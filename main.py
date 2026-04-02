@@ -12,7 +12,7 @@ import logging
 import os
 import secrets
 import sqlite3
-import traceback
+import re
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-logging.basicConfig(level=logging.ERROR)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rubricgen")
 
 # ─────────────────────────────────────────────
@@ -142,6 +142,11 @@ def init_db() -> None:
                 status      TEXT    DEFAULT 'pending',
                 created_at  TEXT    DEFAULT (datetime('now'))
             );
+
+            CREATE INDEX IF NOT EXISTS idx_papers_user ON papers(user_id);
+            CREATE INDEX IF NOT EXISTS idx_rubrics_paper_user ON rubrics(paper_id, user_id);
+            CREATE INDEX IF NOT EXISTS idx_evaluations_paper_user ON evaluations(paper_id, user_id);
+            CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
         """)
         conn.commit()
     conn.close()
@@ -223,6 +228,15 @@ def _set_session_cookie(response: Response, token: str) -> None:
     )
 
 
+def _strip_markdown_fences(raw: str) -> str:
+    """Remove markdown code fences wrapping JSON, if present."""
+    raw = raw.strip()
+    m = re.search(r'```(?:json)?\s*(.*?)```', raw, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    return raw
+
+
 # ─────────────────────────────────────────────
 # Pydantic models
 # ─────────────────────────────────────────────
@@ -296,6 +310,12 @@ def register(body: RegisterPayload):
     password = body.password
     if not email or not password or not name:
         raise HTTPException(400, "All fields required")
+    if len(password) < 8:
+        raise HTTPException(400, "Password must be at least 8 characters")
+    if not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email):
+        raise HTTPException(400, "Invalid email address")
+    if len(name) > 100:
+        raise HTTPException(400, "Display name must be 100 characters or fewer")
     ph, ps = _hash_password(password)
     conn = get_db()
     try:
@@ -341,6 +361,28 @@ def me(rubricgen_session: str | None = Cookie(default=None)):
     return user
 
 
+class AdminLoginPayload(BaseModel):
+    secret: str
+
+
+@app.post("/api/auth/admin")
+def admin_login(body: AdminLoginPayload, response: Response):
+    if not ADMIN_SECRET:
+        raise HTTPException(403, "Admin login is not configured")
+    if not hmac.compare_digest(body.secret, ADMIN_SECRET):
+        raise HTTPException(401, "Invalid admin secret")
+    conn = get_db()
+    row = conn.execute(
+        "SELECT id FROM users WHERE email=?", (ADMIN_EMAIL,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(500, "Admin user not found. Check server configuration.")
+    token = _create_session(row["id"])
+    _set_session_cookie(response, token)
+    return {"ok": True}
+
+
 # ─────────────────────────────────────────────
 # Projects
 # ─────────────────────────────────────────────
@@ -359,6 +401,8 @@ def list_projects(rubricgen_session: str | None = Cookie(default=None)):
 @app.post("/api/projects", status_code=201)
 def create_project(body: ProjectCreate, rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    if len(body.name.strip()) > 200:
+        raise HTTPException(400, "Project name must be 200 characters or fewer")
     conn = get_db()
     with conn:
         cur = conn.execute(
@@ -419,6 +463,8 @@ async def upload_paper(
 ):
     user = require_user(rubricgen_session)
     content = await file.read()
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(413, "File too large. Maximum size is 50 MB.")
     sha256  = hashlib.sha256(content).hexdigest()
     conn = get_db()
     existing = conn.execute(
@@ -606,6 +652,8 @@ def _call_openai(messages: list, model: str, max_tokens: int = 4096) -> str:
 async def generate_rubric(body: GenerateRubricRequest, rubricgen_session: str | None = Cookie(default=None)):
     """Use Claude to generate a structured rubric from a PDF."""
     user = require_user(rubricgen_session)
+    if body.instructions and len(body.instructions) > 5000:
+        raise HTTPException(400, "Instructions must be 5000 characters or fewer")
 
     type_prompt = RUBRIC_TYPE_PROMPTS.get(body.rubric_type, RUBRIC_TYPE_PROMPTS["custom"])
     if body.instructions:
@@ -652,13 +700,7 @@ Make ideal_answer specific to this exact paper's content — include actual valu
 
     raw = _call_anthropic(messages, system=system_prompt, max_tokens=4096)
 
-    # Strip any accidental markdown fences
-    raw = raw.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    raw = raw.strip()
+    raw = _strip_markdown_fences(raw)
 
     try:
         rubric = json.loads(raw)
@@ -835,13 +877,7 @@ Respond ONLY with the JSON object, no preamble."""
         ]
         raw = _call_anthropic(claude_messages, system=system_msg, max_tokens=4096)
 
-    # Parse response
-    raw = raw.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    raw = raw.strip()
+    raw = _strip_markdown_fences(raw)
 
     try:
         eval_data = json.loads(raw)
@@ -924,12 +960,7 @@ Respond ONLY with this JSON structure, no preamble:
 
     raw = _call_anthropic([{"role": "user", "content": user_msg}], system=system_prompt, max_tokens=4096)
 
-    raw = raw.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    raw = raw.strip()
+    raw = _strip_markdown_fences(raw)
 
     try:
         graded = json.loads(raw)
@@ -1056,6 +1087,10 @@ class BatchEvalRequest(BaseModel):
 def batch_evaluate(body: BatchEvalRequest, rubricgen_session: str | None = Cookie(default=None)):
     """Generate rubric and evaluate multiple papers."""
     user = require_user(rubricgen_session)
+    if not body.paper_ids:
+        raise HTTPException(400, "paper_ids must not be empty")
+    if len(body.paper_ids) > 50:
+        raise HTTPException(400, "Cannot batch more than 50 papers at once")
     results = []
     for pid in body.paper_ids:
         try:
