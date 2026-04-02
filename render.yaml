@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: therubricgenerator
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /
+    envVars:
+      - key: RENDER_DATA_DIR
+        value: /var/data
+      - key: ADMIN_EMAIL
+        value: admin@rubricgen.local
+      - key: ADMIN_NAME
+        value: Admin
+      - key: ANTHROPIC_MODEL
+        value: claude-sonnet-4-20250514
+      - key: OPENAI_MODEL
+        value: gpt-4o
+      # Set these as secret values in the Render dashboard:
+      # ADMIN_SECRET
+      # ANTHROPIC_API_KEY
+      # OPENAI_API_KEY
+    disk:
+      name: rubricgen-data
+      mountPath: /var/data
+      sizeGB: 1

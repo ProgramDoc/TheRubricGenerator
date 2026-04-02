@@ -1,0 +1,11 @@
+# Runtime data (created by the app at startup — never commit these)
+papers/
+rubricgen.db
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+.env
+venv/
+.venv/
