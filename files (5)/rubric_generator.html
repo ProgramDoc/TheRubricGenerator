@@ -1,0 +1,1265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OGAI · Rubric Generator</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root {
+  --navy: #161b2e; --blue: #274472; --sky: #5e9ad0;
+  --green: #16a34a; --amber: #d97706; --red: #dc2626;
+  --purple: #7c3aed; --orange: #ea580c;
+  --bg: #f4f5f9; --card: #ffffff;
+  --border: #dce4ee; --text: #1e293b; --muted: #64748b;
+  --panel-w: 460px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; }
+
+/* ── TOP BAR ── */
+#topbar {
+  height: 46px; background: var(--navy); display: flex; align-items: center;
+  padding: 0 16px; gap: 14px; flex-shrink: 0; z-index: 100;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
+#topbar .brand { font-weight: 700; font-size: 15px; color: #fff; letter-spacing: -.2px; display: flex; align-items: center; gap: 8px; }
+#topbar .brand .icon { font-size: 18px; }
+#topbar .brand span { color: var(--sky); }
+.tb-btn {
+  padding: 5px 12px; border: 1px solid rgba(255,255,255,.2); border-radius: 5px;
+  background: transparent; color: #c8d8e8; font-size: 11px; font-weight: 600;
+  cursor: pointer; font-family: inherit; white-space: nowrap;
+}
+.tb-btn:hover { background: rgba(255,255,255,.08); }
+.tb-btn.primary { background: var(--sky); color: #fff; border-color: var(--sky); }
+.tb-btn.primary:hover { background: #4a8ac0; }
+.tb-btn.danger { background: var(--red); color: #fff; border-color: var(--red); }
+.tb-sep { width: 1px; height: 20px; background: rgba(255,255,255,.12); }
+#save-status { font-size: 11px; color: rgba(255,255,255,.4); margin-left: 4px; font-family: 'IBM Plex Mono', monospace; }
+.user-pill { font-size: 11px; color: rgba(255,255,255,.5); margin-left: auto; }
+
+/* ── MAIN LAYOUT ── */
+#layout { display: flex; height: calc(100vh - 46px); overflow: hidden; }
+
+/* ── SIDEBAR ── */
+#sidebar {
+  width: 230px; flex-shrink: 0; background: var(--navy);
+  border-right: 1px solid rgba(255,255,255,.06);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+#sidebar-header {
+  padding: 12px 14px 8px; font-size: 10px; font-weight: 700;
+  color: rgba(255,255,255,.4); letter-spacing: .1em; text-transform: uppercase;
+  flex-shrink: 0; display: flex; align-items: center;
+}
+#new-proj-btn {
+  margin-left: auto; background: rgba(255,255,255,.08);
+  border: 1px solid rgba(255,255,255,.14); color: rgba(255,255,255,.6);
+  border-radius: 4px; cursor: pointer; padding: 0px 8px; font-size: 16px;
+  line-height: 1.4; font-family: inherit;
+}
+#new-proj-btn:hover { background: rgba(255,255,255,.15); color: #fff; }
+#project-list { flex: 1; overflow-y: auto; }
+
+.project-folder { border-bottom: 1px solid rgba(255,255,255,.04); }
+.project-header { display: flex; align-items: center; padding: 7px 8px 7px 10px; cursor: pointer; gap: 5px; user-select: none; }
+.project-header:hover { background: rgba(255,255,255,.05); }
+.project-arrow { font-size: 8px; color: rgba(255,255,255,.28); width: 10px; flex-shrink: 0; }
+.project-name-text { flex: 1; font-size: 11.5px; font-weight: 600; color: rgba(255,255,255,.72); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.project-name-text.unassigned { color: rgba(255,255,255,.35); font-weight: 500; font-style: italic; }
+.project-count { font-size: 9px; color: rgba(255,255,255,.22); font-family: 'IBM Plex Mono', monospace; margin-right: 2px; }
+.project-actions { display: none; gap: 1px; align-items: center; }
+.project-header:hover .project-actions { display: flex; }
+.proj-act-btn { background: none; border: none; color: rgba(255,255,255,.32); cursor: pointer; font-size: 11px; padding: 2px 5px; border-radius: 3px; }
+.proj-act-btn:hover { color: #fff; background: rgba(255,255,255,.12); }
+.proj-act-btn.del:hover { color: #fca5a5; background: rgba(220,38,38,.25); }
+.project-name-input { flex: 1; background: rgba(255,255,255,.1); border: 1px solid var(--sky); border-radius: 3px; color: #fff; padding: 2px 6px; font-size: 11px; font-family: inherit; outline: none; min-width: 0; }
+
+.paper-item { padding: 7px 8px 7px 20px; border-radius: 5px; cursor: pointer; margin: 1px 6px; transition: background .12s; position: relative; }
+.paper-item:hover { background: rgba(255,255,255,.06); }
+.paper-item.active { background: rgba(94,154,208,.2); }
+.paper-item .pi-name { font-size: 11px; color: #e2e8f0; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 18px; }
+.paper-item .pi-meta { font-size: 9.5px; color: rgba(255,255,255,.28); margin-top: 2px; font-family: 'IBM Plex Mono', monospace; }
+.pi-chip { display: inline-block; font-size: 9px; padding: 1px 6px; border-radius: 8px; font-weight: 600; margin-top: 3px; }
+.pi-chip.rubric { background: rgba(124,58,237,.25); color: #a78bfa; }
+.pi-chip.eval   { background: rgba(22,163,74,.2);  color: #4ade80; }
+.pi-chip.none   { background: rgba(255,255,255,.06); color: rgba(255,255,255,.3); }
+
+.paper-item-actions { display: none; position: absolute; top: 6px; right: 6px; gap: 2px; align-items: center; }
+.paper-item:hover .paper-item-actions { display: flex; }
+.paper-act-btn { background: rgba(255,255,255,.07); border: none; color: rgba(255,255,255,.38); cursor: pointer; font-size: 10px; padding: 2px 5px; border-radius: 3px; }
+.paper-act-btn:hover { background: rgba(220,38,38,.3); color: #fca5a5; }
+
+.move-select { display: none; font-size: 9px; padding: 1px 2px; border-radius: 3px; margin-top: 4px; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); color: rgba(255,255,255,.4); font-family: inherit; cursor: pointer; width: 100%; }
+.paper-item:hover .move-select { display: block; }
+.move-select option { background: #1e2d42; color: #e2e8f0; }
+
+#upload-zone { margin: 8px; padding: 12px; border: 1.5px dashed rgba(255,255,255,.15); border-radius: 6px; text-align: center; cursor: pointer; transition: border-color .15s; flex-shrink: 0; }
+#upload-zone:hover, #upload-zone.drag-over { border-color: var(--sky); }
+#upload-zone p { font-size: 11px; color: rgba(255,255,255,.35); line-height: 1.5; }
+#upload-zone strong { color: rgba(255,255,255,.6); }
+#file-input { display: none; }
+
+/* Batch mode indicator */
+#batch-bar {
+  display: none; padding: 7px 10px; background: rgba(124,58,237,.25); border-top: 1px solid rgba(124,58,237,.4);
+  font-size: 10px; color: #a78bfa; font-weight: 600; gap: 8px; align-items: center; flex-shrink: 0;
+}
+#batch-bar.active { display: flex; }
+.batch-count { background: var(--purple); color: #fff; border-radius: 10px; padding: 1px 7px; font-size: 9px; }
+#clear-batch-btn { margin-left: auto; background: none; border: none; color: #a78bfa; cursor: pointer; font-size: 10px; font-family: inherit; }
+
+/* ── PDF VIEWER ── */
+#pdf-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; background: #2c2c2c; }
+#pdf-toolbar { height: 36px; background: #1a1a1a; display: flex; align-items: center; padding: 0 10px; gap: 6px; flex-shrink: 0; }
+#pdf-toolbar button { background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12); color: #ccc; cursor: pointer; border-radius: 3px; padding: 2px 8px; font-size: 11px; }
+#pdf-toolbar button:hover { background: rgba(255,255,255,.14); }
+#pdf-toolbar input[type=number] { width: 44px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.15); color: #fff; border-radius: 3px; padding: 2px 5px; font-size: 11px; text-align: center; font-family: 'IBM Plex Mono', monospace; }
+#pdf-toolbar span { color: rgba(255,255,255,.4); font-size: 11px; font-family: 'IBM Plex Mono', monospace; }
+.tb-spacer { flex: 1; }
+#pdf-scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; align-items: center; padding: 16px; gap: 12px; }
+#no-paper { color: rgba(255,255,255,.25); font-size: 13px; margin: auto; text-align: center; line-height: 1.8; }
+#no-paper .hint { font-size: 28px; margin-bottom: 12px; }
+
+/* ── RIGHT PANEL ── */
+#right-panel {
+  width: var(--panel-w); flex-shrink: 0; background: var(--card);
+  border-left: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden;
+}
+
+/* Tab bar */
+#panel-tabs { display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0; background: #f8fafc; }
+.panel-tab {
+  flex: 1; padding: 10px 4px; border: none; background: none; cursor: pointer; font-size: 11px;
+  font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; font-family: inherit;
+  transition: all .15s;
+}
+.panel-tab:hover { color: var(--text); }
+.panel-tab.active { color: var(--blue); border-bottom-color: var(--sky); background: #fff; }
+.panel-tab .tab-icon { font-size: 13px; display: block; margin-bottom: 2px; }
+
+/* Tab panels */
+.tab-panel { display: none; flex: 1; overflow-y: auto; flex-direction: column; }
+.tab-panel.active { display: flex; }
+
+/* ── RUBRIC TAB ── */
+#rubric-tab { padding: 0; }
+
+.section-card {
+  border-bottom: 1px solid var(--border); padding: 14px 16px;
+}
+.section-card h3 { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; margin-bottom: 10px; }
+
+.form-group { margin-bottom: 10px; }
+.form-group label { display: block; font-size: 11px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.form-group select, .form-group textarea, .form-group input[type=text] {
+  width: 100%; border: 1px solid var(--border); border-radius: 5px; padding: 7px 10px;
+  font-family: inherit; font-size: 12px; color: var(--text); background: var(--bg);
+}
+.form-group select:focus, .form-group textarea:focus, .form-group input[type=text]:focus {
+  outline: none; border-color: var(--sky);
+}
+.form-group textarea { resize: vertical; min-height: 70px; }
+
+.gen-btn {
+  width: 100%; padding: 9px; background: var(--purple); color: #fff; border: none;
+  border-radius: 6px; font-weight: 700; font-size: 12px; cursor: pointer; font-family: inherit;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.gen-btn:hover { background: #6d28d9; }
+.gen-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+.gen-loading { text-align: center; padding: 12px; font-size: 11px; color: var(--muted); display: none; }
+.gen-loading .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--purple); border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Rubric question cards */
+#rubric-questions { padding: 12px 16px; flex: 1; }
+.rubric-empty { text-align: center; padding: 30px 20px; color: var(--muted); font-size: 12px; }
+.rubric-empty .icon { font-size: 28px; margin-bottom: 8px; }
+
+.q-card {
+  border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px;
+  overflow: hidden; background: #fff;
+}
+.q-card-header {
+  display: flex; align-items: center; padding: 8px 12px; background: #f8fafc;
+  border-bottom: 1px solid var(--border); gap: 8px; cursor: pointer;
+}
+.q-num { font-size: 10px; font-weight: 700; font-family: 'IBM Plex Mono', monospace; color: var(--muted); width: 24px; flex-shrink: 0; }
+.q-domain { font-size: 10px; font-weight: 600; color: var(--blue); padding: 1px 7px; background: rgba(39,68,114,.08); border-radius: 10px; }
+.q-points { margin-left: auto; font-size: 10px; font-weight: 700; font-family: 'IBM Plex Mono', monospace; color: var(--purple); }
+.q-delete { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 12px; padding: 2px 4px; border-radius: 3px; }
+.q-delete:hover { color: var(--red); background: rgba(220,38,38,.07); }
+.q-expand-arrow { color: var(--muted); font-size: 9px; margin-left: 4px; transition: transform .15s; }
+.q-card.expanded .q-expand-arrow { transform: rotate(90deg); }
+
+.q-card-body { display: none; padding: 12px; }
+.q-card.expanded .q-card-body { display: block; }
+.q-field { margin-bottom: 10px; }
+.q-field label { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; display: block; margin-bottom: 3px; }
+.q-field textarea, .q-field input {
+  width: 100%; border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px;
+  font-family: inherit; font-size: 11.5px; resize: vertical; background: var(--bg);
+}
+.q-field textarea { min-height: 55px; }
+.q-field input[type=number] { width: 60px; }
+.q-field textarea:focus, .q-field input:focus { outline: none; border-color: var(--sky); }
+
+.rubric-actions { display: flex; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--border); flex-shrink: 0; }
+.rubric-actions button { flex: 1; padding: 7px; border-radius: 5px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit; border: 1px solid var(--border); }
+#save-rubric-btn { background: var(--green); color: #fff; border-color: var(--green); }
+#save-rubric-btn:hover { background: #15803d; }
+#add-question-btn { background: var(--bg); color: var(--text); }
+#add-question-btn:hover { background: var(--border); }
+
+/* ── EVALUATE TAB ── */
+#evaluate-tab { padding: 0; }
+
+.eval-section { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.eval-section h3 { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; margin-bottom: 10px; }
+
+.model-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.model-card {
+  border: 2px solid var(--border); border-radius: 7px; padding: 8px 10px;
+  cursor: pointer; transition: all .15s; background: var(--bg);
+}
+.model-card:hover { border-color: var(--sky); }
+.model-card.selected { border-color: var(--sky); background: rgba(94,154,208,.07); }
+.model-card .m-name { font-size: 11.5px; font-weight: 700; color: var(--text); }
+.model-card .m-provider { font-size: 9.5px; color: var(--muted); margin-top: 1px; }
+.model-card .m-badge { font-size: 8px; padding: 1px 5px; border-radius: 6px; font-weight: 700; margin-top: 4px; display: inline-block; }
+.m-badge.openai { background: rgba(16,163,127,.15); color: #047857; }
+.m-badge.anthropic { background: rgba(124,58,237,.15); color: var(--purple); }
+
+.run-eval-btn {
+  width: 100%; padding: 10px; background: var(--sky); color: #fff; border: none;
+  border-radius: 6px; font-weight: 700; font-size: 12px; cursor: pointer; font-family: inherit;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.run-eval-btn:hover { background: #4a8ac0; }
+.run-eval-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+.eval-status { padding: 10px 14px; font-size: 11px; border-radius: 6px; margin-top: 10px; display: none; }
+.eval-status.info { background: rgba(94,154,208,.1); color: var(--blue); }
+.eval-status.success { background: rgba(22,163,74,.1); color: var(--green); }
+.eval-status.error { background: rgba(220,38,38,.1); color: var(--red); }
+
+/* Eval list */
+#eval-list { padding: 12px 16px; }
+.eval-item {
+  border: 1px solid var(--border); border-radius: 7px; margin-bottom: 8px; padding: 10px 12px;
+  cursor: pointer; transition: border-color .12s;
+}
+.eval-item:hover { border-color: var(--sky); }
+.eval-item.selected { border-color: var(--sky); background: rgba(94,154,208,.05); }
+.eval-item .ei-model { font-size: 11px; font-weight: 700; color: var(--text); }
+.eval-item .ei-score { font-size: 10px; font-family: 'IBM Plex Mono', monospace; color: var(--purple); font-weight: 700; }
+.eval-item .ei-meta { font-size: 9.5px; color: var(--muted); margin-top: 2px; }
+.ei-status-chip { font-size: 9px; padding: 1px 6px; border-radius: 8px; font-weight: 600; }
+.ei-status-chip.graded { background: rgba(22,163,74,.15); color: var(--green); }
+.ei-status-chip.evaluated { background: rgba(217,119,6,.15); color: var(--amber); }
+.ei-status-chip.pending { background: rgba(100,116,139,.12); color: var(--muted); }
+
+/* ── RESULTS TAB ── */
+#results-tab { padding: 0; }
+#results-content { padding: 14px 16px; }
+
+.results-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.score-badge {
+  font-size: 28px; font-weight: 800; font-family: 'IBM Plex Mono', monospace;
+  color: var(--purple); line-height: 1;
+}
+.score-badge small { font-size: 13px; color: var(--muted); font-weight: 500; }
+.export-btn { padding: 6px 14px; background: var(--navy); color: #fff; border: none; border-radius: 5px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit; }
+.export-btn:hover { background: var(--blue); }
+
+.score-bar-wrap { margin-bottom: 16px; }
+.score-bar-bg { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
+.score-bar-fill { height: 100%; border-radius: 4px; transition: width .6s ease; background: var(--purple); }
+
+.results-comments { background: rgba(124,58,237,.06); border: 1px solid rgba(124,58,237,.2); border-radius: 7px; padding: 10px 12px; font-size: 11.5px; color: var(--text); margin-bottom: 14px; line-height: 1.6; }
+.results-comments-label { font-size: 10px; font-weight: 700; color: var(--purple); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+
+.q-result-card { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; overflow: hidden; }
+.q-result-header { display: flex; align-items: center; padding: 8px 12px; gap: 8px; cursor: pointer; background: #f8fafc; border-bottom: 1px solid var(--border); }
+.q-result-domain { font-size: 10px; font-weight: 600; color: var(--blue); padding: 1px 7px; background: rgba(39,68,114,.08); border-radius: 10px; }
+.q-result-score { margin-left: auto; font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 700; }
+.q-result-score.full { color: var(--green); }
+.q-result-score.partial { color: var(--amber); }
+.q-result-score.zero { color: var(--red); }
+.q-result-body { display: none; padding: 12px; }
+.q-result-card.expanded .q-result-body { display: block; }
+.q-result-label { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 3px; margin-top: 8px; }
+.q-result-label:first-child { margin-top: 0; }
+.q-result-text { font-size: 11.5px; color: var(--text); line-height: 1.55; }
+.q-result-reasoning { font-size: 11px; color: var(--muted); background: var(--bg); border-radius: 5px; padding: 7px 9px; margin-top: 4px; line-height: 1.5; }
+
+#results-empty { text-align: center; padding: 40px 20px; color: var(--muted); font-size: 12px; }
+#results-empty .icon { font-size: 32px; margin-bottom: 10px; }
+
+/* ── GRADE BTN ── */
+.grade-btn {
+  width: 100%; padding: 9px; background: var(--orange); color: #fff; border: none;
+  border-radius: 6px; font-weight: 700; font-size: 12px; cursor: pointer; font-family: inherit;
+  margin-top: 8px;
+}
+.grade-btn:hover { background: #c2410c; }
+.grade-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* Modals */
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 500; align-items: center; justify-content: center; }
+.modal-overlay.open { display: flex; }
+.modal { background: #fff; border-radius: 10px; padding: 20px; width: 340px; box-shadow: 0 20px 60px rgba(0,0,0,.25); }
+.modal h3 { font-size: 14px; font-weight: 700; margin-bottom: 12px; }
+.modal input { width: 100%; border: 1px solid var(--border); border-radius: 5px; padding: 8px 10px; font-size: 13px; font-family: inherit; margin-bottom: 12px; }
+.modal input:focus { outline: none; border-color: var(--sky); }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.modal-actions button { padding: 6px 16px; border-radius: 5px; border: 1px solid var(--border); cursor: pointer; font-size: 12px; font-family: inherit; font-weight: 600; }
+.modal-actions .confirm { background: var(--navy); color: #fff; border-color: var(--navy); }
+.modal-actions .confirm:hover { background: var(--blue); }
+
+/* Batch mode toggle */
+.batch-toggle { font-size: 9px; padding: 2px 7px; border-radius: 8px; border: 1px solid rgba(255,255,255,.2); background: transparent; color: rgba(255,255,255,.5); cursor: pointer; font-family: inherit; font-weight: 600; }
+.batch-toggle.active { background: rgba(124,58,237,.4); border-color: var(--purple); color: #c4b5fd; }
+
+/* Checkbox on paper items for batch */
+.paper-checkbox { position: absolute; top: 10px; right: 28px; display: none; }
+.paper-item.batch-mode .paper-checkbox { display: block; }
+
+/* Toast */
+#toast { position: fixed; bottom: 20px; right: 20px; background: var(--navy); color: #fff; padding: 10px 16px; border-radius: 7px; font-size: 12px; z-index: 999; opacity: 0; transition: opacity .3s; pointer-events: none; }
+#toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<!-- ── TOPBAR ── -->
+<div id="topbar">
+  <div class="brand">
+    <span class="icon">📐</span>
+    OGAI · <span>Rubric</span>&nbsp;Generator
+  </div>
+  <div class="tb-sep"></div>
+  <button class="tb-btn" onclick="goToAnnotator()" title="Switch to Annotation Platform">↩ Annotator</button>
+  <button class="tb-btn batch-toggle" id="batch-toggle-btn" onclick="toggleBatchMode()">Batch Mode</button>
+  <button class="tb-btn primary" id="batch-run-btn" style="display:none" onclick="runBatchEval()">⚡ Batch Evaluate</button>
+  <div class="tb-sep"></div>
+  <span id="save-status"></span>
+  <span class="user-pill" id="user-pill"></span>
+  <button class="tb-btn" onclick="logout()">Sign out</button>
+</div>
+
+<div id="layout">
+
+<!-- ── SIDEBAR ── -->
+<div id="sidebar">
+  <div id="sidebar-header">
+    Studies
+    <button id="new-proj-btn" onclick="createNewProject()" title="New project">+</button>
+  </div>
+  <div id="project-list"></div>
+  <div id="batch-bar">
+    <span>Batch</span>
+    <span class="batch-count" id="batch-count-badge">0</span>
+    <button id="clear-batch-btn" onclick="clearBatch()">Clear</button>
+  </div>
+  <div id="upload-zone" onclick="document.getElementById('file-input').click()"
+       ondragover="event.preventDefault()" ondrop="handleDrop(event)"
+       ondragleave="this.classList.remove('drag-over')"
+       ondragenter="this.classList.add('drag-over')">
+    <p><strong>Upload PDF</strong><br>click or drag &amp; drop<br><span style="font-size:9px">Multiple files supported</span></p>
+  </div>
+  <input type="file" id="file-input" accept=".pdf" multiple onchange="handleFileInput(this.files)">
+</div>
+
+<!-- ── PDF VIEWER ── -->
+<div id="pdf-panel">
+  <div id="pdf-toolbar">
+    <button onclick="changePage(-1)">◀</button>
+    <input type="number" id="page-input" value="1" min="1" onchange="gotoPage(this.value)">
+    <span id="page-info">/ 1</span>
+    <button onclick="changePage(1)">▶</button>
+    <div class="tb-spacer"></div>
+    <button onclick="changeZoom(-0.2)">−</button>
+    <span id="zoom-display">100%</span>
+    <button onclick="changeZoom(0.2)">+</button>
+  </div>
+  <div id="pdf-scroll">
+    <div id="no-paper">
+      <div class="hint">📐</div>
+      <strong>OGAI Rubric Generator</strong><br>
+      Upload a PDF and generate an evaluation rubric.<br>
+      A second LLM will answer your questions — graded by Claude.
+    </div>
+  </div>
+</div>
+
+<!-- ── RIGHT PANEL ── -->
+<div id="right-panel">
+  <div id="panel-tabs">
+    <button class="panel-tab active" onclick="switchTab('rubric')" id="tab-rubric">
+      <span class="tab-icon">📐</span>Rubric
+    </button>
+    <button class="panel-tab" onclick="switchTab('evaluate')" id="tab-evaluate">
+      <span class="tab-icon">🤖</span>Evaluate
+    </button>
+    <button class="panel-tab" onclick="switchTab('results')" id="tab-results">
+      <span class="tab-icon">📊</span>Results
+    </button>
+  </div>
+
+  <!-- ── RUBRIC TAB ── -->
+  <div class="tab-panel active" id="rubric-tab">
+
+    <div class="section-card">
+      <h3>📐 Generate Rubric</h3>
+      <div class="form-group">
+        <label>Rubric Type</label>
+        <select id="rubric-type-select">
+          <option value="classification">Classification — study design &amp; taxonomy</option>
+          <option value="extraction">Data Extraction — PICO/PICOS elements</option>
+          <option value="risk_of_bias">Risk of Bias — bias domain appraisal</option>
+          <option value="custom">Custom — based on instructions below</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Custom Instructions <span style="color:var(--muted);font-weight:400">(optional)</span></label>
+        <textarea id="rubric-instructions" placeholder="Additional instructions for rubric generation…&#10;e.g. 'Focus on ITT analysis and statistical methods'"></textarea>
+      </div>
+      <button class="gen-btn" id="gen-btn" onclick="generateRubric()">
+        <span>✦</span> Generate Rubric with Claude
+      </button>
+      <div class="gen-loading" id="gen-loading">
+        <span class="spinner"></span> Claude is reading the paper and building the rubric…
+      </div>
+    </div>
+
+    <div id="rubric-questions">
+      <div class="rubric-empty" id="rubric-empty">
+        <div class="icon">📋</div>
+        Select a study and generate a rubric to see questions here.<br>
+        You can edit each question before evaluating.
+      </div>
+    </div>
+
+    <div class="rubric-actions" id="rubric-actions" style="display:none">
+      <button id="add-question-btn" onclick="addBlankQuestion()">+ Add Question</button>
+      <button id="save-rubric-btn" onclick="saveRubric()">💾 Save Rubric</button>
+    </div>
+  </div>
+
+  <!-- ── EVALUATE TAB ── -->
+  <div class="tab-panel" id="evaluate-tab">
+
+    <div class="eval-section">
+      <h3>🤖 Select Evaluation Model</h3>
+      <div class="model-grid" id="model-grid">
+        <div class="model-card selected" data-model="gpt-4o" onclick="selectModel(this)">
+          <div class="m-name">GPT-4o</div>
+          <div class="m-provider">OpenAI</div>
+          <div class="m-badge openai">OpenAI</div>
+        </div>
+        <div class="model-card" data-model="gpt-4-turbo" onclick="selectModel(this)">
+          <div class="m-name">GPT-4 Turbo</div>
+          <div class="m-provider">OpenAI</div>
+          <div class="m-badge openai">OpenAI</div>
+        </div>
+        <div class="model-card" data-model="gpt-4o-mini" onclick="selectModel(this)">
+          <div class="m-name">GPT-4o mini</div>
+          <div class="m-provider">OpenAI · faster</div>
+          <div class="m-badge openai">OpenAI</div>
+        </div>
+        <div class="model-card" data-model="claude-sonnet-4-20250514" onclick="selectModel(this)">
+          <div class="m-name">Claude Sonnet 4</div>
+          <div class="m-provider">Anthropic</div>
+          <div class="m-badge anthropic">Claude</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="eval-section">
+      <h3>▶ Run Evaluation</h3>
+      <p style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.5;">
+        The selected model will answer your rubric questions.<br>
+        Claude will then grade the answers as an independent judge.
+      </p>
+      <button class="run-eval-btn" id="run-eval-btn" onclick="runEvaluation()">
+        ▶ Run Evaluation
+      </button>
+      <button class="grade-btn" id="grade-btn" onclick="gradeEvaluation()" style="display:none">
+        ✦ Grade with Claude
+      </button>
+      <div class="eval-status" id="eval-status"></div>
+    </div>
+
+    <div class="eval-section">
+      <h3>📋 Evaluation History</h3>
+      <div id="eval-list">
+        <div style="font-size:11px;color:var(--muted);">No evaluations yet for this study.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── RESULTS TAB ── -->
+  <div class="tab-panel" id="results-tab">
+    <div id="results-content">
+      <div id="results-empty">
+        <div class="icon">📊</div>
+        Run an evaluation and grade it to see results here.
+      </div>
+    </div>
+  </div>
+
+</div><!-- /right-panel -->
+</div><!-- /layout -->
+
+<!-- New project modal -->
+<div class="modal-overlay" id="proj-modal">
+  <div class="modal">
+    <h3>New Project</h3>
+    <input type="text" id="proj-name-input" placeholder="Project name" onkeydown="if(event.key==='Enter')confirmNewProject()">
+    <div class="modal-actions">
+      <button onclick="closeProjModal()">Cancel</button>
+      <button class="confirm" onclick="confirmNewProject()">Create</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ════════════════════════════════════════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════════════════════════════════════════
+let currentPaperId   = null;
+let currentPaperName = '';
+let currentRubricId  = null;
+let currentEvalId    = null;
+let currentRubric    = null; // { questions: [] }
+let pdfDoc           = null;
+let currentPage      = 1;
+let totalPages       = 1;
+let zoom             = 1.0;
+let projects         = [];
+let papers           = [];
+let batchMode        = false;
+let batchSelected    = new Set(); // Set of paper IDs
+let selectedModel    = 'gpt-4o';
+let currentTab       = 'rubric';
+
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+// ════════════════════════════════════════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════════════════════════════════════════
+async function init() {
+  try {
+    const me = await api('/api/auth/me');
+    document.getElementById('user-pill').textContent = me.display_name || me.email;
+  } catch {
+    window.location = '/login';
+    return;
+  }
+  await loadProjectsAndPapers();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// API
+// ════════════════════════════════════════════════════════════════════════════
+async function api(url, opts = {}) {
+  const res = await fetch(url, { credentials: 'include', ...opts });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || res.statusText);
+  }
+  return res.json();
+}
+
+async function logout() {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  window.location = '/login';
+}
+
+function goToAnnotator() {
+  window.location = 'https://ogai-annotator.onrender.com';
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SIDEBAR / PROJECTS / PAPERS
+// ════════════════════════════════════════════════════════════════════════════
+async function loadProjectsAndPapers() {
+  [projects, papers] = await Promise.all([api('/api/projects'), api('/api/papers')]);
+  renderSidebar();
+}
+
+function renderSidebar() {
+  const container = document.getElementById('project-list');
+  container.innerHTML = '';
+
+  const byProject = {};
+  papers.forEach(p => {
+    const key = p.project_id || '__none__';
+    (byProject[key] = byProject[key] || []).push(p);
+  });
+
+  // Unassigned
+  if (byProject['__none__']?.length) {
+    container.appendChild(renderFolder(null, 'Unassigned', byProject['__none__']));
+  }
+  // Named projects
+  projects.forEach(proj => {
+    container.appendChild(renderFolder(proj.id, proj.name, byProject[proj.id] || []));
+  });
+}
+
+function renderFolder(projId, projName, paperList) {
+  const div = document.createElement('div');
+  div.className = 'project-folder';
+  div.innerHTML = `
+    <div class="project-header" onclick="toggleFolder(this)">
+      <span class="project-arrow">▶</span>
+      <span class="project-name-text ${projId ? '' : 'unassigned'}">${projName}</span>
+      <span class="project-count">${paperList.length}</span>
+      ${projId ? `
+      <div class="project-actions">
+        <button class="proj-act-btn" onclick="event.stopPropagation();renameProject(${projId},this.closest('.project-folder').querySelector('.project-name-text'))">✎</button>
+        <button class="proj-act-btn del" onclick="event.stopPropagation();deleteProject(${projId})">✕</button>
+      </div>` : ''}
+    </div>
+    <div class="project-papers" style="display:none"></div>`;
+
+  const papersDiv = div.querySelector('.project-papers');
+  paperList.forEach(p => papersDiv.appendChild(renderPaperItem(p)));
+  return div;
+}
+
+function renderPaperItem(p) {
+  const div = document.createElement('div');
+  div.className = 'paper-item' + (p.id === currentPaperId ? ' active' : '') + (batchMode ? ' batch-mode' : '');
+  div.dataset.paperId = p.id;
+  div.onclick = () => batchMode ? toggleBatchSelect(p.id, div) : selectPaper(p.id, p.filename);
+
+  const rubricChip = p.rubric_count > 0 ? `<span class="pi-chip rubric">✦ ${p.rubric_count} rubric</span>` : '';
+  const evalChip   = p.eval_count   > 0 ? `<span class="pi-chip eval">✓ ${p.eval_count} eval</span>` : '';
+  const noneChip   = (!p.rubric_count && !p.eval_count) ? `<span class="pi-chip none">No rubric</span>` : '';
+
+  const projectOptions = projects.map(proj =>
+    `<option value="${proj.id}" ${proj.id === p.project_id ? 'selected' : ''}>${proj.name}</option>`
+  ).join('');
+
+  div.innerHTML = `
+    <div class="pi-name">${p.filename}</div>
+    <div class="pi-meta">${rubricChip}${evalChip}${noneChip}</div>
+    ${batchMode ? `<input type="checkbox" class="paper-checkbox" ${batchSelected.has(p.id) ? 'checked' : ''} onclick="event.stopPropagation();toggleBatchSelect(${p.id},this.closest('.paper-item'))">` : ''}
+    <div class="paper-item-actions">
+      <button class="paper-act-btn" onclick="event.stopPropagation();deletePaper(${p.id})">✕</button>
+    </div>
+    ${projects.length ? `<select class="move-select" onchange="event.stopPropagation();movePaper(${p.id},this.value)" onclick="event.stopPropagation()">
+      <option value="">Move to…</option>
+      ${projectOptions}
+    </select>` : ''}`;
+  return div;
+}
+
+function toggleFolder(header) {
+  const papers = header.nextElementSibling;
+  const arrow  = header.querySelector('.project-arrow');
+  const open   = papers.style.display !== 'none';
+  papers.style.display = open ? 'none' : 'block';
+  arrow.textContent = open ? '▶' : '▼';
+}
+
+async function selectPaper(id, name) {
+  currentPaperId   = id;
+  currentPaperName = name;
+  currentRubricId  = null;
+  currentEvalId    = null;
+  currentRubric    = null;
+  renderSidebar();
+  showStatus('');
+  loadPDF(id);
+  await loadRubricsForPaper(id);
+  await loadEvalsForPaper(id);
+  clearResults();
+}
+
+async function loadRubricsForPaper(id) {
+  clearRubricDisplay();
+  try {
+    const rubrics = await api(`/api/rubrics?paper_id=${id}`);
+    if (rubrics.length > 0) {
+      // Load the most recent rubric
+      const r = rubrics[0];
+      currentRubricId = r.id;
+      currentRubric   = r.rubric;
+      renderRubric(r.rubric);
+      document.getElementById('rubric-type-select').value = r.rubric_type || 'classification';
+    }
+  } catch (e) {
+    console.error('loadRubrics:', e);
+  }
+}
+
+async function loadEvalsForPaper(id) {
+  const container = document.getElementById('eval-list');
+  try {
+    const evals = await api(`/api/evaluations?paper_id=${id}`);
+    if (!evals.length) {
+      container.innerHTML = '<div style="font-size:11px;color:var(--muted);">No evaluations yet for this study.</div>';
+      return;
+    }
+    container.innerHTML = evals.map(e => {
+      const pct = e.max_score ? ((e.total_score / e.max_score) * 100).toFixed(0) : '—';
+      const scoreStr = e.status === 'graded' ? `${e.total_score}/${e.max_score} (${pct}%)` : '—';
+      return `<div class="eval-item ${e.id === currentEvalId ? 'selected' : ''}" onclick="selectEval(${e.id})">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span class="ei-model">${e.eval_model}</span>
+          <span class="ei-status-chip ${e.status}">${e.status}</span>
+        </div>
+        <div class="ei-score">${scoreStr}</div>
+        <div class="ei-meta">${e.rubric_title || e.rubric_type} · ${e.created_at.slice(0,16)}</div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    console.error('loadEvals:', e);
+  }
+}
+
+async function selectEval(eid) {
+  currentEvalId = eid;
+  await loadEvalsForPaper(currentPaperId);
+  await showResults(eid);
+  switchTab('results');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PROJECT CRUD
+// ════════════════════════════════════════════════════════════════════════════
+function createNewProject() {
+  document.getElementById('proj-name-input').value = '';
+  document.getElementById('proj-modal').classList.add('open');
+  setTimeout(() => document.getElementById('proj-name-input').focus(), 50);
+}
+function closeProjModal() { document.getElementById('proj-modal').classList.remove('open'); }
+async function confirmNewProject() {
+  const name = document.getElementById('proj-name-input').value.trim();
+  if (!name) return;
+  closeProjModal();
+  await api('/api/projects', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name}) });
+  await loadProjectsAndPapers();
+}
+async function renameProject(pid, el) {
+  const oldName = el.textContent;
+  el.contentEditable = true;
+  el.focus();
+  el.onblur = async () => {
+    el.contentEditable = false;
+    const newName = el.textContent.trim();
+    if (newName && newName !== oldName) {
+      await api(`/api/projects/${pid}`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name:newName}) });
+      await loadProjectsAndPapers();
+    }
+  };
+}
+async function deleteProject(pid) {
+  if (!confirm('Delete this project? Papers will be moved to Unassigned.')) return;
+  await api(`/api/projects/${pid}`, { method: 'DELETE' });
+  await loadProjectsAndPapers();
+}
+async function movePaper(pid, projId) {
+  await api(`/api/papers/${pid}/assign`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({project_id: projId ? parseInt(projId) : null}) });
+  await loadProjectsAndPapers();
+}
+async function deletePaper(pid) {
+  if (!confirm('Delete this paper and all its rubrics?')) return;
+  if (pid === currentPaperId) { currentPaperId = null; clearAll(); }
+  await api(`/api/papers/${pid}`, { method: 'DELETE' });
+  await loadProjectsAndPapers();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PDF UPLOAD
+// ════════════════════════════════════════════════════════════════════════════
+async function handleFileInput(files) {
+  for (const file of files) await uploadFile(file);
+  document.getElementById('file-input').value = '';
+}
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('upload-zone').classList.remove('drag-over');
+  const files = [...e.dataTransfer.files].filter(f => f.name.endsWith('.pdf'));
+  files.forEach(uploadFile);
+}
+async function uploadFile(file) {
+  showStatus(`Uploading ${file.name}…`);
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const r = await fetch('/api/papers/upload', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (d.duplicate) toast(`${file.name} already uploaded`);
+    else toast(`Uploaded ${file.name}`);
+    await loadProjectsAndPapers();
+    if (!currentPaperId) selectPaper(d.id, file.name);
+  } catch (e) {
+    toast(`Upload failed: ${e.message}`, 'error');
+  }
+  showStatus('');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PDF VIEWER
+// ════════════════════════════════════════════════════════════════════════════
+async function loadPDF(paperId) {
+  document.getElementById('no-paper').style.display = 'none';
+  document.getElementById('pdf-scroll').innerHTML = '<div id="no-paper" style="display:none"></div>';
+  try {
+    pdfDoc = await pdfjsLib.getDocument(`/api/papers/${paperId}/pdf`).promise;
+    totalPages = pdfDoc.numPages;
+    document.getElementById('page-info').textContent = `/ ${totalPages}`;
+    currentPage = 1;
+    await renderAllPages();
+  } catch (e) {
+    console.error('PDF load error:', e);
+  }
+}
+
+async function renderAllPages() {
+  const scroll = document.getElementById('pdf-scroll');
+  scroll.innerHTML = '<div id="no-paper" style="display:none"></div>';
+  for (let i = 1; i <= Math.min(totalPages, 50); i++) {
+    const page = await pdfDoc.getPage(i);
+    const vp   = page.getViewport({ scale: zoom });
+    const canvas = document.createElement('canvas');
+    canvas.width  = vp.width;
+    canvas.height = vp.height;
+    canvas.style.display = 'block';
+    canvas.style.borderRadius = '4px';
+    canvas.style.boxShadow = '0 2px 12px rgba(0,0,0,.4)';
+    scroll.appendChild(canvas);
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+  }
+}
+
+function changePage(d) {
+  currentPage = Math.max(1, Math.min(totalPages, currentPage + d));
+  document.getElementById('page-input').value = currentPage;
+}
+function gotoPage(n) {
+  currentPage = Math.max(1, Math.min(totalPages, parseInt(n) || 1));
+  document.getElementById('page-input').value = currentPage;
+}
+async function changeZoom(d) {
+  zoom = Math.max(0.4, Math.min(2.5, zoom + d));
+  document.getElementById('zoom-display').textContent = Math.round(zoom * 100) + '%';
+  if (pdfDoc) await renderAllPages();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// RUBRIC GENERATION
+// ════════════════════════════════════════════════════════════════════════════
+async function generateRubric() {
+  if (!currentPaperId) { toast('Select a study first', 'error'); return; }
+  const rubricType     = document.getElementById('rubric-type-select').value;
+  const instructions   = document.getElementById('rubric-instructions').value.trim();
+
+  document.getElementById('gen-btn').disabled    = true;
+  document.getElementById('gen-loading').style.display = 'block';
+  clearRubricDisplay();
+
+  try {
+    const result = await api('/api/rubrics/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paper_id: currentPaperId, rubric_type: rubricType, instructions: instructions || null }),
+    });
+    currentRubricId = result.rubric_id;
+    currentRubric   = result.rubric;
+    renderRubric(result.rubric);
+    toast(`Rubric generated — ${result.rubric.questions?.length || 0} questions`);
+    await loadProjectsAndPapers();
+  } catch (e) {
+    toast(`Generation failed: ${e.message}`, 'error');
+  } finally {
+    document.getElementById('gen-btn').disabled    = false;
+    document.getElementById('gen-loading').style.display = 'none';
+  }
+}
+
+function renderRubric(rubric) {
+  if (!rubric || !rubric.questions?.length) { return; }
+  currentRubric = rubric;
+  const container = document.getElementById('rubric-questions');
+  container.innerHTML = '';
+
+  rubric.questions.forEach((q, i) => {
+    container.appendChild(renderQuestionCard(q, i));
+  });
+
+  document.getElementById('rubric-actions').style.display = 'flex';
+  document.getElementById('rubric-empty').remove?.() || null;
+
+  // Show rubric title if present
+  if (rubric.title) {
+    const titleEl = document.createElement('div');
+    titleEl.style.cssText = 'font-size:12px;font-weight:700;color:var(--blue);padding:0 0 10px 0;border-bottom:1px solid var(--border);margin-bottom:10px;';
+    titleEl.innerHTML = `📋 ${rubric.title} <span style="font-size:10px;color:var(--purple);font-family:monospace;font-weight:500;">· ${rubric.total_max_points} pts total</span>`;
+    container.prepend(titleEl);
+  }
+}
+
+function renderQuestionCard(q, i) {
+  const card = document.createElement('div');
+  card.className = 'q-card';
+  card.dataset.qid = q.id;
+  card.innerHTML = `
+    <div class="q-card-header" onclick="toggleQCard(this.parentElement)">
+      <span class="q-num">Q${i+1}</span>
+      <span class="q-domain">${q.domain || 'General'}</span>
+      <span style="flex:1;font-size:11px;color:var(--text);font-weight:500;padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${q.question}</span>
+      <span class="q-points">${q.max_points}pt${q.max_points !== 1 ? 's' : ''}</span>
+      <button class="q-delete" onclick="event.stopPropagation();removeQuestion('${q.id}')">✕</button>
+      <span class="q-expand-arrow">▶</span>
+    </div>
+    <div class="q-card-body">
+      <div class="q-field">
+        <label>Question</label>
+        <textarea data-field="question" onchange="updateQuestion('${q.id}','question',this.value)">${q.question}</textarea>
+      </div>
+      <div class="q-field">
+        <label>Ideal Answer</label>
+        <textarea data-field="ideal_answer" style="min-height:80px" onchange="updateQuestion('${q.id}','ideal_answer',this.value)">${q.ideal_answer || ''}</textarea>
+      </div>
+      <div class="q-field">
+        <label>Scoring Criteria</label>
+        <textarea data-field="scoring_criteria" onchange="updateQuestion('${q.id}','scoring_criteria',this.value)">${q.scoring_criteria || ''}</textarea>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;">
+        <div class="q-field" style="flex:1">
+          <label>Domain</label>
+          <input type="text" value="${q.domain || ''}" onchange="updateQuestion('${q.id}','domain',this.value)">
+        </div>
+        <div class="q-field">
+          <label>Max Points</label>
+          <input type="number" min="1" max="10" value="${q.max_points || 1}" onchange="updateQuestion('${q.id}','max_points',parseInt(this.value))">
+        </div>
+      </div>
+    </div>`;
+  return card;
+}
+
+function toggleQCard(card) {
+  card.classList.toggle('expanded');
+}
+
+function updateQuestion(qid, field, value) {
+  if (!currentRubric) return;
+  const q = currentRubric.questions.find(q => q.id === qid);
+  if (q) { q[field] = value; recalcTotal(); }
+}
+
+function recalcTotal() {
+  if (currentRubric) {
+    currentRubric.total_max_points = currentRubric.questions.reduce((s, q) => s + (q.max_points || 0), 0);
+  }
+}
+
+function removeQuestion(qid) {
+  if (!currentRubric) return;
+  currentRubric.questions = currentRubric.questions.filter(q => q.id !== qid);
+  recalcTotal();
+  const card = document.querySelector(`.q-card[data-qid="${qid}"]`);
+  if (card) card.remove();
+}
+
+function addBlankQuestion() {
+  if (!currentRubric) { currentRubric = { questions: [], total_max_points: 0 }; }
+  const newQ = {
+    id: 'q' + Date.now(),
+    domain: 'General',
+    question: 'New question',
+    ideal_answer: '',
+    scoring_criteria: '',
+    max_points: 1,
+  };
+  currentRubric.questions.push(newQ);
+  const container = document.getElementById('rubric-questions');
+  const card = renderQuestionCard(newQ, currentRubric.questions.length - 1);
+  card.classList.add('expanded');
+  container.appendChild(card);
+  card.scrollIntoView({ behavior: 'smooth' });
+  document.getElementById('rubric-actions').style.display = 'flex';
+}
+
+async function saveRubric() {
+  if (!currentRubric || !currentPaperId) { toast('Nothing to save', 'error'); return; }
+  const rubricType = document.getElementById('rubric-type-select').value;
+  const instructions = document.getElementById('rubric-instructions').value.trim();
+  recalcTotal();
+  try {
+    if (currentRubricId) {
+      await api(`/api/rubrics/${currentRubricId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paper_id: currentPaperId, rubric_type: rubricType, rubric_json: currentRubric, instructions: instructions || null }),
+      });
+    }
+    toast('Rubric saved ✓');
+  } catch (e) {
+    toast(`Save failed: ${e.message}`, 'error');
+  }
+}
+
+function clearRubricDisplay() {
+  const container = document.getElementById('rubric-questions');
+  container.innerHTML = '<div class="rubric-empty" id="rubric-empty"><div class="icon">📋</div>Select a study and generate a rubric to see questions here.<br>You can edit each question before evaluating.</div>';
+  document.getElementById('rubric-actions').style.display = 'none';
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// EVALUATION
+// ════════════════════════════════════════════════════════════════════════════
+function selectModel(card) {
+  document.querySelectorAll('.model-card').forEach(c => c.classList.remove('selected'));
+  card.classList.add('selected');
+  selectedModel = card.dataset.model;
+}
+
+async function runEvaluation() {
+  if (!currentPaperId) { toast('Select a study first', 'error'); return; }
+  if (!currentRubricId) { toast('Generate or save a rubric first', 'error'); return; }
+
+  const btn = document.getElementById('run-eval-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Running…';
+  showEvalStatus('Running evaluation…', 'info');
+  document.getElementById('grade-btn').style.display = 'none';
+
+  try {
+    const result = await api('/api/evaluations/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rubric_id: currentRubricId, paper_id: currentPaperId, eval_model: selectedModel }),
+    });
+    currentEvalId = result.evaluation_id;
+    showEvalStatus(`Evaluation complete — ${result.eval_data.responses?.length || 0} responses collected`, 'success');
+    document.getElementById('grade-btn').style.display = 'block';
+    await loadEvalsForPaper(currentPaperId);
+    toast('Evaluation complete ✓');
+  } catch (e) {
+    showEvalStatus(`Error: ${e.message}`, 'error');
+    toast(`Evaluation failed: ${e.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '▶ Run Evaluation';
+  }
+}
+
+async function gradeEvaluation() {
+  if (!currentEvalId) { toast('Run an evaluation first', 'error'); return; }
+  const btn = document.getElementById('grade-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Claude grading…';
+  showEvalStatus('Claude is grading responses…', 'info');
+
+  try {
+    const result = await api(`/api/evaluations/${currentEvalId}/grade`, { method: 'POST' });
+    const g = result.graded;
+    showEvalStatus(`Grading complete — ${g.total_score}/${g.max_score} (${g.percentage}%)`, 'success');
+    await loadEvalsForPaper(currentPaperId);
+    await showResults(currentEvalId);
+    switchTab('results');
+    toast(`Graded: ${g.total_score}/${g.max_score} (${g.percentage}%)`);
+  } catch (e) {
+    showEvalStatus(`Grading error: ${e.message}`, 'error');
+    toast(`Grading failed: ${e.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✦ Grade with Claude';
+  }
+}
+
+function showEvalStatus(msg, type) {
+  const el = document.getElementById('eval-status');
+  el.textContent = msg;
+  el.className = `eval-status ${type}`;
+  el.style.display = 'block';
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// RESULTS
+// ════════════════════════════════════════════════════════════════════════════
+async function showResults(eid) {
+  const content = document.getElementById('results-content');
+  try {
+    const data = await api(`/api/evaluations/${eid}`);
+    const { rubric, eval_data, grade_data } = data;
+    const grades = grade_data?.grades || [];
+    const qMap   = {};
+    (rubric?.questions || []).forEach(q => qMap[q.id] = q);
+    const respMap = {};
+    (eval_data?.responses || []).forEach(r => respMap[r.question_id] = r.answer);
+
+    const total = grade_data?.total_score ?? 0;
+    const max   = grade_data?.max_score   ?? 1;
+    const pct   = grade_data?.percentage  ?? ((total/max*100).toFixed(1));
+
+    const scoreColor = pct >= 80 ? 'var(--green)' : pct >= 60 ? 'var(--amber)' : 'var(--red)';
+
+    content.innerHTML = `
+      <div class="results-header">
+        <div>
+          <div class="score-badge" style="color:${scoreColor}">${total}<small>/${max}</small></div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px;">${pct}% · ${data.eval_model} · ${data.created_at?.slice(0,10)}</div>
+        </div>
+        <button class="export-btn" onclick="exportResults(${eid})">⬇ Export CSV</button>
+      </div>
+      <div class="score-bar-wrap">
+        <div class="score-bar-bg"><div class="score-bar-fill" style="width:${Math.min(100,pct)}%;background:${scoreColor}"></div></div>
+      </div>
+      ${grade_data?.overall_comments ? `
+      <div class="results-comments">
+        <div class="results-comments-label">✦ Claude's Overall Assessment</div>
+        ${grade_data.overall_comments}
+      </div>` : ''}
+      <div id="q-results-list"></div>`;
+
+    const list = document.getElementById('q-results-list');
+    grades.forEach(g => {
+      const q    = qMap[g.question_id] || {};
+      const resp = respMap[g.question_id] || '(no answer)';
+      const pctQ = g.max_points ? (g.score / g.max_points) : 0;
+      const scoreClass = pctQ >= 0.8 ? 'full' : pctQ > 0 ? 'partial' : 'zero';
+      const card = document.createElement('div');
+      card.className = 'q-result-card';
+      card.innerHTML = `
+        <div class="q-result-header" onclick="this.parentElement.classList.toggle('expanded')">
+          <span class="q-result-domain">${q.domain || 'General'}</span>
+          <span style="flex:1;font-size:11px;color:var(--text);padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${q.question || g.question_id}</span>
+          <span class="q-result-score ${scoreClass}">${g.score}/${g.max_points}</span>
+          <span style="color:var(--muted);font-size:9px;margin-left:4px;">▶</span>
+        </div>
+        <div class="q-result-body">
+          <div class="q-result-label">Question</div>
+          <div class="q-result-text">${q.question || ''}</div>
+          <div class="q-result-label">LLM Answer (${data.eval_model})</div>
+          <div class="q-result-text">${resp}</div>
+          <div class="q-result-label">Ideal Answer</div>
+          <div class="q-result-text" style="color:var(--muted)">${q.ideal_answer || '—'}</div>
+          <div class="q-result-label">Grader Reasoning</div>
+          <div class="q-result-reasoning">${g.reasoning || '—'}</div>
+        </div>`;
+      list.appendChild(card);
+    });
+  } catch (e) {
+    content.innerHTML = `<div class="results-empty"><div class="icon">⚠️</div>Failed to load results: ${e.message}</div>`;
+  }
+}
+
+async function exportResults(eid) {
+  const a = document.createElement('a');
+  a.href = `/api/evaluations/${eid}/export`;
+  a.download = `eval_${eid}.csv`;
+  a.click();
+}
+
+function clearResults() {
+  document.getElementById('results-content').innerHTML = `
+    <div id="results-empty">
+      <div class="icon">📊</div>
+      Run an evaluation and grade it to see results here.
+    </div>`;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// BATCH MODE
+// ════════════════════════════════════════════════════════════════════════════
+function toggleBatchMode() {
+  batchMode = !batchMode;
+  batchSelected.clear();
+  const btn = document.getElementById('batch-toggle-btn');
+  btn.classList.toggle('active', batchMode);
+  document.getElementById('batch-run-btn').style.display = batchMode ? 'inline-block' : 'none';
+  document.getElementById('batch-bar').classList.toggle('active', batchMode);
+  document.getElementById('batch-count-badge').textContent = 0;
+  renderSidebar();
+}
+
+function toggleBatchSelect(pid, el) {
+  if (batchSelected.has(pid)) { batchSelected.delete(pid); el.classList.remove('active'); }
+  else { batchSelected.add(pid); el.classList.add('active'); }
+  document.getElementById('batch-count-badge').textContent = batchSelected.size;
+}
+
+function clearBatch() { batchSelected.clear(); document.getElementById('batch-count-badge').textContent = 0; renderSidebar(); }
+
+async function runBatchEval() {
+  if (!batchSelected.size) { toast('Select studies with checkboxes first', 'error'); return; }
+  const rubricType   = document.getElementById('rubric-type-select').value;
+  const instructions = document.getElementById('rubric-instructions').value.trim();
+  if (!confirm(`Batch evaluate ${batchSelected.size} studies with ${rubricType} rubric using ${selectedModel}?`)) return;
+  toast(`Starting batch evaluation of ${batchSelected.size} studies…`);
+  try {
+    const result = await api('/api/batch/evaluate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        paper_ids: [...batchSelected],
+        rubric_type: rubricType,
+        eval_model: selectedModel,
+        instructions: instructions || null,
+      }),
+    });
+    const ok  = result.results.filter(r => r.status === 'ok').length;
+    const err = result.results.filter(r => r.status === 'error').length;
+    toast(`Batch complete: ${ok} ok, ${err} errors`);
+    await loadProjectsAndPapers();
+  } catch (e) {
+    toast(`Batch failed: ${e.message}`, 'error');
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// TABS
+// ════════════════════════════════════════════════════════════════════════════
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.panel-tab').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById(`tab-${tab}`).classList.add('active');
+  document.getElementById(`${tab}-tab`).classList.add('active');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// UTILITIES
+// ════════════════════════════════════════════════════════════════════════════
+function showStatus(msg) { document.getElementById('save-status').textContent = msg; }
+
+function toast(msg, type = 'info') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.style.background = type === 'error' ? 'var(--red)' : 'var(--navy)';
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+function clearAll() {
+  currentRubricId = null;
+  currentEvalId   = null;
+  currentRubric   = null;
+  clearRubricDisplay();
+  clearResults();
+  document.getElementById('pdf-scroll').innerHTML = '<div id="no-paper"><div class="hint">📐</div><strong>OGAI Rubric Generator</strong></div>';
+  document.getElementById('no-paper').style.display = 'block';
+}
+
+init();
+</script>
+</body>
+</html>
