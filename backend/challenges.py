@@ -165,7 +165,10 @@ def create_challenge(get_db_fn, user_id: int, title: str, theme: str,
                      project_id: int | None = None,
                      visibility: str = "private",
                      difficulty: str | None = None,
-                     registered_model_id: int | None = None) -> int:
+                     registered_model_id: int | None = None,
+                     kind: str = "manual") -> int:
+    if kind not in ("manual", "daily"):
+        raise ValueError(f"kind must be 'manual' or 'daily', got {kind!r}")
     if not paper_ids:
         raise ValueError("At least one paper required")
     if len(paper_ids) > 10:
@@ -217,7 +220,7 @@ def create_challenge(get_db_fn, user_id: int, title: str, theme: str,
                 """INSERT INTO challenges
                    (title, theme, kind, status, created_by, project_id, visibility, difficulty, registered_model_id)
                    VALUES (?,?,?,?,?,?,?,?,?)""",
-                (title, theme, "manual", "pending", user_id,
+                (title, theme, kind, "pending", user_id,
                  project_id, visibility, difficulty, registered_model_id),
             )
             cid = cur.lastrowid

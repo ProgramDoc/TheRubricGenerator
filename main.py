@@ -268,6 +268,13 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_rm_created_by ON registered_models(created_by);
             CREATE INDEX IF NOT EXISTS idx_rmm_user ON registered_model_members(user_id);
+
+            -- ─── Phase 2: Scheduler state ───
+            CREATE TABLE IF NOT EXISTS scheduler_state (
+                key        TEXT PRIMARY KEY,
+                value      TEXT,
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
         """)
         # agent_skills table comes from backend.skills
         conn.executescript(SKILLS_TABLE_SQL)
@@ -276,6 +283,7 @@ def init_db() -> None:
     seed_v1_skills(conn)
     conn.close()
     _ensure_admin_user()
+    _ensure_system_user()
 
 
 def _migrate_challenges_columns(conn) -> None:
@@ -313,12 +321,69 @@ def _ensure_admin_user() -> None:
     conn.close()
 
 
+SYSTEM_EMAIL = "system@rubricgen.local"
+SYSTEM_NAME  = "System (Daily Challenges)"
+
+
+def _ensure_system_user() -> None:
+    """Create the system user used to own auto-fetched papers and daily challenges.
+    The password is a random secret — no one logs in as this user; it exists only
+    as an owning record for system-created rows."""
+    conn = get_db()
+    existing = conn.execute("SELECT id FROM users WHERE email=?", (SYSTEM_EMAIL,)).fetchone()
+    if not existing:
+        random_secret = secrets.token_hex(32)
+        ph, ps = _hash_password(random_secret)
+        with conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO users (email, display_name, password_hash, password_salt, role) VALUES (?,?,?,?,?)",
+                (SYSTEM_EMAIL, SYSTEM_NAME, ph, ps, "system"),
+            )
+            conn.commit()
+    conn.close()
+
+
+def _get_system_user_id() -> int:
+    conn = get_db()
+    row = conn.execute("SELECT id FROM users WHERE email=?", (SYSTEM_EMAIL,)).fetchone()
+    conn.close()
+    if not row:
+        raise RuntimeError("System user missing — call _ensure_system_user() at startup")
+    return row["id"]
+
+
 init_db()
 
 # ─────────────────────────────────────────────
-# App
+# App (with lifespan to start daily scheduler)
 # ─────────────────────────────────────────────
-app = FastAPI(title="TheRubricGenerator")
+from contextlib import asynccontextmanager
+from backend import scheduler as sched
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # Startup: spawn the daily scheduler background task
+    task = None
+    try:
+        system_id = _get_system_user_id()
+        task = asyncio.create_task(
+            sched.daily_loop(get_db, PAPERS_DIR, OBSIDIAN_VAULT_DIR, system_id)
+        )
+        logger.info("Daily scheduler task started")
+    except Exception as e:
+        logger.error("Failed to start daily scheduler: %s", e)
+    yield
+    # Shutdown: cancel the scheduler task
+    if task is not None:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+app = FastAPI(title="TheRubricGenerator", lifespan=_lifespan)
 
 
 # ─────────────────────────────────────────────
@@ -500,6 +565,16 @@ def public_tests_page(rubricgen_session: str | None = Cookie(default=None)):
     if not user:
         return RedirectResponse("/login", status_code=302)
     return FileResponse(str(FRONTEND / "public_tests.html"), media_type="text/html")
+
+
+@app.get("/admin/daily", include_in_schema=False)
+def admin_daily_page(rubricgen_session: str | None = Cookie(default=None)):
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    if user.get("role") != "admin":
+        return RedirectResponse("/", status_code=302)
+    return FileResponse(str(FRONTEND / "daily.html"), media_type="text/html")
 
 
 @app.get("/login", include_in_schema=False)
@@ -697,6 +772,24 @@ def reset_password(body: ResetPasswordPayload):
 # ─────────────────────────────────────────────
 # Admin dashboard
 # ─────────────────────────────────────────────
+@app.get("/api/admin/daily/status")
+def admin_daily_status(rubricgen_session: str | None = Cookie(default=None)):
+    require_admin(rubricgen_session)
+    return sched.get_scheduler_status(get_db)
+
+
+@app.post("/api/admin/daily/trigger")
+def admin_daily_trigger(rubricgen_session: str | None = Cookie(default=None)):
+    require_admin(rubricgen_session)
+    system_id = _get_system_user_id()
+    result = sched.run_daily_challenge(
+        get_db, PAPERS_DIR, OBSIDIAN_VAULT_DIR, system_id, force=True
+    )
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("message", "daily run failed"))
+    return result
+
+
 @app.get("/api/admin/users")
 def admin_list_users(rubricgen_session: str | None = Cookie(default=None)):
     require_admin(rubricgen_session)

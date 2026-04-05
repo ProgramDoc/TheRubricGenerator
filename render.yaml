@@ -20,6 +20,10 @@ services:
         value: gpt-4o
       - key: GEMINI_MODEL
         value: gemini-2.5-pro
+      - key: DAILY_ENABLED
+        value: "true"
+      - key: DAILY_MAX_PAPERS
+        value: "10"
       # Set these as secret values in the Render dashboard:
       # ADMIN_SECRET
       # ANTHROPIC_API_KEY
@@ -27,6 +31,7 @@ services:
       # GEMINI_API_KEY
       # SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
       # APP_BASE_URL
+      # NCBI_API_KEY (optional — boosts PubMed rate limit from 3/s to 10/s)
     disk:
       name: rubricgen-data
       mountPath: /var/data

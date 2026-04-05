@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OGAI · Rubric Generator — Daily Scheduler</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root {
+  --navy: #161b2e; --blue: #274472; --sky: #5e9ad0;
+  --green: #16a34a; --red: #dc2626; --amber: #d97706;
+  --bg: #f4f5f9; --card: #ffffff; --border: #dce4ee;
+  --text: #1e293b; --muted: #64748b;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; min-height: 100vh; }
+
+.topbar { background: var(--navy); color: #fff; padding: 12px 28px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+.topbar .brand { font-size: 16px; font-weight: 700; letter-spacing: -.3px; }
+.topbar .brand span { color: var(--sky); }
+.topbar .badge { margin-left: 10px; padding: 2px 8px; background: var(--amber); color: #fff; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.topbar nav { display: flex; gap: 4px; align-items: center; }
+.topbar nav a { font-family: inherit; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); padding: 6px 12px; border-radius: 5px; text-decoration: none; }
+.topbar nav a:hover { background: rgba(255,255,255,.08); color: #fff; }
+.topbar nav a.active { background: rgba(255,255,255,.15); color: #fff; }
+.topbar .signout-btn { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); padding: 6px 12px; border-radius: 5px; font-family: inherit; font-size: 11px; font-weight: 600; cursor: pointer; margin-left: 10px; }
+
+.container { max-width: 1000px; margin: 0 auto; padding: 28px; }
+.back-link { font-size: 11px; color: var(--muted); text-decoration: none; font-weight: 600; }
+.back-link:hover { color: var(--blue); }
+.page-title { font-size: 22px; font-weight: 700; color: var(--navy); margin-top: 6px; margin-bottom: 4px; letter-spacing: -.3px; }
+.page-subtitle { color: var(--muted); font-size: 13px; margin-bottom: 22px; }
+
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 20px; }
+.card-header { padding: 14px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.card-header h2 { font-size: 13px; font-weight: 700; color: var(--navy); }
+.card-body { padding: 20px; }
+
+.status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
+.status-item { display: flex; flex-direction: column; gap: 4px; }
+.status-label { font-size: 10px; font-weight: 700; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+.status-value { font-size: 14px; font-weight: 600; color: var(--navy); font-family: 'IBM Plex Mono', monospace; }
+
+.pill { display: inline-block; padding: 3px 10px; border-radius: 4px; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.pill-on { background: #dcfce7; color: #15803d; }
+.pill-off { background: #fee2e2; color: #b91c1c; }
+.pill-warn { background: #fef3c7; color: #a16207; }
+
+.theme-box { background: #f0f9ff; border-left: 3px solid var(--sky); padding: 14px 18px; border-radius: 4px; margin-top: 14px; }
+.theme-name { font-size: 15px; font-weight: 700; color: var(--navy); margin-bottom: 4px; }
+.theme-query { font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: var(--blue); margin-bottom: 4px; }
+.theme-description { font-size: 12px; color: var(--muted); }
+
+.btn { padding: 10px 18px; border: none; border-radius: 6px; background: var(--green); color: #fff; font-family: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.btn:hover:not(:disabled) { background: #15803d; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-secondary { background: var(--blue); }
+.btn-secondary:hover:not(:disabled) { background: var(--navy); }
+
+.banner { padding: 12px 14px; border-radius: 6px; font-size: 12px; margin-top: 14px; display: none; line-height: 1.5; }
+.banner.error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; display: block; }
+.banner.success { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; display: block; }
+.banner.info { background: #eff6ff; color: #1e3a8a; border: 1px solid #bfdbfe; display: block; }
+
+.models-list { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.model-chip { background: #f1f5f9; color: var(--blue); font-family: 'IBM Plex Mono', monospace; font-size: 11px; padding: 3px 10px; border-radius: 12px; font-weight: 600; }
+
+.note { font-size: 11px; color: var(--muted); line-height: 1.5; margin-top: 12px; padding: 10px 14px; background: #f8fafc; border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">OGAI · <span>Rubric</span> Generator <span class="badge">Admin</span></div>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/challenges">Challenges</a>
+    <a href="/public-tests">Public Tests</a>
+    <a href="/models">Models</a>
+    <a href="/leaderboard">Leaderboard</a>
+    <a href="/admin">Admin</a>
+    <a href="/admin/daily" class="active">Daily Scheduler</a>
+    <button class="signout-btn" onclick="signOut()">Sign Out</button>
+  </nav>
+</div>
+
+<div class="container">
+  <a class="back-link" href="/admin">← Back to Admin</a>
+  <div class="page-title">Daily Scheduler</div>
+  <div class="page-subtitle">Automated PubMed fetch and benchmark run once per day (UTC)</div>
+
+  <!-- STATUS -->
+  <div class="card">
+    <div class="card-header">
+      <h2>Scheduler Status</h2>
+      <button class="btn btn-secondary" onclick="loadStatus()" style="padding:5px 12px;font-size:11px;">⟳ Refresh</button>
+    </div>
+    <div class="card-body">
+      <div class="status-grid" id="status-grid">
+        <div class="status-item"><div class="status-label">Loading…</div></div>
+      </div>
+      <div class="theme-box" id="theme-box" style="display:none"></div>
+      <div class="note">
+        The scheduler ticks every 10 minutes. When the UTC date advances, the next tick fires the day's challenge
+        automatically — provided <code>DAILY_ENABLED=true</code>. Once fired, <code>scheduler_state.last_daily_run_date</code>
+        prevents re-runs. Reset via the manual trigger below (force-runs regardless).
+      </div>
+    </div>
+  </div>
+
+  <!-- TRIGGER -->
+  <div class="card">
+    <div class="card-header"><h2>Manual Trigger</h2></div>
+    <div class="card-body">
+      <p style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:14px;">
+        Force-run today's challenge now. Fetches papers, creates a daily challenge, and launches the three frontier models
+        against it on a background thread. Safe to call if today's run already happened — it will overwrite the marker and
+        run again.
+      </p>
+      <p style="font-size:11px;color:var(--amber);font-weight:600;margin-bottom:14px;">
+        ⚠ Estimated cost per run: $5–$10 in LLM API spend.
+      </p>
+      <button class="btn" id="trigger-btn" onclick="triggerDaily()">▶ Trigger Today's Run</button>
+      <div class="banner" id="banner"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+async function signOut() {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  window.location.href = '/login';
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function showBanner(msg, type = 'info') {
+  const el = document.getElementById('banner');
+  el.className = 'banner ' + type;
+  el.innerHTML = msg;
+}
+
+async function loadStatus() {
+  const res = await fetch('/api/admin/daily/status');
+  if (res.status === 401 || res.status === 403) { window.location.href = '/login'; return; }
+  if (!res.ok) return;
+  const s = await res.json();
+
+  const enabledPill = s.enabled
+    ? '<span class="pill pill-on">Enabled</span>'
+    : '<span class="pill pill-off">Disabled</span>';
+  const runPill = s.already_ran_today
+    ? '<span class="pill pill-on">Fired today</span>'
+    : '<span class="pill pill-warn">Pending</span>';
+
+  const lastChallengeLink = s.last_challenge_id
+    ? `<a href="/challenges/${s.last_challenge_id}" style="color:var(--blue);text-decoration:none;font-family:'IBM Plex Mono',monospace;">#${s.last_challenge_id} →</a>`
+    : '—';
+
+  document.getElementById('status-grid').innerHTML = `
+    <div class="status-item"><div class="status-label">Enabled</div><div class="status-value">${enabledPill}</div></div>
+    <div class="status-item"><div class="status-label">Today (UTC)</div><div class="status-value">${escapeHtml(s.today_utc)}</div></div>
+    <div class="status-item"><div class="status-label">Status</div><div class="status-value">${runPill}</div></div>
+    <div class="status-item"><div class="status-label">Last Run Date</div><div class="status-value">${escapeHtml(s.last_run_date || 'never')}</div></div>
+    <div class="status-item"><div class="status-label">Last Challenge</div><div class="status-value">${lastChallengeLink}</div></div>
+    <div class="status-item"><div class="status-label">Check Interval</div><div class="status-value">${s.check_interval_seconds}s</div></div>
+    <div class="status-item"><div class="status-label">Max Papers</div><div class="status-value">${s.max_papers}</div></div>
+  `;
+
+  const theme = s.today_theme || {};
+  const tb = document.getElementById('theme-box');
+  tb.style.display = '';
+  tb.innerHTML = `
+    <div class="status-label">Today's Theme</div>
+    <div class="theme-name">${escapeHtml(theme.name || '—')}</div>
+    <div class="theme-query">${escapeHtml(theme.query || '')}</div>
+    <div class="theme-description">${escapeHtml(theme.description || '')}</div>
+    <div class="status-label" style="margin-top:12px;">Participating Models</div>
+    <div class="models-list">
+      ${(s.frontier_models || []).map(m => `<span class="model-chip">${escapeHtml(m)}</span>`).join('')}
+    </div>
+  `;
+}
+
+async function triggerDaily() {
+  if (!confirm('Force-run today\'s daily challenge now?\n\nThis will cost ~$5–$10 in API spend.\nContinue?')) return;
+
+  const btn = document.getElementById('trigger-btn');
+  btn.disabled = true;
+  btn.textContent = 'Fetching papers & launching run…';
+  showBanner('Fetching papers from PubMed… this may take 30–60 seconds.', 'info');
+
+  try {
+    const res = await fetch('/api/admin/daily/trigger', { method: 'POST' });
+    const body = await res.json();
+    if (!res.ok) {
+      showBanner('✗ ' + (body.detail || 'trigger failed'), 'error');
+      btn.disabled = false;
+      btn.textContent = '▶ Trigger Today\'s Run';
+      return;
+    }
+    showBanner(
+      `✓ Launched challenge <a href="/challenges/${body.challenge_id}" style="color:#166534;font-weight:700;">#${body.challenge_id}</a> with ${body.paper_count} papers on theme "${escapeHtml(body.theme_name)}". The run is executing in the background — click the link to watch progress.`,
+      'success'
+    );
+    loadStatus();
+  } catch (e) {
+    showBanner('✗ Network error: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '▶ Trigger Today\'s Run';
+  }
+}
+
+loadStatus();
+</script>
+</body>
+</html>
