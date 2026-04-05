@@ -34,28 +34,66 @@ SUPPORTED_MODELS = {
 }
 
 # Phase 1.5: user-facing difficulty tiers for user-designed public tests.
-# These influence question count and the complexity instruction passed to
-# the generator agent on top of its active skill prompt.
+# Difficulty is defined by the COGNITIVE COMPLEXITY of the questions, not
+# the number of questions. All levels produce ~10 questions. The level
+# steers the generator agent toward different kinds of reasoning:
+#
+#   easy_breezy  — simple extraction: field facts a structured data-extraction
+#                  tool would capture (PICO, sample size, intervention name,
+#                  primary outcome value, etc.)
+#   minor_league — study classification: design type, taxonomy, research
+#                  question type, allocation method, choice of comparator
+#   professional — methodological appraisal: limitations, statistical
+#                  approach, internal validity, risk of bias judgments,
+#                  adequacy of outcome measurement
+#   jedi         — adversarial expert appraisal: subtle methodological
+#                  distinctions, edge cases in bias assessment, reconciling
+#                  conflicting evidence, questions that discriminate expert
+#                  from novice readers
+#
+# The Generator Agent's Claude skill will refine these definitions over
+# successive iterations (Phase 3 self-improvement loop) based on which
+# questions actually discriminate models at each tier.
 DIFFICULTY_LEVELS = {
     "easy_breezy": {
-        "count": 5,
         "label": "Easy Breezy",
-        "hint": "focus on clear, recall-oriented questions with single-fact answers that a careful reader would find easy to verify",
+        "hint": (
+            "SIMPLE EXTRACTION. Ask questions that a structured data-extraction tool would answer: "
+            "specific PICO elements, sample size, intervention name/dose, primary outcome name and value, "
+            "comparator, setting, follow-up duration. Answers should be single facts directly stated in the paper. "
+            "Avoid reasoning chains or interpretation."
+        ),
     },
     "minor_league": {
-        "count": 7,
         "label": "Minor League",
-        "hint": "moderate difficulty; mostly direct extraction with some light multi-step reasoning across sections",
+        "hint": (
+            "STUDY CLASSIFICATION. Ask questions about study design, taxonomy, and methodological categorization: "
+            "RCT vs observational, parallel vs crossover, superiority vs non-inferiority, prospective vs retrospective, "
+            "research question type (etiologic/prognostic/diagnostic/interventional), allocation method, "
+            "type of comparator, applicable risk-of-bias tool. Requires some inference from methods text but "
+            "each answer is a defensible categorical judgment."
+        ),
     },
     "professional": {
-        "count": 10,
         "label": "Professional",
-        "hint": "rigorous; require multi-step reasoning, numerical accuracy, and integration across intro/methods/results",
+        "hint": (
+            "METHODOLOGICAL APPRAISAL. Ask rigorous questions about quality and validity: "
+            "adequacy of blinding, handling of missing data, statistical methods appropriateness, "
+            "outcome measurement validity, threats to internal validity, conflicts of interest, "
+            "reporting bias indicators, risk-of-bias domain judgments with justification. "
+            "Requires multi-step reasoning and integration across intro/methods/results."
+        ),
     },
     "jedi": {
-        "count": 12,
         "label": "Jedi",
-        "hint": "adversarial; edge cases, subtle methodological distinctions, and questions that discriminate expert from novice readers",
+        "hint": (
+            "ADVERSARIAL EXPERT APPRAISAL. Ask questions that discriminate expert from novice: "
+            "subtle methodological distinctions (per-protocol vs ITT implications, competing risks, "
+            "regression to the mean, immortal time bias), reconciling conflicting results across tables "
+            "and text, detecting underreported limitations, applying primacy-gate rules to ambiguous designs, "
+            "identifying when a stated design does not match the methodology-driven classification. "
+            "A novice would miss these; a methodologist would catch them."
+        ),
     },
 }
 

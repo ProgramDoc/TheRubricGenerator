@@ -28,8 +28,9 @@ def run_generator_agent(papers_b64: list[dict], theme: str, skill: dict,
         d = DIFFICULTY_LEVELS[difficulty]
         difficulty_block = (
             f"\n\nDIFFICULTY LEVEL: {d['label']}\n"
-            f"Generate EXACTLY {d['count']} questions (override the default of 10). "
-            f"{d['hint']}."
+            f"{d['hint']}\n"
+            f"Still generate 10 questions total. The difficulty level controls "
+            f"the COGNITIVE COMPLEXITY of each question, not the question count."
         )
 
     # Build multi-document user message

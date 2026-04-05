@@ -136,11 +136,14 @@ tbody tr:last-child td { border-bottom: none; }
         <label>Difficulty Level <span style="color:var(--red)">*</span></label>
         <select id="f-difficulty">
           <option value="">— Select level —</option>
-          <option value="easy_breezy">Easy Breezy (5 questions)</option>
-          <option value="minor_league">Minor League (7 questions)</option>
-          <option value="professional">Professional (10 questions)</option>
-          <option value="jedi">Jedi (12 questions)</option>
+          <option value="easy_breezy">Easy Breezy — simple field extraction (PICO, sample size, outcomes)</option>
+          <option value="minor_league">Minor League — study classification &amp; design taxonomy</option>
+          <option value="professional">Professional — methodological appraisal &amp; validity</option>
+          <option value="jedi">Jedi — adversarial expert appraisal &amp; subtle methodology</option>
         </select>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:4px;">
+          Difficulty controls the cognitive complexity of questions, not the number. All levels produce ~10 questions.
+        </div>
       </div>
       <div class="field" id="model-field" style="display:none">
         <label>Registered Model Under Test <span style="color:var(--red)">*</span></label>
