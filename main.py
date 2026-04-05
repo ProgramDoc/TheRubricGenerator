@@ -55,6 +55,8 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL   = os.environ.get("ANTHROPIC_MODEL",   "claude-sonnet-4-20250514")
 OPENAI_API_KEY    = os.environ.get("OPENAI_API_KEY",    "")
 OPENAI_MODEL      = os.environ.get("OPENAI_MODEL",      "gpt-4o")
+GEMINI_API_KEY    = os.environ.get("GEMINI_API_KEY",    "")
+GEMINI_MODEL      = os.environ.get("GEMINI_MODEL",      "gemini-2.5-pro")
 
 SESSION_COOKIE = "rubricgen_session"
 SESSION_DAYS   = 30
@@ -781,6 +783,46 @@ def _call_anthropic(messages: list, system: str, max_tokens: int = 4096) -> str:
         raise HTTPException(502, f"Anthropic API error: {body[:200]}")
 
 
+def _call_gemini(system: str, user_text: str, model: str, pdf_b64: str | None = None,
+                 max_tokens: int = 4096) -> str:
+    """Call Google Gemini API and return text response. Supports inline PDF."""
+    if not GEMINI_API_KEY:
+        raise HTTPException(500, "GEMINI_API_KEY not configured")
+
+    parts: list[dict] = []
+    if pdf_b64:
+        parts.append({
+            "inline_data": {"mime_type": "application/pdf", "data": pdf_b64}
+        })
+    parts.append({"text": user_text})
+
+    payload = json.dumps({
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": parts}],
+        "generationConfig": {"maxOutputTokens": max_tokens},
+    }).encode()
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = json.loads(resp.read())
+        candidates = data.get("candidates", [])
+        if not candidates:
+            raise HTTPException(502, f"Gemini returned no candidates: {str(data)[:200]}")
+        parts_out = candidates[0].get("content", {}).get("parts", [])
+        return "".join(p.get("text", "") for p in parts_out)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        logger.error("Gemini error: %s", body)
+        raise HTTPException(502, f"Gemini API error: {body[:200]}")
+
+
 def _call_openai(messages: list, model: str, max_tokens: int = 4096) -> str:
     """Call OpenAI API and return text response."""
     if not OPENAI_API_KEY:
@@ -995,41 +1037,21 @@ Respond ONLY with the JSON object, no preamble."""
     user_msg = f"Please answer all of the following questions about this research paper:\n\n{q_block}\n\nRespond with the JSON object as instructed."
 
     model = body.eval_model
-    if model.startswith("gpt-"):
-        # OpenAI — use vision for PDF as image (send as URL workaround: base64 JPEG not supported for PDFs)
-        # For PDFs, we'll send the text content extracted or just prompt without image
-        # OpenAI doesn't natively support PDF base64 — send questions only and note limitation
+    if model.startswith("gemini"):
+        # Google Gemini — natively supports inline PDF
+        raw = _call_gemini(
+            system=system_msg, user_text=user_msg, model=model,
+            pdf_b64=b64, max_tokens=4096,
+        )
+    elif model.startswith("gpt-"):
+        # OpenAI — PDF base64 not natively supported; send text prompt only
         messages = [
             {"role": "system", "content": system_msg},
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"[Note: The PDF content has been provided. Please answer based on the paper.]\n\n{user_msg}"
-                    }
-                ]
-            }
-        ]
-        # Attempt to pass PDF via data URL (OpenAI supports this for some models)
-        try:
-            messages[-1]["content"] = [
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:application/pdf;base64,{b64[:100]}"}  # test
-                },
-                {"type": "text", "text": user_msg}
-            ]
-        except Exception:
-            pass
-        # Simpler: just use text prompt (PDF content not directly supported by OpenAI base64)
-        messages = [
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": user_msg}
+            {"role": "user", "content": user_msg},
         ]
         raw = _call_openai(messages, model=model, max_tokens=4096)
     else:
-        # Claude (fallback)
+        # Claude (with native PDF support)
         claude_messages = [
             {
                 "role": "user",
