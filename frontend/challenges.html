@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OGAI · Rubric Generator — Challenges</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root {
+  --navy: #161b2e; --blue: #274472; --sky: #5e9ad0;
+  --green: #16a34a; --red: #dc2626; --amber: #d97706; --purple: #7c3aed;
+  --bg: #f4f5f9; --card: #ffffff; --border: #dce4ee;
+  --text: #1e293b; --muted: #64748b;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; min-height: 100vh; }
+
+.topbar { background: var(--navy); color: #fff; padding: 12px 28px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+.topbar .brand { font-size: 16px; font-weight: 700; letter-spacing: -.3px; }
+.topbar .brand span { color: var(--sky); }
+.topbar nav { display: flex; gap: 4px; align-items: center; }
+.topbar nav a { font-family: inherit; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); padding: 6px 12px; border-radius: 5px; text-decoration: none; }
+.topbar nav a:hover { background: rgba(255,255,255,.08); color: #fff; }
+.topbar nav a.active { background: rgba(255,255,255,.15); color: #fff; }
+.topbar .user-badge { margin-left: 14px; padding: 4px 10px; background: rgba(255,255,255,.1); border-radius: 4px; font-size: 11px; color: rgba(255,255,255,.85); }
+.topbar .signout-btn { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); padding: 6px 12px; border-radius: 5px; font-family: inherit; font-size: 11px; font-weight: 600; cursor: pointer; margin-left: 10px; }
+.topbar .signout-btn:hover { background: rgba(255,255,255,.1); }
+
+.container { max-width: 1200px; margin: 0 auto; padding: 28px; }
+.page-title { font-size: 20px; font-weight: 700; color: var(--navy); margin-bottom: 4px; }
+.page-subtitle { color: var(--muted); font-size: 12px; margin-bottom: 24px; }
+
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 20px; }
+.card-header { padding: 14px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.card-header h2 { font-size: 13px; font-weight: 700; color: var(--navy); }
+
+.form-body { padding: 20px; }
+.field { margin-bottom: 14px; }
+.field label { display: block; font-size: 10.5px; font-weight: 700; color: var(--blue); letter-spacing: .05em; text-transform: uppercase; margin-bottom: 6px; }
+.field input, .field textarea, .field select {
+  width: 100%; padding: 9px 12px; border: 1.5px solid var(--border); border-radius: 6px;
+  font-family: inherit; font-size: 13px; color: var(--text); background: #f8fafc; outline: none;
+}
+.field input:focus, .field textarea:focus { border-color: var(--sky); background: #fff; }
+
+.paper-list, .model-list { border: 1.5px solid var(--border); border-radius: 6px; background: #f8fafc; max-height: 180px; overflow-y: auto; }
+.paper-item, .model-item { padding: 8px 12px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.paper-item:last-child, .model-item:last-child { border-bottom: none; }
+.paper-item:hover, .model-item:hover { background: #eff6ff; }
+.paper-item input, .model-item input { width: auto; }
+.paper-item label, .model-item label { margin: 0; font-size: 12px; color: var(--text); text-transform: none; letter-spacing: 0; font-weight: 500; cursor: pointer; flex: 1; }
+.model-badge { font-size: 9.5px; font-weight: 700; padding: 1px 6px; border-radius: 3px; text-transform: uppercase; letter-spacing: .05em; }
+.badge-openai { background: rgba(16,163,127,.15); color: #047857; }
+.badge-anthropic { background: rgba(124,58,237,.15); color: var(--purple); }
+.badge-google { background: rgba(66,133,244,.15); color: #1a56db; }
+
+.btn { padding: 10px 18px; border: none; border-radius: 6px; background: var(--blue); color: #fff; font-family: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.btn:hover:not(:disabled) { background: var(--navy); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-run { background: var(--green); }
+.btn-run:hover:not(:disabled) { background: #15803d; }
+
+.banner { padding: 10px 12px; border-radius: 6px; font-size: 12px; margin-top: 12px; display: none; }
+.banner.error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; display: block; }
+.banner.success { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; display: block; }
+
+table { width: 100%; border-collapse: collapse; }
+thead th { text-align: left; font-size: 10.5px; font-weight: 700; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; padding: 11px 16px; background: #f8fafc; border-bottom: 1px solid var(--border); }
+tbody td { padding: 12px 16px; border-bottom: 1px solid #f1f5f9; font-size: 12px; color: var(--text); }
+tbody tr:hover { background: #f8fafc; cursor: pointer; }
+tbody tr:last-child td { border-bottom: none; }
+.num { font-family: 'IBM Plex Mono', monospace; font-weight: 600; color: var(--navy); text-align: right; }
+.status { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.status-complete { background: #dcfce7; color: #15803d; }
+.status-running { background: #fef3c7; color: #a16207; }
+.status-pending { background: #e2e8f0; color: #475569; }
+.status-failed { background: #fee2e2; color: #b91c1c; }
+.empty { padding: 40px; text-align: center; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">OGAI · <span>Rubric</span> Generator</div>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/challenges" class="active">Challenges</a>
+    <a href="/leaderboard">Leaderboard</a>
+    <a href="/papers">Papers</a>
+    <a href="/admin" id="nav-admin" style="display:none">Admin</a>
+    <span class="user-badge" id="user-badge">—</span>
+    <button class="signout-btn" onclick="signOut()">Sign Out</button>
+  </nav>
+</div>
+
+<div class="container">
+  <div class="page-title">Challenges</div>
+  <div class="page-subtitle">Create benchmark runs pitting frontier models against each other</div>
+
+  <!-- CREATE CHALLENGE -->
+  <div class="card">
+    <div class="card-header"><h2>＋ New Challenge</h2></div>
+    <div class="form-body">
+      <div class="field">
+        <label>Title</label>
+        <input id="f-title" type="text" placeholder="e.g. RCT oncology comprehension — March 2026">
+      </div>
+      <div class="field">
+        <label>Theme</label>
+        <input id="f-theme" type="text" placeholder="e.g. Randomized controlled trials in oncology">
+      </div>
+      <div class="field">
+        <label>Select Papers (up to 10)</label>
+        <div class="paper-list" id="paper-list"><div class="empty">Loading…</div></div>
+      </div>
+      <div class="field">
+        <label>Participating Models</label>
+        <div class="model-list" id="model-list">
+          <div class="model-item">
+            <input type="checkbox" id="m-gpt-4o" value="gpt-4o" checked>
+            <label for="m-gpt-4o">GPT-4o <span class="model-badge badge-openai">OpenAI</span></label>
+          </div>
+          <div class="model-item">
+            <input type="checkbox" id="m-gpt-4-turbo" value="gpt-4-turbo">
+            <label for="m-gpt-4-turbo">GPT-4 Turbo <span class="model-badge badge-openai">OpenAI</span></label>
+          </div>
+          <div class="model-item">
+            <input type="checkbox" id="m-gemini-2-5-pro" value="gemini-2.5-pro" checked>
+            <label for="m-gemini-2-5-pro">Gemini 2.5 Pro <span class="model-badge badge-google">Google</span></label>
+          </div>
+          <div class="model-item">
+            <input type="checkbox" id="m-gemini-2-0-flash" value="gemini-2.0-flash">
+            <label for="m-gemini-2-0-flash">Gemini 2.0 Flash <span class="model-badge badge-google">Google</span></label>
+          </div>
+          <div class="model-item">
+            <input type="checkbox" id="m-claude" value="claude-sonnet-4-20250514" checked>
+            <label for="m-claude">Claude Sonnet 4 <span class="model-badge badge-anthropic">Anthropic</span></label>
+          </div>
+        </div>
+      </div>
+      <button class="btn btn-run" id="create-btn" onclick="createAndRun()">Create & Run Challenge</button>
+      <div class="banner" id="banner"></div>
+    </div>
+  </div>
+
+  <!-- LIST -->
+  <div class="card">
+    <div class="card-header"><h2>All Challenges</h2></div>
+    <div id="challenges-list"><div class="empty">Loading…</div></div>
+  </div>
+</div>
+
+<script>
+async function signOut() {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  window.location.href = '/login';
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso.replace(' ', 'T') + 'Z');
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  } catch (_) { return iso; }
+}
+
+function fmtNum(n, d = 3) {
+  if (n === null || n === undefined) return '—';
+  return Number(n).toFixed(d);
+}
+
+function showBanner(msg, type = 'error') {
+  const el = document.getElementById('banner');
+  el.className = 'banner ' + type;
+  el.textContent = msg;
+}
+
+async function loadMe() {
+  const res = await fetch('/api/auth/me');
+  if (!res.ok) { window.location.href = '/login'; return; }
+  const me = await res.json();
+  document.getElementById('user-badge').textContent = me.role || 'reviewer';
+  if (me.role === 'admin') document.getElementById('nav-admin').style.display = '';
+}
+
+async function loadPapers() {
+  const res = await fetch('/api/papers');
+  if (!res.ok) return;
+  const papers = await res.json();
+  const container = document.getElementById('paper-list');
+  if (papers.length === 0) {
+    container.innerHTML = '<div class="empty">No papers uploaded. <a href="/papers">Upload some →</a></div>';
+    return;
+  }
+  container.innerHTML = papers.map(p => `
+    <div class="paper-item">
+      <input type="checkbox" id="paper-${p.id}" value="${p.id}">
+      <label for="paper-${p.id}">${escapeHtml(p.filename)}</label>
+    </div>
+  `).join('');
+}
+
+async function loadChallenges() {
+  const res = await fetch('/api/challenges');
+  if (!res.ok) return;
+  const all = await res.json();
+  const container = document.getElementById('challenges-list');
+  if (all.length === 0) {
+    container.innerHTML = '<div class="empty">No challenges yet. Create one above.</div>';
+    return;
+  }
+  const rows = all.map(c => `
+    <tr onclick="location.href='/challenges/${c.id}'">
+      <td><strong>${escapeHtml(c.title)}</strong><div style="color:var(--muted);font-size:11px;margin-top:2px;">${escapeHtml(c.theme || '')}</div></td>
+      <td><span class="status status-${c.status}">${c.status}</span></td>
+      <td>${c.paper_count} papers</td>
+      <td>${c.participant_count} models</td>
+      <td class="num">${fmtNum(c.generator_score)}</td>
+      <td class="num">${fmtNum(c.judge_score)}</td>
+      <td style="color:var(--muted);font-size:11px;">${fmtDate(c.created_at)}</td>
+    </tr>
+  `).join('');
+  container.innerHTML = `
+    <table>
+      <thead><tr><th>Title</th><th>Status</th><th>Papers</th><th>Models</th><th style="text-align:right">Gen Score</th><th style="text-align:right">Judge Score</th><th>Created</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+async function createAndRun() {
+  const title = document.getElementById('f-title').value.trim();
+  const theme = document.getElementById('f-theme').value.trim();
+  if (!title) { showBanner('Title is required.'); return; }
+
+  const paper_ids = Array.from(document.querySelectorAll('#paper-list input[type="checkbox"]:checked'))
+    .map(el => parseInt(el.value, 10));
+  if (paper_ids.length === 0) { showBanner('Select at least one paper.'); return; }
+  if (paper_ids.length > 10) { showBanner('Maximum 10 papers.'); return; }
+
+  const participant_models = Array.from(document.querySelectorAll('#model-list input[type="checkbox"]:checked'))
+    .map(el => el.value);
+  if (participant_models.length === 0) { showBanner('Select at least one model.'); return; }
+
+  const btn = document.getElementById('create-btn');
+  btn.disabled = true;
+  btn.textContent = 'Creating…';
+
+  try {
+    const res = await fetch('/api/challenges', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, theme, paper_ids, participant_models }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      showBanner(body.detail || 'Failed to create challenge.');
+      btn.disabled = false;
+      btn.textContent = 'Create & Run Challenge';
+      return;
+    }
+    const cid = body.challenge_id;
+
+    btn.textContent = 'Starting run…';
+    const runRes = await fetch(`/api/challenges/${cid}/run`, { method: 'POST' });
+    if (!runRes.ok) {
+      const runBody = await runRes.json();
+      showBanner('Created but failed to start: ' + (runBody.detail || 'unknown'));
+      btn.disabled = false;
+      btn.textContent = 'Create & Run Challenge';
+      return;
+    }
+    showBanner('Challenge created and running. Redirecting…', 'success');
+    setTimeout(() => { window.location.href = `/challenges/${cid}`; }, 800);
+  } catch (e) {
+    showBanner('Network error.');
+    btn.disabled = false;
+    btn.textContent = 'Create & Run Challenge';
+  }
+}
+
+loadMe();
+loadPapers();
+loadChallenges();
+</script>
+</body>
+</html>

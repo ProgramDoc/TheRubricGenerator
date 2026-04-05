@@ -40,6 +40,11 @@ FRONTEND   = BASE_DIR / "frontend"
 
 PAPERS_DIR.mkdir(parents=True, exist_ok=True)
 
+OBSIDIAN_VAULT_DIR = Path(os.environ.get("OBSIDIAN_VAULT_DIR", str(DATA_DIR / "obsidian_vault")))
+OBSIDIAN_VAULT_DIR.mkdir(parents=True, exist_ok=True)
+(OBSIDIAN_VAULT_DIR / "challenges").mkdir(exist_ok=True)
+(OBSIDIAN_VAULT_DIR / "papers").mkdir(exist_ok=True)
+
 ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "")
 ADMIN_EMAIL  = os.environ.get("ADMIN_EMAIL",  "tck936@mail.harvard.edu")
 ADMIN_NAME   = os.environ.get("ADMIN_NAME",   "Admin")
@@ -166,8 +171,75 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_rubrics_paper_user ON rubrics(paper_id, user_id);
             CREATE INDEX IF NOT EXISTS idx_evaluations_paper_user ON evaluations(paper_id, user_id);
             CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+
+            -- ─── Benchmark platform (Phase 1) ───
+            CREATE TABLE IF NOT EXISTS challenges (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                title               TEXT    NOT NULL,
+                theme               TEXT,
+                kind                TEXT    NOT NULL DEFAULT 'manual' CHECK(kind IN ('manual','daily')),
+                status              TEXT    NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','running','complete','failed')),
+                created_by          INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_at          TEXT    DEFAULT (datetime('now')),
+                started_at          TEXT,
+                completed_at        TEXT,
+                generator_skill_id  INTEGER REFERENCES agent_skills(id) ON DELETE SET NULL,
+                judge_skill_id      INTEGER REFERENCES agent_skills(id) ON DELETE SET NULL,
+                generator_score     REAL,
+                judge_score         REAL,
+                error_message       TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS challenge_papers (
+                challenge_id INTEGER NOT NULL REFERENCES challenges(id) ON DELETE CASCADE,
+                paper_id     INTEGER NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+                PRIMARY KEY (challenge_id, paper_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS challenge_rubrics (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                challenge_id       INTEGER NOT NULL UNIQUE REFERENCES challenges(id) ON DELETE CASCADE,
+                rubric_json        TEXT    NOT NULL,
+                generation_time_ms INTEGER NOT NULL DEFAULT 0,
+                generator_skill_id INTEGER REFERENCES agent_skills(id) ON DELETE SET NULL,
+                created_at         TEXT    DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS model_participants (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                challenge_id    INTEGER NOT NULL REFERENCES challenges(id) ON DELETE CASCADE,
+                model_id        TEXT    NOT NULL,
+                provider        TEXT    NOT NULL,
+                answer_json     TEXT    DEFAULT '{}',
+                answer_time_ms  INTEGER DEFAULT 0,
+                grade_json      TEXT    DEFAULT '{}',
+                judge_time_ms   INTEGER DEFAULT 0,
+                accuracy        REAL    DEFAULT 0,
+                speed_bonus     REAL    DEFAULT 0,
+                total_score     REAL    DEFAULT 0,
+                status          TEXT    NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','answering','answered','grading','graded','failed')),
+                error_message   TEXT,
+                created_at      TEXT    DEFAULT (datetime('now')),
+                UNIQUE(challenge_id, model_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS leaderboard_cache (
+                model_id            TEXT PRIMARY KEY,
+                provider            TEXT,
+                total_challenges    INTEGER DEFAULT 0,
+                cumulative_score    REAL    DEFAULT 0,
+                avg_accuracy        REAL    DEFAULT 0,
+                avg_speed_bonus     REAL    DEFAULT 0,
+                last_updated        TEXT    DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_challenges_status ON challenges(status);
+            CREATE INDEX IF NOT EXISTS idx_participants_challenge ON model_participants(challenge_id);
         """)
+        # agent_skills table comes from backend.skills
+        conn.executescript(SKILLS_TABLE_SQL)
         conn.commit()
+    seed_v1_skills(conn)
     conn.close()
     _ensure_admin_user()
 
@@ -277,13 +349,17 @@ def _send_email(to: str, subject: str, body: str) -> None:
         raise HTTPException(500, "Failed to send email")
 
 
-def _strip_markdown_fences(raw: str) -> str:
-    """Remove markdown code fences wrapping JSON, if present."""
-    raw = raw.strip()
-    m = re.search(r'```(?:json)?\s*(.*?)```', raw, re.DOTALL)
-    if m:
-        return m.group(1).strip()
-    return raw
+from backend.helpers import (
+    strip_markdown_fences as _strip_markdown_fences,
+    call_anthropic as _call_anthropic,
+    call_gemini as _call_gemini,
+    call_openai as _call_openai,
+)
+from backend.skills import (
+    SKILLS_TABLE_SQL, seed_v1_skills,
+    get_active_skill, list_skill_versions,
+)
+from backend import challenges as bench
 
 
 # ─────────────────────────────────────────────
@@ -335,7 +411,39 @@ def root(rubricgen_session: str | None = Cookie(default=None)):
     user = _get_user_from_token(rubricgen_session)
     if not user:
         return RedirectResponse("/login", status_code=302)
+    return FileResponse(str(FRONTEND / "dashboard.html"), media_type="text/html")
+
+
+@app.get("/papers", include_in_schema=False)
+def papers_page(rubricgen_session: str | None = Cookie(default=None)):
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
     return FileResponse(str(FRONTEND / "rubric_generator.html"), media_type="text/html")
+
+
+@app.get("/challenges", include_in_schema=False)
+def challenges_page(rubricgen_session: str | None = Cookie(default=None)):
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return FileResponse(str(FRONTEND / "challenges.html"), media_type="text/html")
+
+
+@app.get("/challenges/{challenge_id:int}", include_in_schema=False)
+def challenge_viewer_page(challenge_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return FileResponse(str(FRONTEND / "challenge_viewer.html"), media_type="text/html")
+
+
+@app.get("/leaderboard", include_in_schema=False)
+def leaderboard_page(rubricgen_session: str | None = Cookie(default=None)):
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return FileResponse(str(FRONTEND / "leaderboard.html"), media_type="text/html")
 
 
 @app.get("/login", include_in_schema=False)
@@ -550,6 +658,140 @@ def admin_list_users(rubricgen_session: str | None = Cookie(default=None)):
 
 
 # ─────────────────────────────────────────────
+# Benchmark challenges (Phase 1)
+# ─────────────────────────────────────────────
+class CreateChallengePayload(BaseModel):
+    title: str
+    theme: Optional[str] = ""
+    paper_ids: list[int]
+    participant_models: list[str]
+
+
+@app.post("/api/challenges", status_code=201)
+def api_create_challenge(body: CreateChallengePayload,
+                         rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
+    try:
+        cid = bench.create_challenge(
+            get_db, user["id"], body.title.strip(), (body.theme or "").strip(),
+            body.paper_ids, body.participant_models,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"challenge_id": cid, "status": "pending"}
+
+
+@app.post("/api/challenges/{cid}/run", status_code=202)
+def api_run_challenge(cid: int, rubricgen_session: str | None = Cookie(default=None)):
+    require_user(rubricgen_session)
+    conn = get_db()
+    row = conn.execute("SELECT id, status FROM challenges WHERE id=?", (cid,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "Challenge not found")
+    if row["status"] == "running":
+        raise HTTPException(409, "Challenge is already running")
+    if row["status"] == "complete":
+        raise HTTPException(409, "Challenge already complete")
+
+    bench.run_challenge_async(get_db, cid, PAPERS_DIR, OBSIDIAN_VAULT_DIR)
+    return {"challenge_id": cid, "status": "running"}
+
+
+@app.get("/api/challenges")
+def api_list_challenges(rubricgen_session: str | None = Cookie(default=None)):
+    require_user(rubricgen_session)
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT c.id, c.title, c.theme, c.kind, c.status,
+                  c.created_at, c.started_at, c.completed_at,
+                  c.generator_score, c.judge_score,
+                  u.display_name AS created_by_name,
+                  (SELECT COUNT(*) FROM challenge_papers cp WHERE cp.challenge_id=c.id) AS paper_count,
+                  (SELECT COUNT(*) FROM model_participants mp WHERE mp.challenge_id=c.id) AS participant_count
+           FROM challenges c
+           LEFT JOIN users u ON u.id = c.created_by
+           ORDER BY c.created_at DESC
+           LIMIT 200"""
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@app.get("/api/challenges/{cid}")
+def api_get_challenge(cid: int, rubricgen_session: str | None = Cookie(default=None)):
+    require_user(rubricgen_session)
+    conn = get_db()
+    challenge = conn.execute("SELECT * FROM challenges WHERE id=?", (cid,)).fetchone()
+    if not challenge:
+        conn.close()
+        raise HTTPException(404, "Challenge not found")
+    rubric_row = conn.execute(
+        "SELECT rubric_json, generation_time_ms FROM challenge_rubrics WHERE challenge_id=?",
+        (cid,),
+    ).fetchone()
+    papers = conn.execute(
+        """SELECT p.id, p.filename FROM papers p
+           JOIN challenge_papers cp ON cp.paper_id=p.id
+           WHERE cp.challenge_id=? ORDER BY p.id""",
+        (cid,),
+    ).fetchall()
+    participants = conn.execute(
+        "SELECT * FROM model_participants WHERE challenge_id=? ORDER BY total_score DESC",
+        (cid,),
+    ).fetchall()
+    conn.close()
+
+    result: dict = dict(challenge)
+    result["papers"] = [dict(p) for p in papers]
+    result["participants"] = []
+    for mp in participants:
+        d = dict(mp)
+        try:
+            d["answer_data"] = json.loads(d.pop("answer_json") or "{}")
+        except Exception:
+            d["answer_data"] = {}
+        try:
+            d["grade_data"] = json.loads(d.pop("grade_json") or "{}")
+        except Exception:
+            d["grade_data"] = {}
+        result["participants"].append(d)
+    if rubric_row:
+        try:
+            result["rubric"] = json.loads(rubric_row["rubric_json"])
+        except Exception:
+            result["rubric"] = {}
+        result["generation_time_ms"] = rubric_row["generation_time_ms"]
+    else:
+        result["rubric"] = None
+    return result
+
+
+@app.get("/api/leaderboard")
+def api_leaderboard(rubricgen_session: str | None = Cookie(default=None)):
+    require_user(rubricgen_session)
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT * FROM leaderboard_cache
+           ORDER BY cumulative_score DESC, avg_accuracy DESC"""
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@app.get("/api/skills/{agent_type}")
+def api_get_skill(agent_type: str, rubricgen_session: str | None = Cookie(default=None)):
+    require_admin(rubricgen_session)
+    if agent_type not in ("generator", "judge"):
+        raise HTTPException(400, "agent_type must be 'generator' or 'judge'")
+    conn = get_db()
+    active = get_active_skill(conn, agent_type)
+    versions = list_skill_versions(conn, agent_type)
+    conn.close()
+    return {"active": active, "versions": versions}
+
+
+# ─────────────────────────────────────────────
 # Projects
 # ─────────────────────────────────────────────
 @app.get("/api/projects")
@@ -751,104 +993,6 @@ def _pdf_to_base64(paper_id: int) -> str:
     if not path.exists():
         raise HTTPException(404, "PDF file not found on disk")
     return base64.b64encode(path.read_bytes()).decode()
-
-
-def _call_anthropic(messages: list, system: str, max_tokens: int = 4096) -> str:
-    """Call Anthropic API and return text response."""
-    if not ANTHROPIC_API_KEY:
-        raise HTTPException(500, "ANTHROPIC_API_KEY not configured")
-    payload = json.dumps({
-        "model": ANTHROPIC_MODEL,
-        "max_tokens": max_tokens,
-        "system": system,
-        "messages": messages,
-    }).encode()
-    req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
-        data=payload,
-        headers={
-            "x-api-key": ANTHROPIC_API_KEY,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            data = json.loads(resp.read())
-        return data["content"][0]["text"]
-    except urllib.error.HTTPError as e:
-        body = e.read().decode()
-        logger.error("Anthropic error: %s", body)
-        raise HTTPException(502, f"Anthropic API error: {body[:200]}")
-
-
-def _call_gemini(system: str, user_text: str, model: str, pdf_b64: str | None = None,
-                 max_tokens: int = 4096) -> str:
-    """Call Google Gemini API and return text response. Supports inline PDF."""
-    if not GEMINI_API_KEY:
-        raise HTTPException(500, "GEMINI_API_KEY not configured")
-
-    parts: list[dict] = []
-    if pdf_b64:
-        parts.append({
-            "inline_data": {"mime_type": "application/pdf", "data": pdf_b64}
-        })
-    parts.append({"text": user_text})
-
-    payload = json.dumps({
-        "systemInstruction": {"parts": [{"text": system}]},
-        "contents": [{"role": "user", "parts": parts}],
-        "generationConfig": {"maxOutputTokens": max_tokens},
-    }).encode()
-
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
-    req = urllib.request.Request(
-        url,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            data = json.loads(resp.read())
-        candidates = data.get("candidates", [])
-        if not candidates:
-            raise HTTPException(502, f"Gemini returned no candidates: {str(data)[:200]}")
-        parts_out = candidates[0].get("content", {}).get("parts", [])
-        return "".join(p.get("text", "") for p in parts_out)
-    except urllib.error.HTTPError as e:
-        body = e.read().decode()
-        logger.error("Gemini error: %s", body)
-        raise HTTPException(502, f"Gemini API error: {body[:200]}")
-
-
-def _call_openai(messages: list, model: str, max_tokens: int = 4096) -> str:
-    """Call OpenAI API and return text response."""
-    if not OPENAI_API_KEY:
-        raise HTTPException(500, "OPENAI_API_KEY not configured")
-    payload = json.dumps({
-        "model": model,
-        "max_tokens": max_tokens,
-        "messages": messages,
-    }).encode()
-    req = urllib.request.Request(
-        "https://api.openai.com/v1/chat/completions",
-        data=payload,
-        headers={
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            data = json.loads(resp.read())
-        return data["choices"][0]["message"]["content"]
-    except urllib.error.HTTPError as e:
-        body = e.read().decode()
-        logger.error("OpenAI error: %s", body)
-        raise HTTPException(502, f"OpenAI API error: {body[:200]}")
 
 
 # ─────────────────────────────────────────────

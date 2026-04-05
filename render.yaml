@@ -8,18 +8,25 @@ services:
     envVars:
       - key: RENDER_DATA_DIR
         value: /var/data
+      - key: OBSIDIAN_VAULT_DIR
+        value: /var/data/obsidian_vault
       - key: ADMIN_EMAIL
-        value: admin@rubricgen.local
+        value: tck936@mail.harvard.edu
       - key: ADMIN_NAME
         value: Admin
       - key: ANTHROPIC_MODEL
         value: claude-sonnet-4-20250514
       - key: OPENAI_MODEL
         value: gpt-4o
+      - key: GEMINI_MODEL
+        value: gemini-2.5-pro
       # Set these as secret values in the Render dashboard:
       # ADMIN_SECRET
       # ANTHROPIC_API_KEY
       # OPENAI_API_KEY
+      # GEMINI_API_KEY
+      # SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
+      # APP_BASE_URL
     disk:
       name: rubricgen-data
       mountPath: /var/data

@@ -341,9 +341,14 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
 <!-- ── TOPBAR ── -->
 <div id="topbar">
   <div class="brand">
-    <span class="icon">📐</span>
     OGAI · <span>Rubric</span>&nbsp;Generator
   </div>
+  <div class="tb-sep"></div>
+  <a href="/" class="tb-btn" style="text-decoration:none;">Dashboard</a>
+  <a href="/challenges" class="tb-btn" style="text-decoration:none;">Challenges</a>
+  <a href="/leaderboard" class="tb-btn" style="text-decoration:none;">Leaderboard</a>
+  <a href="/papers" class="tb-btn active" style="text-decoration:none;">Papers</a>
+  <a href="/admin" class="tb-btn" id="nav-admin" style="text-decoration:none;display:none">Admin</a>
   <div class="tb-sep"></div>
   <button class="tb-btn" onclick="goToAnnotator()" title="Switch to Annotation Platform">↩ Annotator</button>
   <button class="tb-btn batch-toggle" id="batch-toggle-btn" onclick="toggleBatchMode()">Batch Mode</button>
@@ -573,6 +578,10 @@ async function init() {
   try {
     const me = await api('/api/auth/me');
     document.getElementById('user-pill').textContent = me.display_name || me.email;
+    if (me.role === 'admin') {
+      const adminLink = document.getElementById('nav-admin');
+      if (adminLink) adminLink.style.display = '';
+    }
   } catch {
     window.location = '/login';
     return;

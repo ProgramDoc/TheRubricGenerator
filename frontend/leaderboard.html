@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OGAI · Rubric Generator — Leaderboard</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root {
+  --navy: #161b2e; --blue: #274472; --sky: #5e9ad0;
+  --green: #16a34a; --red: #dc2626; --amber: #d97706; --purple: #7c3aed; --gold: #d4af37;
+  --bg: #f4f5f9; --card: #ffffff; --border: #dce4ee;
+  --text: #1e293b; --muted: #64748b;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; min-height: 100vh; }
+
+.topbar { background: var(--navy); color: #fff; padding: 12px 28px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+.topbar .brand { font-size: 16px; font-weight: 700; letter-spacing: -.3px; }
+.topbar .brand span { color: var(--sky); }
+.topbar nav { display: flex; gap: 4px; align-items: center; }
+.topbar nav a { font-family: inherit; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); padding: 6px 12px; border-radius: 5px; text-decoration: none; }
+.topbar nav a:hover { background: rgba(255,255,255,.08); color: #fff; }
+.topbar nav a.active { background: rgba(255,255,255,.15); color: #fff; }
+.topbar .user-badge { margin-left: 14px; padding: 4px 10px; background: rgba(255,255,255,.1); border-radius: 4px; font-size: 11px; color: rgba(255,255,255,.85); }
+.topbar .signout-btn { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); padding: 6px 12px; border-radius: 5px; font-family: inherit; font-size: 11px; font-weight: 600; cursor: pointer; margin-left: 10px; }
+
+.container { max-width: 1100px; margin: 0 auto; padding: 28px; }
+.page-title { font-size: 22px; font-weight: 700; color: var(--navy); margin-bottom: 4px; letter-spacing: -.3px; }
+.page-subtitle { color: var(--muted); font-size: 12px; margin-bottom: 24px; }
+
+.podium { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 14px; margin-bottom: 28px; align-items: end; }
+.podium-slot { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px 16px; text-align: center; }
+.podium-slot.first { border-color: var(--gold); border-width: 2px; padding: 28px 16px; box-shadow: 0 6px 16px rgba(212,175,55,.15); }
+.podium-slot.second, .podium-slot.third { padding: 22px 16px; }
+.podium-rank { font-size: 14px; font-weight: 700; color: var(--muted); letter-spacing: .1em; }
+.podium-rank.first { color: var(--gold); font-size: 16px; }
+.podium-model { font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 700; color: var(--navy); margin: 6px 0; word-break: break-word; }
+.podium-score { font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 700; color: var(--blue); margin-top: 8px; }
+.podium-slot.first .podium-score { color: var(--gold); font-size: 28px; }
+
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 20px; }
+.card-header { padding: 14px 20px; border-bottom: 1px solid var(--border); }
+.card-header h2 { font-size: 13px; font-weight: 700; color: var(--navy); }
+
+table { width: 100%; border-collapse: collapse; }
+thead th { text-align: left; font-size: 10.5px; font-weight: 700; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; padding: 11px 16px; background: #f8fafc; border-bottom: 1px solid var(--border); }
+tbody td { padding: 13px 16px; border-bottom: 1px solid #f1f5f9; font-size: 12.5px; color: var(--text); }
+tbody tr:hover { background: #f8fafc; }
+tbody tr:last-child td { border-bottom: none; }
+.num { font-family: 'IBM Plex Mono', monospace; font-weight: 600; color: var(--navy); text-align: right; }
+.rank-cell { font-family: 'IBM Plex Mono', monospace; font-weight: 700; color: var(--muted); width: 40px; }
+.model-cell { font-family: 'IBM Plex Mono', monospace; font-weight: 700; color: var(--navy); }
+
+.model-badge { font-size: 9.5px; font-weight: 700; padding: 2px 7px; border-radius: 3px; text-transform: uppercase; letter-spacing: .05em; margin-left: 6px; }
+.badge-openai { background: rgba(16,163,127,.15); color: #047857; }
+.badge-anthropic { background: rgba(124,58,237,.15); color: var(--purple); }
+.badge-google { background: rgba(66,133,244,.15); color: #1a56db; }
+
+.empty { padding: 60px; text-align: center; color: var(--muted); font-size: 13px; }
+.empty a { color: var(--blue); text-decoration: none; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">OGAI · <span>Rubric</span> Generator</div>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/challenges">Challenges</a>
+    <a href="/leaderboard" class="active">Leaderboard</a>
+    <a href="/papers">Papers</a>
+    <a href="/admin" id="nav-admin" style="display:none">Admin</a>
+    <span class="user-badge" id="user-badge">—</span>
+    <button class="signout-btn" onclick="signOut()">Sign Out</button>
+  </nav>
+</div>
+
+<div class="container">
+  <div class="page-title">🏆 Leaderboard</div>
+  <div class="page-subtitle">Cumulative benchmark scores across all completed challenges</div>
+
+  <div class="podium" id="podium" style="display:none"></div>
+
+  <div class="card">
+    <div class="card-header"><h2>Full Rankings</h2></div>
+    <div id="leaderboard-body"><div class="empty">Loading…</div></div>
+  </div>
+</div>
+
+<script>
+async function signOut() {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  window.location.href = '/login';
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function fmtNum(n, d = 3) {
+  if (n === null || n === undefined) return '—';
+  return Number(n).toFixed(d);
+}
+
+function providerBadge(provider) {
+  const p = (provider || '').toLowerCase();
+  if (p === 'openai') return '<span class="model-badge badge-openai">OpenAI</span>';
+  if (p === 'anthropic') return '<span class="model-badge badge-anthropic">Claude</span>';
+  if (p === 'google') return '<span class="model-badge badge-google">Gemini</span>';
+  return '';
+}
+
+async function loadMe() {
+  const res = await fetch('/api/auth/me');
+  if (!res.ok) { window.location.href = '/login'; return; }
+  const me = await res.json();
+  document.getElementById('user-badge').textContent = me.role || 'reviewer';
+  if (me.role === 'admin') document.getElementById('nav-admin').style.display = '';
+}
+
+async function loadLeaderboard() {
+  const res = await fetch('/api/leaderboard');
+  if (!res.ok) return;
+  const board = await res.json();
+  const body = document.getElementById('leaderboard-body');
+
+  if (board.length === 0) {
+    body.innerHTML = '<div class="empty">No graded runs yet. <a href="/challenges">Run a challenge</a> to populate the leaderboard.</div>';
+    return;
+  }
+
+  // Podium (top 3)
+  if (board.length >= 1) {
+    const podiumDiv = document.getElementById('podium');
+    podiumDiv.style.display = '';
+    const slots = [];
+    // Order: 2nd, 1st, 3rd (visual stagger)
+    if (board[1]) slots.push({ rank: 2, data: board[1], cls: 'second' });
+    slots.push({ rank: 1, data: board[0], cls: 'first' });
+    if (board[2]) slots.push({ rank: 3, data: board[2], cls: 'third' });
+    podiumDiv.innerHTML = slots.map(s => `
+      <div class="podium-slot ${s.cls}">
+        <div class="podium-rank ${s.cls}">#${s.rank}</div>
+        <div class="podium-model">${escapeHtml(s.data.model_id)}${providerBadge(s.data.provider)}</div>
+        <div style="font-size:10px;color:var(--muted);">${s.data.total_challenges} challenges</div>
+        <div class="podium-score">${fmtNum(s.data.cumulative_score, 2)}</div>
+      </div>
+    `).join('');
+  }
+
+  const rows = board.map((m, i) => `
+    <tr>
+      <td class="rank-cell">#${i + 1}</td>
+      <td class="model-cell">${escapeHtml(m.model_id)}${providerBadge(m.provider)}</td>
+      <td class="num">${m.total_challenges}</td>
+      <td class="num">${fmtNum(m.cumulative_score, 3)}</td>
+      <td class="num">${fmtNum(m.avg_accuracy, 3)}</td>
+      <td class="num">${fmtNum(m.avg_speed_bonus, 3)}</td>
+    </tr>
+  `).join('');
+
+  body.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Rank</th>
+          <th>Model</th>
+          <th style="text-align:right">Challenges</th>
+          <th style="text-align:right">Cumulative Score</th>
+          <th style="text-align:right">Avg Accuracy</th>
+          <th style="text-align:right">Avg Speed Bonus</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+loadMe();
+loadLeaderboard();
+</script>
+</body>
+</html>
