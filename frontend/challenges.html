@@ -87,6 +87,8 @@ tbody tr:last-child td { border-bottom: none; }
   <nav>
     <a href="/">Dashboard</a>
     <a href="/challenges" class="active">Challenges</a>
+    <a href="/public-tests">Public Tests</a>
+    <a href="/models">Models</a>
     <a href="/leaderboard">Leaderboard</a>
     <a href="/papers">Papers</a>
     <a href="/admin" id="nav-admin" style="display:none">Admin</a>
@@ -110,6 +112,44 @@ tbody tr:last-child td { border-bottom: none; }
       <div class="field">
         <label>Theme</label>
         <input id="f-theme" type="text" placeholder="e.g. Randomized controlled trials in oncology">
+      </div>
+      <div class="field">
+        <label>Project (optional)</label>
+        <select id="f-project">
+          <option value="">— No project —</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Visibility</label>
+        <div style="display:flex;gap:16px;padding:4px 0;">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);font-weight:500;text-transform:none;letter-spacing:0;margin:0;cursor:pointer;">
+            <input type="radio" name="visibility" value="private" checked onchange="toggleVisibility()" style="width:auto;">
+            Private
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);font-weight:500;text-transform:none;letter-spacing:0;margin:0;cursor:pointer;">
+            <input type="radio" name="visibility" value="public" onchange="toggleVisibility()" style="width:auto;">
+            Public
+          </label>
+        </div>
+      </div>
+      <div class="field" id="difficulty-field" style="display:none">
+        <label>Difficulty Level <span style="color:var(--red)">*</span></label>
+        <select id="f-difficulty">
+          <option value="">— Select level —</option>
+          <option value="easy_breezy">Easy Breezy (5 questions)</option>
+          <option value="minor_league">Minor League (7 questions)</option>
+          <option value="professional">Professional (10 questions)</option>
+          <option value="jedi">Jedi (12 questions)</option>
+        </select>
+      </div>
+      <div class="field" id="model-field" style="display:none">
+        <label>Registered Model Under Test <span style="color:var(--red)">*</span></label>
+        <select id="f-registered-model">
+          <option value="">— Select a registered model —</option>
+        </select>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:4px;">
+          Don't see your model? <a href="/models" style="color:var(--blue);font-weight:600;">Register it →</a>
+        </div>
       </div>
       <div class="field">
         <label>Select Papers (up to 10)</label>
@@ -189,6 +229,38 @@ async function loadMe() {
   if (me.role === 'admin') document.getElementById('nav-admin').style.display = '';
 }
 
+function toggleVisibility() {
+  const isPublic = document.querySelector('input[name="visibility"]:checked').value === 'public';
+  document.getElementById('difficulty-field').style.display = isPublic ? '' : 'none';
+  document.getElementById('model-field').style.display = isPublic ? '' : 'none';
+}
+
+async function loadProjects() {
+  const res = await fetch('/api/projects');
+  if (!res.ok) return;
+  const projects = await res.json();
+  const sel = document.getElementById('f-project');
+  projects.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.name;
+    sel.appendChild(opt);
+  });
+}
+
+async function loadRegisteredModels() {
+  const res = await fetch('/api/models/mine');
+  if (!res.ok) return;
+  const models = await res.json();
+  const sel = document.getElementById('f-registered-model');
+  models.forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m.id;
+    opt.textContent = `${m.name} (${m.version})`;
+    sel.appendChild(opt);
+  });
+}
+
 async function loadPapers() {
   const res = await fetch('/api/papers');
   if (!res.ok) return;
@@ -237,6 +309,13 @@ async function loadChallenges() {
 async function createAndRun() {
   const title = document.getElementById('f-title').value.trim();
   const theme = document.getElementById('f-theme').value.trim();
+  const project_id_raw = document.getElementById('f-project').value;
+  const project_id = project_id_raw ? parseInt(project_id_raw, 10) : null;
+  const visibility = document.querySelector('input[name="visibility"]:checked').value;
+  const difficulty = document.getElementById('f-difficulty').value || null;
+  const rm_raw = document.getElementById('f-registered-model').value;
+  const registered_model_id = rm_raw ? parseInt(rm_raw, 10) : null;
+
   if (!title) { showBanner('Title is required.'); return; }
 
   const paper_ids = Array.from(document.querySelectorAll('#paper-list input[type="checkbox"]:checked'))
@@ -248,6 +327,11 @@ async function createAndRun() {
     .map(el => el.value);
   if (participant_models.length === 0) { showBanner('Select at least one model.'); return; }
 
+  if (visibility === 'public') {
+    if (!difficulty) { showBanner('Public challenges require a difficulty level.'); return; }
+    if (!registered_model_id) { showBanner('Public challenges require a registered model. Register one at /models first.'); return; }
+  }
+
   const btn = document.getElementById('create-btn');
   btn.disabled = true;
   btn.textContent = 'Creating…';
@@ -256,7 +340,10 @@ async function createAndRun() {
     const res = await fetch('/api/challenges', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, theme, paper_ids, participant_models }),
+      body: JSON.stringify({
+        title, theme, paper_ids, participant_models,
+        project_id, visibility, difficulty, registered_model_id,
+      }),
     });
     const body = await res.json();
     if (!res.ok) {
@@ -287,6 +374,8 @@ async function createAndRun() {
 
 loadMe();
 loadPapers();
+loadProjects();
+loadRegisteredModels();
 loadChallenges();
 </script>
 </body>

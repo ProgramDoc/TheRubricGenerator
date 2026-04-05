@@ -98,6 +98,8 @@ tbody tr:last-child td { border-bottom: none; }
   <nav>
     <a href="/">Dashboard</a>
     <a href="/challenges" class="active">Challenges</a>
+    <a href="/public-tests">Public Tests</a>
+    <a href="/models">Models</a>
     <a href="/leaderboard">Leaderboard</a>
     <a href="/papers">Papers</a>
     <a href="/admin" id="nav-admin" style="display:none">Admin</a>
@@ -193,8 +195,23 @@ async function loadChallenge() {
   document.getElementById('challenge-theme').textContent = c.theme || '';
 
   // Meta
+  const levelLabels = { easy_breezy: 'Easy Breezy', minor_league: 'Minor League', professional: 'Professional', jedi: 'Jedi' };
+  const visibilityBadge = c.visibility === 'public'
+    ? '<span style="background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;">Public</span>'
+    : '<span style="background:#e2e8f0;color:#475569;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;">Private</span>';
+  const difficultyBadge = c.difficulty
+    ? `<span style="background:#fef3c7;color:#a16207;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;">${levelLabels[c.difficulty] || c.difficulty}</span>`
+    : '—';
+  const modelInfo = c.registered_model
+    ? `<strong style="font-family:'IBM Plex Mono',monospace;">${escapeHtml(c.registered_model.name)}</strong><div style="font-size:10px;color:var(--muted);">${escapeHtml(c.registered_model.version)}</div>`
+    : '—';
+  const projectInfo = c.project ? `<strong>${escapeHtml(c.project.name)}</strong>` : '<strong>—</strong>';
   document.getElementById('meta-row').innerHTML = `
     <div class="meta-item">Status<strong><span class="status status-${c.status}">${c.status}</span></strong></div>
+    <div class="meta-item">Visibility<strong>${visibilityBadge}</strong></div>
+    <div class="meta-item">Difficulty<strong>${difficultyBadge}</strong></div>
+    <div class="meta-item">Project${projectInfo}</div>
+    <div class="meta-item">Model Under Test<div>${modelInfo}</div></div>
     <div class="meta-item">Created<strong>${fmtDate(c.created_at)}</strong></div>
     <div class="meta-item">Completed<strong>${fmtDate(c.completed_at)}</strong></div>
     <div class="meta-item">Generator Score<strong>${fmtNum(c.generator_score)}</strong></div>

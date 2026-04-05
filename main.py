@@ -247,13 +247,54 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_challenges_status ON challenges(status);
             CREATE INDEX IF NOT EXISTS idx_participants_challenge ON model_participants(challenge_id);
+
+            -- ─── Phase 1.5: Model registry ───
+            CREATE TABLE IF NOT EXISTS registered_models (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                name         TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+                version      TEXT    NOT NULL,
+                provider     TEXT,
+                git_repo     TEXT,
+                organization TEXT,
+                created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_at   TEXT    DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS registered_model_members (
+                registered_model_id INTEGER NOT NULL REFERENCES registered_models(id) ON DELETE CASCADE,
+                user_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                PRIMARY KEY (registered_model_id, user_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_rm_created_by ON registered_models(created_by);
+            CREATE INDEX IF NOT EXISTS idx_rmm_user ON registered_model_members(user_id);
         """)
         # agent_skills table comes from backend.skills
         conn.executescript(SKILLS_TABLE_SQL)
         conn.commit()
+    _migrate_challenges_columns(conn)
     seed_v1_skills(conn)
     conn.close()
     _ensure_admin_user()
+
+
+def _migrate_challenges_columns(conn) -> None:
+    """Phase 1.5 additive migration: add project_id, visibility, difficulty,
+    registered_model_id columns to challenges if missing."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(challenges)").fetchall()}
+    with conn:
+        if "project_id" not in cols:
+            conn.execute("ALTER TABLE challenges ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL")
+        if "visibility" not in cols:
+            conn.execute("ALTER TABLE challenges ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'")
+        if "difficulty" not in cols:
+            conn.execute("ALTER TABLE challenges ADD COLUMN difficulty TEXT")
+        if "registered_model_id" not in cols:
+            conn.execute("ALTER TABLE challenges ADD COLUMN registered_model_id INTEGER REFERENCES registered_models(id) ON DELETE SET NULL")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_challenges_project ON challenges(project_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_challenges_visibility ON challenges(visibility)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_challenges_owner_vis ON challenges(created_by, visibility)")
+        conn.commit()
 
 
 def _ensure_admin_user() -> None:
@@ -443,6 +484,22 @@ def leaderboard_page(rubricgen_session: str | None = Cookie(default=None)):
     if not user:
         return RedirectResponse("/login", status_code=302)
     return FileResponse(str(FRONTEND / "leaderboard.html"), media_type="text/html")
+
+
+@app.get("/models", include_in_schema=False)
+def models_page(rubricgen_session: str | None = Cookie(default=None)):
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return FileResponse(str(FRONTEND / "models.html"), media_type="text/html")
+
+
+@app.get("/public-tests", include_in_schema=False)
+def public_tests_page(rubricgen_session: str | None = Cookie(default=None)):
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return FileResponse(str(FRONTEND / "public_tests.html"), media_type="text/html")
 
 
 @app.get("/login", include_in_schema=False)
@@ -664,6 +721,19 @@ class CreateChallengePayload(BaseModel):
     theme: Optional[str] = ""
     paper_ids: list[int]
     participant_models: list[str]
+    project_id: Optional[int] = None
+    visibility: Optional[str] = "private"
+    difficulty: Optional[str] = None
+    registered_model_id: Optional[int] = None
+
+
+class UpdateChallengePayload(BaseModel):
+    title: Optional[str] = None
+    theme: Optional[str] = None
+    project_id: Optional[int] = None
+    visibility: Optional[str] = None
+    difficulty: Optional[str] = None
+    registered_model_id: Optional[int] = None
 
 
 @app.post("/api/challenges", status_code=201)
@@ -674,10 +744,86 @@ def api_create_challenge(body: CreateChallengePayload,
         cid = bench.create_challenge(
             get_db, user["id"], body.title.strip(), (body.theme or "").strip(),
             body.paper_ids, body.participant_models,
+            project_id=body.project_id,
+            visibility=body.visibility or "private",
+            difficulty=body.difficulty,
+            registered_model_id=body.registered_model_id,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {"challenge_id": cid, "status": "pending"}
+
+
+@app.patch("/api/challenges/{cid}")
+def api_update_challenge(cid: int, body: UpdateChallengePayload,
+                         rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    row = conn.execute("SELECT * FROM challenges WHERE id=?", (cid,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "Challenge not found")
+    if row["created_by"] != user["id"]:
+        conn.close()
+        raise HTTPException(403, "Only the owner can update a challenge")
+
+    current = dict(row)
+    new_visibility = body.visibility if body.visibility is not None else current.get("visibility") or "private"
+    new_difficulty = body.difficulty if body.difficulty is not None else current.get("difficulty")
+    new_registered_model_id = body.registered_model_id if body.registered_model_id is not None else current.get("registered_model_id")
+
+    if new_visibility not in ("private", "public"):
+        conn.close()
+        raise HTTPException(400, "visibility must be 'private' or 'public'")
+    if new_difficulty and new_difficulty not in bench.DIFFICULTY_LEVELS:
+        conn.close()
+        raise HTTPException(400, f"Unknown difficulty '{new_difficulty}'")
+
+    if new_visibility == "public":
+        if not new_difficulty:
+            conn.close()
+            raise HTTPException(400, "Public challenges must specify a difficulty level")
+        if not new_registered_model_id:
+            conn.close()
+            raise HTTPException(400, "Public challenges must specify a registered model")
+        # Verify membership
+        mem = conn.execute(
+            "SELECT 1 FROM registered_model_members WHERE registered_model_id=? AND user_id=?",
+            (new_registered_model_id, user["id"]),
+        ).fetchone()
+        if not mem:
+            conn.close()
+            raise HTTPException(403, "You must be a member of the registered model to publish with it")
+
+    # project_id ownership
+    if body.project_id is not None:
+        proj = conn.execute("SELECT user_id FROM projects WHERE id=?", (body.project_id,)).fetchone()
+        if not proj or proj["user_id"] != user["id"]:
+            conn.close()
+            raise HTTPException(400, "Project not found or not owned by user")
+
+    fields = []
+    values: list = []
+    if body.title is not None:
+        fields.append("title=?"); values.append(body.title.strip())
+    if body.theme is not None:
+        fields.append("theme=?"); values.append(body.theme.strip())
+    if body.project_id is not None:
+        fields.append("project_id=?"); values.append(body.project_id)
+    if body.visibility is not None:
+        fields.append("visibility=?"); values.append(new_visibility)
+    if body.difficulty is not None:
+        fields.append("difficulty=?"); values.append(new_difficulty)
+    if body.registered_model_id is not None:
+        fields.append("registered_model_id=?"); values.append(new_registered_model_id)
+
+    if fields:
+        values.append(cid)
+        with conn:
+            conn.execute(f"UPDATE challenges SET {', '.join(fields)} WHERE id=?", values)
+            conn.commit()
+    conn.close()
+    return {"ok": True}
 
 
 @app.post("/api/challenges/{cid}/run", status_code=202)
@@ -698,20 +844,38 @@ def api_run_challenge(cid: int, rubricgen_session: str | None = Cookie(default=N
 
 
 @app.get("/api/challenges")
-def api_list_challenges(rubricgen_session: str | None = Cookie(default=None)):
-    require_user(rubricgen_session)
+def api_list_challenges(project_id: Optional[int] = None,
+                        visibility: Optional[str] = None,
+                        rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
     conn = get_db()
+    # Default view: user's own challenges (any visibility) + all public challenges
+    where_parts = ["(c.created_by=? OR c.visibility='public')"]
+    params: list = [user["id"]]
+    if project_id is not None:
+        where_parts.append("c.project_id=?")
+        params.append(project_id)
+    if visibility in ("private", "public"):
+        where_parts.append("c.visibility=?")
+        params.append(visibility)
+    where_sql = " AND ".join(where_parts)
     rows = conn.execute(
-        """SELECT c.id, c.title, c.theme, c.kind, c.status,
+        f"""SELECT c.id, c.title, c.theme, c.kind, c.status,
                   c.created_at, c.started_at, c.completed_at,
                   c.generator_score, c.judge_score,
+                  c.project_id, c.visibility, c.difficulty, c.registered_model_id,
+                  c.created_by,
                   u.display_name AS created_by_name,
+                  rm.name AS registered_model_name, rm.version AS registered_model_version,
                   (SELECT COUNT(*) FROM challenge_papers cp WHERE cp.challenge_id=c.id) AS paper_count,
                   (SELECT COUNT(*) FROM model_participants mp WHERE mp.challenge_id=c.id) AS participant_count
            FROM challenges c
            LEFT JOIN users u ON u.id = c.created_by
+           LEFT JOIN registered_models rm ON rm.id = c.registered_model_id
+           WHERE {where_sql}
            ORDER BY c.created_at DESC
-           LIMIT 200"""
+           LIMIT 200""",
+        params,
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -719,12 +883,17 @@ def api_list_challenges(rubricgen_session: str | None = Cookie(default=None)):
 
 @app.get("/api/challenges/{cid}")
 def api_get_challenge(cid: int, rubricgen_session: str | None = Cookie(default=None)):
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
     conn = get_db()
     challenge = conn.execute("SELECT * FROM challenges WHERE id=?", (cid,)).fetchone()
     if not challenge:
         conn.close()
         raise HTTPException(404, "Challenge not found")
+    # Access rule: owner OR public visibility
+    ch_dict = dict(challenge)
+    if ch_dict.get("created_by") != user["id"] and ch_dict.get("visibility") != "public":
+        conn.close()
+        raise HTTPException(403, "You do not have access to this challenge")
     rubric_row = conn.execute(
         "SELECT rubric_json, generation_time_ms FROM challenge_rubrics WHERE challenge_id=?",
         (cid,),
@@ -739,9 +908,25 @@ def api_get_challenge(cid: int, rubricgen_session: str | None = Cookie(default=N
         "SELECT * FROM model_participants WHERE challenge_id=? ORDER BY total_score DESC",
         (cid,),
     ).fetchall()
+    # Project and registered model enrichment
+    project = None
+    if ch_dict.get("project_id"):
+        project = conn.execute(
+            "SELECT id, name FROM projects WHERE id=?", (ch_dict["project_id"],)
+        ).fetchone()
+    registered_model = None
+    if ch_dict.get("registered_model_id"):
+        from backend.models_registry import get_registered_model as _get_rm
+        try:
+            registered_model = _get_rm(conn, ch_dict["registered_model_id"])
+        except HTTPException:
+            registered_model = None
     conn.close()
 
     result: dict = dict(challenge)
+    result["project"] = dict(project) if project else None
+    result["registered_model"] = registered_model
+    result["is_owner"] = (ch_dict.get("created_by") == user["id"])
     result["papers"] = [dict(p) for p in papers]
     result["participants"] = []
     for mp in participants:
@@ -788,6 +973,159 @@ def api_get_skill(agent_type: str, rubricgen_session: str | None = Cookie(defaul
     versions = list_skill_versions(conn, agent_type)
     conn.close()
     return {"active": active, "versions": versions}
+
+
+# ─────────────────────────────────────────────
+# Registered Model Registry (Phase 1.5)
+# ─────────────────────────────────────────────
+from backend import models_registry as mreg
+
+
+class RegisterModelPayload(BaseModel):
+    name: str
+    version: str
+    provider: Optional[str] = ""
+    git_repo: Optional[str] = ""
+    organization: Optional[str] = ""
+    team_member_emails: Optional[list[str]] = None
+
+
+class AddMemberPayload(BaseModel):
+    email: str
+
+
+@app.post("/api/models", status_code=201)
+def api_create_model(body: RegisterModelPayload,
+                     rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        model = mreg.create_registered_model(
+            conn, user["id"],
+            name=body.name, version=body.version,
+            provider=body.provider or "", git_repo=body.git_repo or "",
+            organization=body.organization or "",
+            team_member_emails=body.team_member_emails,
+        )
+    finally:
+        conn.close()
+    return model
+
+
+@app.get("/api/models")
+def api_list_models(mine_only: bool = False,
+                    rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        models = mreg.list_registered_models(conn, user_id=user["id"] if mine_only else None)
+    finally:
+        conn.close()
+    return models
+
+
+@app.get("/api/models/mine")
+def api_list_my_models(rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        models = mreg.list_registered_models(conn, user_id=user["id"])
+    finally:
+        conn.close()
+    return models
+
+
+@app.get("/api/models/{model_id}")
+def api_get_model(model_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return mreg.get_registered_model(conn, model_id)
+    finally:
+        conn.close()
+
+
+@app.delete("/api/models/{model_id}")
+def api_delete_model(model_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        mreg.delete_registered_model(conn, model_id, user["id"])
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+@app.post("/api/models/{model_id}/members")
+def api_add_member(model_id: int, body: AddMemberPayload,
+                   rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return mreg.add_member(conn, model_id, user["id"], body.email)
+    finally:
+        conn.close()
+
+
+@app.delete("/api/models/{model_id}/members/{member_user_id}")
+def api_remove_member(model_id: int, member_user_id: int,
+                      rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return mreg.remove_member(conn, model_id, user["id"], member_user_id)
+    finally:
+        conn.close()
+
+
+# ─────────────────────────────────────────────
+# Public Tests Gallery (Phase 1.5)
+# ─────────────────────────────────────────────
+@app.get("/api/public-tests")
+def api_list_public_tests(difficulty: Optional[str] = None,
+                          rubricgen_session: str | None = Cookie(default=None)):
+    """Feed of user-designed public tests. Not part of the leaderboard."""
+    require_user(rubricgen_session)
+    conn = get_db()
+    where = ["c.visibility='public'"]
+    params: list = []
+    if difficulty and difficulty in bench.DIFFICULTY_LEVELS:
+        where.append("c.difficulty=?")
+        params.append(difficulty)
+    rows = conn.execute(
+        f"""SELECT c.id, c.title, c.theme, c.difficulty, c.status,
+                  c.created_at, c.completed_at,
+                  c.registered_model_id,
+                  rm.name AS model_name, rm.version AS model_version,
+                  rm.organization AS model_org,
+                  u.display_name AS created_by_name,
+                  (SELECT MAX(accuracy) FROM model_participants mp WHERE mp.challenge_id=c.id) AS best_accuracy
+           FROM challenges c
+           LEFT JOIN users u ON u.id = c.created_by
+           LEFT JOIN registered_models rm ON rm.id = c.registered_model_id
+           WHERE {' AND '.join(where)}
+           ORDER BY (c.completed_at IS NULL), c.completed_at DESC, c.created_at DESC
+           LIMIT 200""",
+        params,
+    ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        # Team member names
+        if d.get("registered_model_id"):
+            members = conn.execute(
+                """SELECT u.display_name, u.email
+                   FROM registered_model_members rmm
+                   JOIN users u ON u.id = rmm.user_id
+                   WHERE rmm.registered_model_id=?""",
+                (d["registered_model_id"],),
+            ).fetchall()
+            d["team"] = [dict(m) for m in members]
+        else:
+            d["team"] = []
+        result.append(d)
+    conn.close()
+    return result
 
 
 # ─────────────────────────────────────────────

@@ -33,6 +33,32 @@ SUPPORTED_MODELS = {
     "gemini-2.0-flash":         "google",
 }
 
+# Phase 1.5: user-facing difficulty tiers for user-designed public tests.
+# These influence question count and the complexity instruction passed to
+# the generator agent on top of its active skill prompt.
+DIFFICULTY_LEVELS = {
+    "easy_breezy": {
+        "count": 5,
+        "label": "Easy Breezy",
+        "hint": "focus on clear, recall-oriented questions with single-fact answers that a careful reader would find easy to verify",
+    },
+    "minor_league": {
+        "count": 7,
+        "label": "Minor League",
+        "hint": "moderate difficulty; mostly direct extraction with some light multi-step reasoning across sections",
+    },
+    "professional": {
+        "count": 10,
+        "label": "Professional",
+        "hint": "rigorous; require multi-step reasoning, numerical accuracy, and integration across intro/methods/results",
+    },
+    "jedi": {
+        "count": 12,
+        "label": "Jedi",
+        "hint": "adversarial; edge cases, subtle methodological distinctions, and questions that discriminate expert from novice readers",
+    },
+}
+
 # ─────────────────────────────────────────────
 # Scoring formulas
 # ─────────────────────────────────────────────
@@ -97,7 +123,11 @@ def score_judge(primary_grades: dict, shadow_grades: dict, judge_time_ms: int) -
 # ─────────────────────────────────────────────
 
 def create_challenge(get_db_fn, user_id: int, title: str, theme: str,
-                     paper_ids: list[int], participant_models: list[str]) -> int:
+                     paper_ids: list[int], participant_models: list[str],
+                     project_id: int | None = None,
+                     visibility: str = "private",
+                     difficulty: str | None = None,
+                     registered_model_id: int | None = None) -> int:
     if not paper_ids:
         raise ValueError("At least one paper required")
     if len(paper_ids) > 10:
@@ -108,12 +138,49 @@ def create_challenge(get_db_fn, user_id: int, title: str, theme: str,
         if m not in SUPPORTED_MODELS:
             raise ValueError(f"Unsupported model: {m}")
 
+    if visibility not in ("private", "public"):
+        raise ValueError("visibility must be 'private' or 'public'")
+    if difficulty is not None and difficulty not in DIFFICULTY_LEVELS:
+        raise ValueError(f"Unknown difficulty '{difficulty}'")
+
+    # Public publishing rules: difficulty + registered_model_id required
+    if visibility == "public":
+        if not difficulty:
+            raise ValueError("Public challenges must specify a difficulty level")
+        if not registered_model_id:
+            raise ValueError("Public challenges must specify a registered model")
+
     conn = get_db_fn()
     try:
+        # Validate project ownership if set
+        if project_id is not None:
+            row = conn.execute(
+                "SELECT user_id FROM projects WHERE id=?", (project_id,)
+            ).fetchone()
+            if not row or row["user_id"] != user_id:
+                raise ValueError("Project not found or not owned by user")
+
+        # Validate registered model exists and user is a member
+        if registered_model_id is not None:
+            row = conn.execute(
+                "SELECT id FROM registered_models WHERE id=?", (registered_model_id,)
+            ).fetchone()
+            if not row:
+                raise ValueError("Registered model not found")
+            member = conn.execute(
+                "SELECT 1 FROM registered_model_members WHERE registered_model_id=? AND user_id=?",
+                (registered_model_id, user_id),
+            ).fetchone()
+            if not member:
+                raise ValueError("You must be a member of the registered model to use it")
+
         with conn:
             cur = conn.execute(
-                "INSERT INTO challenges (title, theme, kind, status, created_by) VALUES (?,?,?,?,?)",
-                (title, theme, "manual", "pending", user_id),
+                """INSERT INTO challenges
+                   (title, theme, kind, status, created_by, project_id, visibility, difficulty, registered_model_id)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (title, theme, "manual", "pending", user_id,
+                 project_id, visibility, difficulty, registered_model_id),
             )
             cid = cur.lastrowid
             for pid in paper_ids:
@@ -183,7 +250,12 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
 
         # 2. Generator agent
         gen_skill = get_active_skill(conn, "generator")
-        rubric, gen_ms = run_generator_agent(papers_b64, challenge.get("theme") or "", gen_skill)
+        rubric, gen_ms = run_generator_agent(
+            papers_b64,
+            challenge.get("theme") or "",
+            gen_skill,
+            difficulty=challenge.get("difficulty"),
+        )
 
         with conn:
             conn.execute(
@@ -365,16 +437,23 @@ def run_challenge_async(get_db_fn, challenge_id: int, papers_dir: Path,
 # ─────────────────────────────────────────────
 
 def refresh_leaderboard(conn: sqlite3.Connection) -> None:
-    """Recompute leaderboard_cache from model_participants."""
+    """Recompute leaderboard_cache from model_participants.
+
+    Phase 1.5: only system-run challenges (kind != 'manual') count toward
+    the leaderboard. User-designed manual tests — public or private — are
+    excluded. Phase 2 will introduce kind='daily' which will be the only
+    eligible kind.
+    """
     rows = conn.execute(
-        """SELECT model_id, provider,
+        """SELECT mp.model_id, mp.provider,
                   COUNT(*) AS total_challenges,
-                  SUM(total_score) AS cumulative_score,
-                  AVG(accuracy) AS avg_accuracy,
-                  AVG(speed_bonus) AS avg_speed_bonus
-           FROM model_participants
-           WHERE status='graded'
-           GROUP BY model_id, provider"""
+                  SUM(mp.total_score) AS cumulative_score,
+                  AVG(mp.accuracy) AS avg_accuracy,
+                  AVG(mp.speed_bonus) AS avg_speed_bonus
+           FROM model_participants mp
+           JOIN challenges c ON c.id = mp.challenge_id
+           WHERE mp.status='graded' AND c.kind != 'manual'
+           GROUP BY mp.model_id, mp.provider"""
     ).fetchall()
 
     with conn:

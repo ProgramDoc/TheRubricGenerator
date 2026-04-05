@@ -6,16 +6,31 @@ from ..helpers import call_anthropic, parse_json_response, time_ms
 
 
 def run_generator_agent(papers_b64: list[dict], theme: str, skill: dict,
+                        difficulty: str | None = None,
                         max_tokens: int = 4096) -> tuple[dict, int]:
     """
     papers_b64: list of {filename, b64} — the PDFs in the challenge
     theme: the challenge theme (e.g. "RCT methodology in oncology")
     skill: dict with at least 'prompt_text' (from get_active_skill)
+    difficulty: optional key into DIFFICULTY_LEVELS; when provided, overrides
+        the default 10-question count and injects a complexity hint.
 
     Returns: (rubric_dict, elapsed_ms)
     """
     if not papers_b64:
         raise ValueError("No papers provided to generator")
+
+    # Lazy import to avoid circular (challenges imports this module)
+    from ..challenges import DIFFICULTY_LEVELS
+
+    difficulty_block = ""
+    if difficulty and difficulty in DIFFICULTY_LEVELS:
+        d = DIFFICULTY_LEVELS[difficulty]
+        difficulty_block = (
+            f"\n\nDIFFICULTY LEVEL: {d['label']}\n"
+            f"Generate EXACTLY {d['count']} questions (override the default of 10). "
+            f"{d['hint']}."
+        )
 
     # Build multi-document user message
     content: list[dict] = []
@@ -30,6 +45,7 @@ def run_generator_agent(papers_b64: list[dict], theme: str, skill: dict,
             f"Challenge theme: {theme}\n\n"
             f"Papers in this challenge:\n"
             + "\n".join(f"- {p['filename']}" for p in papers_b64)
+            + difficulty_block
             + "\n\nGenerate the benchmark rubric as specified. Respond with JSON only."
         ),
     })

@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OGAI · Rubric Generator — Model Registry</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root {
+  --navy: #161b2e; --blue: #274472; --sky: #5e9ad0;
+  --green: #16a34a; --red: #dc2626; --amber: #d97706; --purple: #7c3aed;
+  --bg: #f4f5f9; --card: #ffffff; --border: #dce4ee;
+  --text: #1e293b; --muted: #64748b;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; min-height: 100vh; }
+
+.topbar { background: var(--navy); color: #fff; padding: 12px 28px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+.topbar .brand { font-size: 16px; font-weight: 700; letter-spacing: -.3px; }
+.topbar .brand span { color: var(--sky); }
+.topbar nav { display: flex; gap: 4px; align-items: center; }
+.topbar nav a { font-family: inherit; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); padding: 6px 12px; border-radius: 5px; text-decoration: none; }
+.topbar nav a:hover { background: rgba(255,255,255,.08); color: #fff; }
+.topbar nav a.active { background: rgba(255,255,255,.15); color: #fff; }
+.topbar .user-badge { margin-left: 14px; padding: 4px 10px; background: rgba(255,255,255,.1); border-radius: 4px; font-size: 11px; color: rgba(255,255,255,.85); }
+.topbar .signout-btn { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); padding: 6px 12px; border-radius: 5px; font-family: inherit; font-size: 11px; font-weight: 600; cursor: pointer; margin-left: 10px; }
+
+.container { max-width: 1100px; margin: 0 auto; padding: 28px; }
+.page-title { font-size: 20px; font-weight: 700; color: var(--navy); margin-bottom: 4px; }
+.page-subtitle { color: var(--muted); font-size: 12px; margin-bottom: 24px; }
+
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 20px; }
+.card-header { padding: 14px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.card-header h2 { font-size: 13px; font-weight: 700; color: var(--navy); }
+
+.form-body { padding: 20px; }
+.field { margin-bottom: 14px; }
+.field label { display: block; font-size: 10.5px; font-weight: 700; color: var(--blue); letter-spacing: .05em; text-transform: uppercase; margin-bottom: 6px; }
+.field .req { color: var(--red); margin-left: 3px; }
+.field input, .field textarea, .field select {
+  width: 100%; padding: 9px 12px; border: 1.5px solid var(--border); border-radius: 6px;
+  font-family: inherit; font-size: 13px; color: var(--text); background: #f8fafc; outline: none;
+}
+.field input:focus, .field textarea:focus, .field select:focus { border-color: var(--sky); background: #fff; }
+.field .hint { font-size: 10.5px; color: var(--muted); margin-top: 4px; }
+.field textarea { resize: vertical; min-height: 60px; }
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+.btn { padding: 10px 18px; border: none; border-radius: 6px; background: var(--blue); color: #fff; font-family: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.btn:hover:not(:disabled) { background: var(--navy); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-sm { padding: 5px 10px; font-size: 11px; }
+.btn-danger { background: var(--red); }
+.btn-danger:hover { background: #991b1b; }
+
+.banner { padding: 10px 12px; border-radius: 6px; font-size: 12px; margin-top: 12px; display: none; }
+.banner.error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; display: block; }
+.banner.success { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; display: block; }
+
+table { width: 100%; border-collapse: collapse; }
+thead th { text-align: left; font-size: 10.5px; font-weight: 700; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; padding: 11px 16px; background: #f8fafc; border-bottom: 1px solid var(--border); }
+tbody td { padding: 12px 16px; border-bottom: 1px solid #f1f5f9; font-size: 12px; color: var(--text); vertical-align: top; }
+tbody tr:last-child td { border-bottom: none; }
+
+.model-name { font-family: 'IBM Plex Mono', monospace; font-weight: 700; color: var(--navy); }
+.model-version { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.team-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.team-chip { background: #eff6ff; color: var(--blue); font-size: 10.5px; padding: 2px 7px; border-radius: 10px; font-weight: 600; }
+.empty { padding: 40px; text-align: center; color: var(--muted); font-size: 12px; }
+.provider-badge { font-size: 9.5px; font-weight: 700; padding: 2px 6px; border-radius: 3px; text-transform: uppercase; }
+.badge-openai { background: rgba(16,163,127,.15); color: #047857; }
+.badge-anthropic { background: rgba(124,58,237,.15); color: var(--purple); }
+.badge-google { background: rgba(66,133,244,.15); color: #1a56db; }
+.badge-custom { background: #e0e7ff; color: #3730a3; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">OGAI · <span>Rubric</span> Generator</div>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/challenges">Challenges</a>
+    <a href="/public-tests">Public Tests</a>
+    <a href="/models" class="active">Models</a>
+    <a href="/leaderboard">Leaderboard</a>
+    <a href="/papers">Papers</a>
+    <a href="/admin" id="nav-admin" style="display:none">Admin</a>
+    <span class="user-badge" id="user-badge">—</span>
+    <button class="signout-btn" onclick="signOut()">Sign Out</button>
+  </nav>
+</div>
+
+<div class="container">
+  <div class="page-title">Model Registry</div>
+  <div class="page-subtitle">Register your model to publish public benchmark tests</div>
+
+  <div class="card">
+    <div class="card-header"><h2>＋ Register a Model</h2></div>
+    <div class="form-body">
+      <div class="two-col">
+        <div class="field">
+          <label>Model Name<span class="req">*</span></label>
+          <input id="f-name" type="text" placeholder="e.g. MyLab-GPT4o-Finetuned" maxlength="100">
+          <div class="hint">Must be unique across all registered models.</div>
+        </div>
+        <div class="field">
+          <label>Version<span class="req">*</span></label>
+          <input id="f-version" type="text" placeholder="e.g. v2.3 or 2026-03-15" maxlength="50">
+          <div class="hint">Free text. Update when you release a new version.</div>
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="field">
+          <label>Provider</label>
+          <select id="f-provider">
+            <option value="">—</option>
+            <option value="openai">OpenAI</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="google">Google</option>
+            <option value="custom">Custom / Other</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Organization</label>
+          <input id="f-org" type="text" placeholder="e.g. UCLA Health" maxlength="100">
+        </div>
+      </div>
+      <div class="field">
+        <label>Git Repository URL</label>
+        <input id="f-repo" type="url" placeholder="https://github.com/…">
+      </div>
+      <div class="field">
+        <label>Creator</label>
+        <input id="f-creator" type="text" disabled>
+        <div class="hint">You are auto-added to the team.</div>
+      </div>
+      <div class="field">
+        <label>Additional Team Members (emails, one per line)</label>
+        <textarea id="f-team" placeholder="teammate@institution.edu&#10;another@institution.edu"></textarea>
+        <div class="hint">Each email must match a registered user.</div>
+      </div>
+      <button class="btn" id="register-btn" onclick="registerModel()">Register Model</button>
+      <div class="banner" id="banner"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h2>All Registered Models</h2></div>
+    <div id="models-list"><div class="empty">Loading…</div></div>
+  </div>
+</div>
+
+<script>
+let currentUser = null;
+
+async function signOut() {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  window.location.href = '/login';
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso.replace(' ', 'T') + 'Z');
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch (_) { return iso; }
+}
+
+function providerBadge(provider) {
+  const p = (provider || '').toLowerCase();
+  const cls = p === 'openai' ? 'badge-openai' :
+              p === 'anthropic' ? 'badge-anthropic' :
+              p === 'google' ? 'badge-google' : 'badge-custom';
+  return `<span class="provider-badge ${cls}">${escapeHtml(provider || 'custom')}</span>`;
+}
+
+function showBanner(msg, type = 'error') {
+  const el = document.getElementById('banner');
+  el.className = 'banner ' + type;
+  el.textContent = msg;
+}
+
+async function loadMe() {
+  const res = await fetch('/api/auth/me');
+  if (!res.ok) { window.location.href = '/login'; return; }
+  currentUser = await res.json();
+  document.getElementById('user-badge').textContent = currentUser.role || 'reviewer';
+  document.getElementById('f-creator').value = `${currentUser.display_name} <${currentUser.email}>`;
+  if (currentUser.role === 'admin') document.getElementById('nav-admin').style.display = '';
+}
+
+async function loadModels() {
+  const res = await fetch('/api/models');
+  if (!res.ok) return;
+  const models = await res.json();
+  const container = document.getElementById('models-list');
+  if (models.length === 0) {
+    container.innerHTML = '<div class="empty">No models registered yet. Register one above.</div>';
+    return;
+  }
+  const rows = models.map(m => {
+    const canDelete = currentUser && m.created_by === currentUser.id;
+    const teamHtml = (m.members || []).map(mem =>
+      `<span class="team-chip">${escapeHtml(mem.display_name || mem.email)}</span>`
+    ).join('');
+    return `
+      <tr>
+        <td>
+          <div class="model-name">${escapeHtml(m.name)}</div>
+          <div class="model-version">${escapeHtml(m.version)}</div>
+        </td>
+        <td>${providerBadge(m.provider)}</td>
+        <td>${escapeHtml(m.organization || '—')}</td>
+        <td><div class="team-chips">${teamHtml}</div></td>
+        <td>${m.git_repo ? `<a href="${escapeHtml(m.git_repo)}" target="_blank" style="color:var(--blue);text-decoration:none;">↗ repo</a>` : '—'}</td>
+        <td>${fmtDate(m.created_at)}</td>
+        <td>${canDelete ? `<button class="btn btn-sm btn-danger" onclick="deleteModel(${m.id}, '${escapeHtml(m.name)}')">Delete</button>` : ''}</td>
+      </tr>
+    `;
+  }).join('');
+  container.innerHTML = `
+    <table>
+      <thead><tr><th>Name / Version</th><th>Provider</th><th>Organization</th><th>Team</th><th>Repo</th><th>Registered</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+async function registerModel() {
+  const name = document.getElementById('f-name').value.trim();
+  const version = document.getElementById('f-version').value.trim();
+  const provider = document.getElementById('f-provider').value;
+  const git_repo = document.getElementById('f-repo').value.trim();
+  const organization = document.getElementById('f-org').value.trim();
+  const teamRaw = document.getElementById('f-team').value.trim();
+  const team_member_emails = teamRaw ? teamRaw.split(/\n/).map(s => s.trim()).filter(Boolean) : [];
+
+  if (!name || !version) { showBanner('Name and version are required.'); return; }
+
+  const btn = document.getElementById('register-btn');
+  btn.disabled = true;
+  btn.textContent = 'Registering…';
+  try {
+    const res = await fetch('/api/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, version, provider, git_repo, organization, team_member_emails }),
+    });
+    const body = await res.json();
+    if (!res.ok) { showBanner(body.detail || 'Registration failed.'); btn.disabled = false; btn.textContent = 'Register Model'; return; }
+    showBanner(`Registered "${name}" successfully.`, 'success');
+    document.getElementById('f-name').value = '';
+    document.getElementById('f-version').value = '';
+    document.getElementById('f-repo').value = '';
+    document.getElementById('f-org').value = '';
+    document.getElementById('f-team').value = '';
+    document.getElementById('f-provider').value = '';
+    loadModels();
+  } catch (e) {
+    showBanner('Network error.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Register Model';
+  }
+}
+
+async function deleteModel(id, name) {
+  if (!confirm(`Delete registered model "${name}"? This cannot be undone.`)) return;
+  const res = await fetch(`/api/models/${id}`, { method: 'DELETE' });
+  if (res.ok) loadModels();
+  else {
+    const body = await res.json();
+    alert(body.detail || 'Delete failed.');
+  }
+}
+
+(async () => {
+  await loadMe();
+  loadModels();
+})();
+</script>
+</body>
+</html>
