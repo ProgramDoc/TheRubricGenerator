@@ -26,6 +26,18 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from backend.helpers import (
+    strip_markdown_fences as _strip_markdown_fences,
+    call_anthropic as _call_anthropic,
+    call_gemini as _call_gemini,
+    call_openai as _call_openai,
+)
+from backend.skills import (
+    SKILLS_TABLE_SQL, seed_v1_skills,
+    get_active_skill, list_skill_versions,
+)
+from backend import challenges as bench
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rubricgen")
 
@@ -347,19 +359,6 @@ def _send_email(to: str, subject: str, body: str) -> None:
     except Exception as e:
         logger.error("SMTP send failed: %s", e)
         raise HTTPException(500, "Failed to send email")
-
-
-from backend.helpers import (
-    strip_markdown_fences as _strip_markdown_fences,
-    call_anthropic as _call_anthropic,
-    call_gemini as _call_gemini,
-    call_openai as _call_openai,
-)
-from backend.skills import (
-    SKILLS_TABLE_SQL, seed_v1_skills,
-    get_active_skill, list_skill_versions,
-)
-from backend import challenges as bench
 
 
 # ─────────────────────────────────────────────
