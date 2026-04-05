@@ -10,11 +10,13 @@ import hmac
 import json
 import logging
 import os
-import secrets
-import sqlite3
 import re
+import secrets
+import smtplib
+import sqlite3
 import urllib.error
 import urllib.request
+from email.message import EmailMessage
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -39,8 +41,15 @@ FRONTEND   = BASE_DIR / "frontend"
 PAPERS_DIR.mkdir(parents=True, exist_ok=True)
 
 ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "")
-ADMIN_EMAIL  = os.environ.get("ADMIN_EMAIL",  "admin@rubricgen.local")
+ADMIN_EMAIL  = os.environ.get("ADMIN_EMAIL",  "tck936@mail.harvard.edu")
 ADMIN_NAME   = os.environ.get("ADMIN_NAME",   "Admin")
+
+SMTP_HOST    = os.environ.get("SMTP_HOST", "")
+SMTP_PORT    = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USER    = os.environ.get("SMTP_USER", "")
+SMTP_PASS    = os.environ.get("SMTP_PASS", "")
+SMTP_FROM    = os.environ.get("SMTP_FROM", SMTP_USER or "noreply@rubricgen.local")
+APP_BASE_URL = os.environ.get("APP_BASE_URL", "http://localhost:8000")
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL   = os.environ.get("ANTHROPIC_MODEL",   "claude-sonnet-4-20250514")
@@ -143,6 +152,14 @@ def init_db() -> None:
                 created_at  TEXT    DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE IF NOT EXISTS password_resets (
+                token      TEXT    PRIMARY KEY,
+                user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                created_at TEXT    DEFAULT (datetime('now')),
+                expires_at TEXT    NOT NULL,
+                used       INTEGER NOT NULL DEFAULT 0
+            );
+
             CREATE INDEX IF NOT EXISTS idx_papers_user ON papers(user_id);
             CREATE INDEX IF NOT EXISTS idx_rubrics_paper_user ON rubrics(paper_id, user_id);
             CREATE INDEX IF NOT EXISTS idx_evaluations_paper_user ON evaluations(paper_id, user_id);
@@ -228,6 +245,36 @@ def _set_session_cookie(response: Response, token: str) -> None:
     )
 
 
+def require_admin(rubricgen_session: str | None) -> dict:
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admin access required")
+    return user
+
+
+def _send_email(to: str, subject: str, body: str) -> None:
+    """Send an email via SMTP. Raises HTTPException(500) on failure."""
+    if not SMTP_HOST or not SMTP_USER or not SMTP_PASS:
+        logger.error("SMTP not configured; cannot send email to %s", to)
+        raise HTTPException(500, "Email delivery is not configured on the server")
+    msg = EmailMessage()
+    msg["From"]    = SMTP_FROM
+    msg["To"]      = to
+    msg["Subject"] = subject
+    msg.set_content(body)
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
+            s.starttls()
+            s.login(SMTP_USER, SMTP_PASS)
+            s.send_message(msg)
+        logger.info("Sent email to %s (subject: %s)", to, subject)
+    except Exception as e:
+        logger.error("SMTP send failed: %s", e)
+        raise HTTPException(500, "Failed to send email")
+
+
 def _strip_markdown_fences(raw: str) -> str:
     """Remove markdown code fences wrapping JSON, if present."""
     raw = raw.strip()
@@ -295,6 +342,21 @@ def login_page(rubricgen_session: str | None = Cookie(default=None)):
     if user:
         return RedirectResponse("/", status_code=302)
     return FileResponse(str(FRONTEND / "login.html"), media_type="text/html")
+
+
+@app.get("/reset-password", include_in_schema=False)
+def reset_password_page():
+    return FileResponse(str(FRONTEND / "reset_password.html"), media_type="text/html")
+
+
+@app.get("/admin", include_in_schema=False)
+def admin_page(rubricgen_session: str | None = Cookie(default=None)):
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    if user.get("role") != "admin":
+        return RedirectResponse("/", status_code=302)
+    return FileResponse(str(FRONTEND / "admin.html"), media_type="text/html")
 
 
 app.mount("/static", StaticFiles(directory=str(FRONTEND)), name="frontend")
@@ -381,6 +443,108 @@ def admin_login(body: AdminLoginPayload, response: Response):
     token = _create_session(row["id"])
     _set_session_cookie(response, token)
     return {"ok": True}
+
+
+class ForgotPasswordPayload(BaseModel):
+    email: str
+
+
+@app.post("/api/auth/forgot-password")
+def forgot_password(body: ForgotPasswordPayload):
+    """Generate a password reset token and email it to the user.
+    Always returns 200 to avoid leaking which emails are registered."""
+    email = body.email.strip().lower()
+    if not email:
+        raise HTTPException(400, "Email required")
+
+    conn = get_db()
+    row = conn.execute("SELECT id, display_name FROM users WHERE email=?", (email,)).fetchone()
+    if row:
+        token   = secrets.token_urlsafe(32)
+        expires = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        with conn:
+            conn.execute(
+                "INSERT INTO password_resets (token, user_id, expires_at) VALUES (?,?,?)",
+                (token, row["id"], expires),
+            )
+            conn.commit()
+        conn.close()
+
+        reset_url = f"{APP_BASE_URL.rstrip('/')}/reset-password?token={token}"
+        subject   = "OGAI Rubric Generator — Password Reset"
+        msg_body  = (
+            f"Hi {row['display_name']},\n\n"
+            f"We received a request to reset your password. Click the link below to set a new password. "
+            f"This link expires in 1 hour.\n\n"
+            f"{reset_url}\n\n"
+            f"If you did not request this, you can safely ignore this email.\n\n"
+            f"— OGAI Rubric Generator"
+        )
+        try:
+            _send_email(email, subject, msg_body)
+        except HTTPException:
+            # Don't surface SMTP errors to the client — just log
+            pass
+    else:
+        conn.close()
+
+    return {"ok": True, "message": "If that email is registered, a reset link has been sent."}
+
+
+class ResetPasswordPayload(BaseModel):
+    token: str
+    new_password: str
+
+
+@app.post("/api/auth/reset-password")
+def reset_password(body: ResetPasswordPayload):
+    if len(body.new_password) < 8:
+        raise HTTPException(400, "Password must be at least 8 characters")
+
+    now = datetime.now(timezone.utc).isoformat()
+    conn = get_db()
+    row = conn.execute(
+        "SELECT user_id, used FROM password_resets WHERE token=? AND expires_at > ?",
+        (body.token, now),
+    ).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(400, "Invalid or expired reset token")
+    if row["used"]:
+        conn.close()
+        raise HTTPException(400, "This reset link has already been used")
+
+    ph, ps = _hash_password(body.new_password)
+    with conn:
+        conn.execute(
+            "UPDATE users SET password_hash=?, password_salt=? WHERE id=?",
+            (ph, ps, row["user_id"]),
+        )
+        conn.execute("UPDATE password_resets SET used=1 WHERE token=?", (body.token,))
+        # Invalidate any existing sessions for this user
+        conn.execute("DELETE FROM sessions WHERE user_id=?", (row["user_id"],))
+        conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+# ─────────────────────────────────────────────
+# Admin dashboard
+# ─────────────────────────────────────────────
+@app.get("/api/admin/users")
+def admin_list_users(rubricgen_session: str | None = Cookie(default=None)):
+    require_admin(rubricgen_session)
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT u.id, u.email, u.display_name, u.role, u.created_at,
+                  (SELECT COUNT(*) FROM papers      p WHERE p.user_id = u.id) AS paper_count,
+                  (SELECT COUNT(*) FROM rubrics     r WHERE r.user_id = u.id) AS rubric_count,
+                  (SELECT COUNT(*) FROM evaluations e WHERE e.user_id = u.id) AS eval_count
+           FROM users u
+           ORDER BY u.created_at DESC"""
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 # ─────────────────────────────────────────────

@@ -84,6 +84,28 @@ body {
   font-size: 10.5px; color: var(--muted); margin-top: 4px;
 }
 
+.forgot-link {
+  display: block; text-align: right; font-size: 11px;
+  color: var(--blue); text-decoration: none; margin-top: 6px;
+  cursor: pointer; font-weight: 500;
+}
+.forgot-link:hover { text-decoration: underline; }
+
+/* Forgot-password panel (reuses admin-panel styling pattern) */
+.forgot-panel {
+  display: none; margin-top: 12px;
+  background: #eff6ff; border: 1.5px solid var(--sky);
+  border-radius: 6px; padding: 14px;
+}
+.forgot-panel.open { display: block; }
+.forgot-panel label { color: var(--blue) !important; }
+.forgot-submit {
+  width: 100%; padding: 8px; border: none; border-radius: 5px;
+  background: var(--blue); color: #fff; font-family: inherit;
+  font-size: 12px; font-weight: 700; cursor: pointer; margin-top: 10px;
+}
+.forgot-submit:hover { background: #1e3358; }
+
 /* ── Error / success banners ── */
 .banner {
   padding: 10px 12px; border-radius: 6px; font-size: 12px;
@@ -184,6 +206,17 @@ body {
       <label>Password</label>
       <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password"
              onkeydown="if(event.key==='Enter') submitLogin()">
+      <a class="forgot-link" onclick="toggleForgotPanel()">Forgot password?</a>
+    </div>
+
+    <div class="forgot-panel" id="forgot-panel">
+      <div class="field">
+        <label>Enter your registered email</label>
+        <input type="email" id="forgot-email" placeholder="you@institution.edu"
+               onkeydown="if(event.key==='Enter') submitForgot()">
+      </div>
+      <div class="banner" id="forgot-banner"></div>
+      <button class="forgot-submit" onclick="submitForgot()">Send Reset Link</button>
     </div>
 
     <button class="submit-btn" id="login-btn" onclick="submitLogin()">Sign In</button>
@@ -247,11 +280,44 @@ function switchTab(tab) {
 }
 
 function clearBanners() {
-  ['login-banner','register-banner','admin-banner'].forEach(id => {
+  ['login-banner','register-banner','admin-banner','forgot-banner'].forEach(id => {
     const el = document.getElementById(id);
+    if (!el) return;
     el.className = 'banner';
     el.textContent = '';
   });
+}
+
+function toggleForgotPanel() {
+  const panel = document.getElementById('forgot-panel');
+  panel.classList.toggle('open');
+  if (panel.classList.contains('open')) {
+    document.getElementById('forgot-email').focus();
+  }
+}
+
+async function submitForgot() {
+  const email = document.getElementById('forgot-email').value.trim();
+  clearBanners();
+  if (!email) {
+    showBanner('forgot-banner', 'Please enter your email.');
+    return;
+  }
+  try {
+    const res = await fetch('/api/auth/forgot-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    const body = await res.json();
+    if (res.ok) {
+      showBanner('forgot-banner', body.message || 'If that email is registered, a reset link has been sent.', 'success');
+    } else {
+      showBanner('forgot-banner', body.detail || 'Request failed.');
+    }
+  } catch (e) {
+    showBanner('forgot-banner', 'Network error.');
+  }
 }
 
 function showBanner(id, msg, type='error') {
@@ -327,7 +393,7 @@ async function submitAdmin() {
     if (!res.ok) {
       showBanner('admin-banner', body.detail || 'Invalid secret.');
     } else {
-      window.location.href = '/';
+      window.location.href = '/admin';
     }
   } catch (e) {
     showBanner('admin-banner', 'Network error.');

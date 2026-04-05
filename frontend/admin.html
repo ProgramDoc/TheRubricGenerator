@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OGAI · Rubric Generator — Admin Dashboard</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root {
+  --navy: #161b2e; --blue: #274472; --sky: #5e9ad0;
+  --green: #16a34a; --red: #dc2626; --amber: #d97706;
+  --bg: #f4f5f9; --card: #ffffff; --border: #dce4ee;
+  --text: #1e293b; --muted: #64748b;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  font-family: 'IBM Plex Sans', sans-serif;
+  background: var(--bg); color: var(--text); font-size: 13px;
+  min-height: 100vh;
+}
+
+/* ── Top bar ── */
+.topbar {
+  background: var(--navy); color: #fff;
+  padding: 14px 28px; display: flex; align-items: center; justify-content: space-between;
+  box-shadow: 0 2px 8px rgba(0,0,0,.15);
+}
+.topbar .brand {
+  font-size: 16px; font-weight: 700; letter-spacing: -.3px;
+}
+.topbar .brand span { color: var(--sky); }
+.topbar .badge {
+  display: inline-block; margin-left: 10px; padding: 2px 8px;
+  background: var(--amber); color: #fff; border-radius: 4px;
+  font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+}
+.topbar .actions { display: flex; gap: 10px; align-items: center; }
+.topbar a, .topbar button {
+  font-family: inherit; font-size: 12px; font-weight: 600;
+  color: #fff; background: transparent; border: 1px solid rgba(255,255,255,.3);
+  padding: 6px 12px; border-radius: 5px; cursor: pointer; text-decoration: none;
+  transition: all .15s;
+}
+.topbar a:hover, .topbar button:hover { background: rgba(255,255,255,.1); }
+
+/* ── Container ── */
+.container { max-width: 1200px; margin: 0 auto; padding: 28px; }
+
+.page-title {
+  font-size: 20px; font-weight: 700; color: var(--navy);
+  margin-bottom: 4px; letter-spacing: -.3px;
+}
+.page-subtitle { color: var(--muted); font-size: 12px; margin-bottom: 24px; }
+
+/* ── Stat cards ── */
+.stats {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px; margin-bottom: 28px;
+}
+.stat-card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 18px 20px;
+}
+.stat-card .label {
+  font-size: 10.5px; font-weight: 700; color: var(--muted);
+  letter-spacing: .08em; text-transform: uppercase; margin-bottom: 6px;
+}
+.stat-card .value {
+  font-size: 28px; font-weight: 700; color: var(--navy);
+  letter-spacing: -.5px; font-family: 'IBM Plex Mono', monospace;
+}
+
+/* ── Users table card ── */
+.card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden;
+}
+.card-header {
+  padding: 14px 20px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.card-header h2 {
+  font-size: 13px; font-weight: 700; color: var(--navy);
+  letter-spacing: .02em;
+}
+.card-header .hint { font-size: 11px; color: var(--muted); }
+
+table {
+  width: 100%; border-collapse: collapse;
+}
+thead th {
+  text-align: left; font-size: 10.5px; font-weight: 700;
+  color: var(--muted); letter-spacing: .06em; text-transform: uppercase;
+  padding: 11px 16px; background: #f8fafc; border-bottom: 1px solid var(--border);
+}
+tbody td {
+  padding: 12px 16px; border-bottom: 1px solid #f1f5f9;
+  font-size: 12.5px; color: var(--text);
+}
+tbody tr:hover { background: #f8fafc; }
+tbody tr:last-child td { border-bottom: none; }
+
+.email { font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: var(--blue); }
+.role-badge {
+  display: inline-block; padding: 2px 7px; border-radius: 4px;
+  font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+}
+.role-reviewer { background: #dbeafe; color: #1e3a8a; }
+.role-admin    { background: #fef3c7; color: #92400e; }
+
+.num {
+  font-family: 'IBM Plex Mono', monospace; font-weight: 600;
+  color: var(--navy); text-align: right;
+}
+
+.loading, .empty {
+  padding: 40px; text-align: center; color: var(--muted); font-size: 12px;
+}
+.error-banner {
+  background: #fef2f2; color: #991b1b; border: 1px solid #fecaca;
+  padding: 12px 16px; border-radius: 6px; font-size: 12px; margin-bottom: 20px;
+  display: none;
+}
+.error-banner.show { display: block; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    OGAI · <span>Rubric</span> Generator
+    <span class="badge">Admin</span>
+  </div>
+  <div class="actions">
+    <a href="/">Main App</a>
+    <button onclick="logout()">Sign Out</button>
+  </div>
+</div>
+
+<div class="container">
+  <div class="page-title">Admin Dashboard</div>
+  <div class="page-subtitle">User registrations and activity overview</div>
+
+  <div class="error-banner" id="error-banner"></div>
+
+  <div class="stats">
+    <div class="stat-card">
+      <div class="label">Total Users</div>
+      <div class="value" id="stat-users">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Papers Uploaded</div>
+      <div class="value" id="stat-papers">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Rubrics Generated</div>
+      <div class="value" id="stat-rubrics">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Evaluations Run</div>
+      <div class="value" id="stat-evals">—</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h2>Registered Users</h2>
+      <span class="hint">Sorted by most recent registration</span>
+    </div>
+    <div id="table-container">
+      <div class="loading">Loading users…</div>
+    </div>
+  </div>
+</div>
+
+<script>
+async function logout() {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  window.location.href = '/login';
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso.replace(' ', 'T') + 'Z');
+    return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+         + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  } catch (_) { return iso; }
+}
+
+function showError(msg) {
+  const el = document.getElementById('error-banner');
+  el.textContent = msg;
+  el.classList.add('show');
+}
+
+async function loadUsers() {
+  try {
+    const res = await fetch('/api/admin/users');
+    if (res.status === 401 || res.status === 403) {
+      window.location.href = '/login';
+      return;
+    }
+    if (!res.ok) {
+      showError('Failed to load users.');
+      return;
+    }
+    const users = await res.json();
+
+    // Stats
+    document.getElementById('stat-users').textContent = users.length;
+    document.getElementById('stat-papers').textContent =
+      users.reduce((s, u) => s + (u.paper_count || 0), 0);
+    document.getElementById('stat-rubrics').textContent =
+      users.reduce((s, u) => s + (u.rubric_count || 0), 0);
+    document.getElementById('stat-evals').textContent =
+      users.reduce((s, u) => s + (u.eval_count || 0), 0);
+
+    // Table
+    const container = document.getElementById('table-container');
+    if (users.length === 0) {
+      container.innerHTML = '<div class="empty">No users registered yet.</div>';
+      return;
+    }
+    const rows = users.map(u => `
+      <tr>
+        <td>${escapeHtml(u.display_name || '')}</td>
+        <td class="email">${escapeHtml(u.email || '')}</td>
+        <td><span class="role-badge role-${u.role || 'reviewer'}">${escapeHtml(u.role || 'reviewer')}</span></td>
+        <td>${fmtDate(u.created_at)}</td>
+        <td class="num">${u.paper_count || 0}</td>
+        <td class="num">${u.rubric_count || 0}</td>
+        <td class="num">${u.eval_count || 0}</td>
+      </tr>
+    `).join('');
+    container.innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Role</th>
+            <th>Registered</th>
+            <th style="text-align:right">Papers</th>
+            <th style="text-align:right">Rubrics</th>
+            <th style="text-align:right">Evaluations</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  } catch (e) {
+    showError('Network error loading users.');
+  }
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+loadUsers();
+</script>
+</body>
+</html>
