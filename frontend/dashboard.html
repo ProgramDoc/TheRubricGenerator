@@ -149,7 +149,8 @@ tbody tr:last-child td { border-bottom: none; }
     </div>
     <div class="new-project-inline" id="new-project-form">
       <input type="text" id="new-project-input" placeholder="Project name…"
-             onkeydown="if(event.key==='Enter') createProject()">
+             onkeydown="if(event.key==='Enter'){event.preventDefault();createProject();}">
+      <button onclick="createProject()" style="width:100%;margin-top:6px;padding:6px;background:var(--blue);color:#fff;border:none;border-radius:4px;font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;">Create Project</button>
     </div>
     <div class="folder-item" onclick="selectFolder(null)" id="folder-all">
       <div>
@@ -289,14 +290,23 @@ function toggleNewProject() {
 async function createProject() {
   const name = document.getElementById('new-project-input').value.trim();
   if (!name) return;
-  await fetch('/api/projects', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
-  });
-  document.getElementById('new-project-input').value = '';
-  document.getElementById('new-project-form').classList.remove('open');
-  loadProjects();
+  try {
+    const res = await fetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      alert('Failed to create project: ' + (body.detail || res.statusText));
+      return;
+    }
+    document.getElementById('new-project-input').value = '';
+    document.getElementById('new-project-form').classList.remove('open');
+    loadProjects();
+  } catch (e) {
+    alert('Network error creating project: ' + e.message);
+  }
 }
 
 // ── Challenges ──
