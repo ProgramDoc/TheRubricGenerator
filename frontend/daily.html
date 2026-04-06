@@ -277,13 +277,24 @@ async function loadSkillStatus() {
         : rb.action === 'wait'
         ? '<span style="color:var(--amber);">Evaluating…</span>'
         : '<span style="color:var(--green);">Stable</span>';
+      const summary = s.experiment_summary || {};
       el.innerHTML = `
-        <div><strong>Active:</strong> v${s.active_version} (used ${s.times_used_current}x)</div>
-        <div><strong>Avg perf:</strong> ${(s.avg_performance_current || 0).toFixed(4)}</div>
+        <div><strong>Active:</strong> v${s.active_version}</div>
         <div><strong>Total versions:</strong> ${s.total_versions}</div>
-        <div><strong>Improvement due:</strong> ${s.improvement_due ? 'Yes' : 'No (' + s.times_used_current + '/' + s.improve_threshold + ' runs)'}</div>
-        <div><strong>Status:</strong> ${rbBadge}</div>
+        <div><strong>Experiments:</strong> ${summary.total || 0} total (${summary.kept || 0} kept, ${summary.discarded || 0} discarded, ${summary.crashed || 0} crashed)</div>
+        <div><strong>Budget:</strong> ${s.experiment_budget} per cycle</div>
+        <div><strong>Enabled:</strong> ${s.improvement_enabled ? '<span style="color:var(--green)">Yes</span>' : '<span style="color:var(--red)">No</span>'}</div>
       `;
+      // Show recent experiments log
+      const exps = s.recent_experiments || [];
+      if (exps.length > 0) {
+        el.innerHTML += '<div style="margin-top:8px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;">Recent Experiments</div>';
+        el.innerHTML += '<div style="font-family:IBM Plex Mono,monospace;font-size:10px;max-height:120px;overflow-y:auto;margin-top:4px;">' +
+          exps.slice(0, 8).map(e => {
+            const color = e.status === 'keep' ? 'var(--green)' : e.status === 'discard' ? 'var(--amber)' : 'var(--red)';
+            return `<div style="padding:2px 0;border-bottom:1px solid #f1f5f9;"><span style="color:${color};font-weight:700;">${e.status}</span> v${e.skill_version} ${(e.metric_before||0).toFixed(3)}→${(e.metric_after||0).toFixed(3)} <span style="color:var(--muted);">${(e.description||'').substring(0,40)}</span></div>`;
+          }).join('') + '</div>';
+      }
     } catch (e) {
       console.error('Skill status load failed:', e);
     }

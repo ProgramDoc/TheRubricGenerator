@@ -539,14 +539,21 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
 
         logger.info("Challenge %s complete: gen=%s judge=%s", challenge_id, gen_score, judge_score_val)
 
-        # 9. Self-improvement check (daily challenges only)
+        # 9. Self-improvement experiment loop (daily challenges only)
+        #    Uses the daily challenge's papers as the test bed — no extra PubMed fetch.
+        #    Runs up to EXPERIMENT_BUDGET experiments per agent (~$5 total).
         if is_daily:
             try:
-                from .self_improve import maybe_improve_after_challenge
-                maybe_improve_after_challenge(get_db_fn, "generator", vault_dir)
-                maybe_improve_after_challenge(get_db_fn, "judge", vault_dir)
+                from .self_improve import run_experiment_loop
+                # Use first 2 papers from this challenge for lightweight eval
+                eval_papers = papers_b64[:2] if papers_b64 else []
+                eval_theme = challenge.get("theme") or ""
+                if eval_papers:
+                    logger.info("Starting self-improvement experiment loop")
+                    run_experiment_loop(get_db_fn, "generator", eval_papers, eval_theme, vault_dir)
+                    run_experiment_loop(get_db_fn, "judge", eval_papers, eval_theme, vault_dir)
             except Exception as e:
-                logger.error("Self-improvement check failed: %s", e)
+                logger.error("Self-improvement experiment loop failed: %s", e)
 
     except Exception as e:
         logger.error("run_challenge failed: %s\n%s", e, traceback.format_exc())

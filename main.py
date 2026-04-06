@@ -40,6 +40,7 @@ from backend import challenges as bench
 from backend.billing import BILLING_TABLES_SQL, seed_credit_packs
 from backend.promo import PROMO_TABLES_SQL
 from backend.agreements import AGREEMENTS_TABLE_SQL
+from backend.self_improve import EXPERIMENTS_TABLE_SQL
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rubricgen")
@@ -299,6 +300,7 @@ def init_db() -> None:
         conn.executescript(BILLING_TABLES_SQL)
         conn.executescript(PROMO_TABLES_SQL)
         conn.executescript(AGREEMENTS_TABLE_SQL)
+        conn.executescript(EXPERIMENTS_TABLE_SQL)
         conn.commit()
     _migrate_challenges_columns(conn)
     seed_v1_skills(conn)
@@ -1312,8 +1314,7 @@ def api_get_skill(agent_type: str, rubricgen_session: str | None = Cookie(defaul
 
 
 from backend.self_improve import (
-    get_improvement_status, propose_improved_skill, deploy_new_skill,
-    maybe_improve_after_challenge as _improve_check,
+    get_improvement_status, run_experiment_loop,
 )
 from backend.skills import activate_skill_version
 
@@ -1334,24 +1335,43 @@ def api_skill_status(agent_type: str, rubricgen_session: str | None = Cookie(def
 @app.post("/api/admin/skills/{agent_type}/improve")
 def api_trigger_improvement(agent_type: str,
                             rubricgen_session: str | None = Cookie(default=None)):
-    """Manually trigger a self-improvement cycle (propose + deploy new skill)."""
+    """Manually trigger an autoresearch-style experiment loop.
+    Runs up to EXPERIMENT_BUDGET experiments: propose → eval → keep/discard."""
     require_admin(rubricgen_session)
     if agent_type not in ("generator", "judge"):
         raise HTTPException(400, "agent_type must be 'generator' or 'judge'")
+
+    # Load papers from most recent daily challenge for the eval
+    import base64 as _b64
     conn = get_db()
     try:
-        new_prompt = propose_improved_skill(conn, agent_type)
-        if not new_prompt:
-            raise HTTPException(400, "Meta-Claude returned no improvement")
-        new_id = deploy_new_skill(conn, agent_type, new_prompt)
-        # Write to Obsidian
-        from backend.obsidian import write_skill_note
-        active = get_active_skill(conn, agent_type)
-        versions = list_skill_versions(conn, agent_type)
-        write_skill_note(OBSIDIAN_VAULT_DIR, agent_type, active, versions)
-        return {"ok": True, "new_skill_id": new_id, "new_prompt_preview": new_prompt[:200]}
+        latest = conn.execute(
+            """SELECT c.id, c.theme FROM challenges c
+               WHERE c.kind IN ('daily','dry_run') AND c.status='complete'
+               ORDER BY c.completed_at DESC LIMIT 1"""
+        ).fetchone()
+        if not latest:
+            raise HTTPException(400, "No completed challenges to use as test data")
+        theme = latest["theme"] or ""
+        paper_rows = conn.execute(
+            """SELECT p.filename, p.disk_filename
+               FROM papers p JOIN challenge_papers cp ON cp.paper_id = p.id
+               WHERE cp.challenge_id=? LIMIT 2""",
+            (latest["id"],),
+        ).fetchall()
+        papers_b64 = []
+        for r in paper_rows:
+            path = PAPERS_DIR / (r["disk_filename"] or "")
+            if path.exists():
+                papers_b64.append({"filename": r["filename"], "b64": _b64.b64encode(path.read_bytes()).decode()})
     finally:
         conn.close()
+
+    if not papers_b64:
+        raise HTTPException(400, "No papers available for evaluation")
+
+    result = run_experiment_loop(get_db, agent_type, papers_b64, theme, OBSIDIAN_VAULT_DIR)
+    return result
 
 
 @app.post("/api/admin/skills/{agent_type}/{version}/activate")

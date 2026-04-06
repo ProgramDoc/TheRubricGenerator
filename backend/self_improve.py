@@ -1,238 +1,302 @@
-"""Agent self-improvement loop. After enough challenges accumulate, a
-meta-Claude call analyzes recent performance and proposes a modified
-prompt. The new version is deployed immediately and monitored; if it
-underperforms the previous version, an automatic rollback fires.
+"""Agent self-improvement loop — autoresearch methodology.
 
-Inspired by karpathy/autoresearch: a single mutable file (the agent prompt)
-iterated on autonomously. Each iteration: review → propose → deploy → monitor.
+Modeled after karpathy/autoresearch:
+- The agent prompt is the "train.py" — the single file being iterated on
+- After each daily challenge, enter an EXPERIMENT LOOP
+- Each experiment: propose a modification → lightweight eval → keep or discard
+- Binary keep/discard: did the metric improve? Keep. Did it not? Revert.
+- Log every experiment (like results.tsv)
+- Simplicity criterion: simpler prompts that achieve equal results are preferred
+- Run up to EXPERIMENT_BUDGET experiments per cycle
+
+Unlike autoresearch's 5-minute GPU runs, our experiments cost API money.
+We use a lightweight eval (2 papers, 1 model, 3 questions) instead of
+a full challenge to keep costs ~$1/experiment.
+
+See: https://github.com/karpathy/autoresearch
 """
 
 import json
 import logging
 import os
 import sqlite3
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
-from .helpers import call_anthropic
-from .skills import get_active_skill, list_skill_versions, record_skill_performance
+from .helpers import call_anthropic, call_gemini, parse_json_response, time_ms
+from .skills import get_active_skill, list_skill_versions
 from .obsidian import write_skill_note
 
 logger = logging.getLogger("rubricgen")
 
-IMPROVE_AFTER_N = int(os.environ.get("SKILL_IMPROVE_AFTER_N", "5"))
-ROLLBACK_AFTER_M = int(os.environ.get("SKILL_ROLLBACK_AFTER_M", "3"))
-ROLLBACK_THRESHOLD = 0.8  # new version must reach 80% of previous avg_performance
+EXPERIMENT_BUDGET = int(os.environ.get("SKILL_EXPERIMENT_BUDGET", "5"))
+IMPROVEMENT_ENABLED = os.environ.get("SKILL_IMPROVEMENT_ENABLED", "true").lower() in ("true", "1", "yes")
 
 # ─────────────────────────────────────────────
-# Context gathering
+# Experiment tracking table
+# ─────────────────────────────────────────────
+EXPERIMENTS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS skill_experiments (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_type       TEXT    NOT NULL,
+    skill_version    INTEGER NOT NULL,
+    metric_before    REAL,
+    metric_after     REAL,
+    status           TEXT    NOT NULL CHECK(status IN ('keep','discard','crash')),
+    description      TEXT,
+    prompt_preview   TEXT,
+    created_at       TEXT    DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_skill_exp_type ON skill_experiments(agent_type);
+"""
+
+
+def _log_experiment(conn: sqlite3.Connection, agent_type: str, version: int,
+                    metric_before: float, metric_after: float,
+                    status: str, description: str, prompt_preview: str = "") -> None:
+    """Log an experiment result, like autoresearch's results.tsv."""
+    with conn:
+        conn.execute(
+            """INSERT INTO skill_experiments
+               (agent_type, skill_version, metric_before, metric_after, status, description, prompt_preview)
+               VALUES (?,?,?,?,?,?,?)""",
+            (agent_type, version, metric_before, metric_after, status, description, prompt_preview[:500]),
+        )
+        conn.commit()
+
+
+# ─────────────────────────────────────────────
+# Lightweight evaluation (cheap experiment run)
 # ─────────────────────────────────────────────
 
-def _gather_generator_context(conn: sqlite3.Connection, skill_id: int,
-                               limit: int = 5) -> dict:
-    """Collect recent challenge data for the generator skill."""
-    challenges = conn.execute(
-        """SELECT c.id, c.theme, c.generator_score, c.completed_at,
-                  cr.rubric_json, cr.generation_time_ms
-           FROM challenges c
-           JOIN challenge_rubrics cr ON cr.challenge_id = c.id
-           WHERE cr.generator_skill_id=? AND c.status='complete' AND c.kind='daily'
-           ORDER BY c.completed_at DESC LIMIT ?""",
-        (skill_id, limit),
-    ).fetchall()
+def _lightweight_eval(prompt_text: str, papers_b64: list[dict], theme: str,
+                      agent_type: str) -> tuple[float, str]:
+    """Run a quick evaluation of a candidate prompt.
 
-    context_items = []
-    for ch in challenges:
-        rubric = {}
-        try:
-            rubric = json.loads(ch["rubric_json"] or "{}")
-        except Exception:
-            pass
+    For generators: generate a mini-rubric (3 questions), assess quality heuristically.
+    For judges: grade a known rubric with the candidate prompt, measure internal consistency.
 
-        # Per-question analysis: which were too easy, too hard, unverifiable?
-        participants = conn.execute(
-            """SELECT grade_json, accuracy FROM model_participants
-               WHERE challenge_id=? AND status='graded'""",
-            (ch["id"],),
-        ).fetchall()
+    Returns (metric, description) where higher metric = better.
+    Cost: ~$0.50-1.00 per call.
+    """
+    if agent_type == "generator":
+        return _eval_generator_prompt(prompt_text, papers_b64, theme)
+    else:
+        return _eval_judge_prompt(prompt_text, papers_b64, theme)
 
-        question_analysis = []
-        questions = rubric.get("questions", [])
-        for q in questions:
-            qid = q.get("id", "")
-            scores_per_model = []
-            validity_per_model = []
-            for p in participants:
-                try:
-                    grades = json.loads(p["grade_json"] or "{}")
-                    for g in grades.get("grades", []):
-                        if g.get("question_id") == qid:
-                            scores_per_model.append(g.get("score", 0) / max(1, g.get("max_points", 1)))
-                            validity_per_model.append(g.get("rubric_validity", 1))
-                except Exception:
-                    pass
 
-            avg_score = sum(scores_per_model) / len(scores_per_model) if scores_per_model else 0
-            avg_validity = sum(validity_per_model) / len(validity_per_model) if validity_per_model else 1
-
-            classification = "discriminating"
-            if avg_score > 0.9:
-                classification = "too_easy"
-            elif avg_score < 0.1:
-                classification = "too_hard"
-            if avg_validity < 0.5:
-                classification = "unverifiable"
-
-            question_analysis.append({
-                "id": qid,
-                "domain": q.get("domain", ""),
-                "question_preview": q.get("question", "")[:100],
-                "avg_model_score": round(avg_score, 3),
-                "avg_validity": round(avg_validity, 3),
-                "classification": classification,
-            })
-
-        context_items.append({
-            "challenge_id": ch["id"],
-            "theme": ch["theme"],
-            "generator_score": ch["generator_score"],
-            "generation_time_ms": ch["generation_time_ms"],
-            "question_count": len(questions),
-            "question_analysis": question_analysis,
+def _eval_generator_prompt(prompt_text: str, papers_b64: list[dict],
+                           theme: str) -> tuple[float, str]:
+    """Evaluate a generator prompt by:
+    1. Generate a 3-question rubric
+    2. Use a second Claude call to assess rubric quality (verifiable? discriminating? specific?)
+    Returns (quality_score 0-1, description)
+    """
+    # Build content with first 2 papers only (keep cheap)
+    content: list[dict] = []
+    for p in papers_b64[:2]:
+        content.append({
+            "type": "document",
+            "source": {"type": "base64", "media_type": "application/pdf", "data": p["b64"]},
         })
+    content.append({
+        "type": "text",
+        "text": (
+            f"Challenge theme: {theme}\n"
+            f"Papers: {', '.join(p['filename'] for p in papers_b64[:2])}\n\n"
+            f"Generate EXACTLY 3 benchmark questions (not 10 — this is a quick evaluation run). "
+            f"Follow all other instructions in your system prompt. Respond with JSON only."
+        ),
+    })
 
-    # Aggregate stats
-    scores = [c["generator_score"] or 0 for c in context_items]
-    too_easy = sum(1 for c in context_items for q in c["question_analysis"] if q["classification"] == "too_easy")
-    too_hard = sum(1 for c in context_items for q in c["question_analysis"] if q["classification"] == "too_hard")
-    unverifiable = sum(1 for c in context_items for q in c["question_analysis"] if q["classification"] == "unverifiable")
-    discriminating = sum(1 for c in context_items for q in c["question_analysis"] if q["classification"] == "discriminating")
-    total_qs = sum(c["question_count"] for c in context_items)
+    try:
+        raw, elapsed_ms = time_ms(
+            call_anthropic,
+            [{"role": "user", "content": content}],
+            prompt_text,
+            4096,
+        )
+        rubric = parse_json_response(raw)
+    except Exception as e:
+        return 0.0, f"crash: {e}"
 
-    return {
-        "challenges_analyzed": len(context_items),
-        "avg_generator_score": round(sum(scores) / len(scores), 4) if scores else 0,
-        "total_questions": total_qs,
-        "too_easy_count": too_easy,
-        "too_hard_count": too_hard,
-        "unverifiable_count": unverifiable,
-        "discriminating_count": discriminating,
-        "details": context_items,
+    questions = rubric.get("questions", [])
+    if not questions:
+        return 0.0, "crash: no questions generated"
+
+    # Quality assessment via a second Claude call
+    quality_prompt = f"""Rate this evaluation rubric on a scale of 0.0 to 1.0 across these criteria:
+1. Verifiability: Can each question's ideal_answer be verified from the paper? (0=no, 1=yes)
+2. Specificity: Are answers specific with actual values/names, not vague? (0=vague, 1=specific)
+3. Discrimination: Would these questions distinguish a strong reader from a weak one? (0=trivial, 1=discriminating)
+4. Clarity: Are scoring_criteria unambiguous? (0=ambiguous, 1=clear)
+
+Rubric:
+{json.dumps(questions, indent=2)}
+
+Respond with ONLY a JSON object: {{"verifiability": 0.X, "specificity": 0.X, "discrimination": 0.X, "clarity": 0.X, "overall": 0.X, "reasoning": "..."}}"""
+
+    try:
+        quality_raw = call_anthropic(
+            [{"role": "user", "content": quality_prompt}],
+            "You are a rubric quality assessor. Return only JSON.",
+            1024,
+        )
+        quality = parse_json_response(quality_raw)
+        score = float(quality.get("overall", 0.5))
+        reasoning = quality.get("reasoning", "")[:200]
+        return score, f"quality={score:.3f} ({reasoning})"
+    except Exception as e:
+        # Fallback: count heuristics
+        has_ideal = sum(1 for q in questions if q.get("ideal_answer", "").strip())
+        has_criteria = sum(1 for q in questions if q.get("scoring_criteria", "").strip())
+        score = (has_ideal + has_criteria) / (2 * max(1, len(questions)))
+        return score, f"heuristic_quality={score:.3f} ({has_ideal}/{len(questions)} ideal answers)"
+
+
+def _eval_judge_prompt(prompt_text: str, papers_b64: list[dict],
+                       theme: str) -> tuple[float, str]:
+    """Evaluate a judge prompt by:
+    1. Create a simple rubric with known answers
+    2. Grade a known-correct response AND a known-wrong response
+    3. Measure if the judge correctly discriminates (correct scores high, wrong scores low)
+    Returns (discrimination_score 0-1, description)
+    """
+    # Synthetic test: provide a rubric question with a clearly correct and clearly wrong answer
+    test_question = {
+        "question_id": "test_q1",
+        "domain": "Methods",
+        "question": "What study design was used?",
+        "ideal_answer": "A randomized controlled trial with parallel groups.",
+        "scoring_criteria": "Full credit: identifies RCT with parallel groups. Partial: identifies RCT only. Zero: wrong design or vague.",
+        "max_points": 3,
     }
 
+    correct_answer = {"question_id": "test_q1", "answer": "The study used a randomized controlled trial with parallel group allocation."}
+    wrong_answer = {"question_id": "test_q1", "answer": "This was a retrospective cohort study using administrative databases."}
 
-def _gather_judge_context(conn: sqlite3.Connection, skill_id: int,
-                           limit: int = 5) -> dict:
-    """Collect recent judge performance data."""
-    challenges = conn.execute(
-        """SELECT c.id, c.theme, c.judge_score, c.completed_at
-           FROM challenges c
-           WHERE c.judge_skill_id=? AND c.status='complete' AND c.kind='daily'
-           ORDER BY c.completed_at DESC LIMIT ?""",
-        (skill_id, limit),
-    ).fetchall()
+    grading_items_correct = [{**test_question, "llm_answer": correct_answer["answer"]}]
+    grading_items_wrong = [{**test_question, "llm_answer": wrong_answer["answer"]}]
 
-    context_items = []
-    for ch in challenges:
-        participants = conn.execute(
-            """SELECT model_id, grade_json, judge_time_ms
-               FROM model_participants
-               WHERE challenge_id=? AND status='graded'""",
-            (ch["id"],),
-        ).fetchall()
+    try:
+        # Grade the correct answer
+        raw_c = call_anthropic(
+            [{"role": "user", "content": f"Grade this response:\n{json.dumps(grading_items_correct, indent=2)}"}],
+            prompt_text, 1024,
+        )
+        grades_c = parse_json_response(raw_c)
+        score_c = grades_c.get("grades", [{}])[0].get("score", 0) if grades_c.get("grades") else 0
 
-        # Look for inconsistencies in grading
-        grade_patterns = []
-        for p in participants:
-            try:
-                grades = json.loads(p["grade_json"] or "{}")
-                for g in grades.get("grades", []):
-                    grade_patterns.append({
-                        "question_id": g.get("question_id"),
-                        "score": g.get("score", 0),
-                        "max_points": g.get("max_points", 1),
-                        "reasoning_length": len(g.get("reasoning", "")),
-                    })
-            except Exception:
-                pass
+        # Grade the wrong answer
+        raw_w = call_anthropic(
+            [{"role": "user", "content": f"Grade this response:\n{json.dumps(grading_items_wrong, indent=2)}"}],
+            prompt_text, 1024,
+        )
+        grades_w = parse_json_response(raw_w)
+        score_w = grades_w.get("grades", [{}])[0].get("score", 0) if grades_w.get("grades") else 0
 
-        context_items.append({
-            "challenge_id": ch["id"],
-            "theme": ch["theme"],
-            "judge_score": ch["judge_score"],
-            "participant_count": len(participants),
-            "total_grades": len(grade_patterns),
-        })
+        # Discrimination: correct should score high (3), wrong should score low (0-1)
+        max_pts = test_question["max_points"]
+        correct_ratio = score_c / max_pts  # should be ~1.0
+        wrong_ratio = score_w / max_pts    # should be ~0.0
+        discrimination = max(0, correct_ratio - wrong_ratio)  # 1.0 = perfect discrimination
 
-    scores = [c["judge_score"] or 0 for c in context_items]
-    return {
-        "challenges_analyzed": len(context_items),
-        "avg_judge_score": round(sum(scores) / len(scores), 4) if scores else 0,
-        "details": context_items,
-    }
+        return discrimination, f"discrimination={discrimination:.3f} (correct={score_c}/{max_pts}, wrong={score_w}/{max_pts})"
+    except Exception as e:
+        return 0.0, f"crash: {e}"
 
 
 # ─────────────────────────────────────────────
-# Improvement logic
+# Meta-Claude: propose prompt modifications
 # ─────────────────────────────────────────────
 
-def should_improve(conn: sqlite3.Connection, agent_type: str) -> bool:
-    """Check if the current active skill has been used for >= IMPROVE_AFTER_N challenges."""
-    skill = get_active_skill(conn, agent_type)
-    return skill.get("times_used", 0) >= IMPROVE_AFTER_N and IMPROVE_AFTER_N > 0
-
-
-META_PROMPT = """You are a prompt engineer improving an AI agent's system prompt based on
-real performance data from a clinical research model-benchmarking platform.
+META_PROMPT = """You are iterating on an AI agent's system prompt, like modifying train.py in an ML experiment loop.
 
 AGENT TYPE: {agent_type}
+CURRENT VERSION: v{version}
+EXPERIMENT HISTORY (most recent first):
+{experiment_log}
 
-CURRENT PROMPT (version {version}):
+CURRENT PROMPT:
+```
 {current_prompt}
+```
 
-RECENT PERFORMANCE DATA:
-{context_json}
+YOUR TASK:
+Propose a SINGLE focused modification to the prompt. Like a researcher modifying one hyperparameter at a time:
+- Change ONE thing (not five things at once)
+- If the last experiment improved the metric, try a similar direction (momentum)
+- If the last experiment hurt, revert that direction and try something different
+- If you're stuck, try something more radical
 
-INSTRUCTIONS:
-1. Analyze which aspects of the current prompt produce high-quality results.
-2. Identify weaknesses based on the performance data:
-   - For generators: questions classified as "too_easy" (all models got right),
-     "too_hard" (none got right), or "unverifiable" (judge flagged as not verifiable
-     from the paper) are problems. "discriminating" questions are good.
-   - For judges: low consistency scores indicate the grading criteria in the prompt
-     are ambiguous. High scores indicate clear, reproducible grading.
-3. Propose a REVISED version of the prompt that:
-   - Preserves what works well (don't change things that are performing)
-   - Addresses identified weaknesses with SPECIFIC instruction changes
-   - Maintains the EXACT SAME JSON output format (do not change the schema)
-   - Is a COMPLETE replacement prompt (not a diff or patch)
-4. If performance is already excellent (avg score > 0.8), make only minor tweaks.
-   Don't fix what isn't broken.
+SIMPLICITY CRITERION (from autoresearch):
+"All else being equal, simpler is better. A small improvement that adds ugly complexity is not worth it.
+Removing something and getting equal or better results is a great outcome — that's a simplification win."
 
-Return ONLY the revised prompt text. No preamble, no explanation, no markdown fences."""
+WHAT TO MODIFY: {modification_hints}
+
+Return ONLY the complete revised prompt text. No explanation, no preamble, no markdown fences.
+Just the prompt, ready to be used as-is."""
 
 
-def propose_improved_skill(conn: sqlite3.Connection, agent_type: str) -> str | None:
-    """Call meta-Claude to propose a modified skill prompt.
-    Returns the new prompt text, or None on failure."""
-    skill = get_active_skill(conn, agent_type)
+GENERATOR_HINTS = """Consider:
+- Adding/removing specific question-design instructions
+- Changing how you describe what makes a "good" vs "bad" question
+- Adjusting the emphasis on verifiability vs difficulty vs discrimination
+- Simplifying verbose instructions that may confuse the model
+- Adding concrete examples of good questions (few-shot)
+- Removing instructions that don't seem to help"""
 
-    if agent_type == "generator":
-        context = _gather_generator_context(conn, skill["id"])
-    else:
-        context = _gather_judge_context(conn, skill["id"])
+JUDGE_HINTS = """Consider:
+- Making scoring criteria interpretation more specific
+- Adjusting strictness level (too strict = low scores for good answers; too lenient = high scores for bad)
+- Changing how partial credit is described
+- Simplifying the grading rubric if it's overspecified
+- Adding examples of what constitutes full/partial/zero credit
+- Adjusting the rubric_validity assessment instructions"""
+
+
+def _get_experiment_log(conn: sqlite3.Connection, agent_type: str,
+                        limit: int = 10) -> str:
+    """Format recent experiments as a readable log (like results.tsv)."""
+    rows = conn.execute(
+        """SELECT skill_version, metric_before, metric_after, status, description
+           FROM skill_experiments WHERE agent_type=?
+           ORDER BY created_at DESC LIMIT ?""",
+        (agent_type, limit),
+    ).fetchall()
+    if not rows:
+        return "(no previous experiments)"
+    lines = ["version | before | after  | status  | description"]
+    lines.append("--------|--------|--------|---------|------------")
+    for r in rows:
+        lines.append(
+            f"v{r['skill_version']:>5} | {(r['metric_before'] or 0):.4f} | {(r['metric_after'] or 0):.4f} | "
+            f"{r['status']:<7} | {(r['description'] or '')[:60]}"
+        )
+    return "\n".join(lines)
+
+
+def _propose_modification(conn: sqlite3.Connection, agent_type: str,
+                          current_prompt: str, version: int) -> str | None:
+    """Ask meta-Claude to propose a single focused modification."""
+    experiment_log = _get_experiment_log(conn, agent_type)
+    hints = GENERATOR_HINTS if agent_type == "generator" else JUDGE_HINTS
 
     prompt = META_PROMPT.format(
         agent_type=agent_type,
-        version=skill["version"],
-        current_prompt=skill["prompt_text"],
-        context_json=json.dumps(context, indent=2),
+        version=version,
+        experiment_log=experiment_log,
+        current_prompt=current_prompt,
+        modification_hints=hints,
     )
 
     try:
         new_prompt = call_anthropic(
-            messages=[{"role": "user", "content": prompt}],
-            system="You are an expert prompt engineer. Return only the revised prompt text.",
-            max_tokens=4096,
+            [{"role": "user", "content": prompt}],
+            "You are an expert prompt engineer. Return only the revised prompt text.",
+            4096,
         )
         new_prompt = new_prompt.strip()
         if len(new_prompt) < 100:
@@ -240,163 +304,200 @@ def propose_improved_skill(conn: sqlite3.Connection, agent_type: str) -> str | N
             return None
         return new_prompt
     except Exception as e:
-        logger.error("propose_improved_skill failed: %s", e)
+        logger.error("Prompt proposal failed: %s", e)
         return None
 
 
-def deploy_new_skill(conn: sqlite3.Connection, agent_type: str,
-                     new_prompt: str) -> int:
-    """Insert a new skill version and set it as active. Deactivates previous."""
-    versions = list_skill_versions(conn, agent_type)
-    max_version = max((v["version"] for v in versions), default=0)
-    new_version = max_version + 1
-
-    with conn:
-        # Deactivate all existing versions for this agent
-        conn.execute(
-            "UPDATE agent_skills SET active=0 WHERE agent_type=?",
-            (agent_type,),
-        )
-        # Insert new version as active
-        cur = conn.execute(
-            """INSERT INTO agent_skills (agent_type, version, prompt_text, active)
-               VALUES (?,?,?,1)""",
-            (agent_type, new_version, new_prompt),
-        )
-        conn.commit()
-
-    new_id = cur.lastrowid
-    logger.info(
-        "Deployed new %s skill v%d (id=%d). Previous versions deactivated.",
-        agent_type, new_version, new_id,
-    )
-    return new_id
-
-
-def check_rollback(conn: sqlite3.Connection, agent_type: str) -> dict:
-    """Check if the current active skill should be rolled back.
-    Returns {action: 'keep'|'rollback'|'wait', reason: str}."""
-    versions = list_skill_versions(conn, agent_type)
-    if len(versions) < 2:
-        return {"action": "keep", "reason": "only one version exists"}
-
-    current = next((v for v in versions if v["active"]), None)
-    if not current:
-        return {"action": "keep", "reason": "no active version"}
-
-    # Has the current version been used enough to evaluate?
-    if current["times_used"] < ROLLBACK_AFTER_M:
-        return {"action": "wait", "reason": f"need {ROLLBACK_AFTER_M - current['times_used']} more challenges before evaluation"}
-
-    # Find the previous version (highest version that isn't current)
-    previous = next((v for v in versions if v["version"] < current["version"] and v["times_used"] > 0), None)
-    if not previous:
-        return {"action": "keep", "reason": "no previous version to compare against"}
-
-    # Compare performance
-    if previous["avg_performance"] <= 0:
-        return {"action": "keep", "reason": "previous version has no performance data"}
-
-    ratio = current["avg_performance"] / previous["avg_performance"] if previous["avg_performance"] > 0 else 1.0
-
-    if ratio < ROLLBACK_THRESHOLD:
-        return {
-            "action": "rollback",
-            "reason": f"v{current['version']} avg_performance={current['avg_performance']:.4f} is {ratio:.1%} of v{previous['version']} ({previous['avg_performance']:.4f}), below {ROLLBACK_THRESHOLD:.0%} threshold",
-            "current_version": current["version"],
-            "previous_version": previous["version"],
-        }
-
-    return {
-        "action": "keep",
-        "reason": f"v{current['version']} ({current['avg_performance']:.4f}) at {ratio:.1%} of v{previous['version']} ({previous['avg_performance']:.4f}), above threshold",
-    }
-
-
-def rollback_skill(conn: sqlite3.Connection, agent_type: str,
-                   target_version: int) -> None:
-    """Rollback to a specific version."""
-    with conn:
-        conn.execute("UPDATE agent_skills SET active=0 WHERE agent_type=?", (agent_type,))
-        conn.execute(
-            "UPDATE agent_skills SET active=1 WHERE agent_type=? AND version=?",
-            (agent_type, target_version),
-        )
-        conn.commit()
-    logger.info("Rolled back %s skill to v%d", agent_type, target_version)
-
-
 # ─────────────────────────────────────────────
-# Main entry point (called after daily challenge completes)
+# The experiment loop (autoresearch-style)
 # ─────────────────────────────────────────────
 
-def maybe_improve_after_challenge(get_db_fn, agent_type: str,
-                                  vault_dir: Path) -> None:
-    """Check if improvement or rollback is needed. Called after each daily challenge."""
+def run_experiment_loop(get_db_fn, agent_type: str, papers_b64: list[dict],
+                        theme: str, vault_dir: Path) -> dict:
+    """
+    The autoresearch-style experiment loop. Called after each daily challenge.
+
+    LOOP (up to EXPERIMENT_BUDGET times):
+      1. Get current prompt (the "train.py")
+      2. Measure baseline metric with current prompt
+      3. Meta-Claude proposes a modification
+      4. Measure new metric with modified prompt
+      5. If improved → KEEP (update DB, advance version)
+         If not → DISCARD (revert, log, move on)
+      6. Log the experiment
+      7. Repeat
+
+    Returns summary dict with experiment results.
+    """
+    if not IMPROVEMENT_ENABLED:
+        return {"status": "disabled"}
+    if not papers_b64:
+        return {"status": "no_papers"}
+
     conn = get_db_fn()
+    results = []
+
     try:
-        # Step 1: Check for rollback of recently deployed skill
-        rb = check_rollback(conn, agent_type)
-        if rb["action"] == "rollback":
-            logger.info("ROLLBACK triggered for %s: %s", agent_type, rb["reason"])
-            rollback_skill(conn, agent_type, rb["previous_version"])
-            _write_vault(conn, agent_type, vault_dir)
-            return
-        elif rb["action"] == "wait":
-            logger.info("Skill %s evaluation pending: %s", agent_type, rb["reason"])
-            return
+        for experiment_num in range(EXPERIMENT_BUDGET):
+            skill = get_active_skill(conn, agent_type)
+            current_prompt = skill["prompt_text"]
+            current_version = skill["version"]
 
-        # Step 2: Check if improvement is due
-        if not should_improve(conn, agent_type):
-            return
+            logger.info(
+                "Experiment %d/%d for %s (current: v%d)",
+                experiment_num + 1, EXPERIMENT_BUDGET, agent_type, current_version,
+            )
 
-        logger.info("Triggering self-improvement for %s skill", agent_type)
+            # Step 1: Baseline metric with current prompt
+            baseline_metric, baseline_desc = _lightweight_eval(
+                current_prompt, papers_b64, theme, agent_type,
+            )
+            logger.info("  Baseline: %.4f (%s)", baseline_metric, baseline_desc[:80])
 
-        # Step 3: Propose new skill
-        new_prompt = propose_improved_skill(conn, agent_type)
-        if not new_prompt:
-            logger.warning("No improvement proposed for %s — meta-Claude returned nothing", agent_type)
-            return
+            # Step 2: Propose modification
+            new_prompt = _propose_modification(conn, agent_type, current_prompt, current_version)
+            if not new_prompt:
+                _log_experiment(conn, agent_type, current_version, baseline_metric, 0, "crash",
+                                "meta-Claude returned no proposal")
+                results.append({"experiment": experiment_num + 1, "status": "crash", "reason": "no proposal"})
+                continue
 
-        # Step 4: Deploy
-        new_id = deploy_new_skill(conn, agent_type, new_prompt)
-        logger.info("Deployed improved %s skill (id=%d). Monitoring begins.", agent_type, new_id)
+            # Step 3: Evaluate modified prompt
+            new_metric, new_desc = _lightweight_eval(
+                new_prompt, papers_b64, theme, agent_type,
+            )
+            logger.info("  Candidate: %.4f (%s)", new_metric, new_desc[:80])
 
-        # Step 5: Write to Obsidian
-        _write_vault(conn, agent_type, vault_dir)
+            # Step 4: Keep or discard (binary, like autoresearch)
+            if new_metric > baseline_metric:
+                # KEEP — deploy the new version
+                versions = list_skill_versions(conn, agent_type)
+                max_ver = max((v["version"] for v in versions), default=0)
+                new_version = max_ver + 1
+
+                with conn:
+                    conn.execute("UPDATE agent_skills SET active=0 WHERE agent_type=?", (agent_type,))
+                    conn.execute(
+                        "INSERT INTO agent_skills (agent_type, version, prompt_text, active) VALUES (?,?,?,1)",
+                        (agent_type, new_version, new_prompt),
+                    )
+                    conn.commit()
+
+                improvement = new_metric - baseline_metric
+                desc = f"KEEP: {baseline_metric:.4f} → {new_metric:.4f} (+{improvement:.4f}). {new_desc[:100]}"
+                _log_experiment(conn, agent_type, new_version, baseline_metric, new_metric, "keep", desc, new_prompt[:500])
+                results.append({"experiment": experiment_num + 1, "status": "keep",
+                                "before": baseline_metric, "after": new_metric, "version": new_version})
+                logger.info("  → KEEP (v%d, +%.4f)", new_version, improvement)
+
+            else:
+                # DISCARD — revert, don't change anything
+                desc = f"DISCARD: {baseline_metric:.4f} → {new_metric:.4f}. {new_desc[:100]}"
+                _log_experiment(conn, agent_type, current_version, baseline_metric, new_metric, "discard", desc, new_prompt[:500])
+                results.append({"experiment": experiment_num + 1, "status": "discard",
+                                "before": baseline_metric, "after": new_metric})
+                logger.info("  → DISCARD (no improvement)")
+
+        # Write final skill state to Obsidian
+        try:
+            active = get_active_skill(conn, agent_type)
+            versions = list_skill_versions(conn, agent_type)
+            write_skill_note(vault_dir, agent_type, active, versions)
+        except Exception as e:
+            logger.error("Obsidian write failed: %s", e)
 
     except Exception as e:
-        logger.error("Self-improvement failed for %s: %s", agent_type, e, exc_info=True)
+        logger.error("Experiment loop failed for %s: %s", agent_type, e, exc_info=True)
+        results.append({"status": "error", "error": str(e)})
     finally:
         conn.close()
 
+    kept = sum(1 for r in results if r.get("status") == "keep")
+    discarded = sum(1 for r in results if r.get("status") == "discard")
+    logger.info(
+        "Experiment loop complete for %s: %d experiments, %d kept, %d discarded",
+        agent_type, len(results), kept, discarded,
+    )
+    return {"agent_type": agent_type, "experiments": results, "kept": kept, "discarded": discarded}
 
-def _write_vault(conn: sqlite3.Connection, agent_type: str, vault_dir: Path) -> None:
-    """Update the Obsidian skill note."""
-    try:
-        active = get_active_skill(conn, agent_type)
-        versions = list_skill_versions(conn, agent_type)
-        write_skill_note(vault_dir, agent_type, active, versions)
-    except Exception as e:
-        logger.error("Failed to write skill vault note: %s", e)
 
+def maybe_improve_after_challenge(get_db_fn, agent_type: str,
+                                  vault_dir: Path,
+                                  papers_b64: list[dict] | None = None,
+                                  theme: str = "") -> None:
+    """Entry point called after each daily challenge completes.
+    If papers_b64 is provided, runs the experiment loop immediately.
+    Otherwise, loads papers from the most recent daily challenge."""
+    if not IMPROVEMENT_ENABLED:
+        return
+
+    if not papers_b64:
+        # Load papers from the most recent completed daily challenge
+        import base64
+        conn = get_db_fn()
+        try:
+            latest = conn.execute(
+                """SELECT c.id, c.theme FROM challenges c
+                   WHERE c.kind='daily' AND c.status='complete'
+                   ORDER BY c.completed_at DESC LIMIT 1"""
+            ).fetchone()
+            if not latest:
+                return
+            theme = latest["theme"] or ""
+            paper_rows = conn.execute(
+                """SELECT p.filename, p.disk_filename
+                   FROM papers p JOIN challenge_papers cp ON cp.paper_id = p.id
+                   WHERE cp.challenge_id=? LIMIT 3""",
+                (latest["id"],),
+            ).fetchall()
+            # We need the PAPERS_DIR — import from config
+            import os
+            from pathlib import Path as _P
+            data_dir = _P(os.environ.get("RENDER_DATA_DIR", _P(__file__).parent.parent))
+            papers_dir = data_dir / "papers"
+            papers_b64 = []
+            for r in paper_rows:
+                path = papers_dir / (r["disk_filename"] or "")
+                if path.exists():
+                    b64 = base64.b64encode(path.read_bytes()).decode()
+                    papers_b64.append({"filename": r["filename"], "b64": b64})
+        finally:
+            conn.close()
+
+    if not papers_b64:
+        return
+
+    run_experiment_loop(get_db_fn, agent_type, papers_b64, theme, vault_dir)
+
+
+# ─────────────────────────────────────────────
+# Admin status
+# ─────────────────────────────────────────────
 
 def get_improvement_status(conn: sqlite3.Connection, agent_type: str) -> dict:
     """Return current improvement status for the admin panel."""
     skill = get_active_skill(conn, agent_type)
     versions = list_skill_versions(conn, agent_type)
-    rb = check_rollback(conn, agent_type)
+
+    # Recent experiments
+    experiments = conn.execute(
+        """SELECT skill_version, metric_before, metric_after, status, description, created_at
+           FROM skill_experiments WHERE agent_type=?
+           ORDER BY created_at DESC LIMIT 20""",
+        (agent_type,),
+    ).fetchall()
+
+    kept = sum(1 for e in experiments if e["status"] == "keep")
+    discarded = sum(1 for e in experiments if e["status"] == "discard")
+    crashed = sum(1 for e in experiments if e["status"] == "crash")
 
     return {
         "agent_type": agent_type,
         "active_version": skill["version"],
-        "active_skill_id": skill["id"],
         "total_versions": len(versions),
-        "times_used_current": next((v["times_used"] for v in versions if v["active"]), 0),
-        "avg_performance_current": next((v["avg_performance"] for v in versions if v["active"]), 0),
-        "improve_threshold": IMPROVE_AFTER_N,
-        "rollback_threshold": ROLLBACK_AFTER_M,
-        "rollback_status": rb,
-        "improvement_due": should_improve(conn, agent_type),
+        "experiment_budget": EXPERIMENT_BUDGET,
+        "improvement_enabled": IMPROVEMENT_ENABLED,
+        "recent_experiments": [dict(e) for e in experiments],
+        "experiment_summary": {"total": len(experiments), "kept": kept, "discarded": discarded, "crashed": crashed},
         "versions": versions,
     }
