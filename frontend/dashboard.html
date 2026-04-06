@@ -237,7 +237,7 @@ async function loadProjects() {
   if (!res.ok) return;
   const projects = await res.json();
 
-  const own = projects.filter(p => p.role === 'owner');
+  const own = projects.filter(p => p.role === 'admin');
   const shared = projects.filter(p => p.role === 'member');
 
   document.getElementById('own-folders').innerHTML = own.map(p => `
@@ -290,31 +290,23 @@ function toggleNewProject() {
 async function createProject() {
   const input = document.getElementById('new-project-input');
   const name = (input ? input.value : '').trim();
-  if (!name) {
-    alert('Please enter a project name.');
-    return;
-  }
-  console.log('Creating project:', name);
+  if (!name) return;
   try {
     const res = await fetch('/api/projects', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: name }),
+      body: JSON.stringify({ name }),
     });
-    console.log('Response status:', res.status);
-    const body = await res.json().catch(() => null);
-    console.log('Response body:', body);
     if (!res.ok) {
-      alert('Failed to create project: ' + (body && body.detail ? body.detail : res.statusText));
+      const body = await res.json().catch(() => ({}));
+      alert('Failed to create project: ' + (body.detail || res.statusText));
       return;
     }
-    alert('Project "' + name + '" created!');
     input.value = '';
     document.getElementById('new-project-form').classList.remove('open');
     loadProjects();
   } catch (e) {
-    console.error('createProject error:', e);
-    alert('Network error creating project: ' + e.message);
+    alert('Error: ' + e.message);
   }
 }
 
