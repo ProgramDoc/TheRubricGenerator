@@ -174,6 +174,17 @@ tbody tr:last-child td { border-bottom: none; }
       <div class="loading">Loading users…</div>
     </div>
   </div>
+
+  <!-- MODEL APPROVAL QUEUE -->
+  <div class="card">
+    <div class="card-header">
+      <h2>Model Approval Queue (Daily Challenge)</h2>
+      <span class="hint">Models requesting to participate in daily challenges</span>
+    </div>
+    <div id="approval-container">
+      <div class="loading">Loading…</div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -266,7 +277,47 @@ function escapeHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
+async function loadPendingModels() {
+  try {
+    const res = await fetch('/api/admin/models/pending');
+    if (!res.ok) return;
+    const models = await res.json();
+    const container = document.getElementById('approval-container');
+    if (models.length === 0) {
+      container.innerHTML = '<div class="loading">No models pending approval.</div>';
+      return;
+    }
+    const rows = models.map(m => `
+      <tr>
+        <td><strong>${escapeHtml(m.name)}</strong><div style="color:var(--muted);font-size:10px;">${escapeHtml(m.version)}</div></td>
+        <td>${escapeHtml(m.creator_name || m.creator_email || '—')}</td>
+        <td>${escapeHtml(m.provider || '—')}</td>
+        <td>${escapeHtml(m.organization || '—')}</td>
+        <td>${fmtDate(m.created_at)}</td>
+        <td>
+          <button onclick="approveModel(${m.id})" style="background:#16a34a;color:#fff;border:none;padding:4px 10px;border-radius:4px;font-size:11px;font-weight:700;cursor:pointer;margin-right:4px;">Approve</button>
+          <button onclick="rejectModel(${m.id})" style="background:#dc2626;color:#fff;border:none;padding:4px 10px;border-radius:4px;font-size:11px;font-weight:700;cursor:pointer;">Reject</button>
+        </td>
+      </tr>
+    `).join('');
+    container.innerHTML = `<table><thead><tr><th>Model</th><th>Creator</th><th>Provider</th><th>Organization</th><th>Registered</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table>`;
+  } catch (e) { console.error(e); }
+}
+
+async function approveModel(id) {
+  if (!confirm('Approve this model for daily challenges?')) return;
+  const res = await fetch(`/api/admin/models/${id}/approve-daily`, { method: 'POST' });
+  if (res.ok) { loadPendingModels(); alert('Model approved.'); }
+}
+
+async function rejectModel(id) {
+  if (!confirm('Reject this model from daily challenges?')) return;
+  const res = await fetch(`/api/admin/models/${id}/reject-daily`, { method: 'POST' });
+  if (res.ok) { loadPendingModels(); alert('Model rejected.'); }
+}
+
 loadUsers();
+loadPendingModels();
 </script>
 </body>
 </html>

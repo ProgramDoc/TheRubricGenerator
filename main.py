@@ -301,6 +301,25 @@ def init_db() -> None:
         conn.executescript(PROMO_TABLES_SQL)
         conn.executescript(AGREEMENTS_TABLE_SQL)
         conn.executescript(EXPERIMENTS_TABLE_SQL)
+        # Phase 5: competition submissions
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS challenge_submissions (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                challenge_id        INTEGER NOT NULL REFERENCES challenges(id) ON DELETE CASCADE,
+                registered_model_id INTEGER NOT NULL REFERENCES registered_models(id) ON DELETE CASCADE,
+                answer_json         TEXT,
+                submitted_at        TEXT,
+                grade_json          TEXT,
+                judge_time_ms       INTEGER,
+                accuracy            REAL    DEFAULT 0,
+                points              INTEGER DEFAULT 0,
+                status              TEXT    DEFAULT 'open' CHECK(status IN ('open','submitted','grading','graded','failed','expired')),
+                created_at          TEXT    DEFAULT (datetime('now')),
+                UNIQUE(challenge_id, registered_model_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_cs_challenge ON challenge_submissions(challenge_id);
+            CREATE INDEX IF NOT EXISTS idx_cs_model ON challenge_submissions(registered_model_id);
+        """)
         conn.commit()
     _migrate_challenges_columns(conn)
     seed_v1_skills(conn)
@@ -388,6 +407,8 @@ def _migrate_challenges_columns(conn) -> None:
             conn.execute("ALTER TABLE registered_models ADD COLUMN daily_admin_approved INTEGER DEFAULT 0")
         if "agreement_signed_at" not in rm_cols:
             conn.execute("ALTER TABLE registered_models ADD COLUMN agreement_signed_at TEXT")
+        if "model_api_key" not in rm_cols:
+            conn.execute("ALTER TABLE registered_models ADD COLUMN model_api_key TEXT UNIQUE")
         conn.commit()
     # Phase 3.5: role on project_members
     pm_cols = {r["name"] for r in conn.execute("PRAGMA table_info(project_members)").fetchall()}
@@ -1759,6 +1780,343 @@ def api_agreements_status(rubricgen_session: str | None = Cookie(default=None)):
     conn = get_db()
     try:
         return agree.get_user_agreements_status(conn, user["id"])
+    finally:
+        conn.close()
+
+
+# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# Competition API (Phase 5: external model submissions)
+# ─────────────────────────────────────────────
+
+SUBMISSION_WINDOW_HOURS = int(os.environ.get("SUBMISSION_WINDOW_HOURS", "24"))
+
+
+def _auth_model_key(request: Request, conn: sqlite3.Connection) -> dict:
+    """Authenticate a request via X-Model-Key header. Returns the registered model dict."""
+    api_key = request.headers.get("X-Model-Key", "").strip()
+    if not api_key:
+        raise HTTPException(401, "Missing X-Model-Key header")
+    model = mreg.get_model_by_api_key(conn, api_key)
+    if not model:
+        raise HTTPException(401, "Invalid model API key")
+    return model
+
+
+@app.get("/api/compete/challenges")
+def compete_list_challenges(request: Request):
+    """List open challenges this model can participate in."""
+    conn = get_db()
+    try:
+        model = _auth_model_key(request, conn)
+        if not model.get("daily_admin_approved"):
+            raise HTTPException(403, "Model not approved for daily challenges")
+        rows = conn.execute(
+            """SELECT c.id, c.title, c.theme, c.kind, c.status, c.created_at,
+                      cs.status AS submission_status
+               FROM challenges c
+               LEFT JOIN challenge_submissions cs
+                   ON cs.challenge_id = c.id AND cs.registered_model_id = ?
+               WHERE c.kind = 'daily' AND c.status = 'complete'
+               ORDER BY c.created_at DESC LIMIT 30""",
+            (model["id"],),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+@app.get("/api/compete/{challenge_id}/questions")
+def compete_get_questions(challenge_id: int, request: Request):
+    """Fetch challenge questions (ideal answers stripped for fairness)."""
+    conn = get_db()
+    try:
+        model = _auth_model_key(request, conn)
+        if not model.get("daily_admin_approved"):
+            raise HTTPException(403, "Model not approved for daily challenges")
+
+        challenge = conn.execute("SELECT * FROM challenges WHERE id=?", (challenge_id,)).fetchone()
+        if not challenge:
+            raise HTTPException(404, "Challenge not found")
+
+        rubric_row = conn.execute(
+            "SELECT rubric_json FROM challenge_rubrics WHERE challenge_id=?",
+            (challenge_id,),
+        ).fetchone()
+        if not rubric_row:
+            raise HTTPException(404, "Rubric not yet generated")
+
+        rubric = json.loads(rubric_row["rubric_json"] or "{}")
+
+        # Strip ideal answers and scoring criteria — external models should not see them
+        questions_safe = []
+        for q in rubric.get("questions", []):
+            questions_safe.append({
+                "id": q.get("id"),
+                "domain": q.get("domain", ""),
+                "paper_ref": q.get("paper_ref", ""),
+                "question": q.get("question", ""),
+                "max_points": q.get("max_points", 1),
+            })
+
+        # Ensure a submission slot exists
+        conn.execute(
+            """INSERT OR IGNORE INTO challenge_submissions
+               (challenge_id, registered_model_id, status)
+               VALUES (?,?,?)""",
+            (challenge_id, model["id"], "open"),
+        )
+        conn.commit()
+
+        return {
+            "challenge_id": challenge_id,
+            "title": challenge.get("title", ""),
+            "theme": challenge.get("theme", ""),
+            "question_count": len(questions_safe),
+            "questions": questions_safe,
+        }
+    finally:
+        conn.close()
+
+
+class CompeteSubmitPayload(BaseModel):
+    responses: list[dict]
+
+
+@app.post("/api/compete/{challenge_id}/submit")
+def compete_submit(challenge_id: int, body: CompeteSubmitPayload, request: Request):
+    """Submit model answers for a challenge."""
+    conn = get_db()
+    try:
+        model = _auth_model_key(request, conn)
+
+        # Check submission exists and is open
+        sub = conn.execute(
+            "SELECT id, status FROM challenge_submissions WHERE challenge_id=? AND registered_model_id=?",
+            (challenge_id, model["id"]),
+        ).fetchone()
+        if not sub:
+            raise HTTPException(404, "No submission slot — fetch questions first")
+        if sub["status"] not in ("open", "submitted"):
+            raise HTTPException(409, f"Submission is {sub['status']} — cannot resubmit")
+
+        # Validate response format
+        if not body.responses:
+            raise HTTPException(400, "responses array is empty")
+
+        answer_json = json.dumps({"responses": [dict(r) for r in body.responses]})
+
+        with conn:
+            conn.execute(
+                """UPDATE challenge_submissions
+                   SET answer_json=?, submitted_at=datetime('now'), status='submitted'
+                   WHERE id=?""",
+                (answer_json, sub["id"]),
+            )
+            conn.commit()
+
+        return {"ok": True, "submission_id": sub["id"], "status": "submitted",
+                "message": "Answers received. Grading will occur after the submission window closes."}
+    finally:
+        conn.close()
+
+
+@app.get("/api/compete/{challenge_id}/results")
+def compete_get_results(challenge_id: int, request: Request):
+    """View grading results for this model's submission."""
+    conn = get_db()
+    try:
+        model = _auth_model_key(request, conn)
+        sub = conn.execute(
+            "SELECT * FROM challenge_submissions WHERE challenge_id=? AND registered_model_id=?",
+            (challenge_id, model["id"]),
+        ).fetchone()
+        if not sub:
+            raise HTTPException(404, "No submission found")
+        result = dict(sub)
+        try:
+            result["grade_data"] = json.loads(result.pop("grade_json") or "{}")
+        except Exception:
+            result["grade_data"] = {}
+        try:
+            result["answer_data"] = json.loads(result.pop("answer_json") or "{}")
+        except Exception:
+            result["answer_data"] = {}
+        return result
+    finally:
+        conn.close()
+
+
+# ─── Admin: model approval for daily challenges ───
+
+@app.get("/api/admin/models/pending")
+def admin_pending_models(rubricgen_session: str | None = Cookie(default=None)):
+    """List models that have opted into daily but not yet been approved."""
+    require_admin(rubricgen_session)
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT rm.*, u.display_name AS creator_name, u.email AS creator_email
+           FROM registered_models rm
+           LEFT JOIN users u ON u.id = rm.created_by
+           WHERE rm.active_for_daily = 1 AND rm.daily_admin_approved = 0
+           ORDER BY rm.created_at DESC"""
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@app.post("/api/admin/models/{model_id}/approve-daily")
+def admin_approve_model(model_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    require_admin(rubricgen_session)
+    conn = get_db()
+    with conn:
+        conn.execute(
+            "UPDATE registered_models SET daily_admin_approved=1 WHERE id=?",
+            (model_id,),
+        )
+        conn.commit()
+    conn.close()
+    return {"ok": True, "message": "Model approved for daily challenges"}
+
+
+@app.post("/api/admin/models/{model_id}/reject-daily")
+def admin_reject_model(model_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    require_admin(rubricgen_session)
+    conn = get_db()
+    with conn:
+        conn.execute(
+            "UPDATE registered_models SET active_for_daily=0, daily_admin_approved=0 WHERE id=?",
+            (model_id,),
+        )
+        conn.commit()
+    conn.close()
+    return {"ok": True, "message": "Model rejected from daily challenges"}
+
+
+# ─── User: opt in/out of daily ───
+
+@app.post("/api/models/{model_id}/opt-in-daily")
+def model_opt_in_daily(model_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Model owner opts into daily challenges (pending admin approval)."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    row = conn.execute("SELECT created_by, agreement_signed_at FROM registered_models WHERE id=?", (model_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "Model not found")
+    if row["created_by"] != user["id"]:
+        conn.close()
+        raise HTTPException(403, "Only the model creator can opt into daily challenges")
+    if not row["agreement_signed_at"]:
+        conn.close()
+        raise HTTPException(400, "Must accept the Model Publishing Agreement before opting into daily challenges")
+    with conn:
+        conn.execute("UPDATE registered_models SET active_for_daily=1 WHERE id=?", (model_id,))
+        conn.commit()
+    conn.close()
+    return {"ok": True, "status": "pending_approval"}
+
+
+@app.post("/api/models/{model_id}/opt-out-daily")
+def model_opt_out_daily(model_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    row = conn.execute("SELECT created_by FROM registered_models WHERE id=?", (model_id,)).fetchone()
+    if not row or row["created_by"] != user["id"]:
+        conn.close()
+        raise HTTPException(403, "Only the model creator can opt out")
+    with conn:
+        conn.execute(
+            "UPDATE registered_models SET active_for_daily=0, daily_admin_approved=0 WHERE id=?",
+            (model_id,),
+        )
+        conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@app.post("/api/models/{model_id}/regenerate-key")
+def model_regenerate_key(model_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Regenerate the competition API key for a model."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        new_key = mreg.regenerate_api_key(conn, model_id, user["id"])
+        return {"ok": True, "model_api_key": new_key}
+    finally:
+        conn.close()
+
+
+# ─── Admin: grade external submissions ───
+
+@app.post("/api/admin/challenges/{cid}/grade-submissions")
+def admin_grade_submissions(cid: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Grade all submitted external model answers for a challenge."""
+    require_admin(rubricgen_session)
+    conn = get_db()
+    try:
+        rubric_row = conn.execute(
+            "SELECT rubric_json FROM challenge_rubrics WHERE challenge_id=?", (cid,)
+        ).fetchone()
+        if not rubric_row:
+            raise HTTPException(404, "No rubric for this challenge")
+        rubric = json.loads(rubric_row["rubric_json"] or "{}")
+
+        subs = conn.execute(
+            "SELECT * FROM challenge_submissions WHERE challenge_id=? AND status='submitted'",
+            (cid,),
+        ).fetchall()
+        if not subs:
+            return {"ok": True, "graded": 0, "message": "No submissions to grade"}
+
+        from backend.agents.judge import run_judge_agent
+        from backend.skills import get_active_skill as _get_skill
+        judge_skill = _get_skill(conn, "judge")
+
+        graded_count = 0
+        for sub in subs:
+            try:
+                answers = json.loads(sub["answer_json"] or "{}")
+                with conn:
+                    conn.execute(
+                        "UPDATE challenge_submissions SET status='grading' WHERE id=?",
+                        (sub["id"],),
+                    )
+                    conn.commit()
+
+                grades, judge_ms = run_judge_agent(rubric, answers, judge_skill)
+
+                total = float(grades.get("total_score", 0) or 0)
+                max_s = float(grades.get("max_score", 0) or 0)
+                accuracy = (total / max_s) if max_s > 0 else 0
+
+                # Points: use daily rate (100 per correct)
+                from backend.challenges import DAILY_POINTS_PER_CORRECT
+                correct = sum(
+                    1 for g in grades.get("grades", [])
+                    if g.get("score", 0) >= g.get("max_points", 1)
+                )
+                pts = correct * DAILY_POINTS_PER_CORRECT
+
+                with conn:
+                    conn.execute(
+                        """UPDATE challenge_submissions
+                           SET grade_json=?, judge_time_ms=?, accuracy=?, points=?, status='graded'
+                           WHERE id=?""",
+                        (json.dumps(grades), judge_ms, round(accuracy, 4), pts, sub["id"]),
+                    )
+                    conn.commit()
+                graded_count += 1
+            except Exception as e:
+                logger.error("Grading submission %d failed: %s", sub["id"], e)
+                with conn:
+                    conn.execute(
+                        "UPDATE challenge_submissions SET status='failed' WHERE id=?",
+                        (sub["id"],),
+                    )
+                    conn.commit()
+
+        return {"ok": True, "graded": graded_count}
     finally:
         conn.close()
 

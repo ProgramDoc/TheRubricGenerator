@@ -4,6 +4,7 @@ A registered model represents a model under test (e.g. "MyLab-GPT4o-Finetuned v2
 The name is unique across the platform. Team members are registered users linked
 by email."""
 
+import secrets
 import sqlite3
 from fastapi import HTTPException
 
@@ -64,12 +65,15 @@ def create_registered_model(conn: sqlite3.Connection, creator_user_id: int,
             if row:
                 can_run_map[row["id"]] = 1 if tm.get("can_run") else 0
 
+    # Generate a unique API key for this model (used for competition API auth)
+    model_api_key = f"rg_model_{secrets.token_urlsafe(32)}"
+
     try:
         with conn:
             cur = conn.execute(
-                """INSERT INTO registered_models (name, version, provider, git_repo, organization, created_by)
-                   VALUES (?,?,?,?,?,?)""",
-                (name, version, provider or None, git_repo or None, organization or None, creator_user_id),
+                """INSERT INTO registered_models (name, version, provider, git_repo, organization, created_by, model_api_key)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (name, version, provider or None, git_repo or None, organization or None, creator_user_id, model_api_key),
             )
             model_id = cur.lastrowid
             for uid in team_ids:
@@ -190,6 +194,33 @@ def remove_member(conn: sqlite3.Connection, model_id: int, requester_user_id: in
         )
         conn.commit()
     return get_registered_model(conn, model_id)
+
+
+def get_model_by_api_key(conn: sqlite3.Connection, api_key: str) -> dict | None:
+    """Look up a registered model by its API key (for competition API auth)."""
+    row = conn.execute(
+        """SELECT rm.*, u.display_name AS creator_name, u.email AS creator_email
+           FROM registered_models rm
+           LEFT JOIN users u ON u.id = rm.created_by
+           WHERE rm.model_api_key=?""",
+        (api_key,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def regenerate_api_key(conn: sqlite3.Connection, model_id: int,
+                       requester_user_id: int) -> str:
+    """Regenerate the API key for a model. Creator only."""
+    row = conn.execute("SELECT created_by FROM registered_models WHERE id=?", (model_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Model not found")
+    if row["created_by"] != requester_user_id:
+        raise HTTPException(403, "Only the creator can regenerate the API key")
+    new_key = f"rg_model_{secrets.token_urlsafe(32)}"
+    with conn:
+        conn.execute("UPDATE registered_models SET model_api_key=? WHERE id=?", (new_key, model_id))
+        conn.commit()
+    return new_key
 
 
 def user_can_use_model(conn: sqlite3.Connection, model_id: int, user_id: int) -> bool:

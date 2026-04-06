@@ -208,28 +208,46 @@ async function loadModels() {
     return;
   }
   const rows = models.map(m => {
-    const canDelete = currentUser && m.created_by === currentUser.id;
+    const isOwner = currentUser && m.created_by === currentUser.id;
     const teamHtml = (m.members || []).map(mem =>
-      `<span class="team-chip">${escapeHtml(mem.display_name || mem.email)}</span>`
+      `<span class="team-chip">${escapeHtml(mem.display_name || mem.email)}${mem.can_run ? ' (run)' : ''}</span>`
     ).join('');
+    // Daily status badge
+    let dailyBadge = '';
+    if (m.daily_admin_approved) dailyBadge = '<span style="background:#dcfce7;color:#15803d;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:700;">DAILY APPROVED</span>';
+    else if (m.active_for_daily) dailyBadge = '<span style="background:#fef3c7;color:#a16207;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:700;">PENDING</span>';
+    // API key (only visible to owner)
+    const keyHtml = isOwner && m.model_api_key ? `<code style="font-size:9px;background:#f1f5f9;padding:2px 5px;border-radius:3px;word-break:break-all;">${escapeHtml(m.model_api_key)}</code>` : '';
+    // Actions
+    let actions = '';
+    if (isOwner) {
+      actions += `<button class="btn btn-sm btn-danger" onclick="deleteModel(${m.id}, '${escapeHtml(m.name)}')" style="margin-right:4px;">Delete</button>`;
+      if (!m.active_for_daily) {
+        actions += `<button class="btn btn-sm" onclick="optInDaily(${m.id})" style="background:var(--green);margin-right:4px;">Opt In Daily</button>`;
+      } else {
+        actions += `<button class="btn btn-sm" onclick="optOutDaily(${m.id})" style="background:var(--amber);margin-right:4px;">Opt Out</button>`;
+      }
+      actions += `<button class="btn btn-sm" onclick="regenKey(${m.id})" style="background:var(--muted);font-size:9px;">Regen Key</button>`;
+    }
     return `
       <tr>
         <td>
           <div class="model-name">${escapeHtml(m.name)}</div>
           <div class="model-version">${escapeHtml(m.version)}</div>
+          ${dailyBadge}
         </td>
         <td>${providerBadge(m.provider)}</td>
         <td>${escapeHtml(m.organization || '—')}</td>
         <td><div class="team-chips">${teamHtml}</div></td>
-        <td>${m.git_repo ? `<a href="${escapeHtml(m.git_repo)}" target="_blank" style="color:var(--blue);text-decoration:none;">↗ repo</a>` : '—'}</td>
+        <td>${keyHtml || '—'}</td>
         <td>${fmtDate(m.created_at)}</td>
-        <td>${canDelete ? `<button class="btn btn-sm btn-danger" onclick="deleteModel(${m.id}, '${escapeHtml(m.name)}')">Delete</button>` : ''}</td>
+        <td>${actions}</td>
       </tr>
     `;
   }).join('');
   container.innerHTML = `
     <table>
-      <thead><tr><th>Name / Version</th><th>Provider</th><th>Organization</th><th>Team</th><th>Repo</th><th>Registered</th><th></th></tr></thead>
+      <thead><tr><th>Name / Version</th><th>Provider</th><th>Organization</th><th>Team</th><th>API Key</th><th>Registered</th><th>Actions</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
   `;
@@ -281,6 +299,30 @@ async function deleteModel(id, name) {
     const body = await res.json();
     alert(body.detail || 'Delete failed.');
   }
+}
+
+async function optInDaily(id) {
+  if (!confirm('Opt this model into the Daily AI Researcher Challenge?\n\nYour model will be pending admin approval. Once approved, challenge questions will be available via the Competition API using your model API key.\n\nRequires accepted Model Publishing Agreement.')) return;
+  const res = await fetch(`/api/models/${id}/opt-in-daily`, { method: 'POST' });
+  const body = await res.json();
+  if (!res.ok) { alert(body.detail || 'Failed'); return; }
+  alert('Opted in! Status: Pending Admin Approval.');
+  loadModels();
+}
+
+async function optOutDaily(id) {
+  if (!confirm('Opt out of daily challenges? Your model will no longer receive daily challenge questions.')) return;
+  const res = await fetch(`/api/models/${id}/opt-out-daily`, { method: 'POST' });
+  if (res.ok) loadModels();
+}
+
+async function regenKey(id) {
+  if (!confirm('Regenerate the API key? The old key will stop working immediately.')) return;
+  const res = await fetch(`/api/models/${id}/regenerate-key`, { method: 'POST' });
+  const body = await res.json();
+  if (!res.ok) { alert(body.detail || 'Failed'); return; }
+  alert('New API key: ' + body.model_api_key + '\n\nCopy this key — it authenticates your model for the Competition API.');
+  loadModels();
 }
 
 (async () => {
