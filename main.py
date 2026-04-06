@@ -408,7 +408,8 @@ def _migrate_challenges_columns(conn) -> None:
         if "agreement_signed_at" not in rm_cols:
             conn.execute("ALTER TABLE registered_models ADD COLUMN agreement_signed_at TEXT")
         if "model_api_key" not in rm_cols:
-            conn.execute("ALTER TABLE registered_models ADD COLUMN model_api_key TEXT UNIQUE")
+            conn.execute("ALTER TABLE registered_models ADD COLUMN model_api_key TEXT")
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_rm_api_key ON registered_models(model_api_key)")
         conn.commit()
     # Phase 3.5: role on project_members
     pm_cols = {r["name"] for r in conn.execute("PRAGMA table_info(project_members)").fetchall()}
