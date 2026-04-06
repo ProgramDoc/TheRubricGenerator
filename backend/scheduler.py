@@ -27,7 +27,7 @@ logger = logging.getLogger("rubricgen")
 CHECK_INTERVAL_SECONDS = int(os.environ.get("DAILY_CHECK_INTERVAL_SECONDS", "600"))
 DAILY_MAX_PAPERS = min(int(os.environ.get("DAILY_MAX_PAPERS", "10")), 10)
 
-DAILY_FRONTIER_MODELS = ["gpt-4o", "gemini-2.5-pro", "claude-sonnet-4-20250514"]
+DAILY_FRONTIER_MODELS = ["claude-opus-4-20250514", "gpt-5.4", "gemini-3.1", "gemini-3.1-pro", "kimi-k2-thinking"]
 
 
 def _is_enabled() -> bool:

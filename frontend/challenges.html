@@ -90,6 +90,7 @@ tbody tr:last-child td { border-bottom: none; }
     <a href="/public-tests">Public Tests</a>
     <a href="/models">Models</a>
     <a href="/leaderboard">Leaderboard</a>
+    <a href="/billing">Billing</a>
     <a href="/papers">Papers</a>
     <a href="/admin" id="nav-admin" style="display:none">Admin</a>
     <span class="user-badge" id="user-badge">—</span>
@@ -162,26 +163,27 @@ tbody tr:last-child td { border-bottom: none; }
         <label>Participating Models</label>
         <div class="model-list" id="model-list">
           <div class="model-item">
-            <input type="checkbox" id="m-gpt-4o" value="gpt-4o" checked>
-            <label for="m-gpt-4o">GPT-4o <span class="model-badge badge-openai">OpenAI</span></label>
+            <input type="checkbox" id="m-claude" value="claude-opus-4-20250514" checked>
+            <label for="m-claude">Claude Opus 4.6 <span class="model-badge badge-anthropic">Anthropic</span> <span style="color:var(--muted);font-size:10px;margin-left:4px;">15 credits</span></label>
           </div>
           <div class="model-item">
-            <input type="checkbox" id="m-gpt-4-turbo" value="gpt-4-turbo">
-            <label for="m-gpt-4-turbo">GPT-4 Turbo <span class="model-badge badge-openai">OpenAI</span></label>
+            <input type="checkbox" id="m-gpt" value="gpt-5.4" checked>
+            <label for="m-gpt">GPT-5.4 <span class="model-badge badge-openai">OpenAI</span> <span style="color:var(--muted);font-size:10px;margin-left:4px;">12 credits</span></label>
           </div>
           <div class="model-item">
-            <input type="checkbox" id="m-gemini-2-5-pro" value="gemini-2.5-pro" checked>
-            <label for="m-gemini-2-5-pro">Gemini 2.5 Pro <span class="model-badge badge-google">Google</span></label>
+            <input type="checkbox" id="m-gemini" value="gemini-3.1" checked>
+            <label for="m-gemini">Gemini 3.1 <span class="model-badge badge-google">Google</span> <span style="color:var(--muted);font-size:10px;margin-left:4px;">8 credits</span></label>
           </div>
           <div class="model-item">
-            <input type="checkbox" id="m-gemini-2-0-flash" value="gemini-2.0-flash">
-            <label for="m-gemini-2-0-flash">Gemini 2.0 Flash <span class="model-badge badge-google">Google</span></label>
+            <input type="checkbox" id="m-gemini-pro" value="gemini-3.1-pro">
+            <label for="m-gemini-pro">Gemini 3.1 Pro <span class="model-badge badge-google">Google</span> <span style="color:var(--muted);font-size:10px;margin-left:4px;">10 credits</span></label>
           </div>
           <div class="model-item">
-            <input type="checkbox" id="m-claude" value="claude-sonnet-4-20250514" checked>
-            <label for="m-claude">Claude Sonnet 4 <span class="model-badge badge-anthropic">Anthropic</span></label>
+            <input type="checkbox" id="m-kimi" value="kimi-k2-thinking">
+            <label for="m-kimi">Kimi K2 Thinking <span class="model-badge" style="background:rgba(99,102,241,.15);color:#4338ca;">Moonshot</span> <span style="color:var(--muted);font-size:10px;margin-left:4px;">8 credits</span></label>
           </div>
         </div>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:6px;" id="cost-estimate"></div>
       </div>
       <button class="btn btn-run" id="create-btn" onclick="createAndRun()">Create & Run Challenge</button>
       <div class="banner" id="banner"></div>

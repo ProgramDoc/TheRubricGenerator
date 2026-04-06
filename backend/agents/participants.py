@@ -1,9 +1,16 @@
 """Participant model runners. Routes a challenge's rubric + PDFs to a
-frontier model (Claude/GPT/Gemini) and returns structured answers."""
+frontier model (Claude/GPT/Gemini/Kimi/custom) and returns structured answers.
 
+Phase 3 refactor: routing uses the SUPPORTED_MODELS dict from challenges.py.
+Custom models (registered by users) are called via call_openai_compatible
+with the stored base URL and decrypted API key.
+"""
+
+from ..challenges import SUPPORTED_MODELS
 from ..helpers import (
-    call_anthropic, call_gemini, call_openai,
+    call_anthropic, call_gemini, call_openai_compatible,
     parse_json_response, time_ms,
+    OPENAI_API_KEY, MOONSHOT_API_KEY,
 )
 
 
@@ -22,18 +29,11 @@ Format your response as JSON only, no preamble, no markdown fences:
 }"""
 
 
-PROVIDER_BY_PREFIX = {
-    "claude": "anthropic",
-    "gpt":    "openai",
-    "gemini": "google",
+# Map provider → env-var API key for built-in models
+_PROVIDER_KEYS = {
+    "openai":    lambda: OPENAI_API_KEY,
+    "moonshot":  lambda: MOONSHOT_API_KEY,
 }
-
-
-def provider_for(model_id: str) -> str:
-    for prefix, provider in PROVIDER_BY_PREFIX.items():
-        if model_id.startswith(prefix):
-            return provider
-    return "unknown"
 
 
 def _build_question_block(rubric: dict) -> str:
@@ -45,13 +45,16 @@ def _build_question_block(rubric: dict) -> str:
 
 
 def run_participant_model(model_id: str, rubric: dict, papers_b64: list[dict],
-                          max_tokens: int = 4096) -> tuple[dict, int]:
+                          max_tokens: int = 4096,
+                          custom_base_url: str | None = None,
+                          custom_api_key: str | None = None) -> tuple[dict, int]:
     """
-    model_id: 'gpt-4o', 'gemini-2.5-pro', 'claude-sonnet-4-20250514', etc.
-    rubric: the challenge rubric dict
-    papers_b64: list of {filename, b64}
+    model_id: built-in key from SUPPORTED_MODELS or a custom model name.
+    rubric: the challenge rubric dict.
+    papers_b64: list of {filename, b64}.
+    custom_base_url/custom_api_key: for registered custom models.
 
-    Returns: (answers_dict, elapsed_ms) — answers_dict has {"responses": [...]}
+    Returns: (answers_dict, elapsed_ms)
     """
     q_block = _build_question_block(rubric)
     user_msg = (
@@ -59,13 +62,24 @@ def run_participant_model(model_id: str, rubric: dict, papers_b64: list[dict],
         f"about the attached research papers. Respond with the JSON object as instructed.\n\n{q_block}"
     )
 
-    provider = provider_for(model_id)
+    model_spec = SUPPORTED_MODELS.get(model_id)
 
-    if provider == "google":
-        # Gemini natively accepts inline PDFs. Only one PDF supported per call in our
-        # current helper; combine multiple PDFs by concatenating base64 won't work.
-        # For Phase 1 with multiple PDFs, we pass the first PDF inline and reference
-        # all by filename in the prompt.
+    # Determine caller type
+    if custom_base_url and custom_api_key:
+        caller = "openai_compat"
+        base_url = custom_base_url
+        api_key = custom_api_key
+        provider_label = f"Custom ({model_id})"
+    elif model_spec:
+        caller = model_spec["caller"]
+        base_url = model_spec.get("base_url", "")
+        provider = model_spec["provider"]
+        provider_label = provider.title()
+        api_key = _PROVIDER_KEYS.get(provider, lambda: "")()
+    else:
+        raise ValueError(f"Unknown model: {model_id} (not in SUPPORTED_MODELS and no custom credentials)")
+
+    if caller == "gemini":
         pdf_b64 = papers_b64[0]["b64"] if papers_b64 else None
         if len(papers_b64) > 1:
             user_msg = (
@@ -78,8 +92,7 @@ def run_participant_model(model_id: str, rubric: dict, papers_b64: list[dict],
             call_gemini, PARTICIPANT_SYSTEM, user_msg, model_id, pdf_b64, max_tokens
         )
 
-    elif provider == "openai":
-        # OpenAI chat-completions doesn't accept PDF base64. Text-only prompt.
+    elif caller == "openai_compat":
         messages = [
             {"role": "system", "content": PARTICIPANT_SYSTEM},
             {
@@ -92,10 +105,11 @@ def run_participant_model(model_id: str, rubric: dict, papers_b64: list[dict],
                 ),
             },
         ]
-        raw, elapsed_ms = time_ms(call_openai, messages, model_id, max_tokens)
+        raw, elapsed_ms = time_ms(
+            call_openai_compatible, base_url, api_key, model_id, messages, max_tokens, provider_label
+        )
 
-    else:
-        # Anthropic: supports multiple inline PDFs
+    elif caller == "anthropic":
         content: list[dict] = []
         for p in papers_b64:
             content.append({
@@ -112,10 +126,12 @@ def run_participant_model(model_id: str, rubric: dict, papers_b64: list[dict],
             model_id,
         )
 
+    else:
+        raise ValueError(f"Unknown caller type: {caller}")
+
     try:
         answers = parse_json_response(raw)
     except Exception:
-        # Fallback: wrap the raw text so scoring still works, just with 0 credit
         answers = {
             "responses": [
                 {"question_id": q["id"], "answer": raw[:500]}

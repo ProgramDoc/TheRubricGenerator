@@ -109,19 +109,36 @@ def call_gemini(system: str, user_text: str, model: str, pdf_b64: str | None = N
 
 
 def call_openai(messages: list, model: str, max_tokens: int = 4096) -> str:
-    """Call OpenAI API and return text response."""
-    if not OPENAI_API_KEY:
-        raise HTTPException(500, "OPENAI_API_KEY not configured")
+    """Call OpenAI API. Delegates to call_openai_compatible."""
+    return call_openai_compatible(
+        base_url="https://api.openai.com/v1",
+        api_key=OPENAI_API_KEY,
+        model=model, messages=messages, max_tokens=max_tokens,
+        provider_label="OpenAI",
+    )
+
+
+MOONSHOT_API_KEY = os.environ.get("MOONSHOT_API_KEY", "")
+
+
+def call_openai_compatible(base_url: str, api_key: str, model: str,
+                           messages: list, max_tokens: int = 4096,
+                           provider_label: str = "OpenAI-compatible") -> str:
+    """Generic caller for any OpenAI-compatible /v1/chat/completions endpoint.
+    Works for OpenAI, Kimi K2, vLLM, Together, Fireworks, and custom models."""
+    if not api_key:
+        raise HTTPException(500, f"{provider_label} API key not configured")
+    url = f"{base_url.rstrip('/')}/chat/completions"
     payload = json.dumps({
         "model": model,
         "max_tokens": max_tokens,
         "messages": messages,
     }).encode()
     req = urllib.request.Request(
-        "https://api.openai.com/v1/chat/completions",
+        url,
         data=payload,
         headers={
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         },
         method="POST",
@@ -132,8 +149,8 @@ def call_openai(messages: list, model: str, max_tokens: int = 4096) -> str:
         return data["choices"][0]["message"]["content"]
     except urllib.error.HTTPError as e:
         body = e.read().decode()
-        logger.error("OpenAI error: %s", body)
-        raise HTTPException(502, f"OpenAI API error: {body[:200]}")
+        logger.error("%s error (%s): %s", provider_label, url, body)
+        raise HTTPException(502, f"{provider_label} API error: {body[:200]}")
 
 
 def parse_json_response(raw: str) -> dict:

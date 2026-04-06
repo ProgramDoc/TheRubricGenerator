@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OGAI · Rubric Generator — Billing & Credits</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root {
+  --navy: #161b2e; --blue: #274472; --sky: #5e9ad0;
+  --green: #16a34a; --red: #dc2626; --amber: #d97706; --purple: #7c3aed;
+  --bg: #f4f5f9; --card: #ffffff; --border: #dce4ee;
+  --text: #1e293b; --muted: #64748b;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; min-height: 100vh; }
+
+.topbar { background: var(--navy); color: #fff; padding: 12px 28px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+.topbar .brand { font-size: 16px; font-weight: 700; letter-spacing: -.3px; }
+.topbar .brand span { color: var(--sky); }
+.topbar nav { display: flex; gap: 4px; align-items: center; }
+.topbar nav a { font-family: inherit; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); padding: 6px 12px; border-radius: 5px; text-decoration: none; }
+.topbar nav a:hover { background: rgba(255,255,255,.08); color: #fff; }
+.topbar nav a.active { background: rgba(255,255,255,.15); color: #fff; }
+.topbar .credit-badge { margin-left: 8px; padding: 4px 10px; background: rgba(22,163,74,.3); border-radius: 4px; font-size: 11px; font-weight: 700; color: #dcfce7; font-family: 'IBM Plex Mono', monospace; }
+.topbar .signout-btn { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); padding: 6px 12px; border-radius: 5px; font-family: inherit; font-size: 11px; font-weight: 600; cursor: pointer; margin-left: 10px; }
+
+.container { max-width: 1100px; margin: 0 auto; padding: 28px; }
+.page-title { font-size: 22px; font-weight: 700; color: var(--navy); margin-bottom: 4px; letter-spacing: -.3px; }
+.page-subtitle { color: var(--muted); font-size: 13px; margin-bottom: 22px; }
+
+.balance-card { background: linear-gradient(135deg, #1e3a5f 0%, #274472 100%); border-radius: 12px; padding: 28px; color: #fff; margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between; }
+.balance-label { font-size: 12px; font-weight: 600; color: rgba(255,255,255,.6); text-transform: uppercase; letter-spacing: .08em; }
+.balance-value { font-size: 40px; font-weight: 700; font-family: 'IBM Plex Mono', monospace; margin-top: 4px; }
+.balance-unit { font-size: 14px; font-weight: 400; color: rgba(255,255,255,.5); margin-left: 6px; }
+.promo-pill { display: inline-block; padding: 4px 12px; background: rgba(255,255,255,.15); border-radius: 6px; font-size: 11px; font-weight: 600; margin-top: 6px; }
+
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 800px) { .grid-2 { grid-template-columns: 1fr; } }
+
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 20px; }
+.card-header { padding: 14px 20px; border-bottom: 1px solid var(--border); }
+.card-header h2 { font-size: 13px; font-weight: 700; color: var(--navy); }
+.card-body { padding: 20px; }
+
+.pack-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.pack-card { border: 2px solid var(--border); border-radius: 8px; padding: 20px 16px; text-align: center; cursor: pointer; transition: all .15s; }
+.pack-card:hover { border-color: var(--sky); background: #f0f9ff; }
+.pack-name { font-size: 14px; font-weight: 700; color: var(--navy); }
+.pack-credits { font-family: 'IBM Plex Mono', monospace; font-size: 24px; font-weight: 700; color: var(--blue); margin: 8px 0; }
+.pack-price { font-size: 13px; color: var(--muted); font-weight: 600; }
+.pack-btn { margin-top: 12px; background: var(--blue); color: #fff; border: none; border-radius: 5px; padding: 7px 14px; font-family: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+.pack-btn:hover { background: var(--navy); }
+
+.field { margin-bottom: 14px; }
+.field label { display: block; font-size: 10.5px; font-weight: 700; color: var(--blue); letter-spacing: .05em; text-transform: uppercase; margin-bottom: 6px; }
+.field input { width: 100%; padding: 9px 12px; border: 1.5px solid var(--border); border-radius: 6px; font-family: inherit; font-size: 13px; color: var(--text); background: #f8fafc; outline: none; }
+.field input:focus { border-color: var(--sky); background: #fff; }
+.btn { padding: 10px 18px; border: none; border-radius: 6px; background: var(--blue); color: #fff; font-family: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.btn:hover { background: var(--navy); }
+.banner { padding: 10px 12px; border-radius: 6px; font-size: 12px; margin-top: 12px; display: none; }
+.banner.error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; display: block; }
+.banner.success { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; display: block; }
+
+table { width: 100%; border-collapse: collapse; }
+thead th { text-align: left; font-size: 10.5px; font-weight: 700; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; padding: 11px 16px; background: #f8fafc; border-bottom: 1px solid var(--border); }
+tbody td { padding: 11px 16px; border-bottom: 1px solid #f1f5f9; font-size: 12px; color: var(--text); }
+tbody tr:last-child td { border-bottom: none; }
+.num { font-family: 'IBM Plex Mono', monospace; font-weight: 600; text-align: right; }
+.positive { color: var(--green); }
+.negative { color: var(--red); }
+
+.empty { padding: 30px; text-align: center; color: var(--muted); font-size: 12px; }
+
+.success-msg { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; padding: 14px 18px; border-radius: 8px; margin-bottom: 20px; font-size: 13px; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">OGAI · <span>Rubric</span> Generator</div>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/challenges">Challenges</a>
+    <a href="/public-tests">Public Tests</a>
+    <a href="/models">Models</a>
+    <a href="/leaderboard">Leaderboard</a>
+    <a href="/billing" class="active">Billing</a>
+    <a href="/papers">Papers</a>
+    <a href="/admin" id="nav-admin" style="display:none">Admin</a>
+    <span class="credit-badge" id="nav-credits">— credits</span>
+    <button class="signout-btn" onclick="signOut()">Sign Out</button>
+  </nav>
+</div>
+
+<div class="container">
+  <div id="success-banner" class="success-msg" style="display:none">Payment successful! Credits have been added to your account.</div>
+
+  <div class="page-title">Billing & Credits</div>
+  <div class="page-subtitle">Manage your credit balance, purchase packs, and apply promo codes</div>
+
+  <!-- BALANCE -->
+  <div class="balance-card">
+    <div>
+      <div class="balance-label">Current Balance</div>
+      <div class="balance-value" id="balance-value">—<span class="balance-unit">credits</span></div>
+      <div class="promo-pill" id="promo-pill" style="display:none"></div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <!-- PURCHASE -->
+    <div class="card">
+      <div class="card-header"><h2>Purchase Credits</h2></div>
+      <div class="card-body">
+        <div class="pack-grid" id="packs-grid">
+          <div class="empty">Loading…</div>
+        </div>
+        <div class="banner" id="purchase-banner"></div>
+      </div>
+    </div>
+
+    <!-- PROMO -->
+    <div class="card">
+      <div class="card-header"><h2>Promo Code</h2></div>
+      <div class="card-body">
+        <div class="field">
+          <label>Enter Code</label>
+          <input type="text" id="promo-code" placeholder="e.g. PARTNER2026" style="text-transform:uppercase">
+        </div>
+        <button class="btn" onclick="applyPromo()">Apply Code</button>
+        <div class="banner" id="promo-banner"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TRANSACTIONS -->
+  <div class="card">
+    <div class="card-header"><h2>Transaction History</h2></div>
+    <div id="txn-list"><div class="empty">Loading…</div></div>
+  </div>
+</div>
+
+<script>
+let agreementAccepted = false;
+
+async function signOut() {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  window.location.href = '/login';
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso.replace(' ', 'T') + 'Z');
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  } catch (_) { return iso; }
+}
+
+function showBanner(id, msg, type = 'error') {
+  const el = document.getElementById(id);
+  el.className = 'banner ' + type;
+  el.textContent = msg;
+}
+
+// Check for success param
+if (new URLSearchParams(location.search).get('success') === '1') {
+  document.getElementById('success-banner').style.display = '';
+}
+
+async function loadMe() {
+  const res = await fetch('/api/auth/me');
+  if (!res.ok) { window.location.href = '/login'; return; }
+  const me = await res.json();
+  if (me.role === 'admin') document.getElementById('nav-admin').style.display = '';
+  // Check payment agreement
+  const agRes = await fetch('/api/agreements/status');
+  if (agRes.ok) {
+    const status = await agRes.json();
+    agreementAccepted = !!status.payment;
+  }
+}
+
+async function loadBalance() {
+  const res = await fetch('/api/billing/balance');
+  if (!res.ok) return;
+  const data = await res.json();
+  document.getElementById('balance-value').innerHTML = `${data.balance}<span class="balance-unit">credits</span>`;
+  document.getElementById('nav-credits').textContent = `${data.balance} credits`;
+  if (data.active_promo) {
+    const pill = document.getElementById('promo-pill');
+    pill.style.display = '';
+    pill.textContent = `Promo: ${data.active_promo.type} (${data.active_promo.currently_valid ? 'active' : 'pending approval'})`;
+  }
+}
+
+async function loadPacks() {
+  const res = await fetch('/api/billing/packs');
+  if (!res.ok) return;
+  const packs = await res.json();
+  document.getElementById('packs-grid').innerHTML = packs.map(p => `
+    <div class="pack-card" onclick="buyPack(${p.id}, '${escapeHtml(p.name)}')">
+      <div class="pack-name">${escapeHtml(p.name)}</div>
+      <div class="pack-credits">${p.credits}</div>
+      <div class="pack-price">$${(p.price_cents / 100).toFixed(2)}</div>
+      <button class="pack-btn">Purchase</button>
+    </div>
+  `).join('');
+}
+
+async function loadTransactions() {
+  const res = await fetch('/api/billing/transactions');
+  if (!res.ok) return;
+  const txns = await res.json();
+  const container = document.getElementById('txn-list');
+  if (txns.length === 0) {
+    container.innerHTML = '<div class="empty">No transactions yet.</div>';
+    return;
+  }
+  container.innerHTML = `
+    <table>
+      <thead><tr><th>Date</th><th>Type</th><th>Description</th><th style="text-align:right">Amount</th></tr></thead>
+      <tbody>${txns.map(t => `
+        <tr>
+          <td>${fmtDate(t.created_at)}</td>
+          <td>${escapeHtml(t.type)}</td>
+          <td>${escapeHtml(t.description || '')}</td>
+          <td class="num ${t.amount > 0 ? 'positive' : 'negative'}">${t.amount > 0 ? '+' : ''}${t.amount}</td>
+        </tr>
+      `).join('')}</tbody>
+    </table>
+  `;
+}
+
+async function buyPack(packId, packName) {
+  if (!agreementAccepted) {
+    if (!confirm('You need to accept the Payment Agreement before purchasing credits. Would you like to view and accept it now?')) return;
+    // Fetch and show agreement
+    const agRes = await fetch('/api/agreements/payment');
+    if (!agRes.ok) { showBanner('purchase-banner', 'Failed to load agreement.'); return; }
+    const ag = await agRes.json();
+    if (confirm(ag.text.substring(0, 1000) + '\n\n... (truncated) ...\n\nDo you accept this Payment & Usage Agreement?')) {
+      const acceptRes = await fetch('/api/agreements/payment/accept', { method: 'POST' });
+      if (acceptRes.ok) {
+        agreementAccepted = true;
+        showBanner('purchase-banner', 'Agreement accepted! Proceeding to checkout.', 'success');
+      } else {
+        showBanner('purchase-banner', 'Failed to record agreement acceptance.');
+        return;
+      }
+    } else {
+      return;
+    }
+  }
+
+  try {
+    const res = await fetch('/api/billing/checkout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pack_id: packId }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      showBanner('purchase-banner', body.detail || 'Checkout failed.');
+      return;
+    }
+    window.location.href = body.checkout_url;
+  } catch (e) {
+    showBanner('purchase-banner', 'Network error.');
+  }
+}
+
+async function applyPromo() {
+  const code = document.getElementById('promo-code').value.trim();
+  if (!code) { showBanner('promo-banner', 'Enter a promo code.'); return; }
+  try {
+    const res = await fetch('/api/promo/apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      showBanner('promo-banner', body.detail || 'Failed to apply code.');
+    } else {
+      showBanner('promo-banner', `Promo applied! Type: ${body.promo_type}. Auto-approved until ${body.auto_approved_until.slice(0,16).replace('T',' ')} UTC.`, 'success');
+      loadBalance();
+    }
+  } catch (e) {
+    showBanner('promo-banner', 'Network error.');
+  }
+}
+
+(async () => {
+  await loadMe();
+  loadBalance();
+  loadPacks();
+  loadTransactions();
+})();
+</script>
+</body>
+</html>

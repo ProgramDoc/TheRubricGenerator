@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import Cookie, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Cookie, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -37,6 +37,9 @@ from backend.skills import (
     get_active_skill, list_skill_versions,
 )
 from backend import challenges as bench
+from backend.billing import BILLING_TABLES_SQL, seed_credit_packs
+from backend.promo import PROMO_TABLES_SQL
+from backend.agreements import AGREEMENTS_TABLE_SQL
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rubricgen")
@@ -276,11 +279,16 @@ def init_db() -> None:
                 updated_at TEXT DEFAULT (datetime('now'))
             );
         """)
-        # agent_skills table comes from backend.skills
+        # Phase 1: agent skills
         conn.executescript(SKILLS_TABLE_SQL)
+        # Phase 3: billing, promo, agreements
+        conn.executescript(BILLING_TABLES_SQL)
+        conn.executescript(PROMO_TABLES_SQL)
+        conn.executescript(AGREEMENTS_TABLE_SQL)
         conn.commit()
     _migrate_challenges_columns(conn)
     seed_v1_skills(conn)
+    seed_credit_packs(conn)
     conn.close()
     _ensure_admin_user()
     _ensure_system_user()
@@ -302,6 +310,24 @@ def _migrate_challenges_columns(conn) -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_challenges_project ON challenges(project_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_challenges_visibility ON challenges(visibility)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_challenges_owner_vis ON challenges(created_by, visibility)")
+        conn.commit()
+    # Phase 3: add API fields to registered_models
+    rm_cols = {r["name"] for r in conn.execute("PRAGMA table_info(registered_models)").fetchall()}
+    with conn:
+        if "api_base_url" not in rm_cols:
+            conn.execute("ALTER TABLE registered_models ADD COLUMN api_base_url TEXT")
+        if "api_key_encrypted" not in rm_cols:
+            conn.execute("ALTER TABLE registered_models ADD COLUMN api_key_encrypted TEXT")
+        if "price_per_test_credits" not in rm_cols:
+            conn.execute("ALTER TABLE registered_models ADD COLUMN price_per_test_credits INTEGER DEFAULT 0")
+        if "public_for_testing" not in rm_cols:
+            conn.execute("ALTER TABLE registered_models ADD COLUMN public_for_testing INTEGER DEFAULT 0")
+        if "active_for_daily" not in rm_cols:
+            conn.execute("ALTER TABLE registered_models ADD COLUMN active_for_daily INTEGER DEFAULT 0")
+        if "daily_admin_approved" not in rm_cols:
+            conn.execute("ALTER TABLE registered_models ADD COLUMN daily_admin_approved INTEGER DEFAULT 0")
+        if "agreement_signed_at" not in rm_cols:
+            conn.execute("ALTER TABLE registered_models ADD COLUMN agreement_signed_at TEXT")
         conn.commit()
 
 
@@ -565,6 +591,14 @@ def public_tests_page(rubricgen_session: str | None = Cookie(default=None)):
     if not user:
         return RedirectResponse("/login", status_code=302)
     return FileResponse(str(FRONTEND / "public_tests.html"), media_type="text/html")
+
+
+@app.get("/billing", include_in_schema=False)
+def billing_page(rubricgen_session: str | None = Cookie(default=None)):
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return FileResponse(str(FRONTEND / "billing.html"), media_type="text/html")
 
 
 @app.get("/admin/daily", include_in_schema=False)
@@ -1219,6 +1253,199 @@ def api_list_public_tests(difficulty: Optional[str] = None,
         result.append(d)
     conn.close()
     return result
+
+
+# ─────────────────────────────────────────────
+# Billing (Phase 3)
+# ─────────────────────────────────────────────
+from backend import billing as bill
+from backend import promo
+from backend import agreements as agree
+
+
+class CheckoutPayload(BaseModel):
+    pack_id: int
+
+
+class ApplyPromoPayload(BaseModel):
+    code: str
+
+
+class CreatePromoPayload(BaseModel):
+    code: str
+    type: str
+    max_uses: Optional[int] = 0
+    discount_pct: Optional[int] = 100
+    valid_until: Optional[str] = None
+    auto_approve_hours: Optional[int] = 48
+
+
+@app.get("/api/billing/balance")
+def api_billing_balance(rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        balance = bill.get_balance(conn, user["id"])
+        promo_status = promo.user_has_active_promo(conn, user["id"])
+    finally:
+        conn.close()
+    return {"balance": balance, "active_promo": promo_status}
+
+
+@app.get("/api/billing/packs")
+def api_billing_packs(rubricgen_session: str | None = Cookie(default=None)):
+    require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return bill.list_packs(conn)
+    finally:
+        conn.close()
+
+
+@app.get("/api/billing/transactions")
+def api_billing_transactions(rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return bill.list_transactions(conn, user["id"])
+    finally:
+        conn.close()
+
+
+@app.post("/api/billing/checkout")
+def api_billing_checkout(body: CheckoutPayload,
+                         rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
+    # Check payment agreement
+    conn = get_db()
+    try:
+        if not agree.has_accepted(conn, user["id"], "payment"):
+            raise HTTPException(403, "You must accept the Payment Agreement before purchasing credits")
+        checkout_url = bill.create_checkout_session(
+            conn, user["id"], body.pack_id,
+            success_url=f"{APP_BASE_URL}/billing?success=1",
+            cancel_url=f"{APP_BASE_URL}/billing?cancel=1",
+        )
+    finally:
+        conn.close()
+    return {"checkout_url": checkout_url}
+
+
+@app.post("/api/billing/webhook")
+async def api_stripe_webhook(request: Request):
+    """Stripe webhook endpoint. No auth — verified by Stripe signature."""
+    payload = await request.body()
+    sig = request.headers.get("stripe-signature", "")
+    return bill.handle_stripe_webhook(payload, sig, get_db)
+
+
+@app.get("/api/billing/test-cost")
+def api_test_cost(models: str = "", rubricgen_session: str | None = Cookie(default=None)):
+    """Calculate credits needed for a test. models is comma-separated."""
+    user = require_user(rubricgen_session)
+    model_ids = [m.strip() for m in models.split(",") if m.strip()]
+    conn = get_db()
+    try:
+        cost = bill.calculate_test_cost(model_ids, conn)
+        promo_status = promo.user_has_active_promo(conn, user["id"])
+    finally:
+        conn.close()
+    if promo_status and promo_status.get("type") == "free":
+        return {"cost": cost, "discounted_cost": 0, "promo": "free"}
+    elif promo_status and promo_status.get("type") == "breakeven":
+        return {"cost": cost, "discounted_cost": cost, "promo": "breakeven"}
+    return {"cost": cost, "discounted_cost": cost, "promo": None}
+
+
+# ─── Promo codes ───
+
+@app.post("/api/promo/apply")
+def api_apply_promo(body: ApplyPromoPayload,
+                    rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return promo.apply_promo_code(conn, user["id"], body.code)
+    finally:
+        conn.close()
+
+
+@app.get("/api/promo/status")
+def api_promo_status(rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return promo.get_user_promo_status(conn, user["id"])
+    finally:
+        conn.close()
+
+
+@app.post("/api/admin/promo", status_code=201)
+def api_create_promo(body: CreatePromoPayload,
+                     rubricgen_session: str | None = Cookie(default=None)):
+    user = require_admin(rubricgen_session)
+    conn = get_db()
+    try:
+        return promo.create_promo_code(
+            conn, body.code, body.type, user["id"],
+            max_uses=body.max_uses or 0,
+            discount_pct=body.discount_pct or 100,
+            valid_until=body.valid_until,
+            auto_approve_hours=body.auto_approve_hours or 48,
+        )
+    finally:
+        conn.close()
+
+
+@app.get("/api/admin/promo")
+def api_list_promos(rubricgen_session: str | None = Cookie(default=None)):
+    require_admin(rubricgen_session)
+    conn = get_db()
+    try:
+        return promo.list_promo_codes(conn)
+    finally:
+        conn.close()
+
+
+@app.post("/api/admin/promo/{activation_id}/approve")
+def api_approve_promo(activation_id: int,
+                      rubricgen_session: str | None = Cookie(default=None)):
+    require_admin(rubricgen_session)
+    conn = get_db()
+    try:
+        return promo.admin_approve_user_promo(conn, activation_id)
+    finally:
+        conn.close()
+
+
+# ─── Agreements ───
+
+@app.get("/api/agreements/{agreement_type}")
+def api_get_agreement(agreement_type: str,
+                      rubricgen_session: str | None = Cookie(default=None)):
+    require_user(rubricgen_session)
+    return {"text": agree.get_agreement_text(agreement_type), "version": agree.CURRENT_VERSION}
+
+
+@app.post("/api/agreements/{agreement_type}/accept")
+def api_accept_agreement(agreement_type: str,
+                         rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return agree.accept_agreement(conn, user["id"], agreement_type)
+    finally:
+        conn.close()
+
+
+@app.get("/api/agreements/status")
+def api_agreements_status(rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return agree.get_user_agreements_status(conn, user["id"])
+    finally:
+        conn.close()
 
 
 # ─────────────────────────────────────────────

@@ -24,14 +24,24 @@ from .skills import (
 
 logger = logging.getLogger("rubricgen")
 
+# Frontier models — updated April 2026
+# Each entry maps model_id → {provider, caller, cost_credits, ...}
 SUPPORTED_MODELS = {
-    "gpt-4o":                   "openai",
-    "gpt-4-turbo":              "openai",
-    "gpt-4o-mini":              "openai",
-    "claude-sonnet-4-20250514": "anthropic",
-    "gemini-2.5-pro":           "google",
-    "gemini-2.0-flash":         "google",
+    "claude-opus-4-20250514":   {"provider": "anthropic", "caller": "anthropic",     "cost_credits": 15},
+    "gpt-5.4":                  {"provider": "openai",    "caller": "openai_compat",  "cost_credits": 12, "base_url": "https://api.openai.com/v1"},
+    "gemini-3.1":               {"provider": "google",    "caller": "gemini",          "cost_credits": 8},
+    "gemini-3.1-pro":           {"provider": "google",    "caller": "gemini",          "cost_credits": 10},
+    "kimi-k2-thinking":         {"provider": "moonshot",  "caller": "openai_compat",  "cost_credits": 8,  "base_url": "https://api.moonshot.cn/v1"},
+    # Legacy models (still supported for existing challenges)
+    "gpt-4o":                   {"provider": "openai",    "caller": "openai_compat",  "cost_credits": 10, "base_url": "https://api.openai.com/v1"},
+    "claude-sonnet-4-20250514": {"provider": "anthropic", "caller": "anthropic",      "cost_credits": 12},
+    "gemini-2.5-pro":           {"provider": "google",    "caller": "gemini",          "cost_credits": 8},
 }
+
+# Convenience: map model_id → provider string (for backward compat)
+def provider_for_model(model_id: str) -> str:
+    m = SUPPORTED_MODELS.get(model_id)
+    return m["provider"] if m else "unknown"
 
 # Phase 1.5: user-facing difficulty tiers for user-designed public tests.
 # Difficulty is defined by the COGNITIVE COMPLEXITY of the questions, not
@@ -232,7 +242,7 @@ def create_challenge(get_db_fn, user_id: int, title: str, theme: str,
             for m in participant_models:
                 conn.execute(
                     "INSERT INTO model_participants (challenge_id, model_id, provider, status) VALUES (?,?,?,?)",
-                    (cid, m, SUPPORTED_MODELS[m], "pending"),
+                    (cid, m, SUPPORTED_MODELS[m]["provider"], "pending"),
                 )
             conn.commit()
     finally:

@@ -32,6 +32,9 @@ services:
       # SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
       # APP_BASE_URL
       # NCBI_API_KEY (optional — boosts PubMed rate limit from 3/s to 10/s)
+      # STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET
+      # MOONSHOT_API_KEY (for Kimi K2 Thinking model)
+      # MODEL_ENCRYPTION_KEY (Fernet key for encrypting custom model API keys)
     disk:
       name: rubricgen-data
       mountPath: /var/data
