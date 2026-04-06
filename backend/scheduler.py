@@ -101,29 +101,44 @@ def run_daily_challenge(get_db_fn, papers_dir: Path, vault_dir: Path,
             if last == date_iso:
                 return {"ok": False, "message": "already ran today", "date": date_iso}
 
-        theme = pubmed.theme_for_date(date_iso)
-        logger.info("Daily run: date=%s theme=%r", date_iso, theme["name"])
+        primary_theme = pubmed.theme_for_date(date_iso)
+        logger.info("Daily run: date=%s primary_theme=%r", date_iso, primary_theme["name"])
 
         # Write the date marker early so concurrent/background invocations don't double-fire
         _set_state(conn, "last_daily_run_date", date_iso)
     finally:
         conn.close()
 
-    # Fetch papers (no DB connection held during network IO)
-    papers = pubmed.fetch_papers_for_theme(theme, DAILY_MAX_PAPERS, papers_dir)
+    # Fetch papers — try primary theme, then fall back to up to 3 alternates
+    theme = primary_theme
+    papers = None
+    themes_tried: list[str] = []
+    for attempt in range(4):  # primary + 3 fallbacks
+        if attempt > 0:
+            # Pick next theme in rotation (skip primary)
+            fallback_idx = (pubmed.SEED_THEMES.index(primary_theme) + attempt) % len(pubmed.SEED_THEMES)
+            theme = pubmed.SEED_THEMES[fallback_idx]
+            logger.info("Daily run: theme %r failed, trying fallback %r", themes_tried[-1], theme["name"])
+        themes_tried.append(theme["name"])
+        try:
+            papers = pubmed.fetch_papers_for_theme(theme, DAILY_MAX_PAPERS, papers_dir)
+        except Exception as e:
+            logger.error("Daily run: fetch error for theme %r: %s", theme["name"], e)
+            papers = None
+        if papers:
+            break
+
     if not papers:
-        logger.error("Daily run: no papers fetched for theme %r; aborting", theme["name"])
+        logger.error("Daily run: no papers fetched after trying themes: %s; aborting", themes_tried)
         # Reset the date marker so we retry on the next tick
         conn = get_db_fn()
         try:
             with conn:
-                conn.execute(
-                    "DELETE FROM scheduler_state WHERE key='last_daily_run_date'"
-                )
+                conn.execute("DELETE FROM scheduler_state WHERE key='last_daily_run_date'")
                 conn.commit()
         finally:
             conn.close()
-        return {"ok": False, "message": "no papers fetched", "theme": theme["name"]}
+        return {"ok": False, "message": f"no papers fetched (tried: {', '.join(themes_tried)})", "themes_tried": themes_tried}
 
     # Insert papers + build paper_ids list
     conn = get_db_fn()

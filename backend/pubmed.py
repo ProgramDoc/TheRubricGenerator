@@ -38,49 +38,51 @@ EUTILS_SLEEP = 0.15 if NCBI_API_KEY else 0.4
 # ─────────────────────────────────────────────
 # Seed themes
 # ─────────────────────────────────────────────
+# Queries are intentionally broad — the PMC OA + citation filters narrow results.
+# Avoid overly-specific multi-word phrases that reduce the match pool.
 SEED_THEMES = [
     {"name": "Oncology RCTs",
-     "query": "cancer randomized controlled trial",
+     "query": "cancer AND (randomized OR randomised) AND clinical trial[pt]",
      "description": "Randomized trials in oncology"},
     {"name": "Cardiovascular cohort studies",
-     "query": "cardiovascular disease cohort prospective",
+     "query": "cardiovascular AND cohort AND prospective",
      "description": "Prospective cohort studies of cardiovascular disease"},
     {"name": "Diagnostic accuracy",
-     "query": "sensitivity specificity diagnostic accuracy",
+     "query": "(sensitivity OR specificity) AND diagnostic AND accuracy",
      "description": "Diagnostic test accuracy studies"},
-    {"name": "Meta-analyses of RCTs",
-     "query": "meta-analysis randomized trials",
-     "description": "Systematic reviews and meta-analyses of randomized trials"},
-    {"name": "Risk prediction models",
-     "query": "risk prediction model validation cohort",
+    {"name": "Meta-analyses",
+     "query": "meta-analysis[pt] AND systematic review",
+     "description": "Systematic reviews and meta-analyses"},
+    {"name": "Prediction models",
+     "query": "prediction model AND (validation OR development) AND cohort",
      "description": "Clinical prediction model development and validation"},
-    {"name": "Infectious disease epidemiology",
-     "query": "infectious disease epidemiology surveillance",
-     "description": "Infectious disease epidemiology"},
+    {"name": "Infectious disease",
+     "query": "infectious disease AND (epidemiology OR clinical trial)",
+     "description": "Infectious disease research"},
     {"name": "Mental health interventions",
-     "query": "depression anxiety psychotherapy randomized",
+     "query": "(depression OR anxiety) AND (randomized OR intervention)",
      "description": "Mental health intervention trials"},
-    {"name": "Pediatric interventions",
-     "query": "pediatric children randomized clinical trial",
+    {"name": "Pediatric clinical research",
+     "query": "(pediatric OR children) AND clinical trial[pt]",
      "description": "Pediatric clinical research"},
-    {"name": "Geriatric observational",
-     "query": "elderly geriatric cohort frailty",
-     "description": "Observational studies in older adults"},
-    {"name": "Pharmacoepidemiology",
-     "query": "drug safety pharmacoepidemiology adverse event",
+    {"name": "Geriatric research",
+     "query": "(elderly OR older adults OR geriatric) AND cohort",
+     "description": "Research in older adult populations"},
+    {"name": "Drug safety",
+     "query": "(adverse event OR drug safety OR pharmacovigilance) AND cohort",
      "description": "Drug safety and pharmacoepidemiology"},
     {"name": "Surgical outcomes",
-     "query": "surgical outcomes randomized trial",
-     "description": "Surgical intervention trials and outcome studies"},
-    {"name": "Health economics evaluations",
-     "query": "cost-effectiveness quality-adjusted life year",
-     "description": "Cost-effectiveness analyses"},
-    {"name": "Guideline comparisons",
-     "query": "clinical practice guideline systematic review",
-     "description": "Clinical practice guidelines and appraisal"},
-    {"name": "Global health RCTs",
-     "query": "low-middle income country randomized trial",
-     "description": "Global health intervention trials"},
+     "query": "surgical AND (outcomes OR randomized) AND clinical trial",
+     "description": "Surgical intervention studies"},
+    {"name": "Cost-effectiveness",
+     "query": "(cost-effectiveness OR cost-utility) AND (QALY OR quality-adjusted)",
+     "description": "Health economics evaluations"},
+    {"name": "Clinical guidelines",
+     "query": "guideline[pt] AND systematic review",
+     "description": "Clinical practice guidelines"},
+    {"name": "Global health",
+     "query": "(low-income OR middle-income OR developing country) AND clinical trial",
+     "description": "Global health clinical trials"},
 ]
 
 
@@ -283,12 +285,23 @@ def fetch_papers_for_theme(theme: dict, count: int, dest_dir: Path,
     logger.info("  %d papers pass citation threshold (>=%d)", len(filtered), min_citations)
 
     if not filtered:
-        # Fallback: retry with lower threshold if absolutely nothing matched
-        logger.warning("  no papers met threshold, retrying with min_citations=5")
+        # Fallback tier 1: lower threshold to 5
+        logger.warning("  no papers met threshold (>=%d), trying >=5", min_citations)
         filtered = [
             dict(m, citation_count=citation_map.get(m["pmid"], 0))
             for m in metas if citation_map.get(m["pmid"], 0) >= 5
         ]
+    if not filtered:
+        # Fallback tier 2: lower threshold to 1 (any cited paper)
+        logger.warning("  still no papers at >=5, trying >=1")
+        filtered = [
+            dict(m, citation_count=citation_map.get(m["pmid"], 0))
+            for m in metas if citation_map.get(m["pmid"], 0) >= 1
+        ]
+    if not filtered:
+        # Fallback tier 3: accept any paper with a PMCID regardless of citations
+        logger.warning("  no cited papers at all, accepting any PMC OA paper")
+        filtered = [dict(m, citation_count=0) for m in metas]
 
     # Sort by citations desc (prefer higher-impact papers)
     filtered.sort(key=lambda m: m.get("citation_count", 0), reverse=True)
