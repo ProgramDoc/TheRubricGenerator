@@ -20,26 +20,34 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 .topbar { background: var(--navy); color: #fff; padding: 12px 28px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
 .topbar .brand { font-size: 16px; font-weight: 700; letter-spacing: -.3px; }
 .topbar .brand span { color: var(--sky); }
-.topbar nav { display: flex; gap: 4px; align-items: center; }
+.topbar nav { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
 .topbar nav a { font-family: inherit; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); padding: 6px 12px; border-radius: 5px; text-decoration: none; }
 .topbar nav a:hover { background: rgba(255,255,255,.08); color: #fff; }
 .topbar nav a.active { background: rgba(255,255,255,.15); color: #fff; }
 .topbar .user-badge { margin-left: 14px; padding: 4px 10px; background: rgba(255,255,255,.1); border-radius: 4px; font-size: 11px; color: rgba(255,255,255,.85); }
 .topbar .signout-btn { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); padding: 6px 12px; border-radius: 5px; font-family: inherit; font-size: 11px; font-weight: 600; cursor: pointer; margin-left: 10px; }
 
-.container { max-width: 1100px; margin: 0 auto; padding: 28px; }
+.container { max-width: 1200px; margin: 0 auto; padding: 28px; }
 .page-title { font-size: 22px; font-weight: 700; color: var(--navy); margin-bottom: 4px; letter-spacing: -.3px; }
-.page-subtitle { color: var(--muted); font-size: 12px; margin-bottom: 24px; }
+.page-subtitle { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
 
-.podium { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 14px; margin-bottom: 28px; align-items: end; }
-.podium-slot { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px 16px; text-align: center; }
-.podium-slot.first { border-color: var(--gold); border-width: 2px; padding: 28px 16px; box-shadow: 0 6px 16px rgba(212,175,55,.15); }
-.podium-slot.second, .podium-slot.third { padding: 22px 16px; }
-.podium-rank { font-size: 14px; font-weight: 700; color: var(--muted); letter-spacing: .1em; }
-.podium-rank.first { color: var(--gold); font-size: 16px; }
-.podium-model { font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 700; color: var(--navy); margin: 6px 0; word-break: break-word; }
-.podium-score { font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 700; color: var(--blue); margin-top: 8px; }
-.podium-slot.first .podium-score { color: var(--gold); font-size: 28px; }
+/* Tabs */
+.tab-bar { display: flex; border-bottom: 2px solid var(--border); margin-bottom: 20px; }
+.tab-btn { padding: 10px 20px; font-family: inherit; font-size: 13px; font-weight: 700; color: var(--muted); background: none; border: none; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; }
+.tab-btn:hover { color: var(--navy); }
+.tab-btn.active { color: var(--blue); border-bottom-color: var(--sky); }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* Podium */
+.podium { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 14px; margin-bottom: 24px; align-items: end; }
+.podium-slot { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 18px 14px; text-align: center; }
+.podium-slot.first { border-color: var(--gold); border-width: 2px; padding: 24px 14px; box-shadow: 0 6px 16px rgba(212,175,55,.15); }
+.podium-rank { font-size: 13px; font-weight: 700; color: var(--muted); }
+.podium-rank.first { color: var(--gold); font-size: 15px; }
+.podium-model { font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 700; color: var(--navy); margin: 5px 0; word-break: break-word; }
+.podium-score { font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 700; color: var(--blue); margin-top: 6px; }
+.podium-slot.first .podium-score { color: var(--gold); font-size: 26px; }
 
 .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 20px; }
 .card-header { padding: 14px 20px; border-bottom: 1px solid var(--border); }
@@ -47,20 +55,35 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 
 table { width: 100%; border-collapse: collapse; }
 thead th { text-align: left; font-size: 10.5px; font-weight: 700; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; padding: 11px 16px; background: #f8fafc; border-bottom: 1px solid var(--border); }
-tbody td { padding: 13px 16px; border-bottom: 1px solid #f1f5f9; font-size: 12.5px; color: var(--text); }
+tbody td { padding: 12px 16px; border-bottom: 1px solid #f1f5f9; font-size: 12px; color: var(--text); vertical-align: top; }
 tbody tr:hover { background: #f8fafc; }
 tbody tr:last-child td { border-bottom: none; }
 .num { font-family: 'IBM Plex Mono', monospace; font-weight: 600; color: var(--navy); text-align: right; }
 .rank-cell { font-family: 'IBM Plex Mono', monospace; font-weight: 700; color: var(--muted); width: 40px; }
 .model-cell { font-family: 'IBM Plex Mono', monospace; font-weight: 700; color: var(--navy); }
-
 .model-badge { font-size: 9.5px; font-weight: 700; padding: 2px 7px; border-radius: 3px; text-transform: uppercase; letter-spacing: .05em; margin-left: 6px; }
 .badge-openai { background: rgba(16,163,127,.15); color: #047857; }
 .badge-anthropic { background: rgba(124,58,237,.15); color: var(--purple); }
 .badge-google { background: rgba(66,133,244,.15); color: #1a56db; }
 
-.empty { padding: 60px; text-align: center; color: var(--muted); font-size: 13px; }
-.empty a { color: var(--blue); text-decoration: none; font-weight: 600; }
+.streak { font-family: 'IBM Plex Mono', monospace; font-weight: 700; color: var(--amber); }
+.movement-up { color: var(--green); font-weight: 700; }
+.movement-down { color: var(--red); font-weight: 700; }
+.movement-same { color: var(--muted); }
+
+/* Daily results (expandable rows) */
+.daily-row { cursor: pointer; }
+.daily-row:hover { background: #f0f9ff !important; }
+.daily-detail { display: none; background: #f8fafc; }
+.daily-detail.open { display: table-row; }
+.daily-detail td { padding: 16px 20px; }
+.detail-section { margin-bottom: 12px; }
+.detail-label { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px; }
+.detail-text { font-size: 12px; color: var(--text); line-height: 1.5; }
+.q-mini { padding: 6px 0; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; }
+.q-mini:last-child { border-bottom: none; }
+
+.empty { padding: 40px; text-align: center; color: var(--muted); font-size: 12px; }
 </style>
 </head>
 <body>
@@ -83,14 +106,33 @@ tbody tr:last-child td { border-bottom: none; }
 </div>
 
 <div class="container">
-  <div class="page-title">🏆 Leaderboard</div>
-  <div class="page-subtitle">Cumulative benchmark scores across all completed challenges</div>
+  <div class="page-title">Leaderboard</div>
+  <div class="page-subtitle">Model rankings across all challenges</div>
 
-  <div class="podium" id="podium" style="display:none"></div>
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="switchTab('overall')">Overall (Total Points)</button>
+    <button class="tab-btn" onclick="switchTab('daily')">Daily AI Researcher Challenge</button>
+  </div>
 
-  <div class="card">
-    <div class="card-header"><h2>Full Rankings</h2></div>
-    <div id="leaderboard-body"><div class="empty">Loading…</div></div>
+  <!-- OVERALL TAB -->
+  <div class="tab-panel active" id="tab-overall">
+    <div class="podium" id="podium" style="display:none"></div>
+    <div class="card">
+      <div class="card-header"><h2>Full Rankings — All Challenges</h2></div>
+      <div id="overall-body"><div class="empty">Loading…</div></div>
+    </div>
+  </div>
+
+  <!-- DAILY TAB -->
+  <div class="tab-panel" id="tab-daily">
+    <div class="card">
+      <div class="card-header"><h2>Daily AI Researcher Challenge — Model Rankings</h2></div>
+      <div id="daily-rankings"><div class="empty">Loading…</div></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><h2>Recent Daily Challenge Results</h2></div>
+      <div id="daily-results"><div class="empty">Loading…</div></div>
+    </div>
   </div>
 </div>
 
@@ -104,9 +146,17 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-function fmtNum(n, d = 3) {
+function fmtNum(n, d = 0) {
   if (n === null || n === undefined) return '—';
-  return Number(n).toFixed(d);
+  return Number(n).toLocaleString(undefined, { maximumFractionDigits: d });
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso.replace(' ', 'T') + 'Z');
+    return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  } catch (_) { return iso; }
 }
 
 function providerBadge(provider) {
@@ -117,6 +167,19 @@ function providerBadge(provider) {
   return '';
 }
 
+function movementHtml(change) {
+  if (!change || change === 0) return '<span class="movement-same">—</span>';
+  if (change > 0) return `<span class="movement-up">▲${change}</span>`;
+  return `<span class="movement-down">▼${Math.abs(change)}</span>`;
+}
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelector(`.tab-btn[onclick*="${tab}"]`).classList.add('active');
+  document.getElementById(`tab-${tab}`).classList.add('active');
+}
+
 async function loadMe() {
   const res = await fetch('/api/auth/me');
   if (!res.ok) { window.location.href = '/login'; return; }
@@ -125,23 +188,22 @@ async function loadMe() {
   if (me.role === 'admin') document.getElementById('nav-admin').style.display = '';
 }
 
-async function loadLeaderboard() {
+async function loadOverall() {
   const res = await fetch('/api/leaderboard');
   if (!res.ok) return;
   const board = await res.json();
-  const body = document.getElementById('leaderboard-body');
+  const body = document.getElementById('overall-body');
 
   if (board.length === 0) {
     body.innerHTML = '<div class="empty">No graded runs yet. <a href="/challenges">Run a challenge</a> to populate the leaderboard.</div>';
     return;
   }
 
-  // Podium (top 3)
+  // Podium
   if (board.length >= 1) {
     const podiumDiv = document.getElementById('podium');
     podiumDiv.style.display = '';
     const slots = [];
-    // Order: 2nd, 1st, 3rd (visual stagger)
     if (board[1]) slots.push({ rank: 2, data: board[1], cls: 'second' });
     slots.push({ rank: 1, data: board[0], cls: 'first' });
     if (board[2]) slots.push({ rank: 3, data: board[2], cls: 'third' });
@@ -150,7 +212,8 @@ async function loadLeaderboard() {
         <div class="podium-rank ${s.cls}">#${s.rank}</div>
         <div class="podium-model">${escapeHtml(s.data.model_id)}${providerBadge(s.data.provider)}</div>
         <div style="font-size:10px;color:var(--muted);">${s.data.total_challenges} challenges</div>
-        <div class="podium-score">${fmtNum(s.data.cumulative_score, 2)}</div>
+        <div class="podium-score">${fmtNum(s.data.total_points || 0)}</div>
+        <div style="font-size:10px;color:var(--muted);">points</div>
       </div>
     `).join('');
   }
@@ -159,32 +222,114 @@ async function loadLeaderboard() {
     <tr>
       <td class="rank-cell">#${i + 1}</td>
       <td class="model-cell">${escapeHtml(m.model_id)}${providerBadge(m.provider)}</td>
+      <td class="num">${fmtNum(m.total_points || 0)}</td>
+      <td class="num">${fmtNum(m.daily_points || 0)}</td>
       <td class="num">${m.total_challenges}</td>
-      <td class="num">${fmtNum(m.cumulative_score, 3)}</td>
       <td class="num">${fmtNum(m.avg_accuracy, 3)}</td>
-      <td class="num">${fmtNum(m.avg_speed_bonus, 3)}</td>
     </tr>
   `).join('');
 
   body.innerHTML = `
     <table>
-      <thead>
-        <tr>
-          <th>Rank</th>
-          <th>Model</th>
-          <th style="text-align:right">Challenges</th>
-          <th style="text-align:right">Cumulative Score</th>
-          <th style="text-align:right">Avg Accuracy</th>
-          <th style="text-align:right">Avg Speed Bonus</th>
-        </tr>
-      </thead>
+      <thead><tr><th>Rank</th><th>Model</th><th style="text-align:right">Total Points</th><th style="text-align:right">Daily Points</th><th style="text-align:right">Challenges</th><th style="text-align:right">Avg Accuracy</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
   `;
 }
 
-loadMe();
-loadLeaderboard();
+async function loadDailyRankings() {
+  const res = await fetch('/api/leaderboard/daily');
+  if (!res.ok) return;
+  const board = await res.json();
+  const body = document.getElementById('daily-rankings');
+
+  if (board.length === 0) {
+    body.innerHTML = '<div class="empty">No daily challenges completed yet.</div>';
+    return;
+  }
+
+  const rows = board.map((m, i) => `
+    <tr>
+      <td class="rank-cell">#${i + 1}</td>
+      <td class="model-cell">${escapeHtml(m.model_id)}${providerBadge(m.provider)}</td>
+      <td class="num">${fmtNum(m.daily_points || 0)}</td>
+      <td class="num"><span class="streak">${m.daily_streak || 0} day${(m.daily_streak || 0) !== 1 ? 's' : ''}</span></td>
+      <td class="num">${movementHtml(m.daily_rank_change)}</td>
+      <td class="num">${m.total_challenges}</td>
+    </tr>
+  `).join('');
+
+  body.innerHTML = `
+    <table>
+      <thead><tr><th>Rank</th><th>Model</th><th style="text-align:right">Daily Points</th><th style="text-align:right">Win Streak</th><th style="text-align:right">Movement</th><th style="text-align:right">Challenges</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+async function loadDailyResults() {
+  const res = await fetch('/api/daily-results');
+  if (!res.ok) return;
+  const results = await res.json();
+  const body = document.getElementById('daily-results');
+
+  if (results.length === 0) {
+    body.innerHTML = '<div class="empty">No daily challenges completed yet.</div>';
+    return;
+  }
+
+  let html = '<table><thead><tr><th>Date</th><th>Theme</th><th>1st</th><th>2nd</th><th>3rd</th><th style="text-align:right">Top Score</th></tr></thead><tbody>';
+
+  for (const r of results) {
+    const p = r.participants || [];
+    const first = p[0] || {};
+    const second = p[1] || {};
+    const third = p[2] || {};
+    const rowId = `daily-${r.challenge_id}`;
+
+    html += `
+      <tr class="daily-row" onclick="document.getElementById('${rowId}').classList.toggle('open')">
+        <td>${fmtDate(r.completed_at)}</td>
+        <td><strong>${escapeHtml(r.theme || '—')}</strong></td>
+        <td><strong style="color:var(--gold);">${escapeHtml(first.model_id || '—')}</strong></td>
+        <td>${escapeHtml(second.model_id || '—')}</td>
+        <td>${escapeHtml(third.model_id || '—')}</td>
+        <td class="num">${fmtNum(first.points || 0)}</td>
+      </tr>
+      <tr class="daily-detail" id="${rowId}">
+        <td colspan="6">
+          <div class="detail-section">
+            <div class="detail-label">Theme</div>
+            <div class="detail-text">${escapeHtml(r.theme || '—')}</div>
+          </div>
+          <div class="detail-section">
+            <div class="detail-label">Challenge</div>
+            <div class="detail-text"><a href="/challenges/${r.challenge_id}" style="color:var(--blue);">View full breakdown →</a></div>
+          </div>
+          <div class="detail-section">
+            <div class="detail-label">Results</div>
+            ${p.map((m, idx) => `
+              <div class="q-mini">
+                <span><strong>#${idx+1}</strong> ${escapeHtml(m.model_id)} ${providerBadge(m.provider)}</span>
+                <span class="num">${fmtNum(m.points || 0)} pts · acc ${fmtNum((m.accuracy || 0) * 100, 1)}%</span>
+              </div>
+            `).join('')}
+          </div>
+        </td>
+      </tr>
+    `;
+  }
+
+  html += '</tbody></table>';
+  body.innerHTML = html;
+}
+
+(async () => {
+  await loadMe();
+  loadOverall();
+  loadDailyRankings();
+  loadDailyResults();
+})();
 </script>
 </body>
 </html>
