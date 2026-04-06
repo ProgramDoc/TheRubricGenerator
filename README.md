@@ -8,13 +8,14 @@ Repository: [github.com/ProgramDoc/TheRubricGenerator](https://github.com/Progra
 
 ## Overview
 
-TheRubricGenerator is a platform for benchmarking frontier LLMs on clinical research comprehension. It uses a **two-agent architecture** where one Claude agent generates difficult evaluation rubrics from research papers and another Claude agent judges competing models' answers.
+TheRubricGenerator is a platform for benchmarking frontier LLMs on clinical research comprehension. It uses a **two-agent architecture** where one Claude agent generates difficult evaluation rubrics from research papers and another Claude agent judges competing models' answers. The agents autonomously improve their own prompts using an autoresearch-style experiment loop.
 
-The platform supports three modes of operation:
+The platform supports four modes of operation:
 
-1. **Daily Challenges** - Automated daily benchmarks using papers fetched from PubMed, scored on a public leaderboard
-2. **Individual Tests** - User-designed tests with custom papers, difficulty levels, and model selection (private or public)
-3. **Manual Evaluation** - Traditional rubric-based evaluation with human-in-the-loop editing
+1. **Daily AI Researcher Challenge** - Automated daily benchmarks (7am PST Mon-Fri) using PubMed papers, mixed difficulty (2/2/4/2 composition), bonus round, 100 pts/correct, dual leaderboard with streak tracking
+2. **Individual Tests** - User-designed tests with custom papers, four cognitive difficulty levels, private or public
+3. **Competition API** - External models fetch questions and submit answers via API (Kaggle-style)
+4. **Manual Evaluation** - Traditional rubric-based evaluation with human-in-the-loop editing
 
 ---
 
@@ -29,18 +30,19 @@ TheRubricGenerator/
 │
 ├── backend/
 │   ├── helpers.py                   # LLM callers (Anthropic, Gemini, OpenAI-compat)
-│   ├── challenges.py                # Challenge orchestration + scoring formulas
+│   ├── challenges.py                # Challenge orchestration, scoring, points system
+│   ├── self_improve.py              # Autoresearch-style skill experiment loop
 │   ├── pubmed.py                    # PubMed/PMC/iCite client + 14 seed themes
-│   ├── scheduler.py                 # Daily challenge scheduler (asyncio)
+│   ├── scheduler.py                 # Daily scheduler (7am PST Mon-Fri)
 │   ├── skills.py                    # Agent skill versioning (generator + judge)
 │   ├── obsidian.py                  # Obsidian vault writer (markdown notes)
 │   ├── billing.py                   # Stripe credit system
 │   ├── promo.py                     # Promo code management
 │   ├── agreements.py                # Legal agreements (model publishing + payment)
-│   ├── models_registry.py           # Custom model registration + team management
+│   ├── models_registry.py           # Model registration, team, API keys
 │   └── agents/
-│       ├── generator.py             # Rubric Generator Agent (Claude)
-│       ├── judge.py                 # Judge Agent (Claude) + shadow regrade
+│       ├── generator.py             # Rubric Generator Agent (daily composition)
+│       ├── judge.py                 # Judge Agent + shadow regrade
 │       └── participants.py          # Frontier model runner (routes to provider APIs)
 │
 └── frontend/
@@ -52,8 +54,8 @@ TheRubricGenerator/
     ├── models.html                  # Model registry (name, version, team, API)
     ├── billing.html                 # Credit balance, purchase packs, transactions
     ├── rubric_generator.html        # Paper upload + manual rubric editing
-    ├── daily.html                   # Admin: daily scheduler status + trigger
-    ├── admin.html                   # Admin: user management dashboard
+    ├── daily.html                   # Admin: scheduler + skill improvement panel
+    ├── admin.html                   # Admin: users + model approval queue
     ├── login.html                   # Authentication (login, register, admin, forgot password)
     └── reset_password.html          # Password reset form
 ```
@@ -88,6 +90,21 @@ Reads uploaded PDFs and generates a structured evaluation rubric with 10 questio
 Grades each competing model's answers against the rubric. Uses a shadow regrade (second independent grading pass) to measure its own consistency. The judge flags unverifiable questions to prevent the generator from being rewarded for impossible rubrics.
 
 ---
+
+## Points System
+
+| Source | Points per correct answer |
+|--------|--------------------------|
+| Easy Breezy (individual) | 1 |
+| Minor League (individual) | 2 |
+| Professional (individual) | 5 |
+| Jedi (individual) | 10 |
+| **Daily AI Researcher Challenge** | **100** (10x Jedi) |
+| Daily bonus (if 10/10 correct) | 20 per bonus question |
+
+**Daily composition:** 2 easy + 2 minor + 4 professional + 2 jedi = 10 questions. Max daily score: 1,040 pts.
+
+**Leaderboard:** Two tabs — Overall (total points from all challenges) and Daily (streak tracking, position movement, expandable drill-down by day).
 
 ## Scoring
 
@@ -129,6 +146,34 @@ Prepaid credit system via Stripe:
 Each individual test deducts credits based on the models selected. Daily challenges are free for users (absorbed by the platform). Promo codes (free or break-even) available for technology partners with 48-hour auto-approval.
 
 ---
+
+## Competition API (External Models)
+
+External models compete by submitting answers to our API — we don't call their infrastructure.
+
+```
+1. Register model → receive API key (rg_model_xxxxx)
+2. Opt into daily challenges → pending admin approval
+3. Admin approves → model receives daily challenge access
+4. Fetch questions:  GET /api/compete/{id}/questions  (X-Model-Key header)
+5. Run model locally, generate answers
+6. Submit:          POST /api/compete/{id}/submit
+7. View results:    GET /api/compete/{id}/results
+```
+
+Questions are served **without ideal answers** — external models cannot see the rubric answers.
+
+## Self-Improvement (Autoresearch-Style)
+
+After each daily challenge, the Generator and Judge agents run an autonomous experiment loop inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch):
+
+1. Meta-Claude proposes ONE focused modification to the agent's prompt
+2. Lightweight evaluation (~$1): mini-rubric quality or judge discrimination test
+3. Binary keep/discard: metric improved → keep (advance version). Didn't → discard.
+4. Repeat up to 5 experiments per cycle
+5. Simplicity criterion: "simpler is better; removing something for equal results is a win"
+
+All experiments logged in `skill_experiments` table (like autoresearch's results.tsv).
 
 ## Model Marketplace
 

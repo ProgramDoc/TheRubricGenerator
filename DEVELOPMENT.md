@@ -6,31 +6,37 @@
 
 ---
 
-## Current State (Phase 3 - April 2026)
+## Current State (Phase 5 Complete - April 2026)
 
 ### Codebase Summary
 
 | Component | Files | Lines |
 |-----------|-------|-------|
-| `main.py` | 1 | ~2,100 |
-| `backend/` modules | 12 | ~2,700 |
-| `frontend/` pages | 12 | ~4,400 |
-| **Total** | **25** | **~9,200** |
+| `main.py` | 1 | ~3,040 |
+| `backend/` modules | 14 | ~3,535 |
+| `frontend/` pages | 13 | ~4,910 |
+| **Total** | **28** | **~11,485** |
 
 ### What's Live
 
 - **Two-agent benchmark system:** Claude Rubric Generator + Claude Judge
 - **Five frontier models:** Claude Opus 4.6, GPT-5.4, Gemini 3.1, Gemini 3.1 Pro, Kimi K2 Thinking
-- **Daily challenges:** Automated PubMed fetch (14 rotating themes) + daily benchmark run
-- **Individual tests:** User-designed, private or public, four difficulty levels
-- **Model marketplace:** Register custom OpenAI-compatible models, set pricing, publish for community
-- **Billing:** Stripe prepaid credits ($10/$25/$50 packs), per-test deduction
-- **Promo codes:** Admin-created, free or break-even, 48h auto-approve then admin gate
+- **Daily AI Researcher Challenge:** Automated PubMed fetch (14 rotating themes), 7am PST Mon-Fri, mixed difficulty (2/2/4/2), bonus round, 100 pts/correct
+- **Points system:** Individual (1/2/5/10 by difficulty), Daily (100 pts/correct, 10x Jedi), bonus round (20 pts/q if 10/10)
+- **Dual leaderboard:** Overall (total points) + Daily (streak, movement, expandable drill-down)
+- **Individual tests:** User-designed, private or public, four cognitive difficulty levels
+- **Project folders:** Left sidebar, sharing by email, admin/member roles, admin transfer, protected delete
+- **Model registry:** Unique name, version, team with can_run permissions, credit warning acknowledgment
+- **Competition API:** External models fetch questions + submit answers (X-Model-Key auth), admin approval queue
+- **Self-improvement loop:** Autoresearch-style experiment loop (propose → eval → binary keep/discard, up to 5 experiments per cycle)
+- **Billing:** Stripe prepaid credits ($10/$25/$50), per-test deduction, daily pricing ($3/day or $10/week)
+- **Promo codes:** Admin-created (free/breakeven), 48h auto-approve then admin gate
 - **Legal agreements:** Model Publishing Agreement + Payment Agreement (acceptance tracked)
-- **Leaderboard:** Cumulative scores across daily challenges (manual tests excluded)
-- **Obsidian vault:** Persistent markdown notes per challenge + agent skills
-- **Password reset:** SMTP email flow with token expiry
-- **Admin dashboard:** User management + daily scheduler controls
+- **SSO:** Cross-app auth to OGAI Annotator via HMAC-signed tokens
+- **Obsidian vault:** Persistent markdown notes per challenge + agent skill version history
+- **Password reset:** SMTP email flow with 1hr token expiry
+- **Admin dashboard:** User management, daily scheduler controls, skill improvement panel, model approval queue
+- **Dry-run mode:** Test daily challenges without recording to leaderboard
 
 ---
 
@@ -42,110 +48,83 @@ Two-LLM evaluation platform. Claude generates rubrics from PDFs, a second LLM (o
 
 **Key decision:** Human-editable rubric between generation and evaluation prevents circularity.
 
-**Files:** `main.py` (monolithic), `frontend/rubric_generator.html`, `frontend/login.html`
-
 ### v1.0.1 - Security & Robustness Fixes (April 2, 2026)
 
-Code review findings addressed:
-- Added missing `/api/auth/admin` endpoint (frontend was calling nonexistent route)
-- 50MB file upload size limit
-- Batch evaluation capped at 50 papers
-- Safe markdown fence stripping (regex instead of crash-prone `split`)
-- Server-side validation: password length, email format, field limits
-- Database indices on frequently queried columns
-- Logging level changed from ERROR to INFO
-- Python 3.12.3 pinned for Render compatibility
+- Missing `/api/auth/admin` endpoint, 50MB upload limit, batch cap, safe markdown parsing
+- Server-side validation, database indices, INFO logging, Python 3.12.3 pinned
 
 ### v1.1 - Gemini Support (April 5, 2026)
 
-Added Google Gemini as a third evaluation model alongside OpenAI and Claude.
-- `_call_gemini()` using Google Generative Language API v1beta
-- Gemini natively accepts inline PDF base64 (advantage over OpenAI)
-- Frontend model cards for Gemini 2.5 Pro and Gemini 2.0 Flash
+- Google Gemini API via `_call_gemini()` with native PDF base64 support
 
 ### v1.2 - Password Reset & Admin Dashboard (April 5, 2026)
 
-- Forgot password flow via SMTP with 1hr token expiry
-- `reset_password.html` for setting new password from email link
-- `admin.html` dashboard showing registered users + activity counts
-- Admin email default set to `tck936@mail.harvard.edu`
-- Admin login redirects to `/admin` instead of `/`
+- SMTP password reset, admin.html user dashboard, admin email `tck936@mail.harvard.edu`
 
 ### Phase 1 - Benchmark Platform (April 5, 2026)
 
-Major architecture evolution. Modular `backend/` package mirroring TheReviewer's pattern.
-
-**New:**
-- `backend/agents/` — Generator Agent, Judge Agent, Participant runner
-- `backend/challenges.py` — Challenge orchestration with background threads
-- `backend/skills.py` — Versioned agent prompts (seeded v1)
-- `backend/obsidian.py` — Markdown vault writer
-- `backend/helpers.py` — Shared LLM callers (extracted from main.py)
+- Modular `backend/` package (agents, challenges, skills, obsidian, helpers)
+- Two-agent architecture: Generator + Judge with versioned skills
+- Challenge orchestration on background threads
 - Dashboard, Challenges, Challenge Viewer, Leaderboard pages
-- Scoring: generator (difficulty x validity x speed), model (accuracy x speed), judge (consistency x speed)
-
-**Design:** Root `/` now serves `dashboard.html`. Papers/rubric editor at `/papers`.
 
 ### Phase 1.5 - User Challenges & Model Registry (April 5, 2026)
 
-- Project folders for organizing challenges
-- Private vs Public visibility
-- Four difficulty levels (Easy Breezy through Jedi) based on cognitive complexity
-- Public tests gallery (`/public-tests`) separate from leaderboard
-- Model registry: unique name, version, team linked by email
-- Leaderboard isolation: only `kind='daily'` challenges count
+- Project folders, private/public visibility, four difficulty levels
+- Model registry with team members, public tests gallery
+- Leaderboard isolation: only `kind='daily'` counts
 
 ### Phase 2 - PubMed Auto-Fetch & Daily Scheduler (April 5, 2026)
 
-- `backend/pubmed.py` — E-utilities search + iCite citation filter + PMC PDF download
-- `backend/scheduler.py` — asyncio background task, fires once per UTC day
-- System user (`system@rubricgen.local`) owns auto-fetched papers
-- 14 seed themes rotating by day-of-year
-- Admin panel at `/admin/daily` with manual trigger
-- Cost safety: one run per day, `DAILY_ENABLED` kill switch
+- `backend/pubmed.py` — E-utilities + iCite + PMC PDF download
+- `backend/scheduler.py` — asyncio daily loop, 7am PST Mon-Fri
+- 14 seed themes, theme fallback on failure, system user
 
 ### Phase 3 - Billing, Marketplace & Updated Models (April 5, 2026)
 
-- Updated frontier models: Claude Opus 4.6, GPT-5.4, Gemini 3.1/Pro, Kimi K2 Thinking
-- `call_openai_compatible()` for OpenAI, Kimi, and custom external models
-- `backend/billing.py` — Stripe prepaid credits, checkout sessions, webhooks
-- `backend/promo.py` — Admin-created promo codes (free/breakeven), 48h auto-approve
-- `backend/agreements.py` — Model Publishing + Payment agreements (full legal text)
-- Custom model API registration (base URL + encrypted key + per-test pricing)
-- `/billing` page with balance, pack purchase, transaction history, promo entry
+- Updated frontier models (Claude Opus 4.6, GPT-5.4, Gemini 3.1/Pro, Kimi K2)
+- `call_openai_compatible()` for OpenAI-compatible APIs
+- Stripe prepaid credits, promo codes, legal agreements
+
+### Phase 3.5 - Folders, Teams, Points & Daily AI Researcher Challenge (April 5, 2026)
+
+- Points system: individual (1/2/5/10) + daily (100 pts/correct) + bonus round
+- Daily composition: 2 easy + 2 minor + 4 professional + 2 jedi
+- Dual leaderboard: overall (total points) + daily (streak, movement, expandable rows)
+- Dashboard left sidebar with project folders (admin/member roles)
+- Project sharing, admin transfer, protected delete, self-removal
+- Model team `can_run` permissions with credit warning acknowledgment
+- SSO to OGAI Annotator via HMAC-signed redirect tokens
+
+### Phase 4 - Agent Self-Improvement Loop (April 5, 2026)
+
+Autoresearch-style experiment loop (inspired by karpathy/autoresearch):
+- After each daily challenge, runs up to 5 experiments per agent
+- Each experiment: meta-Claude proposes ONE focused modification → lightweight eval → binary keep/discard
+- Lightweight eval: generator (3-question mini-rubric + quality assessment), judge (discrimination test)
+- Simplicity criterion: simpler prompts that achieve equal results preferred
+- Experiment log table (`skill_experiments`) tracks every attempt like autoresearch's results.tsv
+- Admin panel shows experiment history per agent
+
+### Phase 5 - External Model Competition API (April 5, 2026)
+
+External models submit answers to OUR API (we don't call theirs):
+- `GET /api/compete/{id}/questions` — fetch questions (ideal answers stripped)
+- `POST /api/compete/{id}/submit` — submit answers
+- `GET /api/compete/{id}/results` — view grades
+- Authenticated via `X-Model-Key` header (key generated at registration)
+- Admin approval queue for daily challenge participation
+- `POST /api/admin/challenges/{id}/grade-submissions` — batch grade external answers
+- Dry-run mode for testing daily challenges without leaderboard impact
 
 ---
 
 ## Planned Development
 
-### Phase 4 - Self-Improvement Loop
-
-The generator and judge agents should iteratively refine their skills based on performance:
-
-1. After every N daily challenges, spawn a meta-Claude call with the performance history
-2. Propose a new skill version (modified system prompt)
-3. Canary the new version on the next K challenges alongside the current active version
-4. If the new version beats the current on avg_performance, promote it
-5. Write the updated skill to Obsidian vault for human review
-
-**Status:** Agent skills table exists with versioning + performance tracking. The actual mutation logic is not yet implemented.
-
-### Phase 5 - External Model API Routing
-
-Allow registered external models to participate in daily challenges:
-
-1. Admin approval queue for models opting into daily challenges
-2. When daily challenge runs, include admin-approved external models alongside built-in frontier models
-3. Route API calls to external model's stored base URL with decrypted API key
-4. Handle timeout/failure gracefully (mark model as failed for that challenge, don't block others)
-5. External model owners absorb their API costs (enforced by signed Model Publishing Agreement)
-
-**Status:** Schema exists (`active_for_daily`, `daily_admin_approved`). Routing logic in `participants.py` supports `custom_base_url`/`custom_api_key` params. Admin approval UI not built yet.
-
 ### Phase 6 - Advanced Analytics & Reporting
 
 - Per-model performance breakdown by theme, difficulty level, question domain
-- Historical trend charts (e.g., accuracy over time per model)
+- Historical trend charts (accuracy over time per model)
 - Exportable benchmark reports (PDF/CSV)
 - Public API for querying leaderboard data
 - Email notifications for daily challenge completions
@@ -170,34 +149,33 @@ Allow registered external models to participate in daily challenges:
 
 ### Why Two Agents?
 
-Using the same model to generate questions, answer them, and grade them creates circularity. The two-agent design separates concerns:
-
+The two-agent design separates concerns to avoid circularity:
 - **Generator Agent** (Claude) writes questions + ideal answers from the paper
 - **Competing Models** (GPT-5.4, Gemini, Kimi, custom) answer without seeing ideal answers
 - **Judge Agent** (Claude) grades answers against the rubric independently
 
-The human can still edit the rubric before evaluation (Phase 1 legacy flow), but in automated mode the generator's skill evolves based on how well its questions discriminate between models.
+### Why Prepaid Credits?
 
-### Why Prepaid Credits (Not Subscriptions)?
+Clinical researchers use the platform irregularly. Prepaid credits let occasional users buy what they need and heavy users buy in bulk at a discount.
 
-Clinical researchers use the platform irregularly. Monthly subscriptions would charge idle users unfairly. Prepaid credits let occasional users buy what they need and heavy users buy in bulk at a discount.
+### Why SQLite?
 
-### Why SQLite (Not PostgreSQL)?
+Single Render instance with persistent disk. SQLite with WAL mode handles the write load (one daily challenge + sporadic individual tests). Migration to PostgreSQL straightforward — all parameterized SQL.
 
-Simplicity. The platform has a single Render instance with a persistent disk. SQLite with WAL mode handles concurrent reads well, and the write load (one daily challenge + sporadic individual tests) is light. Migration to PostgreSQL is straightforward if needed — all queries use parameterized SQL with no ORM, so the switch requires only a connection adapter change.
+### Autoresearch-Style Self-Improvement
 
-### Why Not an ORM?
+Inspired by karpathy/autoresearch: a single mutable file (the agent prompt) iterated on autonomously. Each iteration: modify ONE thing → run → measure → binary keep/discard. The key insight: many small experiments with clear metrics, not one big rewrite.
 
-TheReviewer uses SQLAlchemy + Alembic. TheRubricGenerator uses raw `sqlite3` with parameterized queries. This was a deliberate choice for Phase 1 velocity. An ORM migration (with Alembic for schema management) is appropriate if the schema grows past ~20 tables or if PostgreSQL migration happens.
+### Competition API (Not "We Call Them")
+
+External models don't give us their API keys. We expose an API they submit answers to — like Kaggle. We publish questions, they fetch + submit, we grade. Cleaner security model.
 
 ### Obsidian Vault
 
-The vault at `OBSIDIAN_VAULT_DIR` is write-only from the backend. It creates:
+Write-only from the backend:
 - `SKILL_generator.md` / `SKILL_judge.md` — active prompts + version history
-- `challenges/{id}_{theme}.md` — full challenge record (rubric, answers, grades, scores)
-- `papers/{id}_{filename}.md` — paper metadata (future)
-
-The user syncs this directory to their local machine via Obsidian Sync, iCloud, rsync, or git to browse it as an Obsidian vault.
+- `challenges/{id}_{theme}.md` — full challenge record
+- User syncs to local machine via Obsidian Sync/iCloud/rsync/git
 
 ---
 
@@ -205,19 +183,20 @@ The user syncs this directory to their local machine via Obsidian Sync, iCloud, 
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `main.py` | ~2,100 | App entry point, routes, auth, config, lifespan |
-| `backend/challenges.py` | ~525 | Challenge orchestration, scoring formulas, SUPPORTED_MODELS |
-| `backend/pubmed.py` | ~320 | PubMed/PMC/iCite client, 14 seed themes |
+| `main.py` | ~3,040 | App entry, routes, auth, config, lifespan, all API endpoints |
+| `backend/challenges.py` | ~710 | Challenge orchestration, scoring, points, daily composition |
+| `backend/self_improve.py` | ~500 | Autoresearch-style experiment loop |
+| `backend/pubmed.py` | ~330 | PubMed/PMC/iCite client, 14 seed themes |
+| `backend/scheduler.py` | ~270 | Daily scheduler (7am PST Mon-Fri) |
+| `backend/models_registry.py` | ~270 | Model CRUD, team management, API key generation |
 | `backend/billing.py` | ~264 | Stripe credit system, checkout, webhooks |
 | `backend/agreements.py` | ~237 | Legal agreement text + acceptance tracking |
-| `backend/scheduler.py` | ~220 | Daily challenge asyncio scheduler |
-| `backend/models_registry.py` | ~189 | Custom model CRUD + team management |
-| `backend/promo.py` | ~180 | Promo code management + 48h auto-approve |
+| `backend/promo.py` | ~180 | Promo codes, 48h auto-approve |
+| `backend/skills.py` | ~178 | Agent skill versioning, seed prompts |
 | `backend/helpers.py` | ~163 | LLM callers (Anthropic, Gemini, OpenAI-compatible) |
 | `backend/obsidian.py` | ~156 | Markdown vault writer |
-| `backend/skills.py` | ~154 | Agent skill versioning + seed prompts |
-| `backend/agents/participants.py` | ~141 | Frontier + custom model runner |
-| `backend/agents/generator.py` | ~66 | Rubric Generator Agent |
+| `backend/agents/participants.py` | ~142 | Frontier + custom model runner |
+| `backend/agents/generator.py` | ~83 | Rubric Generator Agent (daily composition support) |
 | `backend/agents/judge.py` | ~50 | Judge Agent + shadow regrade |
 
 ---
@@ -236,8 +215,9 @@ The user syncs this directory to their local machine via Obsidian Sync, iCloud, 
 | `STRIPE_SECRET_KEY` | For billing | — | Stripe API key |
 | `STRIPE_WEBHOOK_SECRET` | For billing | — | Stripe webhook signature |
 | `MOONSHOT_API_KEY` | For Kimi | — | Moonshot AI API key |
-| `MODEL_ENCRYPTION_KEY` | For custom models | — | Fernet encryption key |
 | `NCBI_API_KEY` | No | — | PubMed rate limit boost |
+| `SSO_SECRET` | For SSO | — | Shared secret with Annotator |
+| `ANNOTATOR_URL` | No | `https://ogai-annotator.onrender.com` | Annotator URL for SSO redirect |
 | `SMTP_HOST` | For email | — | SMTP server |
 | `SMTP_PORT` | For email | 587 | SMTP port |
 | `SMTP_USER` | For email | — | SMTP username |
@@ -246,7 +226,12 @@ The user syncs this directory to their local machine via Obsidian Sync, iCloud, 
 | `APP_BASE_URL` | For email | `http://localhost:8000` | Base URL for email links |
 | `DAILY_ENABLED` | No | `true` | Enable daily scheduler |
 | `DAILY_MAX_PAPERS` | No | `10` | Papers per daily run |
+| `DAILY_TIMEZONE` | No | `America/Los_Angeles` | Scheduler timezone |
+| `DAILY_HOUR` | No | `7` | Hour to fire daily (in timezone) |
+| `SUBMISSION_WINDOW_HOURS` | No | `24` | Hours external models have to submit |
+| `SKILL_EXPERIMENT_BUDGET` | No | `5` | Experiments per improvement cycle |
+| `SKILL_IMPROVEMENT_ENABLED` | No | `true` | Enable self-improvement loop |
 
 ---
 
-**Last updated:** April 5, 2026
+**Last updated:** April 6, 2026
