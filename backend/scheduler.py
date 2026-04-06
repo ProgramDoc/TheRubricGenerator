@@ -16,8 +16,9 @@ import json
 import logging
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from . import challenges as bench
 from . import pubmed
@@ -64,6 +65,8 @@ def get_scheduler_status(get_db_fn) -> dict:
         conn.close()
     today = _today_iso()
     theme = pubmed.theme_for_date(today)
+    now_local = datetime.now(SCHEDULE_TIMEZONE)
+    is_weekday = now_local.weekday() in SCHEDULE_WEEKDAYS
     return {
         "enabled": _is_enabled(),
         "today_utc": today,
@@ -74,12 +77,16 @@ def get_scheduler_status(get_db_fn) -> dict:
         "check_interval_seconds": CHECK_INTERVAL_SECONDS,
         "max_papers": DAILY_MAX_PAPERS,
         "frontier_models": DAILY_FRONTIER_MODELS,
+        "schedule": f"{SCHEDULE_HOUR}:00 {SCHEDULE_TIMEZONE} Mon-Fri",
+        "local_time": now_local.strftime("%Y-%m-%d %H:%M %Z"),
+        "is_weekday": is_weekday,
+        "scheduled_today": is_weekday and not (last == today),
     }
 
 
 def run_daily_challenge(get_db_fn, papers_dir: Path, vault_dir: Path,
                         system_user_id: int, date_iso: str | None = None,
-                        force: bool = False) -> dict:
+                        force: bool = False, dry_run: bool = False) -> dict:
     """
     Execute the daily flow:
     1. Pick theme for date
@@ -167,13 +174,15 @@ def run_daily_challenge(get_db_fn, papers_dir: Path, vault_dir: Path,
         return {"ok": False, "message": "no paper IDs after insert", "theme": theme["name"]}
 
     # Create the challenge
-    title = f"Daily Challenge — {theme['name']} — {date_iso}"
+    challenge_kind = "dry_run" if dry_run else "daily"
+    title_prefix = "DRY RUN" if dry_run else "Daily Challenge"
+    title = f"{title_prefix} — {theme['name']} — {date_iso}"
     try:
         challenge_id = bench.create_challenge(
             get_db_fn, system_user_id, title, theme["name"],
             paper_ids, DAILY_FRONTIER_MODELS,
             visibility="private",
-            kind="daily",
+            kind=challenge_kind,
         )
     except ValueError as e:
         logger.error("Daily run: create_challenge failed: %s", e)
@@ -199,10 +208,31 @@ def run_daily_challenge(get_db_fn, papers_dir: Path, vault_dir: Path,
     }
 
 
+# Schedule configuration: 7am PST, Mon-Fri
+SCHEDULE_TIMEZONE = ZoneInfo(os.environ.get("DAILY_TIMEZONE", "America/Los_Angeles"))
+SCHEDULE_HOUR     = int(os.environ.get("DAILY_HOUR", "7"))
+SCHEDULE_WEEKDAYS = {0, 1, 2, 3, 4}  # Mon-Fri (0=Monday in Python's weekday())
+
+
+def _is_scheduled_now() -> bool:
+    """Check if we're past the scheduled time for today (in the configured timezone)."""
+    now = datetime.now(SCHEDULE_TIMEZONE)
+    # Check weekday (Mon=0 through Fri=4)
+    if now.weekday() not in SCHEDULE_WEEKDAYS:
+        return False
+    # Check if we've passed the scheduled hour
+    if now.hour < SCHEDULE_HOUR:
+        return False
+    return True
+
+
 def maybe_run_daily(get_db_fn, papers_dir: Path, vault_dir: Path,
                     system_user_id: int) -> None:
-    """One tick: check if today's run is pending; fire if so."""
+    """One tick: check if today's run is pending; fire if so.
+    Only fires on weekdays (Mon-Fri) at or after the scheduled hour (default 7am PST)."""
     if not _is_enabled():
+        return
+    if not _is_scheduled_now():
         return
     today = _today_iso()
     conn = get_db_fn()
@@ -212,6 +242,10 @@ def maybe_run_daily(get_db_fn, papers_dir: Path, vault_dir: Path,
         conn.close()
     if last == today:
         return
+    logger.info("Scheduled daily run triggered (weekday=%d, hour=%d %s)",
+                datetime.now(SCHEDULE_TIMEZONE).weekday(),
+                datetime.now(SCHEDULE_TIMEZONE).hour,
+                SCHEDULE_TIMEZONE)
     try:
         run_daily_challenge(get_db_fn, papers_dir, vault_dir, system_user_id, date_iso=today)
     except Exception as e:

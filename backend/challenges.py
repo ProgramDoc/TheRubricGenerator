@@ -16,7 +16,7 @@ from pathlib import Path
 
 from .agents.generator import run_generator_agent
 from .agents.judge import run_judge_agent, shadow_regrade
-from .agents.participants import provider_for, run_participant_model
+from .agents.participants import run_participant_model
 from .obsidian import write_challenge_note, write_skill_note
 from .skills import (
     get_active_skill, list_skill_versions, record_skill_performance,
@@ -177,8 +177,8 @@ def create_challenge(get_db_fn, user_id: int, title: str, theme: str,
                      difficulty: str | None = None,
                      registered_model_id: int | None = None,
                      kind: str = "manual") -> int:
-    if kind not in ("manual", "daily"):
-        raise ValueError(f"kind must be 'manual' or 'daily', got {kind!r}")
+    if kind not in ("manual", "daily", "dry_run"):
+        raise ValueError(f"kind must be 'manual', 'daily', or 'dry_run', got {kind!r}")
     if not paper_ids:
         raise ValueError("At least one paper required")
     if len(paper_ids) > 10:
@@ -503,7 +503,7 @@ def refresh_leaderboard(conn: sqlite3.Connection) -> None:
                   AVG(mp.speed_bonus) AS avg_speed_bonus
            FROM model_participants mp
            JOIN challenges c ON c.id = mp.challenge_id
-           WHERE mp.status='graded' AND c.kind != 'manual'
+           WHERE mp.status='graded' AND c.kind = 'daily'
            GROUP BY mp.model_id, mp.provider"""
     ).fetchall()
 

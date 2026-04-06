@@ -122,7 +122,14 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
       <p style="font-size:11px;color:var(--amber);font-weight:600;margin-bottom:14px;">
         ⚠ Estimated cost per run: $5–$10 in LLM API spend.
       </p>
-      <button class="btn" id="trigger-btn" onclick="triggerDaily()">▶ Trigger Today's Run</button>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button class="btn" id="trigger-btn" onclick="triggerDaily(false)">▶ Trigger Daily Run (Live)</button>
+        <button class="btn btn-secondary" id="dryrun-btn" onclick="triggerDaily(true)">▶ Dry Run (Not Recorded)</button>
+      </div>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:8px;">
+        <strong>Live</strong> = records to leaderboard (kind='daily').<br>
+        <strong>Dry Run</strong> = runs the full pipeline but results are NOT added to the leaderboard (kind='dry_run'). Use this to test performance.
+      </div>
       <div class="banner" id="banner"></div>
     </div>
   </div>
@@ -161,13 +168,19 @@ async function loadStatus() {
     ? `<a href="/challenges/${s.last_challenge_id}" style="color:var(--blue);text-decoration:none;font-family:'IBM Plex Mono',monospace;">#${s.last_challenge_id} →</a>`
     : '—';
 
+  const scheduledPill = s.scheduled_today
+    ? '<span class="pill pill-warn">Scheduled today</span>'
+    : s.is_weekday
+    ? '<span class="pill pill-on">Already fired</span>'
+    : '<span class="pill" style="background:#e2e8f0;color:#475569;">Weekend — no run</span>';
+
   document.getElementById('status-grid').innerHTML = `
     <div class="status-item"><div class="status-label">Enabled</div><div class="status-value">${enabledPill}</div></div>
-    <div class="status-item"><div class="status-label">Today (UTC)</div><div class="status-value">${escapeHtml(s.today_utc)}</div></div>
-    <div class="status-item"><div class="status-label">Status</div><div class="status-value">${runPill}</div></div>
+    <div class="status-item"><div class="status-label">Schedule</div><div class="status-value">${escapeHtml(s.schedule || '—')}</div></div>
+    <div class="status-item"><div class="status-label">Local Time</div><div class="status-value">${escapeHtml(s.local_time || '—')}</div></div>
+    <div class="status-item"><div class="status-label">Auto-Run Today</div><div class="status-value">${scheduledPill}</div></div>
     <div class="status-item"><div class="status-label">Last Run Date</div><div class="status-value">${escapeHtml(s.last_run_date || 'never')}</div></div>
     <div class="status-item"><div class="status-label">Last Challenge</div><div class="status-value">${lastChallengeLink}</div></div>
-    <div class="status-item"><div class="status-label">Check Interval</div><div class="status-value">${s.check_interval_seconds}s</div></div>
     <div class="status-item"><div class="status-label">Max Papers</div><div class="status-value">${s.max_papers}</div></div>
   `;
 
@@ -186,25 +199,29 @@ async function loadStatus() {
   `;
 }
 
-async function triggerDaily() {
-  if (!confirm('Force-run today\'s daily challenge now?\n\nThis will cost ~$5–$10 in API spend.\nContinue?')) return;
+async function triggerDaily(dryRun) {
+  const mode = dryRun ? 'DRY RUN (not recorded to leaderboard)' : 'LIVE (will be recorded to leaderboard)';
+  if (!confirm(`Trigger a ${mode} daily challenge now?\n\nThis will cost ~$5–$10 in API spend.\nContinue?`)) return;
 
-  const btn = document.getElementById('trigger-btn');
+  const btn = document.getElementById(dryRun ? 'dryrun-btn' : 'trigger-btn');
   btn.disabled = true;
   btn.textContent = 'Fetching papers & launching run…';
   showBanner('Fetching papers from PubMed… this may take 30–60 seconds.', 'info');
 
   try {
-    const res = await fetch('/api/admin/daily/trigger', { method: 'POST' });
+    const res = await fetch('/api/admin/daily/trigger', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dry_run: dryRun }),
+    });
     const body = await res.json();
     if (!res.ok) {
       showBanner('✗ ' + (body.detail || 'trigger failed'), 'error');
-      btn.disabled = false;
-      btn.textContent = '▶ Trigger Today\'s Run';
       return;
     }
+    const label = dryRun ? '🧪 DRY RUN launched' : '✓ LIVE challenge launched';
     showBanner(
-      `✓ Launched challenge <a href="/challenges/${body.challenge_id}" style="color:#166534;font-weight:700;">#${body.challenge_id}</a> with ${body.paper_count} papers on theme "${escapeHtml(body.theme_name)}". The run is executing in the background — click the link to watch progress.`,
+      `${label}: <a href="/challenges/${body.challenge_id}" style="color:#166534;font-weight:700;">#${body.challenge_id}</a> with ${body.paper_count} papers on theme "${escapeHtml(body.theme_name)}". ${dryRun ? 'Results will NOT appear on the leaderboard.' : 'Results WILL appear on the leaderboard.'} Click the link to watch progress.`,
       'success'
     );
     loadStatus();
@@ -212,7 +229,7 @@ async function triggerDaily() {
     showBanner('✗ Network error: ' + e.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.textContent = '▶ Trigger Today\'s Run';
+    btn.textContent = dryRun ? '▶ Dry Run (Not Recorded)' : '▶ Trigger Daily Run (Live)';
   }
 }
 

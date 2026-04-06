@@ -6,7 +6,6 @@ Custom models (registered by users) are called via call_openai_compatible
 with the stored base URL and decrypted API key.
 """
 
-from ..challenges import SUPPORTED_MODELS
 from ..helpers import (
     call_anthropic, call_gemini, call_openai_compatible,
     parse_json_response, time_ms,
@@ -62,6 +61,8 @@ def run_participant_model(model_id: str, rubric: dict, papers_b64: list[dict],
         f"about the attached research papers. Respond with the JSON object as instructed.\n\n{q_block}"
     )
 
+    # Lazy import to avoid circular dependency (challenges imports participants)
+    from ..challenges import SUPPORTED_MODELS
     model_spec = SUPPORTED_MODELS.get(model_id)
 
     # Determine caller type

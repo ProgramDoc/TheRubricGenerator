@@ -192,7 +192,7 @@ def init_db() -> None:
                 id                  INTEGER PRIMARY KEY AUTOINCREMENT,
                 title               TEXT    NOT NULL,
                 theme               TEXT,
-                kind                TEXT    NOT NULL DEFAULT 'manual' CHECK(kind IN ('manual','daily')),
+                kind                TEXT    NOT NULL DEFAULT 'manual' CHECK(kind IN ('manual','daily','dry_run')),
                 status              TEXT    NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','running','complete','failed')),
                 created_by          INTEGER REFERENCES users(id) ON DELETE SET NULL,
                 created_at          TEXT    DEFAULT (datetime('now')),
@@ -311,6 +311,50 @@ def _migrate_challenges_columns(conn) -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_challenges_visibility ON challenges(visibility)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_challenges_owner_vis ON challenges(created_by, visibility)")
         conn.commit()
+    # Migrate challenges kind CHECK to allow 'dry_run'
+    # SQLite doesn't support ALTER CONSTRAINT, so we disable foreign keys
+    # temporarily and recreate the table if the check doesn't include dry_run.
+    # Pragmatic approach: just try inserting and deleting a dry_run row.
+    try:
+        conn.execute("INSERT INTO challenges (title, theme, kind, status, created_by) VALUES ('__migrate_test','','dry_run','pending',NULL)")
+        conn.execute("DELETE FROM challenges WHERE title='__migrate_test'")
+        conn.commit()
+    except Exception:
+        # CHECK constraint rejected 'dry_run' — need to recreate table.
+        # This is safe because CREATE TABLE IF NOT EXISTS already ran with the new CHECK.
+        logger.info("Migrating challenges table to support kind='dry_run'...")
+        try:
+            conn.executescript("""
+                PRAGMA foreign_keys=OFF;
+                CREATE TABLE IF NOT EXISTS challenges_new (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title               TEXT    NOT NULL,
+                    theme               TEXT,
+                    kind                TEXT    NOT NULL DEFAULT 'manual' CHECK(kind IN ('manual','daily','dry_run')),
+                    status              TEXT    NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','running','complete','failed')),
+                    created_by          INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    created_at          TEXT    DEFAULT (datetime('now')),
+                    started_at          TEXT,
+                    completed_at        TEXT,
+                    generator_skill_id  INTEGER REFERENCES agent_skills(id) ON DELETE SET NULL,
+                    judge_skill_id      INTEGER REFERENCES agent_skills(id) ON DELETE SET NULL,
+                    generator_score     REAL,
+                    judge_score         REAL,
+                    error_message       TEXT,
+                    project_id          INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+                    visibility          TEXT    NOT NULL DEFAULT 'private',
+                    difficulty          TEXT,
+                    registered_model_id INTEGER REFERENCES registered_models(id) ON DELETE SET NULL
+                );
+                INSERT INTO challenges_new SELECT id,title,theme,kind,status,created_by,created_at,started_at,completed_at,generator_skill_id,judge_skill_id,generator_score,judge_score,error_message,project_id,visibility,difficulty,registered_model_id FROM challenges;
+                DROP TABLE challenges;
+                ALTER TABLE challenges_new RENAME TO challenges;
+                PRAGMA foreign_keys=ON;
+            """)
+            conn.commit()
+        except Exception as e:
+            logger.error("challenges table migration failed: %s", e)
+
     # Phase 3: add API fields to registered_models
     rm_cols = {r["name"] for r in conn.execute("PRAGMA table_info(registered_models)").fetchall()}
     with conn:
@@ -812,16 +856,83 @@ def admin_daily_status(rubricgen_session: str | None = Cookie(default=None)):
     return sched.get_scheduler_status(get_db)
 
 
+class DailyTriggerPayload(BaseModel):
+    dry_run: Optional[bool] = False
+
+
 @app.post("/api/admin/daily/trigger")
-def admin_daily_trigger(rubricgen_session: str | None = Cookie(default=None)):
+def admin_daily_trigger(body: DailyTriggerPayload = DailyTriggerPayload(),
+                        rubricgen_session: str | None = Cookie(default=None)):
     require_admin(rubricgen_session)
     system_id = _get_system_user_id()
     result = sched.run_daily_challenge(
-        get_db, PAPERS_DIR, OBSIDIAN_VAULT_DIR, system_id, force=True
+        get_db, PAPERS_DIR, OBSIDIAN_VAULT_DIR, system_id,
+        force=True, dry_run=body.dry_run or False,
     )
     if not result.get("ok"):
         raise HTTPException(400, result.get("message", "daily run failed"))
     return result
+
+
+# ─── Admin leaderboard management ───
+
+@app.delete("/api/admin/leaderboard/{model_id}")
+def admin_delete_leaderboard_entry(model_id: str,
+                                   rubricgen_session: str | None = Cookie(default=None)):
+    """Remove a model from the leaderboard cache."""
+    require_admin(rubricgen_session)
+    conn = get_db()
+    with conn:
+        conn.execute("DELETE FROM leaderboard_cache WHERE model_id=?", (model_id,))
+        conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@app.post("/api/admin/leaderboard/refresh")
+def admin_refresh_leaderboard(rubricgen_session: str | None = Cookie(default=None)):
+    """Force-recompute the leaderboard from scratch (only kind='daily' challenges)."""
+    require_admin(rubricgen_session)
+    conn = get_db()
+    bench.refresh_leaderboard(conn)
+    conn.close()
+    return {"ok": True}
+
+
+@app.post("/api/admin/challenges/{cid}/exclude")
+def admin_exclude_challenge(cid: int,
+                            rubricgen_session: str | None = Cookie(default=None)):
+    """Exclude a challenge from the leaderboard by changing its kind to 'dry_run'."""
+    require_admin(rubricgen_session)
+    conn = get_db()
+    row = conn.execute("SELECT id, kind FROM challenges WHERE id=?", (cid,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "Challenge not found")
+    with conn:
+        conn.execute("UPDATE challenges SET kind='dry_run' WHERE id=?", (cid,))
+        conn.commit()
+    bench.refresh_leaderboard(conn)
+    conn.close()
+    return {"ok": True, "message": f"Challenge {cid} excluded from leaderboard"}
+
+
+@app.post("/api/admin/challenges/{cid}/include")
+def admin_include_challenge(cid: int,
+                            rubricgen_session: str | None = Cookie(default=None)):
+    """Re-include a challenge in the leaderboard by changing its kind back to 'daily'."""
+    require_admin(rubricgen_session)
+    conn = get_db()
+    row = conn.execute("SELECT id, kind FROM challenges WHERE id=?", (cid,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "Challenge not found")
+    with conn:
+        conn.execute("UPDATE challenges SET kind='daily' WHERE id=?", (cid,))
+        conn.commit()
+    bench.refresh_leaderboard(conn)
+    conn.close()
+    return {"ok": True, "message": f"Challenge {cid} included in leaderboard"}
 
 
 @app.get("/api/admin/users")
