@@ -288,23 +288,32 @@ function toggleNewProject() {
 }
 
 async function createProject() {
-  const name = document.getElementById('new-project-input').value.trim();
-  if (!name) return;
+  const input = document.getElementById('new-project-input');
+  const name = (input ? input.value : '').trim();
+  if (!name) {
+    alert('Please enter a project name.');
+    return;
+  }
+  console.log('Creating project:', name);
   try {
     const res = await fetch('/api/projects', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name: name }),
     });
+    console.log('Response status:', res.status);
+    const body = await res.json().catch(() => null);
+    console.log('Response body:', body);
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      alert('Failed to create project: ' + (body.detail || res.statusText));
+      alert('Failed to create project: ' + (body && body.detail ? body.detail : res.statusText));
       return;
     }
-    document.getElementById('new-project-input').value = '';
+    alert('Project "' + name + '" created!');
+    input.value = '';
     document.getElementById('new-project-form').classList.remove('open');
     loadProjects();
   } catch (e) {
+    console.error('createProject error:', e);
     alert('Network error creating project: ' + e.message);
   }
 }
