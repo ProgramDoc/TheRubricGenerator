@@ -64,6 +64,9 @@ ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "")
 ADMIN_EMAIL  = os.environ.get("ADMIN_EMAIL",  "tck936@mail.harvard.edu")
 ADMIN_NAME   = os.environ.get("ADMIN_NAME",   "Admin")
 
+SSO_SECRET       = os.environ.get("SSO_SECRET", "")
+ANNOTATOR_URL    = os.environ.get("ANNOTATOR_URL", "https://ogai-annotator.onrender.com")
+
 SMTP_HOST    = os.environ.get("SMTP_HOST", "")
 SMTP_PORT    = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER    = os.environ.get("SMTP_USER", "")
@@ -762,6 +765,38 @@ def admin_login(body: AdminLoginPayload, response: Response):
     token = _create_session(row["id"])
     _set_session_cookie(response, token)
     return {"ok": True}
+
+
+# ─────────────────────────────────────────────
+# SSO: generate token for cross-app auth
+# ─────────────────────────────────────────────
+import time as _time
+
+
+def _generate_sso_token(user: dict) -> str:
+    """Create an HMAC-signed, time-limited SSO token containing user info.
+    Format: base64(json({email, display_name, role, ts})) + '.' + hmac_signature
+    Valid for 60 seconds."""
+    if not SSO_SECRET:
+        raise HTTPException(500, "SSO is not configured (SSO_SECRET missing)")
+    payload = json.dumps({
+        "email": user["email"],
+        "display_name": user["display_name"],
+        "role": user.get("role", "reviewer"),
+        "ts": int(_time.time()),
+    })
+    payload_b64 = base64.urlsafe_b64encode(payload.encode()).decode()
+    sig = hmac.new(SSO_SECRET.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()
+    return f"{payload_b64}.{sig}"
+
+
+@app.get("/api/sso/annotator")
+def sso_to_annotator(rubricgen_session: str | None = Cookie(default=None)):
+    """Generate an SSO token and redirect the user to the Annotator."""
+    user = require_user(rubricgen_session)
+    token = _generate_sso_token(user)
+    redirect_url = f"{ANNOTATOR_URL.rstrip('/')}/sso?token={token}"
+    return RedirectResponse(redirect_url, status_code=302)
 
 
 class ForgotPasswordPayload(BaseModel):
