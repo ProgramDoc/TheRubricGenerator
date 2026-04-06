@@ -1311,6 +1311,69 @@ def api_get_skill(agent_type: str, rubricgen_session: str | None = Cookie(defaul
     return {"active": active, "versions": versions}
 
 
+from backend.self_improve import (
+    get_improvement_status, propose_improved_skill, deploy_new_skill,
+    maybe_improve_after_challenge as _improve_check,
+)
+from backend.skills import activate_skill_version
+
+
+@app.get("/api/admin/skills/{agent_type}/status")
+def api_skill_status(agent_type: str, rubricgen_session: str | None = Cookie(default=None)):
+    """Self-improvement status: active version, performance, rollback status."""
+    require_admin(rubricgen_session)
+    if agent_type not in ("generator", "judge"):
+        raise HTTPException(400, "agent_type must be 'generator' or 'judge'")
+    conn = get_db()
+    try:
+        return get_improvement_status(conn, agent_type)
+    finally:
+        conn.close()
+
+
+@app.post("/api/admin/skills/{agent_type}/improve")
+def api_trigger_improvement(agent_type: str,
+                            rubricgen_session: str | None = Cookie(default=None)):
+    """Manually trigger a self-improvement cycle (propose + deploy new skill)."""
+    require_admin(rubricgen_session)
+    if agent_type not in ("generator", "judge"):
+        raise HTTPException(400, "agent_type must be 'generator' or 'judge'")
+    conn = get_db()
+    try:
+        new_prompt = propose_improved_skill(conn, agent_type)
+        if not new_prompt:
+            raise HTTPException(400, "Meta-Claude returned no improvement")
+        new_id = deploy_new_skill(conn, agent_type, new_prompt)
+        # Write to Obsidian
+        from backend.obsidian import write_skill_note
+        active = get_active_skill(conn, agent_type)
+        versions = list_skill_versions(conn, agent_type)
+        write_skill_note(OBSIDIAN_VAULT_DIR, agent_type, active, versions)
+        return {"ok": True, "new_skill_id": new_id, "new_prompt_preview": new_prompt[:200]}
+    finally:
+        conn.close()
+
+
+@app.post("/api/admin/skills/{agent_type}/{version}/activate")
+def api_activate_skill(agent_type: str, version: int,
+                       rubricgen_session: str | None = Cookie(default=None)):
+    """Manually activate a specific skill version."""
+    require_admin(rubricgen_session)
+    if agent_type not in ("generator", "judge"):
+        raise HTTPException(400, "agent_type must be 'generator' or 'judge'")
+    conn = get_db()
+    try:
+        activate_skill_version(conn, agent_type, version)
+        # Write to Obsidian
+        from backend.obsidian import write_skill_note
+        active = get_active_skill(conn, agent_type)
+        versions = list_skill_versions(conn, agent_type)
+        write_skill_note(OBSIDIAN_VAULT_DIR, agent_type, active, versions)
+        return {"ok": True, "activated_version": version}
+    finally:
+        conn.close()
+
+
 # ─────────────────────────────────────────────
 # Registered Model Registry (Phase 1.5)
 # ─────────────────────────────────────────────

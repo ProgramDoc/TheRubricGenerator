@@ -133,6 +133,37 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
       <div class="banner" id="banner"></div>
     </div>
   </div>
+
+  <!-- SKILL IMPROVEMENT -->
+  <div class="card">
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+      <h2>Agent Self-Improvement</h2>
+      <button class="btn btn-secondary" onclick="loadSkillStatus()" style="padding:5px 12px;font-size:11px;">⟳ Refresh</button>
+    </div>
+    <div class="card-body">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;" id="skill-panels">
+        <div>
+          <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Generator Agent</div>
+          <div id="gen-skill-status" style="font-size:12px;color:var(--text);line-height:1.6;">Loading…</div>
+          <div style="margin-top:10px;display:flex;gap:6px;">
+            <button class="btn btn-secondary" onclick="triggerImprovement('generator')" style="padding:5px 10px;font-size:10px;">Improve Now</button>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Judge Agent</div>
+          <div id="judge-skill-status" style="font-size:12px;color:var(--text);line-height:1.6;">Loading…</div>
+          <div style="margin-top:10px;display:flex;gap:6px;">
+            <button class="btn btn-secondary" onclick="triggerImprovement('judge')" style="padding:5px 10px;font-size:10px;">Improve Now</button>
+          </div>
+        </div>
+      </div>
+      <div class="note" style="margin-top:14px;">
+        After every <strong>5 daily challenges</strong>, the system proposes a new skill version via a meta-Claude call.
+        The new version is deployed immediately. If it underperforms after <strong>3 challenges</strong> (below 80% of previous avg), it auto-rolls back.
+        You can also manually trigger improvement or activate any historical version.
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -233,7 +264,48 @@ async function triggerDaily(dryRun) {
   }
 }
 
+async function loadSkillStatus() {
+  for (const type of ['generator', 'judge']) {
+    try {
+      const res = await fetch(`/api/admin/skills/${type}/status`);
+      if (!res.ok) continue;
+      const s = await res.json();
+      const el = document.getElementById(`${type === 'generator' ? 'gen' : 'judge'}-skill-status`);
+      const rb = s.rollback_status || {};
+      const rbBadge = rb.action === 'rollback'
+        ? '<span style="color:var(--red);font-weight:700;">ROLLBACK PENDING</span>'
+        : rb.action === 'wait'
+        ? '<span style="color:var(--amber);">Evaluating…</span>'
+        : '<span style="color:var(--green);">Stable</span>';
+      el.innerHTML = `
+        <div><strong>Active:</strong> v${s.active_version} (used ${s.times_used_current}x)</div>
+        <div><strong>Avg perf:</strong> ${(s.avg_performance_current || 0).toFixed(4)}</div>
+        <div><strong>Total versions:</strong> ${s.total_versions}</div>
+        <div><strong>Improvement due:</strong> ${s.improvement_due ? 'Yes' : 'No (' + s.times_used_current + '/' + s.improve_threshold + ' runs)'}</div>
+        <div><strong>Status:</strong> ${rbBadge}</div>
+      `;
+    } catch (e) {
+      console.error('Skill status load failed:', e);
+    }
+  }
+}
+
+async function triggerImprovement(agentType) {
+  if (!confirm(`Trigger self-improvement for the ${agentType} agent?\n\nMeta-Claude will analyze recent performance and propose a revised prompt.\nThe new version deploys immediately.\n\nCost: ~$0.10`)) return;
+  showBanner(`Proposing improved ${agentType} skill…`, 'info');
+  try {
+    const res = await fetch(`/api/admin/skills/${agentType}/improve`, { method: 'POST' });
+    const body = await res.json();
+    if (!res.ok) { showBanner('Failed: ' + (body.detail || 'unknown'), 'error'); return; }
+    showBanner(`New ${agentType} skill v${body.new_skill_id} deployed. Monitoring begins.`, 'success');
+    loadSkillStatus();
+  } catch (e) {
+    showBanner('Network error: ' + e.message, 'error');
+  }
+}
+
 loadStatus();
+loadSkillStatus();
 </script>
 </body>
 </html>

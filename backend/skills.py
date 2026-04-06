@@ -136,6 +136,30 @@ def list_skill_versions(conn: sqlite3.Connection, agent_type: str) -> list[dict]
     return [dict(r) for r in rows]
 
 
+def activate_skill_version(conn: sqlite3.Connection, agent_type: str, version: int) -> None:
+    """Set a specific version as active, deactivating all others for that agent type."""
+    with conn:
+        conn.execute("UPDATE agent_skills SET active=0 WHERE agent_type=?", (agent_type,))
+        conn.execute(
+            "UPDATE agent_skills SET active=1 WHERE agent_type=? AND version=?",
+            (agent_type, version),
+        )
+        conn.commit()
+
+
+def get_previous_skill(conn: sqlite3.Connection, agent_type: str) -> dict | None:
+    """Get the most recent non-active version with usage data."""
+    active = get_active_skill(conn, agent_type)
+    row = conn.execute(
+        """SELECT id, version, prompt_text, avg_performance, times_used
+           FROM agent_skills
+           WHERE agent_type=? AND version < ? AND times_used > 0
+           ORDER BY version DESC LIMIT 1""",
+        (agent_type, active["version"]),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def record_skill_performance(conn: sqlite3.Connection, skill_id: int, new_score: float) -> None:
     """Update running average performance for a skill."""
     row = conn.execute(

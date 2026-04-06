@@ -539,6 +539,15 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
 
         logger.info("Challenge %s complete: gen=%s judge=%s", challenge_id, gen_score, judge_score_val)
 
+        # 9. Self-improvement check (daily challenges only)
+        if is_daily:
+            try:
+                from .self_improve import maybe_improve_after_challenge
+                maybe_improve_after_challenge(get_db_fn, "generator", vault_dir)
+                maybe_improve_after_challenge(get_db_fn, "judge", vault_dir)
+            except Exception as e:
+                logger.error("Self-improvement check failed: %s", e)
+
     except Exception as e:
         logger.error("run_challenge failed: %s\n%s", e, traceback.format_exc())
         try:
