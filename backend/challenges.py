@@ -43,6 +43,48 @@ def provider_for_model(model_id: str) -> str:
     m = SUPPORTED_MODELS.get(model_id)
     return m["provider"] if m else "unknown"
 
+# ─────────────────────────────────────────────
+# Points system
+# ─────────────────────────────────────────────
+# Individual test points per correct answer
+INDIVIDUAL_POINTS = {
+    "easy_breezy":  1,
+    "minor_league": 2,
+    "professional": 5,
+    "jedi":         10,
+}
+
+# Daily AI Researcher Challenge: 10x Jedi rate = 100 pts per correct answer
+DAILY_POINTS_PER_CORRECT = 100
+
+# Daily bonus: 2 additional Jedi questions worth 20 pts each if all 10 base correct
+DAILY_BONUS_QUESTION_COUNT = 2
+DAILY_BONUS_POINTS_EACH = 20
+
+# Daily test composition: 2 easy, 2 minor, 4 professional, 2 jedi = 10 questions
+DAILY_COMPOSITION = {
+    "easy_breezy": 2,
+    "minor_league": 2,
+    "professional": 4,
+    "jedi": 2,
+}
+
+# Daily challenge pricing in credits
+DAILY_PRICE_PER_CHALLENGE = 300   # $3
+DAILY_PRICE_PER_WEEK = 1000       # $10
+
+
+def calculate_points(difficulty: str | None, correct_count: int, total: int,
+                     is_daily: bool = False, bonus_correct: int = 0) -> int:
+    """Calculate points earned for a challenge run."""
+    if is_daily:
+        base = correct_count * DAILY_POINTS_PER_CORRECT
+        bonus = bonus_correct * DAILY_BONUS_POINTS_EACH
+        return base + bonus
+    pts_per = INDIVIDUAL_POINTS.get(difficulty, 1)
+    return correct_count * pts_per
+
+
 # Phase 1.5: user-facing difficulty tiers for user-designed public tests.
 # Difficulty is defined by the COGNITIVE COMPLEXITY of the questions, not
 # the number of questions. All levels produce ~10 questions. The level
@@ -301,11 +343,13 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
 
         # 2. Generator agent
         gen_skill = get_active_skill(conn, "generator")
+        is_daily = (challenge.get("kind") == "daily")
         rubric, gen_ms = run_generator_agent(
             papers_b64,
             challenge.get("theme") or "",
             gen_skill,
             difficulty=challenge.get("difficulty"),
+            daily_composition=DAILY_COMPOSITION if is_daily else None,
         )
 
         with conn:
@@ -354,17 +398,56 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
 
                 run_score = score_model_run(grades, answer_ms)
 
+                # Calculate points
+                correct_count = sum(
+                    1 for g in grades.get("grades", [])
+                    if g.get("score", 0) >= g.get("max_points", 1)
+                )
+                total_q = len(grades.get("grades", []))
+                bonus_correct = 0
+
+                # Daily bonus round: if all base questions correct, generate 2 more Jedi questions
+                if is_daily and correct_count == total_q and total_q > 0:
+                    logger.info("Model %s got %d/%d — triggering bonus round", model_id, correct_count, total_q)
+                    try:
+                        bonus_rubric, _ = run_generator_agent(
+                            papers_b64,
+                            challenge.get("theme") or "",
+                            gen_skill,
+                            difficulty="jedi",
+                        )
+                        # Override to exactly 2 questions
+                        bonus_qs = (bonus_rubric.get("questions") or [])[:DAILY_BONUS_QUESTION_COUNT]
+                        if bonus_qs:
+                            bonus_rubric_trimmed = dict(bonus_rubric, questions=bonus_qs)
+                            bonus_answers, _ = run_participant_model(model_id, bonus_rubric_trimmed, papers_b64)
+                            bonus_grades, _ = run_judge_agent(bonus_rubric_trimmed, bonus_answers, judge_skill)
+                            bonus_correct = sum(
+                                1 for g in bonus_grades.get("grades", [])
+                                if g.get("score", 0) >= g.get("max_points", 1)
+                            )
+                            # Append bonus to grades
+                            grades["bonus_grades"] = bonus_grades.get("grades", [])
+                            grades["bonus_correct"] = bonus_correct
+                    except Exception as e:
+                        logger.error("Bonus round failed for %s: %s", model_id, e)
+
+                pts = calculate_points(
+                    challenge.get("difficulty"), correct_count, total_q,
+                    is_daily=is_daily, bonus_correct=bonus_correct,
+                )
+
                 with conn:
                     conn.execute(
                         """UPDATE model_participants
                            SET grade_json=?, judge_time_ms=?,
                                accuracy=?, speed_bonus=?, total_score=?,
-                               status='graded'
+                               points=?, status='graded'
                            WHERE id=?""",
                         (
                             json.dumps(grades), judge_ms,
                             run_score["accuracy"], run_score["speed_bonus"], run_score["total_score"],
-                            mp["id"],
+                            pts, mp["id"],
                         ),
                     )
                     conn.commit()
@@ -488,38 +571,124 @@ def run_challenge_async(get_db_fn, challenge_id: int, papers_dir: Path,
 # ─────────────────────────────────────────────
 
 def refresh_leaderboard(conn: sqlite3.Connection) -> None:
-    """Recompute leaderboard_cache from model_participants.
+    """Recompute leaderboard_cache. Overall leaderboard = total_points from
+    ALL public individual tests + daily challenges. Daily leaderboard =
+    daily_points from kind='daily' only."""
 
-    Phase 1.5: only system-run challenges (kind != 'manual') count toward
-    the leaderboard. User-designed manual tests — public or private — are
-    excluded. Phase 2 will introduce kind='daily' which will be the only
-    eligible kind.
-    """
+    # Overall: all graded challenges that earn points (daily + public individual)
     rows = conn.execute(
         """SELECT mp.model_id, mp.provider,
                   COUNT(*) AS total_challenges,
                   SUM(mp.total_score) AS cumulative_score,
                   AVG(mp.accuracy) AS avg_accuracy,
-                  AVG(mp.speed_bonus) AS avg_speed_bonus
+                  AVG(mp.speed_bonus) AS avg_speed_bonus,
+                  SUM(mp.points) AS total_points,
+                  SUM(CASE WHEN c.kind='daily' THEN mp.points ELSE 0 END) AS daily_points
            FROM model_participants mp
            JOIN challenges c ON c.id = mp.challenge_id
-           WHERE mp.status='graded' AND c.kind = 'daily'
+           WHERE mp.status='graded' AND (c.kind = 'daily' OR c.visibility = 'public')
            GROUP BY mp.model_id, mp.provider"""
     ).fetchall()
 
+    # Daily streak: count consecutive days a model has held #1 rank
+    # Get the most recent daily challenges in order
+    daily_results = conn.execute(
+        """SELECT c.id, c.completed_at, mp.model_id, mp.points
+           FROM model_participants mp
+           JOIN challenges c ON c.id = mp.challenge_id
+           WHERE mp.status='graded' AND c.kind='daily' AND c.status='complete'
+           ORDER BY c.completed_at DESC"""
+    ).fetchall()
+
+    # Group by challenge to find daily winners
+    from collections import defaultdict
+    challenge_winners: dict[int, tuple[str, int]] = {}  # challenge_id -> (model_id, points)
+    for r in daily_results:
+        cid = r["id"]
+        if cid not in challenge_winners or r["points"] > challenge_winners[cid][1]:
+            challenge_winners[cid] = (r["model_id"], r["points"])
+
+    # Get ordered list of winners (most recent first)
+    ordered_challenges = sorted(challenge_winners.keys(), reverse=True)
+    winner_sequence = [challenge_winners[cid][0] for cid in ordered_challenges]
+
+    # Calculate streaks per model
+    streaks: dict[str, int] = defaultdict(int)
+    if winner_sequence:
+        current_winner = winner_sequence[0]
+        streak = 1
+        for w in winner_sequence[1:]:
+            if w == current_winner:
+                streak += 1
+            else:
+                break
+        streaks[current_winner] = streak
+
+    # Previous rank for movement calculation
+    prev_ranks: dict[str, int] = {}
+    prev = conn.execute(
+        "SELECT model_id, RANK() OVER (ORDER BY total_points DESC) AS rank FROM leaderboard_cache"
+    ).fetchall()
+    for r in prev:
+        prev_ranks[r["model_id"]] = r["rank"]
+
     with conn:
         conn.execute("DELETE FROM leaderboard_cache")
-        for r in rows:
+        # Sort by total_points for new rank
+        sorted_rows = sorted(rows, key=lambda r: -(r["total_points"] or 0))
+        for i, r in enumerate(sorted_rows):
+            new_rank = i + 1
+            old_rank = prev_ranks.get(r["model_id"], new_rank)
+            rank_change = old_rank - new_rank  # positive = moved up
             conn.execute(
                 """INSERT INTO leaderboard_cache
                    (model_id, provider, total_challenges, cumulative_score,
-                    avg_accuracy, avg_speed_bonus, last_updated)
-                   VALUES (?,?,?,?,?,?,datetime('now'))""",
+                    avg_accuracy, avg_speed_bonus, total_points, daily_points,
+                    daily_streak, daily_rank_change, last_updated)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))""",
                 (
                     r["model_id"], r["provider"], r["total_challenges"],
                     r["cumulative_score"] or 0,
                     r["avg_accuracy"] or 0,
                     r["avg_speed_bonus"] or 0,
+                    r["total_points"] or 0,
+                    r["daily_points"] or 0,
+                    streaks.get(r["model_id"], 0),
+                    rank_change,
                 ),
             )
         conn.commit()
+
+
+def get_daily_results(conn: sqlite3.Connection, limit: int = 30) -> list[dict]:
+    """Get recent daily challenge results for the Daily AI Researcher Challenge leaderboard.
+    Each row = one day's results with winner, 2nd, 3rd place."""
+    challenges = conn.execute(
+        """SELECT c.id, c.title, c.theme, c.completed_at, c.generator_score,
+                  cr.rubric_json
+           FROM challenges c
+           LEFT JOIN challenge_rubrics cr ON cr.challenge_id = c.id
+           WHERE c.kind='daily' AND c.status='complete'
+           ORDER BY c.completed_at DESC
+           LIMIT ?""",
+        (limit,),
+    ).fetchall()
+
+    results = []
+    for ch in challenges:
+        participants = conn.execute(
+            """SELECT model_id, provider, points, accuracy, answer_time_ms,
+                      judge_time_ms, grade_json, answer_json
+               FROM model_participants
+               WHERE challenge_id=? AND status='graded'
+               ORDER BY points DESC""",
+            (ch["id"],),
+        ).fetchall()
+        results.append({
+            "challenge_id": ch["id"],
+            "title": ch["title"],
+            "theme": ch["theme"],
+            "completed_at": ch["completed_at"],
+            "participants": [dict(p) for p in participants],
+        })
+    return results

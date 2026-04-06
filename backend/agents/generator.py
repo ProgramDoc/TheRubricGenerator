@@ -7,13 +7,15 @@ from ..helpers import call_anthropic, parse_json_response, time_ms
 
 def run_generator_agent(papers_b64: list[dict], theme: str, skill: dict,
                         difficulty: str | None = None,
+                        daily_composition: dict | None = None,
                         max_tokens: int = 4096) -> tuple[dict, int]:
     """
     papers_b64: list of {filename, b64} — the PDFs in the challenge
     theme: the challenge theme (e.g. "RCT methodology in oncology")
     skill: dict with at least 'prompt_text' (from get_active_skill)
-    difficulty: optional key into DIFFICULTY_LEVELS; when provided, overrides
-        the default 10-question count and injects a complexity hint.
+    difficulty: optional key into DIFFICULTY_LEVELS for individual tests
+    daily_composition: optional dict {easy_breezy: 2, minor_league: 2, professional: 4, jedi: 2}
+        for the Daily AI Researcher Challenge
 
     Returns: (rubric_dict, elapsed_ms)
     """
@@ -24,7 +26,22 @@ def run_generator_agent(papers_b64: list[dict], theme: str, skill: dict,
     from ..challenges import DIFFICULTY_LEVELS
 
     difficulty_block = ""
-    if difficulty and difficulty in DIFFICULTY_LEVELS:
+    if daily_composition:
+        # Daily AI Researcher Challenge: mixed difficulty composition
+        comp_lines = "\n".join(f"- {count} {level.replace('_',' ').title()} questions"
+                               for level, count in daily_composition.items())
+        total_q = sum(daily_composition.values())
+        difficulty_block = (
+            f"\n\nDAILY AI RESEARCHER CHALLENGE — MIXED DIFFICULTY COMPOSITION\n"
+            f"Generate EXACTLY {total_q} questions with this exact breakdown:\n{comp_lines}\n\n"
+            f"Each question MUST include a 'difficulty' field in the JSON set to one of: "
+            f"'easy_breezy', 'minor_league', 'professional', 'jedi'.\n"
+            f"Easy Breezy = simple field extraction (PICO, sample size).\n"
+            f"Minor League = study classification and design taxonomy.\n"
+            f"Professional = methodological appraisal and validity.\n"
+            f"Jedi = adversarial expert appraisal, subtle methodology distinctions."
+        )
+    elif difficulty and difficulty in DIFFICULTY_LEVELS:
         d = DIFFICULTY_LEVELS[difficulty]
         difficulty_block = (
             f"\n\nDIFFICULTY LEVEL: {d['label']}\n"

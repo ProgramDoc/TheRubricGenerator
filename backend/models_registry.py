@@ -11,7 +11,8 @@ from fastapi import HTTPException
 def create_registered_model(conn: sqlite3.Connection, creator_user_id: int,
                             name: str, version: str, provider: str = "",
                             git_repo: str = "", organization: str = "",
-                            team_member_emails: list[str] | None = None) -> dict:
+                            team_member_emails: list[str] | None = None,
+                            team_members_with_perms: list[dict] | None = None) -> dict:
     """
     Validates:
     - name unique (409)
@@ -52,6 +53,17 @@ def create_registered_model(conn: sqlite3.Connection, creator_user_id: int,
 
     team_ids.add(creator_user_id)
 
+    # Build can_run permissions map from team_members_with_perms if provided
+    can_run_map: dict[int, int] = {creator_user_id: 1}  # creator always has can_run
+    if team_members_with_perms:
+        for tm in team_members_with_perms:
+            em = (tm.get("email") or "").strip().lower()
+            if not em:
+                continue
+            row = conn.execute("SELECT id FROM users WHERE email=?", (em,)).fetchone()
+            if row:
+                can_run_map[row["id"]] = 1 if tm.get("can_run") else 0
+
     try:
         with conn:
             cur = conn.execute(
@@ -62,8 +74,8 @@ def create_registered_model(conn: sqlite3.Connection, creator_user_id: int,
             model_id = cur.lastrowid
             for uid in team_ids:
                 conn.execute(
-                    "INSERT OR IGNORE INTO registered_model_members (registered_model_id, user_id) VALUES (?,?)",
-                    (model_id, uid),
+                    "INSERT OR IGNORE INTO registered_model_members (registered_model_id, user_id, can_run) VALUES (?,?,?)",
+                    (model_id, uid, can_run_map.get(uid, 0)),
                 )
             conn.commit()
     except sqlite3.IntegrityError:
@@ -84,7 +96,7 @@ def get_registered_model(conn: sqlite3.Connection, model_id: int) -> dict:
         raise HTTPException(404, "Model not found")
     model = dict(row)
     members = conn.execute(
-        """SELECT u.id, u.email, u.display_name
+        """SELECT u.id, u.email, u.display_name, rmm.can_run
            FROM registered_model_members rmm
            JOIN users u ON u.id = rmm.user_id
            WHERE rmm.registered_model_id=?
@@ -187,3 +199,39 @@ def user_can_use_model(conn: sqlite3.Connection, model_id: int, user_id: int) ->
         (model_id, user_id),
     ).fetchone()
     return row is not None
+
+
+def user_can_run_model(conn: sqlite3.Connection, model_id: int, user_id: int) -> bool:
+    """Check if a user has can_run permission on a model (required to use it in challenges).
+    The creator always has can_run."""
+    # Creator always allowed
+    creator = conn.execute(
+        "SELECT created_by FROM registered_models WHERE id=?", (model_id,)
+    ).fetchone()
+    if creator and creator["created_by"] == user_id:
+        return True
+    row = conn.execute(
+        "SELECT can_run FROM registered_model_members WHERE registered_model_id=? AND user_id=?",
+        (model_id, user_id),
+    ).fetchone()
+    return row is not None and bool(row["can_run"])
+
+
+def update_member_permission(conn: sqlite3.Connection, model_id: int,
+                             requester_user_id: int, member_user_id: int,
+                             can_run: bool) -> dict:
+    """Update a member's can_run permission. Creator only."""
+    row = conn.execute(
+        "SELECT created_by FROM registered_models WHERE id=?", (model_id,)
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "Model not found")
+    if row["created_by"] != requester_user_id:
+        raise HTTPException(403, "Only the creator can change member permissions")
+    with conn:
+        conn.execute(
+            "UPDATE registered_model_members SET can_run=? WHERE registered_model_id=? AND user_id=?",
+            (1 if can_run else 0, model_id, member_user_id),
+        )
+        conn.commit()
+    return get_registered_model(conn, model_id)

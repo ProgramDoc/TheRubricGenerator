@@ -275,6 +275,16 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_rm_created_by ON registered_models(created_by);
             CREATE INDEX IF NOT EXISTS idx_rmm_user ON registered_model_members(user_id);
 
+            -- Phase 3.5: Project sharing
+            CREATE TABLE IF NOT EXISTS project_members (
+                project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                added_by   INTEGER REFERENCES users(id),
+                added_at   TEXT    DEFAULT (datetime('now')),
+                PRIMARY KEY (project_id, user_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_pm_user ON project_members(user_id);
+
             -- ─── Phase 2: Scheduler state ───
             CREATE TABLE IF NOT EXISTS scheduler_state (
                 key        TEXT PRIMARY KEY,
@@ -375,6 +385,29 @@ def _migrate_challenges_columns(conn) -> None:
             conn.execute("ALTER TABLE registered_models ADD COLUMN daily_admin_approved INTEGER DEFAULT 0")
         if "agreement_signed_at" not in rm_cols:
             conn.execute("ALTER TABLE registered_models ADD COLUMN agreement_signed_at TEXT")
+        conn.commit()
+    # Phase 3.5: can_run on model members, points on participants
+    rmm_cols = {r["name"] for r in conn.execute("PRAGMA table_info(registered_model_members)").fetchall()}
+    with conn:
+        if "can_run" not in rmm_cols:
+            conn.execute("ALTER TABLE registered_model_members ADD COLUMN can_run INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
+    mp_cols = {r["name"] for r in conn.execute("PRAGMA table_info(model_participants)").fetchall()}
+    with conn:
+        if "points" not in mp_cols:
+            conn.execute("ALTER TABLE model_participants ADD COLUMN points INTEGER DEFAULT 0")
+        conn.commit()
+    # Phase 3.5: daily leaderboard columns
+    lb_cols = {r["name"] for r in conn.execute("PRAGMA table_info(leaderboard_cache)").fetchall()}
+    with conn:
+        if "total_points" not in lb_cols:
+            conn.execute("ALTER TABLE leaderboard_cache ADD COLUMN total_points INTEGER DEFAULT 0")
+        if "daily_points" not in lb_cols:
+            conn.execute("ALTER TABLE leaderboard_cache ADD COLUMN daily_points INTEGER DEFAULT 0")
+        if "daily_streak" not in lb_cols:
+            conn.execute("ALTER TABLE leaderboard_cache ADD COLUMN daily_streak INTEGER DEFAULT 0")
+        if "daily_rank_change" not in lb_cols:
+            conn.execute("ALTER TABLE leaderboard_cache ADD COLUMN daily_rank_change INTEGER DEFAULT 0")
         conn.commit()
 
 
@@ -1226,14 +1259,40 @@ def api_get_challenge(cid: int, rubricgen_session: str | None = Cookie(default=N
 
 @app.get("/api/leaderboard")
 def api_leaderboard(rubricgen_session: str | None = Cookie(default=None)):
+    """Overall leaderboard ranked by total points."""
     require_user(rubricgen_session)
     conn = get_db()
     rows = conn.execute(
         """SELECT * FROM leaderboard_cache
-           ORDER BY cumulative_score DESC, avg_accuracy DESC"""
+           ORDER BY total_points DESC, cumulative_score DESC"""
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+@app.get("/api/leaderboard/daily")
+def api_daily_leaderboard(rubricgen_session: str | None = Cookie(default=None)):
+    """Daily AI Researcher Challenge leaderboard with streak and movement."""
+    require_user(rubricgen_session)
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT * FROM leaderboard_cache
+           WHERE daily_points > 0
+           ORDER BY daily_points DESC"""
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@app.get("/api/daily-results")
+def api_daily_results(rubricgen_session: str | None = Cookie(default=None)):
+    """Recent Daily AI Researcher Challenge results with drill-down data."""
+    require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return bench.get_daily_results(conn, limit=30)
+    finally:
+        conn.close()
 
 
 @app.get("/api/skills/{agent_type}")
@@ -1347,6 +1406,29 @@ def api_remove_member(model_id: int, member_user_id: int,
     conn = get_db()
     try:
         return mreg.remove_member(conn, model_id, user["id"], member_user_id)
+    finally:
+        conn.close()
+
+
+class UpdateMemberPermPayload(BaseModel):
+    can_run: bool
+    acknowledged: Optional[bool] = False
+
+
+@app.patch("/api/models/{model_id}/members/{member_user_id}")
+def api_update_member_perm(model_id: int, member_user_id: int,
+                           body: UpdateMemberPermPayload,
+                           rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
+    if body.can_run and not body.acknowledged:
+        return {
+            "ok": False,
+            "credit_warning": True,
+            "message": "Granting run permission means your prepaid credits will be charged when this user runs your model. Set acknowledged=true to confirm.",
+        }
+    conn = get_db()
+    try:
+        return mreg.update_member_permission(conn, model_id, user["id"], member_user_id, body.can_run)
     finally:
         conn.close()
 
@@ -1599,14 +1681,31 @@ def api_agreements_status(rubricgen_session: str | None = Cookie(default=None)):
 # ─────────────────────────────────────────────
 @app.get("/api/projects")
 def list_projects(rubricgen_session: str | None = Cookie(default=None)):
+    """List user's own projects + projects shared with them."""
     user = require_user(rubricgen_session)
     conn = get_db()
-    rows = conn.execute(
-        "SELECT id, name, created_at FROM projects WHERE user_id=? ORDER BY created_at",
+    # Own projects
+    own = conn.execute(
+        """SELECT p.id, p.name, p.created_at, 'owner' AS role,
+                  (SELECT COUNT(*) FROM challenges c WHERE c.project_id=p.id) AS challenge_count,
+                  (SELECT COUNT(*) FROM project_members pm WHERE pm.project_id=p.id) AS member_count
+           FROM projects p WHERE p.user_id=? ORDER BY p.created_at""",
+        (user["id"],),
+    ).fetchall()
+    # Shared with me
+    shared = conn.execute(
+        """SELECT p.id, p.name, p.created_at, 'member' AS role,
+                  u.display_name AS owner_name,
+                  (SELECT COUNT(*) FROM challenges c WHERE c.project_id=p.id) AS challenge_count,
+                  (SELECT COUNT(*) FROM project_members pm2 WHERE pm2.project_id=p.id) AS member_count
+           FROM project_members pm
+           JOIN projects p ON p.id = pm.project_id
+           JOIN users u ON u.id = p.user_id
+           WHERE pm.user_id=? ORDER BY pm.added_at DESC""",
         (user["id"],),
     ).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    return [dict(r) for r in own] + [dict(r) for r in shared]
 
 
 @app.post("/api/projects", status_code=201)
@@ -1644,6 +1743,88 @@ def delete_project(pid: int, rubricgen_session: str | None = Cookie(default=None
         conn.execute("DELETE FROM projects WHERE id=? AND user_id=?", (pid, user["id"]))
         conn.commit()
     conn.close()
+    return {"ok": True}
+
+
+class ShareProjectPayload(BaseModel):
+    email: str
+
+
+@app.get("/api/projects/{pid}/members")
+def list_project_members(pid: int, rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    proj = conn.execute("SELECT user_id FROM projects WHERE id=?", (pid,)).fetchone()
+    if not proj or proj["user_id"] != user["id"]:
+        conn.close()
+        raise HTTPException(403, "Only the project owner can view members")
+    rows = conn.execute(
+        """SELECT pm.user_id, u.email, u.display_name, pm.added_at
+           FROM project_members pm JOIN users u ON u.id = pm.user_id
+           WHERE pm.project_id=?""",
+        (pid,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@app.post("/api/projects/{pid}/share")
+def share_project(pid: int, body: ShareProjectPayload,
+                  rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    proj = conn.execute("SELECT user_id, name FROM projects WHERE id=?", (pid,)).fetchone()
+    if not proj or proj["user_id"] != user["id"]:
+        conn.close()
+        raise HTTPException(403, "Only the project owner can share")
+    email = body.email.strip().lower()
+    target = conn.execute("SELECT id, display_name FROM users WHERE email=?", (email,)).fetchone()
+    if not target:
+        conn.close()
+        raise HTTPException(400, f"No registered user with email {email}")
+    if target["id"] == user["id"]:
+        conn.close()
+        raise HTTPException(400, "Cannot share a project with yourself")
+    with conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO project_members (project_id, user_id, added_by) VALUES (?,?,?)",
+            (pid, target["id"], user["id"]),
+        )
+        conn.commit()
+    conn.close()
+    # Send email notification
+    try:
+        _send_email(
+            email,
+            f"OGAI Rubric Generator — Project shared with you",
+            f"Hi {target['display_name']},\n\n"
+            f"{user['display_name']} has shared the project \"{proj['name']}\" with you "
+            f"on the OGAI Rubric Generator platform.\n\n"
+            f"Log in to view it: {APP_BASE_URL}\n\n"
+            f"— OGAI Rubric Generator",
+        )
+    except Exception:
+        pass  # Don't fail the share if email fails
+    return {"ok": True}
+
+
+@app.delete("/api/projects/{pid}/members/{member_user_id}")
+def remove_project_member(pid: int, member_user_id: int,
+                          rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    proj = conn.execute("SELECT user_id FROM projects WHERE id=?", (pid,)).fetchone()
+    if not proj or proj["user_id"] != user["id"]:
+        conn.close()
+        raise HTTPException(403, "Only the project owner can remove members")
+    with conn:
+        conn.execute(
+            "DELETE FROM project_members WHERE project_id=? AND user_id=?",
+            (pid, member_user_id),
+        )
+        conn.commit()
+    conn.close()
+    return {"ok": True}
     return {"ok": True}
 
 
