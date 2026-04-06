@@ -279,6 +279,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS project_members (
                 project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
                 user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                role       TEXT    NOT NULL DEFAULT 'member' CHECK(role IN ('admin','member')),
                 added_by   INTEGER REFERENCES users(id),
                 added_at   TEXT    DEFAULT (datetime('now')),
                 PRIMARY KEY (project_id, user_id)
@@ -386,6 +387,12 @@ def _migrate_challenges_columns(conn) -> None:
         if "agreement_signed_at" not in rm_cols:
             conn.execute("ALTER TABLE registered_models ADD COLUMN agreement_signed_at TEXT")
         conn.commit()
+    # Phase 3.5: role on project_members
+    pm_cols = {r["name"] for r in conn.execute("PRAGMA table_info(project_members)").fetchall()}
+    if pm_cols and "role" not in pm_cols:
+        with conn:
+            conn.execute("ALTER TABLE project_members ADD COLUMN role TEXT NOT NULL DEFAULT 'member'")
+            conn.commit()
     # Phase 3.5: can_run on model members, points on participants
     rmm_cols = {r["name"] for r in conn.execute("PRAGMA table_info(registered_model_members)").fetchall()}
     with conn:
@@ -584,9 +591,6 @@ class RegisterPayload(BaseModel):
 class LoginPayload(BaseModel):
     email: str
     password: str
-
-class ProjectCreate(BaseModel):
-    name: str
 
 class ProjectRename(BaseModel):
     name: str
@@ -1677,24 +1681,50 @@ def api_agreements_status(rubricgen_session: str | None = Cookie(default=None)):
 
 
 # ─────────────────────────────────────────────
-# Projects
+# Projects (with sharing, admin roles, self-removal)
 # ─────────────────────────────────────────────
+
+def _user_project_role(conn, pid: int, user_id: int) -> str | None:
+    """Returns 'admin' if project owner, or the role from project_members, or None."""
+    proj = conn.execute("SELECT user_id FROM projects WHERE id=?", (pid,)).fetchone()
+    if not proj:
+        return None
+    if proj["user_id"] == user_id:
+        return "admin"
+    mem = conn.execute(
+        "SELECT role FROM project_members WHERE project_id=? AND user_id=?",
+        (pid, user_id),
+    ).fetchone()
+    return mem["role"] if mem else None
+
+
+class ProjectCreatePayload(BaseModel):
+    name: str
+    share_emails: Optional[list[str]] = None
+
+
+class ShareProjectPayload(BaseModel):
+    email: str
+
+
+class TransferAdminPayload(BaseModel):
+    new_admin_user_id: int
+
+
 @app.get("/api/projects")
 def list_projects(rubricgen_session: str | None = Cookie(default=None)):
     """List user's own projects + projects shared with them."""
     user = require_user(rubricgen_session)
     conn = get_db()
-    # Own projects
     own = conn.execute(
-        """SELECT p.id, p.name, p.created_at, 'owner' AS role,
+        """SELECT p.id, p.name, p.created_at, 'admin' AS role,
                   (SELECT COUNT(*) FROM challenges c WHERE c.project_id=p.id) AS challenge_count,
                   (SELECT COUNT(*) FROM project_members pm WHERE pm.project_id=p.id) AS member_count
            FROM projects p WHERE p.user_id=? ORDER BY p.created_at""",
         (user["id"],),
     ).fetchall()
-    # Shared with me
     shared = conn.execute(
-        """SELECT p.id, p.name, p.created_at, 'member' AS role,
+        """SELECT p.id, p.name, p.created_at, pm.role,
                   u.display_name AS owner_name,
                   (SELECT COUNT(*) FROM challenges c WHERE c.project_id=p.id) AS challenge_count,
                   (SELECT COUNT(*) FROM project_members pm2 WHERE pm2.project_id=p.id) AS member_count
@@ -1709,74 +1739,146 @@ def list_projects(rubricgen_session: str | None = Cookie(default=None)):
 
 
 @app.post("/api/projects", status_code=201)
-def create_project(body: ProjectCreate, rubricgen_session: str | None = Cookie(default=None)):
+def create_project(body: ProjectCreatePayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Create a project, optionally sharing with team members at creation time."""
     user = require_user(rubricgen_session)
-    if len(body.name.strip()) > 200:
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "Project name is required")
+    if len(name) > 200:
         raise HTTPException(400, "Project name must be 200 characters or fewer")
     conn = get_db()
     with conn:
-        cur = conn.execute(
-            "INSERT INTO projects (name, user_id) VALUES (?,?)", (body.name.strip(), user["id"])
-        )
+        cur = conn.execute("INSERT INTO projects (name, user_id) VALUES (?,?)", (name, user["id"]))
+        pid = cur.lastrowid
         conn.commit()
-    pid = cur.lastrowid
+    # Share with provided emails
+    shared_results: list[dict] = []
+    if body.share_emails:
+        for raw_email in body.share_emails:
+            email = (raw_email or "").strip().lower()
+            if not email:
+                continue
+            target = conn.execute("SELECT id, display_name FROM users WHERE email=?", (email,)).fetchone()
+            if not target:
+                shared_results.append({"email": email, "status": "not_found"})
+                continue
+            if target["id"] == user["id"]:
+                continue
+            with conn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO project_members (project_id, user_id, role, added_by) VALUES (?,?,?,?)",
+                    (pid, target["id"], "member", user["id"]),
+                )
+                conn.commit()
+            shared_results.append({"email": email, "status": "shared"})
+            try:
+                _send_email(
+                    email,
+                    "OGAI Rubric Generator — Project shared with you",
+                    f"Hi {target['display_name']},\n\n"
+                    f"{user['display_name']} has shared the project \"{name}\" with you.\n\n"
+                    f"Log in to view it: {APP_BASE_URL}\n\n— OGAI Rubric Generator",
+                )
+            except Exception:
+                pass
     conn.close()
-    return {"id": pid, "name": body.name.strip()}
+    return {"id": pid, "name": name, "shared": shared_results}
 
 
 @app.patch("/api/projects/{pid}")
 def rename_project(pid: int, body: ProjectRename, rubricgen_session: str | None = Cookie(default=None)):
+    """Rename a project. Admin only."""
     user = require_user(rubricgen_session)
     conn = get_db()
+    role = _user_project_role(conn, pid, user["id"])
+    if role != "admin":
+        conn.close()
+        raise HTTPException(403, "Only project admins can rename projects")
+    if not body.name or not body.name.strip():
+        conn.close()
+        raise HTTPException(400, "Name is required")
     with conn:
-        conn.execute("UPDATE projects SET name=? WHERE id=? AND user_id=?", (body.name, pid, user["id"]))
+        conn.execute("UPDATE projects SET name=? WHERE id=?", (body.name.strip(), pid))
         conn.commit()
     conn.close()
     return {"ok": True}
 
 
 @app.delete("/api/projects/{pid}")
-def delete_project(pid: int, rubricgen_session: str | None = Cookie(default=None)):
+def delete_project(pid: int, confirmed: bool = False,
+                   rubricgen_session: str | None = Cookie(default=None)):
+    """Delete a project. Admin only. Requires confirmed=true query param.
+    Returns a warning if not confirmed."""
     user = require_user(rubricgen_session)
     conn = get_db()
+    role = _user_project_role(conn, pid, user["id"])
+    if role != "admin":
+        conn.close()
+        raise HTTPException(403, "Only project admins can delete projects")
+    # Count what will be affected
+    challenge_count = conn.execute(
+        "SELECT COUNT(*) AS c FROM challenges WHERE project_id=?", (pid,)
+    ).fetchone()["c"]
+    member_count = conn.execute(
+        "SELECT COUNT(*) AS c FROM project_members WHERE project_id=?", (pid,)
+    ).fetchone()["c"]
+    if not confirmed:
+        conn.close()
+        return {
+            "ok": False,
+            "warning": True,
+            "message": f"This will remove the project and unlink {challenge_count} challenges. {member_count} team members will lose access. Pass confirmed=true to proceed.",
+            "challenge_count": challenge_count,
+            "member_count": member_count,
+        }
     with conn:
-        conn.execute("DELETE FROM projects WHERE id=? AND user_id=?", (pid, user["id"]))
+        # Unlink challenges (don't delete them, just set project_id=NULL)
+        conn.execute("UPDATE challenges SET project_id=NULL WHERE project_id=?", (pid,))
+        conn.execute("DELETE FROM project_members WHERE project_id=?", (pid,))
+        conn.execute("DELETE FROM projects WHERE id=?", (pid,))
         conn.commit()
     conn.close()
     return {"ok": True}
 
 
-class ShareProjectPayload(BaseModel):
-    email: str
-
-
 @app.get("/api/projects/{pid}/members")
 def list_project_members(pid: int, rubricgen_session: str | None = Cookie(default=None)):
+    """List members. Any project member or admin can view."""
     user = require_user(rubricgen_session)
     conn = get_db()
-    proj = conn.execute("SELECT user_id FROM projects WHERE id=?", (pid,)).fetchone()
-    if not proj or proj["user_id"] != user["id"]:
+    role = _user_project_role(conn, pid, user["id"])
+    if not role:
         conn.close()
-        raise HTTPException(403, "Only the project owner can view members")
-    rows = conn.execute(
-        """SELECT pm.user_id, u.email, u.display_name, pm.added_at
+        raise HTTPException(403, "You are not a member of this project")
+    # Include the project owner as "admin" in the list
+    proj = conn.execute("SELECT user_id FROM projects WHERE id=?", (pid,)).fetchone()
+    owner = conn.execute(
+        "SELECT id AS user_id, email, display_name FROM users WHERE id=?", (proj["user_id"],)
+    ).fetchone()
+    members = conn.execute(
+        """SELECT pm.user_id, u.email, u.display_name, pm.role, pm.added_at
            FROM project_members pm JOIN users u ON u.id = pm.user_id
            WHERE pm.project_id=?""",
         (pid,),
     ).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    result = [dict(owner, role="admin", added_at=None)]  # owner always first
+    result.extend(dict(m) for m in members)
+    return result
 
 
 @app.post("/api/projects/{pid}/share")
 def share_project(pid: int, body: ShareProjectPayload,
                   rubricgen_session: str | None = Cookie(default=None)):
+    """Share a project with a user by email. Admin only."""
     user = require_user(rubricgen_session)
     conn = get_db()
-    proj = conn.execute("SELECT user_id, name FROM projects WHERE id=?", (pid,)).fetchone()
-    if not proj or proj["user_id"] != user["id"]:
+    role = _user_project_role(conn, pid, user["id"])
+    if role != "admin":
         conn.close()
-        raise HTTPException(403, "Only the project owner can share")
+        raise HTTPException(403, "Only project admins can share")
+    proj = conn.execute("SELECT name FROM projects WHERE id=?", (pid,)).fetchone()
     email = body.email.strip().lower()
     target = conn.execute("SELECT id, display_name FROM users WHERE email=?", (email,)).fetchone()
     if not target:
@@ -1787,44 +1889,105 @@ def share_project(pid: int, body: ShareProjectPayload,
         raise HTTPException(400, "Cannot share a project with yourself")
     with conn:
         conn.execute(
-            "INSERT OR IGNORE INTO project_members (project_id, user_id, added_by) VALUES (?,?,?)",
-            (pid, target["id"], user["id"]),
+            "INSERT OR IGNORE INTO project_members (project_id, user_id, role, added_by) VALUES (?,?,?,?)",
+            (pid, target["id"], "member", user["id"]),
         )
         conn.commit()
     conn.close()
-    # Send email notification
     try:
         _send_email(
             email,
-            f"OGAI Rubric Generator — Project shared with you",
+            "OGAI Rubric Generator — Project shared with you",
             f"Hi {target['display_name']},\n\n"
-            f"{user['display_name']} has shared the project \"{proj['name']}\" with you "
-            f"on the OGAI Rubric Generator platform.\n\n"
-            f"Log in to view it: {APP_BASE_URL}\n\n"
-            f"— OGAI Rubric Generator",
+            f"{user['display_name']} has shared the project \"{proj['name']}\" with you.\n\n"
+            f"Log in to view it: {APP_BASE_URL}\n\n— OGAI Rubric Generator",
         )
     except Exception:
-        pass  # Don't fail the share if email fails
+        pass
+    return {"ok": True}
+
+
+@app.post("/api/projects/{pid}/transfer-admin")
+def transfer_project_admin(pid: int, body: TransferAdminPayload,
+                           rubricgen_session: str | None = Cookie(default=None)):
+    """Transfer project admin to another member. Current admin only.
+    The current admin becomes a regular member."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    proj = conn.execute("SELECT user_id FROM projects WHERE id=?", (pid,)).fetchone()
+    if not proj:
+        conn.close()
+        raise HTTPException(404, "Project not found")
+    if proj["user_id"] != user["id"]:
+        conn.close()
+        raise HTTPException(403, "Only the project owner can transfer admin")
+    # Verify new admin is a member
+    mem = conn.execute(
+        "SELECT user_id FROM project_members WHERE project_id=? AND user_id=?",
+        (pid, body.new_admin_user_id),
+    ).fetchone()
+    if not mem:
+        conn.close()
+        raise HTTPException(400, "Target user is not a member of this project")
+    with conn:
+        # Transfer ownership: change projects.user_id
+        conn.execute("UPDATE projects SET user_id=? WHERE id=?", (body.new_admin_user_id, pid))
+        # Remove new admin from project_members (they're now the owner)
+        conn.execute("DELETE FROM project_members WHERE project_id=? AND user_id=?",
+                     (pid, body.new_admin_user_id))
+        # Add old admin as a regular member
+        conn.execute(
+            "INSERT OR IGNORE INTO project_members (project_id, user_id, role, added_by) VALUES (?,?,?,?)",
+            (pid, user["id"], "member", body.new_admin_user_id),
+        )
+        conn.commit()
+    conn.close()
+    return {"ok": True, "message": "Admin transferred successfully"}
+
+
+@app.post("/api/projects/{pid}/leave")
+def leave_project(pid: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Remove yourself from a shared project. Non-admin members only.
+    Admins must transfer admin first."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    proj = conn.execute("SELECT user_id FROM projects WHERE id=?", (pid,)).fetchone()
+    if not proj:
+        conn.close()
+        raise HTTPException(404, "Project not found")
+    if proj["user_id"] == user["id"]:
+        conn.close()
+        raise HTTPException(400, "Project admins cannot leave. Transfer admin to another member first, or delete the project.")
+    mem = conn.execute(
+        "SELECT user_id FROM project_members WHERE project_id=? AND user_id=?",
+        (pid, user["id"]),
+    ).fetchone()
+    if not mem:
+        conn.close()
+        raise HTTPException(400, "You are not a member of this project")
+    with conn:
+        conn.execute("DELETE FROM project_members WHERE project_id=? AND user_id=?",
+                     (pid, user["id"]))
+        conn.commit()
+    conn.close()
     return {"ok": True}
 
 
 @app.delete("/api/projects/{pid}/members/{member_user_id}")
 def remove_project_member(pid: int, member_user_id: int,
                           rubricgen_session: str | None = Cookie(default=None)):
+    """Remove a member from a project. Admin only."""
     user = require_user(rubricgen_session)
     conn = get_db()
-    proj = conn.execute("SELECT user_id FROM projects WHERE id=?", (pid,)).fetchone()
-    if not proj or proj["user_id"] != user["id"]:
+    role = _user_project_role(conn, pid, user["id"])
+    if role != "admin":
         conn.close()
-        raise HTTPException(403, "Only the project owner can remove members")
+        raise HTTPException(403, "Only project admins can remove members")
     with conn:
-        conn.execute(
-            "DELETE FROM project_members WHERE project_id=? AND user_id=?",
-            (pid, member_user_id),
-        )
+        conn.execute("DELETE FROM project_members WHERE project_id=? AND user_id=?",
+                     (pid, member_user_id))
         conn.commit()
     conn.close()
-    return {"ok": True}
     return {"ok": True}
 
 

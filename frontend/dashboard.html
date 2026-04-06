@@ -60,6 +60,10 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
   color: var(--muted); background: #f1f5f9; padding: 2px 7px; border-radius: 10px;
 }
 .folder-shared { font-size: 9px; color: var(--blue); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+.folder-actions { display: none; gap: 4px; margin-top: 4px; }
+.folder-item:hover .folder-actions { display: flex; }
+.folder-action { font-size: 10px; color: var(--muted); cursor: pointer; padding: 1px 5px; border-radius: 3px; border: 1px solid transparent; }
+.folder-action:hover { background: #e2e8f0; color: var(--navy); border-color: var(--border); }
 
 .section-label {
   padding: 10px 16px 6px; font-size: 9.5px; font-weight: 700; color: var(--muted);
@@ -240,6 +244,11 @@ async function loadProjects() {
       <div>
         <div class="folder-name">${escapeHtml(p.name)}</div>
         <div class="folder-meta">${p.challenge_count || 0} challenges · ${p.member_count || 0} members</div>
+        <div class="folder-actions" onclick="event.stopPropagation()">
+          <span class="folder-action" onclick="shareProjectPrompt(${p.id})" title="Share">Share</span>
+          <span class="folder-action" onclick="renameProjectPrompt(${p.id},'${escapeHtml(p.name)}')" title="Rename">Rename</span>
+          <span class="folder-action" onclick="deleteProjectPrompt(${p.id},'${escapeHtml(p.name)}')" title="Delete" style="color:var(--red)">Delete</span>
+        </div>
       </div>
       <span class="folder-count">${p.challenge_count || 0}</span>
     </div>
@@ -253,6 +262,9 @@ async function loadProjects() {
           <div class="folder-name">${escapeHtml(p.name)}</div>
           <div class="folder-meta">${escapeHtml(p.owner_name || '')} · ${p.challenge_count || 0} challenges</div>
           <div class="folder-shared">Shared</div>
+          <div class="folder-actions" onclick="event.stopPropagation()">
+            <span class="folder-action" onclick="leaveProject(${p.id},'${escapeHtml(p.name)}')" style="color:var(--amber)">Leave</span>
+          </div>
         </div>
         <span class="folder-count">${p.challenge_count || 0}</span>
       </div>
@@ -340,6 +352,55 @@ async function loadLeaderboard() {
     </tr>
   `).join('');
   container.innerHTML = `<table><thead><tr><th>#</th><th>Model</th><th style="text-align:right">Points</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+// ── Project management ──
+async function shareProjectPrompt(pid) {
+  const email = prompt('Enter the email of the user to share with:');
+  if (!email) return;
+  const res = await fetch(`/api/projects/${pid}/share`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: email.trim() }),
+  });
+  const body = await res.json();
+  if (!res.ok) { alert(body.detail || 'Failed to share'); return; }
+  alert('Project shared! They will receive an email notification.');
+  loadProjects();
+}
+
+async function renameProjectPrompt(pid, currentName) {
+  const name = prompt('New project name:', currentName);
+  if (!name || name.trim() === currentName) return;
+  const res = await fetch(`/api/projects/${pid}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: name.trim() }),
+  });
+  if (!res.ok) { const b = await res.json(); alert(b.detail || 'Rename failed'); return; }
+  loadProjects();
+}
+
+async function deleteProjectPrompt(pid, name) {
+  // First call without confirmed to get the warning
+  const check = await fetch(`/api/projects/${pid}`, { method: 'DELETE' });
+  const info = await check.json();
+  if (info.warning) {
+    if (!confirm(info.message)) return;
+    // Confirmed — call again with confirmed=true
+    const res = await fetch(`/api/projects/${pid}?confirmed=true`, { method: 'DELETE' });
+    if (!res.ok) { const b = await res.json(); alert(b.detail || 'Delete failed'); return; }
+  }
+  if (selectedProject === pid) selectedProject = null;
+  loadProjects();
+  loadChallenges();
+}
+
+async function leaveProject(pid, name) {
+  if (!confirm(`Leave the project "${name}"? You will lose access to its challenges.`)) return;
+  const res = await fetch(`/api/projects/${pid}/leave`, { method: 'POST' });
+  if (!res.ok) { const b = await res.json(); alert(b.detail || 'Failed to leave'); return; }
+  if (selectedProject === pid) selectedProject = null;
+  loadProjects();
+  loadChallenges();
 }
 
 (async () => {
