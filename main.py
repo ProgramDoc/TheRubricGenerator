@@ -522,8 +522,9 @@ def _migrate_challenge_columns_v2(conn) -> None:
         # User API keys
         user_cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
         if "api_key" not in user_cols:
-            conn.execute("ALTER TABLE users ADD COLUMN api_key TEXT UNIQUE")
+            conn.execute("ALTER TABLE users ADD COLUMN api_key TEXT")
             conn.execute("ALTER TABLE users ADD COLUMN api_key_created_at TEXT")
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_api_key ON users(api_key)")
         conn.commit()
 
 
