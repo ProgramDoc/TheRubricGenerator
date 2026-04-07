@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The AI Researcher — Developers</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root { --navy: #161b2e; --blue: #274472; --sky: #5e9ad0; --green: #16a34a; --red: #dc2626; --amber: #d97706; --purple: #7c3aed; --bg: #f4f5f9; --card: #ffffff; --border: #dce4ee; --text: #1e293b; --muted: #64748b; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; min-height: 100vh; }
+
+.topbar { background: var(--navy); color: #fff; padding: 12px 28px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+.topbar .brand { font-size: 16px; font-weight: 700; } .topbar .brand span { color: var(--sky); }
+.topbar nav { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.topbar nav a { font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); padding: 6px 12px; border-radius: 5px; text-decoration: none; }
+.topbar nav a:hover { background: rgba(255,255,255,.08); color: #fff; }
+.topbar nav a.active { background: rgba(255,255,255,.15); color: #fff; }
+.topbar .user-badge { margin-left: 14px; padding: 4px 10px; background: rgba(255,255,255,.1); border-radius: 4px; font-size: 11px; color: rgba(255,255,255,.85); }
+.topbar .signout-btn { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); padding: 6px 12px; border-radius: 5px; font-size: 11px; font-weight: 600; cursor: pointer; margin-left: 10px; }
+.nav-dropdown { position: relative; display: inline-block; }
+.nav-dropdown > a { cursor: default; }
+.nav-dropdown-menu { display: none; position: absolute; top: 100%; left: 0; min-width: 160px; background: var(--navy); border: 1px solid rgba(255,255,255,.15); border-radius: 6px; padding: 4px 0; margin-top: 4px; z-index: 50; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+.nav-dropdown:hover .nav-dropdown-menu { display: block; }
+.nav-dropdown-menu a { display: block; padding: 8px 16px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); text-decoration: none; border-radius: 0; }
+.nav-dropdown-menu a:hover { background: rgba(255,255,255,.08); color: #fff; }
+.nav-settings { position: relative; display: inline-block; }
+.nav-settings .settings-icon { background: none; border: none; color: rgba(255,255,255,.7); font-size: 16px; cursor: pointer; padding: 4px 8px; }
+.nav-settings .settings-icon:hover { color: #fff; }
+.nav-settings-menu { display: none; position: absolute; top: 100%; right: 0; min-width: 150px; background: var(--navy); border: 1px solid rgba(255,255,255,.15); border-radius: 6px; padding: 4px 0; margin-top: 4px; z-index: 50; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+.nav-settings:hover .nav-settings-menu { display: block; }
+.nav-settings-menu a { display: block; padding: 8px 16px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); text-decoration: none; }
+.nav-settings-menu a:hover { background: rgba(255,255,255,.08); color: #fff; }
+
+.container { max-width: 900px; margin: 0 auto; padding: 28px; }
+.page-title { font-size: 22px; font-weight: 700; color: var(--navy); margin-bottom: 4px; }
+.page-subtitle { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
+
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 20px; }
+.card-header { padding: 14px 20px; border-bottom: 1px solid var(--border); }
+.card-header h2 { font-size: 13px; font-weight: 700; color: var(--navy); }
+.card-body { padding: 20px; }
+
+.key-display { font-family: 'IBM Plex Mono', monospace; font-size: 13px; background: var(--navy); color: #e2e8f0; padding: 12px 16px; border-radius: 6px; margin: 10px 0; word-break: break-all; }
+.key-none { color: var(--muted); font-style: italic; font-size: 12px; }
+.key-meta { font-size: 11px; color: var(--muted); margin-top: 6px; }
+
+.btn { font-family: inherit; font-size: 12px; font-weight: 600; padding: 8px 16px; border-radius: 5px; cursor: pointer; border: none; }
+.btn-primary { background: var(--blue); color: #fff; } .btn-primary:hover { background: var(--navy); }
+.btn-green { background: var(--green); color: #fff; }
+.btn-red { background: transparent; color: var(--red); border: 1px solid rgba(220,38,38,.3) !important; }
+.btn-copy { background: rgba(94,154,208,.1); color: var(--blue); }
+.btn-group { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+
+h3 { font-size: 15px; font-weight: 700; color: var(--navy); margin: 20px 0 10px; }
+h3:first-child { margin-top: 0; }
+
+.endpoint { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 12px; overflow: hidden; }
+.endpoint-header { padding: 10px 14px; background: #f8fafc; border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.method { font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 3px; }
+.method-get { background: rgba(22,163,74,.12); color: var(--green); }
+.method-post { background: rgba(39,68,114,.12); color: var(--blue); }
+.method-put { background: rgba(217,119,6,.12); color: var(--amber); }
+.method-delete { background: rgba(220,38,38,.12); color: var(--red); }
+.endpoint-path { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text); }
+.endpoint-desc { color: var(--muted); font-weight: 400; margin-left: auto; font-size: 11px; }
+.endpoint-body { padding: 10px 14px; font-size: 11px; }
+pre.code { background: var(--navy); color: #e2e8f0; padding: 12px 14px; border-radius: 5px; font-size: 11px; line-height: 1.6; overflow-x: auto; margin: 8px 0; font-family: 'IBM Plex Mono', monospace; }
+.note { padding: 10px 14px; background: #f0fdf4; border-left: 3px solid var(--green); border-radius: 3px; font-size: 11px; margin: 12px 0; }
+.warn { padding: 10px 14px; background: #fef3c7; border-left: 3px solid var(--amber); border-radius: 3px; font-size: 11px; margin: 12px 0; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">The AI <span>Researcher</span></div>
+  <nav>
+    <a href="/">Dashboard</a>
+    <div class="nav-dropdown"><a href="/challenges">Benchmark Lab ▾</a><div class="nav-dropdown-menu"><a href="/challenges">Challenges</a><a href="/leaderboard">Leaderboard</a></div></div>
+    <a href="/public-tests">Public Tests</a>
+    <a href="/models">Models</a>
+    <a href="/leaderboard">Leaderboard</a>
+    <a href="/analytics">Analytics</a>
+    <a href="/library">Library</a>
+    <a href="/search">Search</a>
+    <a href="/papers">Papers</a>
+    <a href="/api/sso/annotator">PDF Viewer</a>
+    <a href="/admin" id="nav-admin" style="display:none">Admin</a>
+    <span class="user-badge" id="user-badge">—</span>
+    <div class="nav-settings">
+      <button class="settings-icon" title="Settings">⚙</button>
+      <div class="nav-settings-menu">
+        <a href="/billing">Billing</a>
+        <a href="/billing?tab=preferences">Preferences</a>
+        <a href="/developers" style="color:#fff">Developers</a>
+      </div>
+    </div>
+    <button class="signout-btn" onclick="signOut()">Sign Out</button>
+  </nav>
+</div>
+
+<div class="container">
+  <div class="page-title">Developers</div>
+  <div class="page-subtitle">Manage your API key and integrate The AI Researcher into your workflows</div>
+
+  <!-- API Key Management -->
+  <div class="card">
+    <div class="card-header"><h2>🔑 Your API Key</h2></div>
+    <div class="card-body">
+      <p style="font-size:12px;color:var(--muted);margin-bottom:10px">Use your API key to authenticate programmatic requests. Add it as a header: <code style="background:#f0f4ff;padding:1px 4px;border-radius:3px">X-API-Key: your_key</code></p>
+      <div id="key-display"></div>
+      <div class="btn-group" id="key-actions"></div>
+    </div>
+  </div>
+
+  <!-- Quick Start -->
+  <div class="card">
+    <div class="card-header"><h2>🚀 Quick Start</h2></div>
+    <div class="card-body">
+      <ol style="padding-left:20px;font-size:12px;line-height:2">
+        <li><strong>Generate your API key</strong> above</li>
+        <li><strong>Add the header</strong> to every request: <code style="background:#f0f4ff;padding:1px 4px;border-radius:3px">X-API-Key: rg_user_your_key</code></li>
+        <li><strong>Call any endpoint</strong> — challenges, papers, rubrics, evaluations, search</li>
+      </ol>
+
+      <h3>curl Example</h3>
+      <pre class="code">curl -H "X-API-Key: rg_user_your_key" \
+  https://therubricgenerator.onrender.com/api/challenges</pre>
+
+      <h3>Python Example</h3>
+      <pre class="code">import requests
+
+API_KEY = "rg_user_your_key"
+BASE = "https://therubricgenerator.onrender.com"
+headers = {"X-API-Key": API_KEY}
+
+# List your challenges
+challenges = requests.get(f"{BASE}/api/challenges", headers=headers).json()
+print(f"You have {len(challenges)} challenges")
+
+# Upload a PDF
+with open("paper.pdf", "rb") as f:
+    r = requests.post(f"{BASE}/api/papers/upload", headers=headers, files={"file": f})
+    paper_id = r.json()["id"]
+    print(f"Uploaded paper #{paper_id}")
+
+# Create and run a challenge
+challenge = requests.post(f"{BASE}/api/challenges", headers=headers, json={
+    "title": "My API Challenge",
+    "theme": "oncology",
+    "paper_ids": [paper_id],
+    "participant_models": ["claude-opus-4-20250514"],
+}).json()
+
+# Run it
+requests.post(f"{BASE}/api/challenges/{challenge['challenge_id']}/run",
+              headers=headers, json={"approved": True})
+
+# Check results (poll until complete)
+import time
+while True:
+    result = requests.get(f"{BASE}/api/challenges/{challenge['challenge_id']}",
+                         headers=headers).json()
+    if result["status"] in ("complete", "failed"):
+        break
+    time.sleep(10)
+
+print(f"Status: {result['status']}")
+for p in result.get("participants", []):
+    print(f"  {p['model_id']}: {p['accuracy']:.1%} accuracy")</pre>
+
+      <h3>JavaScript (fetch)</h3>
+      <pre class="code">const API_KEY = "rg_user_your_key";
+const BASE = "https://therubricgenerator.onrender.com";
+const headers = { "X-API-Key": API_KEY, "Content-Type": "application/json" };
+
+// List challenges
+const challenges = await fetch(`${BASE}/api/challenges`, { headers }).then(r => r.json());
+console.log(`${challenges.length} challenges`);</pre>
+    </div>
+  </div>
+
+  <!-- Endpoint Reference -->
+  <div class="card">
+    <div class="card-header"><h2>📖 API Reference</h2></div>
+    <div class="card-body">
+
+      <div class="note"><strong>Authentication:</strong> All endpoints accept <code>X-API-Key</code> header. Browser sessions (cookies) also work — the API key is an alternative for programmatic access.</div>
+
+      <h3>Challenges</h3>
+
+      <div class="endpoint">
+        <div class="endpoint-header"><span class="method method-post">POST</span><span class="endpoint-path">/api/challenges</span><span class="endpoint-desc">Create a new challenge</span></div>
+        <div class="endpoint-body">
+          <pre class="code">// Request body
+{"title": "My Test", "theme": "oncology", "paper_ids": [1, 2], "participant_models": ["claude-opus-4-20250514"]}
+
+// Response
+{"challenge_id": 5}</pre>
+        </div>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header"><span class="method method-get">GET</span><span class="endpoint-path">/api/challenges</span><span class="endpoint-desc">List your challenges</span></div>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header"><span class="method method-get">GET</span><span class="endpoint-path">/api/challenges/{id}</span><span class="endpoint-desc">Get challenge details, rubric, results</span></div>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header"><span class="method method-post">POST</span><span class="endpoint-path">/api/challenges/{id}/run</span><span class="endpoint-desc">Start running a challenge</span></div>
+        <div class="endpoint-body">
+          <pre class="code">{"approved": true}  // Required if cost > $5</pre>
+        </div>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header"><span class="method method-post">POST</span><span class="endpoint-path">/api/challenges/{id}/cancel</span><span class="endpoint-desc">Cancel a running challenge</span></div>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header"><span class="method method-delete">DELETE</span><span class="endpoint-path">/api/challenges/{id}</span><span class="endpoint-desc">Delete a private challenge</span></div>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header"><span class="method method-get">GET</span><span class="endpoint-path">/api/challenges/{id}/events</span><span class="endpoint-desc">Real-time progress events</span></div>
+      </div>
+
+      <h3>Papers</h3>
+
+      <div class="endpoint">
+        <div class="endpoint-header"><span class="method method-post">POST</span><span class="endpoint-path">/api/papers/upload</span><span class="endpoint-desc">Upload a PDF (multipart form)</span></div>
+        <div class="endpoint-body">
+          <pre class="code">curl -H "X-API-Key: rg_user_xxx" \
+  -F "file=@paper.pdf" -F "project_id=1" \
+  https://site/api/papers/upload</pre>
+        </div>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header"><span class="method method-get">GET</span><span class="endpoint-path">/api/papers</span><span class="endpoint-desc">List your uploaded papers</span></div>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header"><span class="method method-delete">DELETE</span><span class="endpoint-path">/api/papers/{id}</span><span class="endpoint-desc">Delete a paper</span></div>
+      </div>
+
+      <h3>Rubrics</h3>
+
+      <div class="endpoint">
+        <div class="endpoint-header"><span class="method method-post">POST</span><span class="endpoint-path">/api/rubrics/generate</span><span class="endpoint-desc">Generate rubric from a paper</span></div>
+        <div class="endpoint-body">
+          <pre class="code">{"paper_id": 1, "rubric_type": "classification"}</pre>
+        </div>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header"><span class="method method-get">GET</span><span class="endpoint-path">/api/rubrics?paper_id=N</span><span class="endpoint-desc">List rubrics for a paper</span></div>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header"><span class="method method-put">PUT</span><span class="endpoint-path">/api/rubrics/{id}</span><span class="endpoint-desc">Update a rubric</span></div>
+      </div>
+
+      <h3>Evaluations</h3>
+
+      <div class="endpoint">
+        <div class="endpoint-header"><span class="method method-post">POST</span><span class="endpoint-path">/api/evaluations/run</span><span class="endpoint-desc">Run LLM evaluation against a rubric</span></div>
+        <div class="endpoint-body">
+          <pre class="code">{"rubric_id": 1, "paper_id": 1, "eval_model": "gpt-5.4"}</pre>
+        </div>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header"><span class="method method-get">GET</span><span class="endpoint-path">/api/evaluations/{id}</span><span class="endpoint-desc">Get evaluation results</span></div>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header"><span class="method method-get">GET</span><span class="endpoint-path">/api/evaluations/{id}/export</span><span class="endpoint-desc">Download results as CSV</span></div>
+      </div>
+
+      <h3>Search</h3>
+
+      <div class="endpoint">
+        <div class="endpoint-header"><span class="method method-post">POST</span><span class="endpoint-path">/api/search/chat</span><span class="endpoint-desc">AI search strategist (generates PubMed queries)</span></div>
+        <div class="endpoint-body">
+          <pre class="code">{"message": "Find RCTs comparing ACE inhibitors to ARBs in elderly patients"}</pre>
+        </div>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header"><span class="method method-post">POST</span><span class="endpoint-path">/api/search/execute</span><span class="endpoint-desc">Run search on PubMed or Europe PMC</span></div>
+        <div class="endpoint-body">
+          <pre class="code">{"session_id": 1, "database": "pubmed", "query": "cancer AND randomized", "page": 1}</pre>
+        </div>
+      </div>
+
+      <div class="endpoint">
+        <div class="endpoint-header"><span class="method method-post">POST</span><span class="endpoint-path">/api/search/import</span><span class="endpoint-desc">Import search results as papers</span></div>
+        <div class="endpoint-body">
+          <pre class="code">{"session_id": 1, "result_ids": [1, 2, 3], "project_id": 1}</pre>
+        </div>
+      </div>
+
+      <h3>Available Models</h3>
+      <div style="font-size:12px;line-height:1.8;margin-top:8px">
+        <code>claude-opus-4-20250514</code> (15 credits) · <code>gpt-5.4</code> (12 credits) · <code>gemini-3.1</code> (8 credits) · <code>gemini-3.1-pro</code> (10 credits) · <code>kimi-k2-thinking</code> (8 credits)
+      </div>
+
+      <div class="warn" style="margin-top:16px"><strong>Rate limits:</strong> API requests follow the same credit system as the web UI. Challenge runs debit credits from your balance (admins are exempt).</div>
+    </div>
+  </div>
+</div>
+
+<script>
+async function signOut() { await fetch('/api/auth/logout', { method: 'POST' }); location.href = '/login'; }
+
+async function checkAuth() {
+  const r = await fetch('/api/auth/me');
+  if (!r.ok) { location.href = '/login'; return; }
+  const u = await r.json();
+  document.getElementById('user-badge').textContent = u.display_name || u.email;
+  if (u.role === 'admin') document.getElementById('nav-admin').style.display = '';
+}
+
+async function loadKeyStatus() {
+  const r = await fetch('/api/developers/key-status');
+  if (!r.ok) return;
+  const data = await r.json();
+  const display = document.getElementById('key-display');
+  const actions = document.getElementById('key-actions');
+
+  if (data.has_key) {
+    display.innerHTML = `<div class="key-display">${data.masked_key}</div><div class="key-meta">Created: ${data.created_at || '—'}</div>`;
+    actions.innerHTML = `
+      <button class="btn btn-green" onclick="generateKey()">Regenerate</button>
+      <button class="btn btn-copy" onclick="generateAndCopy()">Generate & Copy Full Key</button>
+      <button class="btn btn-red" onclick="revokeKey()">Revoke</button>
+    `;
+  } else {
+    display.innerHTML = '<div class="key-none">No API key generated yet.</div>';
+    actions.innerHTML = '<button class="btn btn-primary" onclick="generateKey()">Generate API Key</button>';
+  }
+}
+
+async function generateKey() {
+  const r = await fetch('/api/developers/generate-key', { method: 'POST' });
+  if (!r.ok) { alert('Failed to generate key'); return; }
+  const data = await r.json();
+  document.getElementById('key-display').innerHTML = `
+    <div class="key-display" style="background:var(--green);color:#fff">${data.api_key}</div>
+    <div class="key-meta" style="color:var(--green);font-weight:700">⚠ Copy this key now — it won't be shown in full again!</div>
+  `;
+  navigator.clipboard.writeText(data.api_key).catch(() => {});
+  loadKeyStatus();
+}
+
+async function generateAndCopy() {
+  const r = await fetch('/api/developers/generate-key', { method: 'POST' });
+  if (!r.ok) { alert('Failed'); return; }
+  const data = await r.json();
+  await navigator.clipboard.writeText(data.api_key);
+  document.getElementById('key-display').innerHTML = `
+    <div class="key-display" style="background:var(--green);color:#fff">${data.api_key}</div>
+    <div class="key-meta" style="color:var(--green);font-weight:700">✓ Copied to clipboard! Store it securely.</div>
+  `;
+  setTimeout(loadKeyStatus, 5000);
+}
+
+async function revokeKey() {
+  if (!confirm('Revoke your API key? Any scripts using it will stop working immediately.')) return;
+  await fetch('/api/developers/revoke-key', { method: 'DELETE' });
+  loadKeyStatus();
+}
+
+checkAuth();
+loadKeyStatus();
+</script>
+</body>
+</html>

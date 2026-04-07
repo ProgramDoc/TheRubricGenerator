@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import Cookie, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import Cookie, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -519,6 +519,11 @@ def _migrate_challenge_columns_v2(conn) -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_ce_challenge ON challenge_events(challenge_id);
         """)
+        # User API keys
+        user_cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+        if "api_key" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN api_key TEXT UNIQUE")
+            conn.execute("ALTER TABLE users ADD COLUMN api_key_created_at TEXT")
         conn.commit()
 
 
@@ -635,8 +640,25 @@ def _get_user_from_token(token: str | None) -> dict | None:
     return dict(row) if row else None
 
 
-def require_user(rubricgen_session: str | None = Cookie(default=None)) -> dict:
+def _get_user_by_api_key(api_key: str) -> dict | None:
+    """Look up a user by their personal API key."""
+    if not api_key or not api_key.startswith("rg_user_"):
+        return None
+    conn = get_db()
+    row = conn.execute(
+        "SELECT id, email, display_name, role FROM users WHERE api_key=?",
+        (api_key,),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def require_user(rubricgen_session: str | None = Cookie(default=None),
+                 x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> dict:
+    """Authenticate via session cookie OR API key header."""
     user = _get_user_from_token(rubricgen_session)
+    if not user and x_api_key:
+        user = _get_user_by_api_key(x_api_key)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return user
@@ -829,6 +851,14 @@ def search_page(rubricgen_session: str | None = Cookie(default=None)):
     if not user:
         return RedirectResponse("/login", status_code=302)
     return FileResponse(str(FRONTEND / "search.html"), media_type="text/html")
+
+
+@app.get("/developers", include_in_schema=False)
+def developers_page(rubricgen_session: str | None = Cookie(default=None)):
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return FileResponse(str(FRONTEND / "developers.html"), media_type="text/html")
 
 
 @app.get("/annotate/{cid}", include_in_schema=False)
@@ -3599,6 +3629,61 @@ def api_cancel_membership(rubricgen_session: str | None = Cookie(default=None)):
         return member_mod.cancel_subscription(conn, user["id"])
     finally:
         conn.close()
+
+
+# ─────────────────────────────────────────────
+# Developer API Key Management
+# ─────────────────────────────────────────────
+
+@app.post("/api/developers/generate-key")
+def api_generate_api_key(rubricgen_session: str | None = Cookie(default=None)):
+    """Generate or regenerate the user's personal API key."""
+    user = require_user(rubricgen_session)
+    new_key = f"rg_user_{secrets.token_urlsafe(32)}"
+    conn = get_db()
+    try:
+        with conn:
+            conn.execute(
+                "UPDATE users SET api_key=?, api_key_created_at=datetime('now') WHERE id=?",
+                (new_key, user["id"]),
+            )
+            conn.commit()
+    finally:
+        conn.close()
+    return {"api_key": new_key, "message": "API key generated. Store it securely — it won't be shown in full again."}
+
+
+@app.get("/api/developers/key-status")
+def api_key_status(rubricgen_session: str | None = Cookie(default=None)):
+    """Check if user has an API key (returns masked version)."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    row = conn.execute(
+        "SELECT api_key, api_key_created_at FROM users WHERE id=?", (user["id"],)
+    ).fetchone()
+    conn.close()
+    if row and row["api_key"]:
+        key = row["api_key"]
+        masked = key[:12] + "..." + key[-4:]
+        return {"has_key": True, "masked_key": masked, "created_at": row["api_key_created_at"]}
+    return {"has_key": False, "masked_key": None, "created_at": None}
+
+
+@app.delete("/api/developers/revoke-key")
+def api_revoke_key(rubricgen_session: str | None = Cookie(default=None)):
+    """Revoke the user's API key."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        with conn:
+            conn.execute(
+                "UPDATE users SET api_key=NULL, api_key_created_at=NULL WHERE id=?",
+                (user["id"],),
+            )
+            conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "message": "API key revoked."}
 
 
 # ─────────────────────────────────────────────
