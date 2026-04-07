@@ -48,6 +48,8 @@ from backend.templates import TEMPLATE_TABLES_SQL
 from backend import templates as tmpl_mod
 from backend.search import SEARCH_TABLES_SQL
 from backend import search as search_mod
+from backend.membership import MEMBERSHIP_TABLES_SQL, seed_plans
+from backend import membership as member_mod
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rubricgen")
@@ -356,12 +358,15 @@ def init_db() -> None:
         conn.executescript(TEMPLATE_TABLES_SQL)
         # Literature search
         conn.executescript(SEARCH_TABLES_SQL)
+        # Membership plans
+        conn.executescript(MEMBERSHIP_TABLES_SQL)
         conn.commit()
     _migrate_challenges_columns(conn)
     _migrate_org_columns(conn)
     _migrate_challenge_columns_v2(conn)
     seed_v1_skills(conn)
     seed_credit_packs(conn)
+    seed_plans(conn)
     conn.close()
     _ensure_admin_user()
     _ensure_system_user()
@@ -2627,31 +2632,43 @@ def list_papers(rubricgen_session: str | None = Cookie(default=None)):
 @app.post("/api/papers/upload", status_code=201)
 async def upload_paper(
     file: UploadFile = File(...),
+    project_id: int | None = None,
     rubricgen_session: str | None = Cookie(default=None),
 ):
     user = require_user(rubricgen_session)
     content = await file.read()
     if len(content) > 50 * 1024 * 1024:
         raise HTTPException(413, "File too large. Maximum size is 50 MB.")
-    sha256  = hashlib.sha256(content).hexdigest()
+
+    # Check membership PDF limit
     conn = get_db()
-    existing = conn.execute(
-        "SELECT id FROM papers WHERE sha256=? AND user_id=?", (sha256, user["id"])
-    ).fetchone()
-    if existing:
+    try:
+        pdf_status = member_mod.check_pdf_limit(conn, user["id"])
+        if not pdf_status["allowed"]:
+            raise HTTPException(403, {
+                "detail": f"PDF upload limit reached ({pdf_status['used']}/{pdf_status['limit']}). Upgrade your membership to upload more.",
+                "pdf_status": pdf_status,
+            })
+
+        sha256 = hashlib.sha256(content).hexdigest()
+        existing = conn.execute(
+            "SELECT id FROM papers WHERE sha256=? AND user_id=?", (sha256, user["id"])
+        ).fetchone()
+        if existing:
+            return {"id": existing["id"], "duplicate": True}
+        disk_name = f"{sha256}.pdf"
+        (PAPERS_DIR / disk_name).write_bytes(content)
+        with conn:
+            cur = conn.execute(
+                "INSERT INTO papers (filename, disk_filename, sha256, user_id, project_id) VALUES (?,?,?,?,?)",
+                (file.filename, disk_name, sha256, user["id"], project_id),
+            )
+            conn.commit()
+        pid = cur.lastrowid
+        member_mod.increment_pdf_count(conn, user["id"])
+        return {"id": pid, "filename": file.filename, "duplicate": False}
+    finally:
         conn.close()
-        return {"id": existing["id"], "duplicate": True}
-    disk_name = f"{sha256}.pdf"
-    (PAPERS_DIR / disk_name).write_bytes(content)
-    with conn:
-        cur = conn.execute(
-            "INSERT INTO papers (filename, disk_filename, sha256, user_id) VALUES (?,?,?,?)",
-            (file.filename, disk_name, sha256, user["id"]),
-        )
-        conn.commit()
-    pid = cur.lastrowid
-    conn.close()
-    return {"id": pid, "filename": file.filename, "duplicate": False}
 
 
 @app.patch("/api/papers/{pid}/assign")
@@ -3419,6 +3436,63 @@ def api_public_org_leaderboard(request: Request):
 
 
 # ─────────────────────────────────────────────
+# Membership API
+# ─────────────────────────────────────────────
+
+@app.get("/api/membership")
+def api_get_membership(rubricgen_session: str | None = Cookie(default=None)):
+    """Get current user's membership and usage."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        membership = member_mod.get_user_membership(conn, user["id"])
+        pdf_status = member_mod.check_pdf_limit(conn, user["id"])
+        return {**membership, "pdf_status": pdf_status}
+    finally:
+        conn.close()
+
+
+@app.get("/api/membership/plans")
+def api_list_plans(rubricgen_session: str | None = Cookie(default=None)):
+    """List available membership plans."""
+    require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return member_mod.list_plans(conn)
+    finally:
+        conn.close()
+
+
+class SubscribePayload(BaseModel):
+    plan_id: int
+
+@app.post("/api/membership/subscribe")
+def api_subscribe(body: SubscribePayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Create Stripe subscription for a membership plan."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return member_mod.create_subscription(
+            conn, user["id"], body.plan_id,
+            success_url=f"{APP_BASE_URL}/billing?membership=success",
+            cancel_url=f"{APP_BASE_URL}/billing?membership=cancelled",
+        )
+    finally:
+        conn.close()
+
+
+@app.post("/api/membership/cancel")
+def api_cancel_membership(rubricgen_session: str | None = Cookie(default=None)):
+    """Cancel current subscription."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return member_mod.cancel_subscription(conn, user["id"])
+    finally:
+        conn.close()
+
+
+# ─────────────────────────────────────────────
 # Literature Search API
 # ─────────────────────────────────────────────
 
@@ -3430,11 +3504,13 @@ class SearchExecutePayload(BaseModel):
     session_id: int
     database: str = "pubmed"
     query: str | None = None
-    max_results: int = 100
+    page: int = 1
+    page_size: int = 50
 
 class SearchImportPayload(BaseModel):
     session_id: int
     result_ids: list[int]
+    project_id: int | None = None
 
 class SearchExportPayload(BaseModel):
     session_id: int
@@ -3475,7 +3551,7 @@ def api_search_execute(body: SearchExecutePayload, rubricgen_session: str | None
     try:
         return search_mod.execute_search(
             conn, body.session_id, user["id"],
-            body.database, body.query, body.max_results,
+            body.database, body.query, body.page, body.page_size,
         )
     finally:
         conn.close()
@@ -3521,8 +3597,13 @@ def api_search_import(body: SearchImportPayload, rubricgen_session: str | None =
     user = require_user(rubricgen_session)
     conn = get_db()
     try:
+        # Check PDF limit before import
+        pdf_status = member_mod.check_pdf_limit(conn, user["id"])
+        if not pdf_status["allowed"]:
+            raise HTTPException(403, f"PDF limit reached ({pdf_status['used']}/{pdf_status['limit']}). Upgrade your membership.")
         return search_mod.import_results(
             conn, body.session_id, body.result_ids, user["id"], PAPERS_DIR,
+            project_id=body.project_id,
         )
     finally:
         conn.close()

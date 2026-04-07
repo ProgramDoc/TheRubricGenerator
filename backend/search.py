@@ -347,8 +347,8 @@ LINKOUT_URLS = {
 
 def execute_search(conn: sqlite3.Connection, session_id: int, user_id: int,
                    database: str, query: str,
-                   max_results: int = 100) -> dict:
-    """Run a search. PubMed and Europe PMC return results; others return link-out URLs."""
+                   page: int = 1, page_size: int = 50) -> dict:
+    """Run a search with pagination. PubMed and Europe PMC return results; others return link-out URLs."""
     # Verify session ownership
     sess = conn.execute(
         "SELECT id FROM search_sessions WHERE id = ? AND user_id = ?",
@@ -357,22 +357,39 @@ def execute_search(conn: sqlite3.Connection, session_id: int, user_id: int,
     if not sess:
         raise HTTPException(404, "Session not found")
 
-    # Determine query version
+    # Determine query version (only increment on page 1 / new search)
     latest = conn.execute(
         "SELECT MAX(query_version) AS v FROM search_results WHERE session_id = ?",
         (session_id,),
     ).fetchone()
-    version = (latest["v"] or 0) + 1 if latest and latest["v"] is not None else 0
+    if page == 1:
+        version = (latest["v"] or 0) + 1 if latest and latest["v"] is not None else 0
+    else:
+        version = latest["v"] if latest and latest["v"] is not None else 0
+
+    offset = (page - 1) * page_size
 
     if database == "pubmed":
-        articles = _search_pubmed(query, max_results)
-        count = save_results(conn, session_id, version, "pubmed", articles)
-        return {"count": count, "results": articles, "query_version": version, "database": "pubmed"}
+        result = _search_pubmed(query, page_size, offset)
+        articles = result["articles"]
+        total = result["total"]
+        if articles:
+            save_results(conn, session_id, version, "pubmed", articles)
+        total_pages = (total + page_size - 1) // page_size if total else 1
+        return {"count": len(articles), "total": total, "page": page,
+                "total_pages": total_pages, "results": articles,
+                "query_version": version, "database": "pubmed"}
 
     elif database == "europe_pmc":
-        articles = _search_europe_pmc(query, max_results)
-        count = save_results(conn, session_id, version, "europe_pmc", articles)
-        return {"count": count, "results": articles, "query_version": version, "database": "europe_pmc"}
+        result = _search_europe_pmc(query, page_size, offset)
+        articles = result["articles"]
+        total = result["total"]
+        if articles:
+            save_results(conn, session_id, version, "europe_pmc", articles)
+        total_pages = (total + page_size - 1) // page_size if total else 1
+        return {"count": len(articles), "total": total, "page": page,
+                "total_pages": total_pages, "results": articles,
+                "query_version": version, "database": "europe_pmc"}
 
     else:
         # Link-out databases
@@ -388,20 +405,23 @@ def execute_search(conn: sqlite3.Connection, session_id: int, user_id: int,
         }
 
 
-def _search_pubmed(query: str, max_results: int = 100) -> list[dict]:
-    """Search PubMed using E-utilities (without OA filter restriction)."""
+def _search_pubmed(query: str, page_size: int = 50,
+                   offset: int = 0) -> dict:
+    """Search PubMed with pagination. Returns {articles, total}."""
     encoded = urllib.parse.quote(query)
     url = (
         f"{PUBMED_EUTILS}/esearch.fcgi?db=pubmed&term={encoded}"
-        f"&retmax={max_results}&retmode=json{_apikey_param()}"
+        f"&retmax={page_size}&retstart={offset}&retmode=json{_apikey_param()}"
     )
     time.sleep(EUTILS_SLEEP)
     raw = _http_get(url)
     data = json.loads(raw)
-    pmids = data.get("esearchresult", {}).get("idlist", [])
+    esearch = data.get("esearchresult", {})
+    pmids = esearch.get("idlist", [])
+    total = int(esearch.get("count", 0))
 
     if not pmids:
-        return []
+        return {"articles": [], "total": total}
 
     # Fetch metadata
     metas = _fetch_full_metadata(pmids)
@@ -411,7 +431,7 @@ def _search_pubmed(query: str, max_results: int = 100) -> list[dict]:
     for m in metas:
         m["citation_count"] = cites.get(m["pmid"], 0)
 
-    return metas
+    return {"articles": metas, "total": total}
 
 
 def _fetch_full_metadata(pmids: list[str]) -> list[dict]:
@@ -497,17 +517,24 @@ def _parse_abstracts_into(xml_str: str, meta_map: dict) -> None:
             meta_map[pmid]["abstract"] = abstract_text
 
 
-def _search_europe_pmc(query: str, max_results: int = 100) -> list[dict]:
-    """Search Europe PMC REST API."""
+def _search_europe_pmc(query: str, page_size: int = 50,
+                       offset: int = 0) -> dict:
+    """Search Europe PMC REST API with pagination. Returns {articles, total}."""
     encoded = urllib.parse.quote(query)
-    url = f"https://www.ebi.ac.uk/europepmc/webservices/rest/search?query={encoded}&format=json&pageSize={min(max_results, 100)}"
+    # Europe PMC uses cursorMark for deep pagination, but offset works for first 1000
+    page_num = (offset // page_size) + 1 if page_size else 1
+    url = (
+        f"https://www.ebi.ac.uk/europepmc/webservices/rest/search"
+        f"?query={encoded}&format=json&pageSize={min(page_size, 1000)}&page={page_num}"
+    )
     try:
         raw = _http_get(url)
         data = json.loads(raw)
     except Exception as e:
         logger.error("Europe PMC search failed: %s", e)
-        return []
+        return {"articles": [], "total": 0}
 
+    total = int(data.get("hitCount", 0))
     articles = []
     for rec in data.get("resultList", {}).get("result", []):
         authors = rec.get("authorString", "")
@@ -523,7 +550,7 @@ def _search_europe_pmc(query: str, max_results: int = 100) -> list[dict]:
             "url": f"https://europepmc.org/article/MED/{rec.get('pmid', '')}" if rec.get("pmid") else "",
             "citation_count": rec.get("citedByCount", 0),
         })
-    return articles
+    return {"articles": articles, "total": total}
 
 
 def _build_linkout_url(database: str, query: str) -> str | None:
@@ -593,7 +620,8 @@ def select_all_results(conn: sqlite3.Connection, session_id: int,
 
 def import_results(conn: sqlite3.Connection, session_id: int,
                    result_ids: list[int], user_id: int,
-                   papers_dir: Path) -> dict:
+                   papers_dir: Path,
+                   project_id: int | None = None) -> dict:
     """Import selected search results as papers."""
     imported = 0
     skipped = 0
@@ -642,9 +670,9 @@ def import_results(conn: sqlite3.Connection, session_id: int,
             try:
                 with conn:
                     cur = conn.execute(
-                        """INSERT INTO papers (filename, disk_filename, sha256, user_id)
-                           VALUES (?, ?, ?, ?)""",
-                        (filename, f"{sha256}.pdf" if pdf_path else None, sha256, user_id),
+                        """INSERT INTO papers (filename, disk_filename, sha256, user_id, project_id)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (filename, f"{sha256}.pdf" if pdf_path else None, sha256, user_id, project_id),
                     )
                     paper_id = cur.lastrowid
                     conn.commit()

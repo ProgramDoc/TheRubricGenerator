@@ -233,11 +233,15 @@ table.res-table tbody tr:last-child td { border-bottom: none; }
       <div class="results-toolbar" id="results-toolbar" style="display:none">
         <label><input type="checkbox" id="select-all" onchange="toggleSelectAll(this.checked)"> Select all</label>
         <span class="results-count" id="results-count">0 results</span>
+        <select id="import-project" style="font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:4px">
+          <option value="">Import to: Unassigned</option>
+        </select>
         <button class="btn btn-import" onclick="importSelected()">Import Selected</button>
         <button class="btn btn-export" onclick="exportRIS()">RIS</button>
         <button class="btn btn-export" onclick="exportBibTeX()">BibTeX</button>
       </div>
       <div id="results-body"><div class="empty">Run a search to see results here.</div></div>
+      <div id="pagination-bar" style="display:none;text-align:center;padding:12px;display:flex;gap:6px;justify-content:center;flex-wrap:wrap"></div>
     </div>
   </div>
 </div>
@@ -249,6 +253,9 @@ let sessions = [];
 let queryVersions = [];
 let currentQuery = '';
 let results = [];
+let currentPage = 1;
+let totalPages = 1;
+let totalResults = 0;
 
 // ── Auth ──
 async function checkAuth() {
@@ -474,7 +481,8 @@ function copyQuery() {
 }
 
 // ── Search ──
-async function runSearch() {
+async function runSearch(page) {
+  currentPage = page || 1;
   const db = document.getElementById('search-db').value;
   const btn = document.getElementById('run-btn');
   btn.disabled = true; btn.textContent = 'Searching...';
@@ -482,7 +490,7 @@ async function runSearch() {
   try {
     const r = await fetch('/api/search/execute', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ session_id: currentSessionId, database: db, query: currentQuery, max_results: 100 }),
+      body: JSON.stringify({ session_id: currentSessionId, database: db, query: currentQuery, page: currentPage, page_size: 50 }),
     });
     if (!r.ok) { const e = await r.json(); alert(e.detail || 'Search failed'); return; }
     const data = await r.json();
@@ -493,11 +501,32 @@ async function runSearch() {
     }
 
     results = data.results || [];
+    totalResults = data.total || results.length;
+    totalPages = data.total_pages || 1;
+    currentPage = data.page || 1;
     renderResults(results);
+    renderPagination();
     switchWsTab('results');
   } finally {
     btn.disabled = false; btn.textContent = 'Search';
   }
+}
+
+function renderPagination() {
+  const bar = document.getElementById('pagination-bar');
+  if (totalPages <= 1) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  let html = '';
+  if (currentPage > 1) html += `<button style="padding:5px 12px;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer;font-size:11px" onclick="runSearch(${currentPage-1})">Prev</button>`;
+  const start = Math.max(1, currentPage - 3);
+  const end = Math.min(totalPages, currentPage + 3);
+  for (let i = start; i <= end; i++) {
+    const active = i === currentPage ? 'background:var(--blue);color:#fff;border-color:var(--blue)' : 'background:#fff';
+    html += `<button style="padding:5px 12px;border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:11px;${active}" onclick="runSearch(${i})">${i}</button>`;
+  }
+  if (currentPage < totalPages) html += `<button style="padding:5px 12px;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer;font-size:11px" onclick="runSearch(${currentPage+1})">Next</button>`;
+  html += `<span style="font-size:10px;color:var(--muted);padding:5px">Page ${currentPage} of ${totalPages} (${totalResults.toLocaleString()} results)</span>`;
+  bar.innerHTML = html;
 }
 
 function renderResults(res) {
@@ -513,8 +542,9 @@ function renderResults(res) {
   }
 
   toolbar.style.display = 'flex';
-  tabBtn.textContent = `Results [${res.length}]`;
-  document.getElementById('results-count').textContent = `${res.length} results`;
+  const totalLabel = totalResults > res.length ? `${totalResults.toLocaleString()} total` : `${res.length}`;
+  tabBtn.textContent = `Results [${totalLabel}]`;
+  document.getElementById('results-count').textContent = `${res.length} shown of ${totalResults.toLocaleString()} results`;
 
   let html = '<table class="res-table"><thead><tr><th style="width:30px"></th><th>Title</th><th>Authors</th><th>Journal</th><th>Year</th><th>Cites</th><th>DB</th><th>Status</th></tr></thead><tbody>';
   res.forEach(r => {
@@ -563,9 +593,10 @@ async function importSelected() {
   const ids = [...document.querySelectorAll('.res-table input[type=checkbox][data-id]:checked')]
     .map(cb => parseInt(cb.dataset.id));
   if (!ids.length) { alert('Select at least one result to import'); return; }
+  const projectId = document.getElementById('import-project').value || null;
   const r = await fetch('/api/search/import', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ session_id: currentSessionId, result_ids: ids }),
+    body: JSON.stringify({ session_id: currentSessionId, result_ids: ids, project_id: projectId ? parseInt(projectId) : null }),
   });
   if (!r.ok) { const e = await r.json(); alert(e.detail || 'Import failed'); return; }
   const data = await r.json();
@@ -619,9 +650,24 @@ document.getElementById('chat-input').addEventListener('input', function() {
 });
 
 // ── Init ──
+async function loadProjects() {
+  try {
+    const r = await fetch('/api/projects');
+    if (!r.ok) return;
+    const projects = await r.json();
+    const sel = document.getElementById('import-project');
+    projects.forEach(p => {
+      const o = document.createElement('option');
+      o.value = p.id; o.textContent = p.name;
+      sel.appendChild(o);
+    });
+  } catch {}
+}
+
 async function init() {
   await checkAuth();
   await loadSessions();
+  loadProjects();
   const savedId = sessionStorage.getItem('search_session_id');
   if (savedId) {
     currentSessionId = parseInt(savedId);

@@ -161,6 +161,13 @@ tbody tr:last-child td { border-bottom: none; }
       </div>
       <div class="field">
         <label>Upload & Select Papers (up to 100)</label>
+        <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center">
+          <label style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase">Upload to project:</label>
+          <select id="upload-project" style="font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;flex:1">
+            <option value="">Unassigned</option>
+          </select>
+        </div>
+        <div id="pdf-limit-warning" style="display:none;font-size:11px;color:var(--red);padding:8px;background:rgba(220,38,38,.05);border-radius:5px;margin-bottom:8px"></div>
         <div id="upload-zone" style="border:2px dashed var(--border);border-radius:8px;padding:20px;text-align:center;cursor:pointer;margin-bottom:10px;transition:border-color .15s" onclick="document.getElementById('pdf-upload').click()" ondragover="event.preventDefault();this.style.borderColor='var(--sky)'" ondragleave="this.style.borderColor='var(--border)'" ondrop="event.preventDefault();this.style.borderColor='var(--border)';handleDrop(event)">
           <div style="font-size:12px;font-weight:600;color:var(--muted)">Drag PDFs here or click to upload</div>
           <div style="font-size:10px;color:var(--muted);margin-top:4px">Max 50MB per file</div>
@@ -267,11 +274,17 @@ async function loadProjects() {
   if (!res.ok) return;
   const projects = await res.json();
   const sel = document.getElementById('f-project');
+  const uploadSel = document.getElementById('upload-project');
   projects.forEach(p => {
     const opt = document.createElement('option');
     opt.value = p.id;
     opt.textContent = p.name;
     sel.appendChild(opt);
+    // Also populate upload project selector
+    const opt2 = document.createElement('option');
+    opt2.value = p.id;
+    opt2.textContent = p.name;
+    uploadSel.appendChild(opt2);
   });
 }
 
@@ -469,6 +482,7 @@ async function handleDrop(event) {
 
 async function handleFileSelect(files) {
   const progress = document.getElementById('upload-progress');
+  const projectId = document.getElementById('upload-project').value;
   for (const file of files) {
     if (!file.name.toLowerCase().endsWith('.pdf')) {
       progress.innerHTML += `<div style="font-size:10px;color:var(--red)">Skipped ${file.name} (not a PDF)</div>`;
@@ -477,14 +491,20 @@ async function handleFileSelect(files) {
     progress.innerHTML += `<div style="font-size:10px;color:var(--muted)" id="up-${file.name.replace(/\W/g,'')}">Uploading ${file.name}…</div>`;
     const form = new FormData();
     form.append('file', file);
+    if (projectId) form.append('project_id', projectId);
     try {
       const r = await fetch('/api/papers/upload', { method: 'POST', body: form });
       const data = await r.json();
       const statusEl = document.getElementById('up-' + file.name.replace(/\W/g, ''));
       if (r.ok) {
         if (statusEl) statusEl.innerHTML = `<span style="color:var(--green)">${file.name} uploaded</span>`;
-        // Add to paper list as checked
         addPaperToList(data.id || data.paper_id, file.name);
+      } else if (r.status === 403) {
+        // PDF limit reached
+        if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${file.name}: Upload limit reached</span>`;
+        document.getElementById('pdf-limit-warning').style.display = '';
+        document.getElementById('pdf-limit-warning').innerHTML = `PDF upload limit reached. <a href="/billing" style="color:var(--blue);font-weight:700">Upgrade your membership</a> to upload more.`;
+        break;
       } else {
         if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${file.name}: ${data.detail || 'failed'}</span>`;
       }

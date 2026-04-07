@@ -103,7 +103,21 @@ tbody tr:last-child td { border-bottom: none; }
   <div id="success-banner" class="success-msg" style="display:none">Payment successful! Credits have been added to your account.</div>
 
   <div class="page-title">Billing & Credits</div>
-  <div class="page-subtitle">Manage your credit balance, purchase packs, and apply promo codes</div>
+  <div class="page-subtitle">Manage your membership, credit balance, and purchase packs</div>
+
+  <!-- MEMBERSHIP -->
+  <div class="card" style="margin-bottom:20px">
+    <div class="card-header"><h2>Membership Plan</h2></div>
+    <div style="padding:20px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+        <span id="plan-badge" style="font-size:14px;font-weight:700;padding:6px 14px;border-radius:6px;background:var(--blue);color:#fff">Free</span>
+        <span id="pdf-usage" style="font-size:12px;color:var(--muted)"></span>
+      </div>
+      <div id="plan-cards" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+        <div style="text-align:center;color:var(--muted);font-size:12px">Loading plans...</div>
+      </div>
+    </div>
+  </div>
 
   <!-- BALANCE -->
   <div class="balance-card">
@@ -306,6 +320,64 @@ async function applyPromo() {
   }
 }
 
+async function loadMembership() {
+  try {
+    const [memRes, plansRes] = await Promise.all([
+      fetch('/api/membership'),
+      fetch('/api/membership/plans'),
+    ]);
+    if (!memRes.ok || !plansRes.ok) return;
+    const membership = await memRes.json();
+    const plans = await plansRes.json();
+
+    // Show current plan badge
+    const badge = document.getElementById('plan-badge');
+    const colors = { Free: '#64748b', Pro: '#274472', Enterprise: '#7c3aed' };
+    badge.textContent = membership.plan_name || 'Free';
+    badge.style.background = colors[membership.plan_name] || '#64748b';
+
+    // Show PDF usage
+    const ps = membership.pdf_status || {};
+    const usageEl = document.getElementById('pdf-usage');
+    if (ps.limit === -1) {
+      usageEl.textContent = `${ps.used} PDFs uploaded (unlimited)`;
+    } else {
+      usageEl.textContent = `${ps.used}/${ps.limit} PDFs used`;
+    }
+
+    // Show plan cards
+    const container = document.getElementById('plan-cards');
+    container.innerHTML = plans.map(p => {
+      const isCurrent = p.name === membership.plan_name;
+      const price = p.price_cents === 0 ? 'Free' : `$${(p.price_cents/100).toFixed(0)}/mo`;
+      const features = (p.features || []).map(f => `<div style="font-size:10.5px;color:var(--text);padding:2px 0">${escapeHtml(f)}</div>`).join('');
+      const btnStyle = isCurrent
+        ? 'background:var(--green);color:#fff;cursor:default'
+        : p.price_cents === 0 ? 'background:#f0f4ff;color:var(--muted);cursor:default' : 'background:var(--blue);color:#fff;cursor:pointer';
+      const btnText = isCurrent ? 'Current Plan' : p.price_cents === 0 ? 'Free' : 'Subscribe';
+      const btnClick = isCurrent || p.price_cents === 0 ? '' : `onclick="subscribePlan(${p.id})"`;
+      return `<div style="border:1px solid ${isCurrent ? 'var(--blue)' : 'var(--border)'};border-radius:8px;padding:16px;text-align:center;${isCurrent ? 'box-shadow:0 0 0 2px rgba(39,68,114,.2)' : ''}">
+        <div style="font-size:15px;font-weight:700;color:var(--navy)">${escapeHtml(p.name)}</div>
+        <div style="font-size:20px;font-weight:700;color:var(--blue);margin:6px 0">${price}</div>
+        <div style="margin:10px 0">${features}</div>
+        <button ${btnClick} style="width:100%;padding:8px;border:none;border-radius:5px;font-family:inherit;font-size:12px;font-weight:700;${btnStyle}">${btnText}</button>
+      </div>`;
+    }).join('');
+  } catch (e) { console.error('Failed to load membership:', e); }
+}
+
+async function subscribePlan(planId) {
+  try {
+    const r = await fetch('/api/membership/subscribe', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ plan_id: planId }),
+    });
+    if (!r.ok) { const e = await r.json(); alert(e.detail || 'Failed'); return; }
+    const data = await r.json();
+    if (data.checkout_url) window.location.href = data.checkout_url;
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
 async function loadOrgCredits() {
   try {
     const r = await fetch('/api/orgs');
@@ -326,6 +398,7 @@ async function loadOrgCredits() {
 
 (async () => {
   await loadMe();
+  loadMembership();
   loadBalance();
   loadPacks();
   loadTransactions();

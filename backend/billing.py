@@ -334,6 +334,20 @@ def handle_stripe_webhook(payload: bytes, sig_header: str,
                     logger.info("Stripe: credited %d to user %d (session=%s)", credits, user_id, session_id)
             finally:
                 conn.close()
+    # Handle subscription events (membership plans)
+    sub_events = (
+        "customer.subscription.created",
+        "customer.subscription.updated",
+        "customer.subscription.deleted",
+        "invoice.paid",
+    )
+    if event["type"] in sub_events:
+        try:
+            from .membership import handle_subscription_webhook
+            handle_subscription_webhook(event, get_db_fn)
+        except Exception as e:
+            logger.error("Subscription webhook handling failed: %s", e)
+
     return {"received": True}
 
 
