@@ -96,6 +96,9 @@ tbody tr:last-child td { border-bottom: none; }
     <a href="/public-tests">Public Tests</a>
     <a href="/models">Models</a>
     <a href="/leaderboard" class="active">Leaderboard</a>
+    <a href="/analytics">Analytics</a>
+    <a href="/library">Library</a>
+    <a href="/search">Search</a>
     <a href="/billing">Billing</a>
     <a href="/papers">Papers</a>
     <a href="/api/sso/annotator">Annotator</a>
@@ -112,6 +115,7 @@ tbody tr:last-child td { border-bottom: none; }
   <div class="tab-bar">
     <button class="tab-btn active" onclick="switchTab('overall')">Overall (Total Points)</button>
     <button class="tab-btn" onclick="switchTab('daily')">Daily AI Researcher Challenge</button>
+    <button class="tab-btn" onclick="switchTab('orgs')">Organizations</button>
   </div>
 
   <!-- OVERALL TAB -->
@@ -132,6 +136,14 @@ tbody tr:last-child td { border-bottom: none; }
     <div class="card">
       <div class="card-header"><h2>Recent Daily Challenge Results</h2></div>
       <div id="daily-results"><div class="empty">Loading…</div></div>
+    </div>
+  </div>
+
+  <!-- ORGANIZATIONS TAB -->
+  <div class="tab-panel" id="tab-orgs">
+    <div class="card">
+      <div class="card-header"><h2>Organization Rankings</h2></div>
+      <div id="org-rankings"><div class="empty">Loading…</div></div>
     </div>
   </div>
 </div>
@@ -324,11 +336,35 @@ async function loadDailyResults() {
   body.innerHTML = html;
 }
 
+async function loadOrgRankings() {
+  const res = await fetch('/api/leaderboard/organizations');
+  const wrap = document.getElementById('org-rankings');
+  if (!res.ok) { wrap.innerHTML = '<div class="empty">Failed to load</div>'; return; }
+  const orgs = await res.json();
+  if (!orgs.length) { wrap.innerHTML = '<div class="empty">No organization data yet. Organizations earn points when their registered models compete in challenges.</div>'; return; }
+
+  let html = '<table><thead><tr><th>#</th><th>Organization</th><th>Models</th><th>Challenges</th><th style="text-align:right">Avg Accuracy</th><th style="text-align:right">Total Points</th><th>Best Model</th></tr></thead><tbody>';
+  orgs.forEach((o, i) => {
+    html += `<tr>
+      <td class="rank-cell">${i + 1}</td>
+      <td style="font-weight:700;color:var(--navy)"><a href="/org/${o.org_id}" style="color:inherit;text-decoration:none">${escapeHtml(o.org_name)}</a></td>
+      <td class="num">${o.total_models || 0}</td>
+      <td class="num">${o.total_challenges || 0}</td>
+      <td class="num">${fmtNum((o.avg_accuracy || 0) * 100, 1)}%</td>
+      <td class="num" style="font-size:14px;font-weight:700">${fmtNum(o.total_points || 0)}</td>
+      <td>${escapeHtml(o.best_model_id || '—')}</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+}
+
 (async () => {
   await loadMe();
   loadOverall();
   loadDailyRankings();
   loadDailyResults();
+  loadOrgRankings();
 })();
 </script>
 </body>

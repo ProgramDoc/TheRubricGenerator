@@ -13,7 +13,8 @@ def create_registered_model(conn: sqlite3.Connection, creator_user_id: int,
                             name: str, version: str, provider: str = "",
                             git_repo: str = "", organization: str = "",
                             team_member_emails: list[str] | None = None,
-                            team_members_with_perms: list[dict] | None = None) -> dict:
+                            team_members_with_perms: list[dict] | None = None,
+                            org_id: int | None = None) -> dict:
     """
     Validates:
     - name unique (409)
@@ -71,9 +72,9 @@ def create_registered_model(conn: sqlite3.Connection, creator_user_id: int,
     try:
         with conn:
             cur = conn.execute(
-                """INSERT INTO registered_models (name, version, provider, git_repo, organization, created_by, model_api_key)
-                   VALUES (?,?,?,?,?,?,?)""",
-                (name, version, provider or None, git_repo or None, organization or None, creator_user_id, model_api_key),
+                """INSERT INTO registered_models (name, version, provider, git_repo, organization, created_by, model_api_key, org_id)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (name, version, provider or None, git_repo or None, organization or None, creator_user_id, model_api_key, org_id),
             )
             model_id = cur.lastrowid
             for uid in team_ids:
@@ -266,3 +267,16 @@ def update_member_permission(conn: sqlite3.Connection, model_id: int,
         )
         conn.commit()
     return get_registered_model(conn, model_id)
+
+
+def list_org_models(conn: sqlite3.Connection, org_id: int) -> list[dict]:
+    """List all models belonging to an organization."""
+    rows = conn.execute(
+        """SELECT rm.*, u.display_name AS creator_name
+           FROM registered_models rm
+           LEFT JOIN users u ON u.id = rm.created_by
+           WHERE rm.org_id = ?
+           ORDER BY rm.created_at DESC""",
+        (org_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]

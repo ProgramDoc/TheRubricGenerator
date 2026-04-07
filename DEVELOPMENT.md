@@ -6,16 +6,16 @@
 
 ---
 
-## Current State (Phase 5 Complete - April 2026)
+## Current State (Phase 8 + Search Complete - April 2026)
 
 ### Codebase Summary
 
 | Component | Files | Lines |
 |-----------|-------|-------|
-| `main.py` | 1 | ~3,040 |
-| `backend/` modules | 14 | ~3,535 |
-| `frontend/` pages | 13 | ~4,910 |
-| **Total** | **28** | **~11,485** |
+| `main.py` | 1 | ~3,850 |
+| `backend/` modules | 18 | ~4,985 |
+| `frontend/` pages | 17 | ~6,760 |
+| **Total** | **36** | **~15,595** |
 
 ### What's Live
 
@@ -37,6 +37,17 @@
 - **Password reset:** SMTP email flow with 1hr token expiry
 - **Admin dashboard:** User management, daily scheduler controls, skill improvement panel, model approval queue
 - **Dry-run mode:** Test daily challenges without recording to leaderboard
+- **Analytics dashboard:** Per-model breakdown by theme/difficulty, historical trend charts (Chart.js), CSV/PDF export
+- **Public leaderboard API:** Rate-limited JSON API for third-party integrations (`/api/public/leaderboard`)
+- **Email notifications:** Opt-in daily challenge completion emails
+- **Organizations:** Multi-tenant teams with viewer/contributor/admin roles, shared credit pools, invite-link and email-domain auto-join
+- **Org leaderboard:** Aggregate model performance ranked by organization
+- **Org billing:** Separate credit pool per org, Stripe checkout, personal-to-org credit transfers
+- **Multi-paper comparative rubrics:** New `comparative` rubric type for cross-paper synthesis (contradictions, methodology, population, outcomes, evidence strength)
+- **Rubric templates:** Reusable, versioned templates with living question stats (auto-flag too-easy/broken questions)
+- **Community library:** Publish, browse, search, fork, and rate (1-5 stars) rubric templates
+- **Ground truth annotations:** Import expert answers from OGAI Annotator, compare AI judge accuracy to human experts
+- **Literature search:** AI-powered multi-database search with chatbot strategist, PICO extraction, PubMed/Europe PMC full search, link-outs for Scholar/JSTOR/WoS/ScienceDirect/Wiley/OVID, import results as papers, RIS/BibTeX export
 
 ---
 
@@ -121,27 +132,78 @@ External models submit answers to OUR API (we don't call theirs):
 
 ## Planned Development
 
-### Phase 6 - Advanced Analytics & Reporting
+### Phase 6 - Advanced Analytics & Reporting (April 6, 2026)
 
-- Per-model performance breakdown by theme, difficulty level, question domain
-- Historical trend charts (accuracy over time per model)
-- Exportable benchmark reports (PDF/CSV)
-- Public API for querying leaderboard data
-- Email notifications for daily challenge completions
+- `backend/analytics.py` — query engine for per-model breakdown, historical trends, theme stats
+- Analytics dashboard (`/analytics`) with Chart.js bar/line charts, filter controls, export buttons
+- Per-model accuracy breakdown by theme, difficulty level, question domain
+- Historical trend charts (accuracy over time per model, daily challenges)
+- Exportable benchmark reports: CSV (per-question detail) and PDF (summary tables via reportlab)
+- Public leaderboard API: `GET /api/public/leaderboard`, `/api/public/leaderboard/daily`, `/api/public/models` — no auth, rate-limited (60 req/min per IP)
+- Notification preferences: opt-in daily challenge completion emails via existing SMTP
+- `analytics_snapshots` cache table rebuilt after each challenge for fast aggregation
+- Integration hooks in challenge pipeline: analytics refresh + email notification (try/except, non-blocking)
 
-### Phase 7 - Multi-Tenant Teams & Organizations
+### Phase 7 - Multi-Tenant Teams & Organizations (April 6, 2026)
 
-- Organization accounts with shared billing
-- Team-level access control (viewer, contributor, admin)
-- Organization leaderboard (aggregate team model performance)
-- SSO integration for institutional users
+- `backend/organizations.py` — org CRUD, membership management, role hierarchy (viewer < contributor < admin)
+- Organization dashboard (`/org/{id}`) with Members, Models, Billing, Settings tabs
+- Shared billing: `org_credits` pool, Stripe checkout for orgs, personal-to-org credit transfers
+- Invite-link joining (`organizations.invite_code`) + email-domain auto-join on registration
+- Organization leaderboard: third tab on leaderboard page, aggregates `challenge_submissions` by org
+- Public org leaderboard API: `GET /api/public/leaderboard/organizations` (rate-limited)
+- Model assignment: `registered_models.org_id` FK, org dropdown on model creation form
+- Dashboard sidebar: organizations section with role badges and "Create Organization" button
+- Billing page: org credits summary table with links to per-org billing
+- 17 new API endpoints: org CRUD (7), membership (3), billing (4), models (1), leaderboard (2)
+- 5 new DB tables: `organizations`, `org_members`, `org_credits`, `org_credit_transactions`, `org_leaderboard_cache`
 
-### Phase 8 - Advanced Rubric Types
+### Phase 8 - Advanced Rubric Types (April 6, 2026)
 
-- Multi-paper comparative rubrics (compare findings across N studies)
-- Living rubric templates that evolve based on accumulated test data
-- Community rubric library (share and fork rubric templates)
-- Integration with OGAI Annotator for human-annotated ground truth
+- `backend/templates.py` — template CRUD, community library, living stats, ground truth import
+- Multi-paper comparative rubrics: new `comparative` type in generator.py, cross-paper synthesis questions with `paper_refs`
+- Rubric templates: versioned (`rubric_templates` table), fork chain via `parent_id`, save from existing rubric
+- Living template stats: `template_question_stats` tracks per-question avg score, auto-flags too_easy (>95%) and broken (<5%) after 5+ uses
+- Community library (`/library`): publish/unpublish, browse with search/filter/sort (recent/rating/popular), fork, rate (1-5 stars)
+- 5 new DB tables: `rubric_templates`, `template_question_stats`, `community_templates`, `community_ratings`, `ground_truth_annotations`
+- Ground truth / Annotator integration: HMAC-authenticated import endpoint, expert answer storage, judge-vs-human accuracy comparison
+- 20 new API endpoints: template CRUD (8), community library (5), comparative generation (1), ground truth (3), stats (1), evaluation accuracy (1)
+- Frontend: `library.html` (community browser with cards, preview modal, fork/rate), "Comparative" rubric type + save/load template buttons in `rubric_generator.html`
+
+### Literature Search Interface (April 6, 2026)
+
+- `backend/search.py` — session-based conversational search with AI strategist chatbot
+- Dual-panel UI (`/search`): left = AI chat with PICO extraction and query refinement, right = Query Builder + Results workspace
+- AI search strategist: extracts PICO elements, generates structured PubMed Boolean queries with MeSH terms, translates to Ovid MEDLINE/Web of Science syntax, refines queries conversationally
+- Full search integration: PubMed (esearch → esummary → efetch with abstracts → iCite citations) and Europe PMC (REST API)
+- Link-out support: Google Scholar, JSTOR, Web of Science, ScienceDirect, Wiley Online, OVID — AI generates database-specific syntax, opens in new tab
+- Query versioning: v0, v1, v2... with dropdown history, each AI refinement creates a new version
+- Results table: title, authors, journal, year, citations, database badge, expandable abstracts, checkbox selection
+- Import: selected results → download PMC PDF → create paper record (reuses existing dedup) → available in Papers page
+- Export: RIS and BibTeX citation formats
+- Session persistence: multiple named sessions, sessionStorage for page refresh survival
+- 3 new DB tables: `search_sessions`, `search_messages`, `search_results`
+- 10 new API endpoints: chat, execute, sessions CRUD, import, export RIS/BibTeX, selection
+
+### Challenge System Improvements (April 6, 2026)
+
+- **Inline PDF upload** in challenge creation form — drag-and-drop or click-to-upload, auto-adds to paper list
+- **5 questions per PDF** — dynamic question count (previously fixed 10 total). With 3 PDFs → 15 questions, 10 PDFs → 50 questions
+- **100-PDF limit** per challenge (previously 10)
+- **Cost estimation** — comprehensive breakdown: generator + participant + judge costs. New `estimate_challenge_cost()` in billing.py, new `GET /api/challenges/estimate-cost` endpoint
+- **Credit enforcement** — `debit_credits()` now called before runs (was previously a stub). Insufficient balance returns 402. Failed runs auto-refund via new `refund_credits()` function
+- **Pre-run approval** — cost >$5 (50 credits) requires explicit user approval via modal. Always requires approval if user balance ≤$5
+- **Unique run ID** — `RG-YYYYMMDD-xxxxxx` format, generated at creation, displayed in challenge viewer
+- **Enhanced Obsidian notes** — now includes: run ID, user info, cost breakdown, generator agent state (version, performance, prompt preview), judge agent state, recent autoresearch experiment history table
+- **Obsidian linking docs** — admin page now explains how to sync vault via Obsidian Sync, iCloud, Git, or rsync
+
+### Obsidian Integration Architecture
+
+The Obsidian vault is a **write-only local directory** configured via `OBSIDIAN_VAULT_DIR` env var. After each challenge completes, markdown notes are written to `{vault}/challenges/` and agent skill files to `{vault}/SKILL_generator.md` / `SKILL_judge.md`. Users sync the vault externally:
+- **Obsidian Sync**: Point env var to the synced vault folder
+- **iCloud/Dropbox**: Point to cloud-synced folder
+- **Git**: Point to a git repo, auto-commit via cron
+- **Self-hosted**: rsync or scp from server
 
 ---
 
@@ -183,13 +245,17 @@ Write-only from the backend:
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `main.py` | ~3,040 | App entry, routes, auth, config, lifespan, all API endpoints |
-| `backend/challenges.py` | ~710 | Challenge orchestration, scoring, points, daily composition |
+| `main.py` | ~3,850 | App entry, routes, auth, config, lifespan, all API endpoints |
+| `backend/challenges.py` | ~780 | Challenge orchestration, scoring, points, daily composition, org leaderboard |
 | `backend/self_improve.py` | ~500 | Autoresearch-style experiment loop |
+| `backend/templates.py` | ~350 | Rubric templates, community library, living stats, ground truth |
+| `backend/analytics.py` | ~350 | Analytics queries, CSV/PDF export, email notifications, rate limiter |
+| `backend/search.py` | ~450 | Literature search: AI chat, PubMed/Europe PMC, import, export |
+| `backend/organizations.py` | ~300 | Organization CRUD, membership, roles, invite/domain-join |
 | `backend/pubmed.py` | ~330 | PubMed/PMC/iCite client, 14 seed themes |
 | `backend/scheduler.py` | ~270 | Daily scheduler (7am PST Mon-Fri) |
-| `backend/models_registry.py` | ~270 | Model CRUD, team management, API key generation |
-| `backend/billing.py` | ~264 | Stripe credit system, checkout, webhooks |
+| `backend/models_registry.py` | ~285 | Model CRUD, team management, API key generation, org models |
+| `backend/billing.py` | ~415 | Stripe credit system, checkout, webhooks, org billing |
 | `backend/agreements.py` | ~237 | Legal agreement text + acceptance tracking |
 | `backend/promo.py` | ~180 | Promo codes, 48h auto-approve |
 | `backend/skills.py` | ~178 | Agent skill versioning, seed prompts |

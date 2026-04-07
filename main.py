@@ -41,6 +41,13 @@ from backend.billing import BILLING_TABLES_SQL, seed_credit_packs
 from backend.promo import PROMO_TABLES_SQL
 from backend.agreements import AGREEMENTS_TABLE_SQL
 from backend.self_improve import EXPERIMENTS_TABLE_SQL
+from backend import analytics as analytics_mod
+from backend.organizations import ORG_TABLES_SQL
+from backend import organizations as org_mod
+from backend.templates import TEMPLATE_TABLES_SQL
+from backend import templates as tmpl_mod
+from backend.search import SEARCH_TABLES_SQL
+from backend import search as search_mod
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rubricgen")
@@ -320,8 +327,39 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_cs_challenge ON challenge_submissions(challenge_id);
             CREATE INDEX IF NOT EXISTS idx_cs_model ON challenge_submissions(registered_model_id);
         """)
+        # Phase 6: analytics & notifications
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS analytics_snapshots (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                model_id   TEXT NOT NULL,
+                theme      TEXT,
+                difficulty TEXT,
+                challenges INTEGER DEFAULT 0,
+                correct    INTEGER DEFAULT 0,
+                total      INTEGER DEFAULT 0,
+                accuracy   REAL    DEFAULT 0,
+                updated_at TEXT    DEFAULT (datetime('now')),
+                UNIQUE(model_id, theme, difficulty)
+            );
+            CREATE INDEX IF NOT EXISTS idx_as_model ON analytics_snapshots(model_id);
+
+            CREATE TABLE IF NOT EXISTS notification_preferences (
+                user_id         INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                daily_complete  INTEGER DEFAULT 0,
+                weekly_digest   INTEGER DEFAULT 0,
+                updated_at      TEXT DEFAULT (datetime('now'))
+            );
+        """)
+        # Phase 7: organizations
+        conn.executescript(ORG_TABLES_SQL)
+        # Phase 8: templates, community library, ground truth
+        conn.executescript(TEMPLATE_TABLES_SQL)
+        # Literature search
+        conn.executescript(SEARCH_TABLES_SQL)
         conn.commit()
     _migrate_challenges_columns(conn)
+    _migrate_org_columns(conn)
+    _migrate_challenge_columns_v2(conn)
     seed_v1_skills(conn)
     seed_credit_packs(conn)
     conn.close()
@@ -439,6 +477,29 @@ def _migrate_challenges_columns(conn) -> None:
             conn.execute("ALTER TABLE leaderboard_cache ADD COLUMN daily_streak INTEGER DEFAULT 0")
         if "daily_rank_change" not in lb_cols:
             conn.execute("ALTER TABLE leaderboard_cache ADD COLUMN daily_rank_change INTEGER DEFAULT 0")
+        conn.commit()
+
+
+def _migrate_org_columns(conn) -> None:
+    """Phase 7 additive migration: add org_id to registered_models if missing."""
+    rm_cols = {r["name"] for r in conn.execute("PRAGMA table_info(registered_models)").fetchall()}
+    with conn:
+        if "org_id" not in rm_cols:
+            conn.execute("ALTER TABLE registered_models ADD COLUMN org_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_rm_org ON registered_models(org_id)")
+        conn.commit()
+
+
+def _migrate_challenge_columns_v2(conn) -> None:
+    """Add run_id, cost_estimate, cost_approved to challenges if missing."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(challenges)").fetchall()}
+    with conn:
+        if "run_id" not in cols:
+            conn.execute("ALTER TABLE challenges ADD COLUMN run_id TEXT")
+        if "cost_estimate" not in cols:
+            conn.execute("ALTER TABLE challenges ADD COLUMN cost_estimate INTEGER")
+        if "cost_approved" not in cols:
+            conn.execute("ALTER TABLE challenges ADD COLUMN cost_approved INTEGER NOT NULL DEFAULT 0")
         conn.commit()
 
 
@@ -685,6 +746,14 @@ def leaderboard_page(rubricgen_session: str | None = Cookie(default=None)):
     return FileResponse(str(FRONTEND / "leaderboard.html"), media_type="text/html")
 
 
+@app.get("/analytics", include_in_schema=False)
+def analytics_page(rubricgen_session: str | None = Cookie(default=None)):
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return FileResponse(str(FRONTEND / "analytics.html"), media_type="text/html")
+
+
 @app.get("/models", include_in_schema=False)
 def models_page(rubricgen_session: str | None = Cookie(default=None)):
     user = _get_user_from_token(rubricgen_session)
@@ -717,6 +786,30 @@ def admin_daily_page(rubricgen_session: str | None = Cookie(default=None)):
     if user.get("role") != "admin":
         return RedirectResponse("/", status_code=302)
     return FileResponse(str(FRONTEND / "daily.html"), media_type="text/html")
+
+
+@app.get("/org/{org_id}", include_in_schema=False)
+def org_page(org_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return FileResponse(str(FRONTEND / "org.html"), media_type="text/html")
+
+
+@app.get("/library", include_in_schema=False)
+def library_page(rubricgen_session: str | None = Cookie(default=None)):
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return FileResponse(str(FRONTEND / "library.html"), media_type="text/html")
+
+
+@app.get("/search", include_in_schema=False)
+def search_page(rubricgen_session: str | None = Cookie(default=None)):
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return FileResponse(str(FRONTEND / "search.html"), media_type="text/html")
 
 
 @app.get("/login", include_in_schema=False)
@@ -772,6 +865,13 @@ def register(body: RegisterPayload):
             conn.commit()
     except sqlite3.IntegrityError:
         raise HTTPException(409, "Email already registered")
+    # Phase 7: auto-join orgs by email domain
+    try:
+        user_row = conn.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()
+        if user_row:
+            org_mod.join_by_domain(conn, user_row["id"])
+    except Exception as e:
+        logger.error("Domain auto-join failed for %s: %s", email, e)
     finally:
         conn.close()
     return {"ok": True}
@@ -1161,20 +1261,89 @@ def api_update_challenge(cid: int, body: UpdateChallengePayload,
 
 
 @app.post("/api/challenges/{cid}/run", status_code=202)
-def api_run_challenge(cid: int, rubricgen_session: str | None = Cookie(default=None)):
-    require_user(rubricgen_session)
+@app.get("/api/challenges/estimate-cost")
+def api_estimate_cost(paper_count: int = 1, models: str = "",
+                      rubricgen_session: str | None = Cookie(default=None)):
+    """Estimate the cost of running a challenge."""
+    user = require_user(rubricgen_session)
+    model_ids = [m.strip() for m in models.split(",") if m.strip()]
     conn = get_db()
-    row = conn.execute("SELECT id, status FROM challenges WHERE id=?", (cid,)).fetchone()
-    conn.close()
-    if not row:
-        raise HTTPException(404, "Challenge not found")
-    if row["status"] == "running":
-        raise HTTPException(409, "Challenge is already running")
-    if row["status"] == "complete":
-        raise HTTPException(409, "Challenge already complete")
+    try:
+        estimate = bill.estimate_challenge_cost(model_ids, paper_count, conn)
+        balance = bill.get_balance(conn, user["id"])
+        estimate["balance"] = balance
+        estimate["sufficient"] = balance >= estimate["total"]
+        return estimate
+    finally:
+        conn.close()
+
+
+class RunChallengePayload(BaseModel):
+    approved: bool = False
+
+def api_run_challenge(cid: int, body: RunChallengePayload | None = None,
+                      rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
+    approved = body.approved if body else False
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM challenges WHERE id=?", (cid,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Challenge not found")
+        if row["status"] == "running":
+            raise HTTPException(409, "Challenge is already running")
+        if row["status"] == "complete":
+            raise HTTPException(409, "Challenge already complete")
+
+        # Count papers and models for cost estimate
+        paper_count = conn.execute(
+            "SELECT COUNT(*) AS c FROM challenge_papers WHERE challenge_id=?", (cid,)
+        ).fetchone()["c"]
+        model_rows = conn.execute(
+            "SELECT model_id FROM model_participants WHERE challenge_id=?", (cid,)
+        ).fetchall()
+        model_ids = [r["model_id"] for r in model_rows]
+
+        estimate = bill.estimate_challenge_cost(model_ids, paper_count, conn)
+        total_cost = estimate["total"]
+
+        # Check balance
+        balance = bill.get_balance(conn, user["id"])
+        if balance < total_cost:
+            raise HTTPException(402, {
+                "detail": "Insufficient credits",
+                "estimate": estimate,
+                "balance": balance,
+            })
+
+        # Require approval if cost > 50 credits ($5) or user has <= 50 credits
+        APPROVAL_THRESHOLD = 50
+        if not approved and (total_cost > APPROVAL_THRESHOLD or balance <= APPROVAL_THRESHOLD):
+            return JSONResponse(status_code=402, content={
+                "approval_required": True,
+                "estimate": estimate,
+                "balance": balance,
+                "message": f"This challenge will cost approximately {total_cost} credits. Your balance is {balance} credits.",
+            })
+
+        # Debit credits before running
+        success = bill.debit_credits(conn, user["id"], total_cost,
+                                     f"Challenge #{cid} ({row['title']})", cid)
+        if not success:
+            raise HTTPException(402, "Failed to debit credits — insufficient balance")
+
+        # Store cost estimate on challenge
+        with conn:
+            conn.execute(
+                "UPDATE challenges SET cost_estimate=?, cost_approved=1 WHERE id=?",
+                (total_cost, cid),
+            )
+            conn.commit()
+    finally:
+        conn.close()
 
     bench.run_challenge_async(get_db, cid, PAPERS_DIR, OBSIDIAN_VAULT_DIR)
-    return {"challenge_id": cid, "status": "running"}
+    return {"challenge_id": cid, "status": "running", "cost_debited": total_cost, "run_id": row["run_id"]}
 
 
 @app.get("/api/challenges")
@@ -1429,6 +1598,7 @@ class RegisterModelPayload(BaseModel):
     git_repo: Optional[str] = ""
     organization: Optional[str] = ""
     team_member_emails: Optional[list[str]] = None
+    org_id: Optional[int] = None
 
 
 class AddMemberPayload(BaseModel):
@@ -1447,6 +1617,7 @@ def api_create_model(body: RegisterModelPayload,
             provider=body.provider or "", git_repo=body.git_repo or "",
             organization=body.organization or "",
             team_member_emails=body.team_member_emails,
+            org_id=body.org_id,
         )
     finally:
         conn.close()
@@ -2991,6 +3162,955 @@ def export_evaluation(eid: int, rubricgen_session: str | None = Cookie(default=N
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename=eval_{eid}.csv"},
     )
+
+
+# ─────────────────────────────────────────────
+# Phase 7: Organizations API
+# ─────────────────────────────────────────────
+
+class OrgCreatePayload(BaseModel):
+    name: str
+    description: str = ""
+    domain: str = ""
+
+class OrgUpdatePayload(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    domain: str | None = None
+
+class OrgMemberPayload(BaseModel):
+    email: str
+    role: str = "viewer"
+
+class OrgMemberRolePayload(BaseModel):
+    role: str
+
+class OrgJoinPayload(BaseModel):
+    invite_code: str
+
+class OrgTransferPayload(BaseModel):
+    amount: int
+
+
+@app.post("/api/orgs")
+def api_create_org(body: OrgCreatePayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Create a new organization."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return org_mod.create_organization(conn, user["id"], body.name, body.description, body.domain)
+    finally:
+        conn.close()
+
+
+@app.get("/api/orgs")
+def api_list_orgs(rubricgen_session: str | None = Cookie(default=None)):
+    """List organizations the current user belongs to."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return org_mod.list_user_organizations(conn, user["id"])
+    finally:
+        conn.close()
+
+
+@app.get("/api/orgs/{org_id}")
+def api_get_org(org_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Get organization details. Requires viewer+ role."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        org_mod.require_org_role(conn, org_id, user["id"], "viewer")
+        return org_mod.get_organization(conn, org_id)
+    finally:
+        conn.close()
+
+
+@app.patch("/api/orgs/{org_id}")
+def api_update_org(org_id: int, body: OrgUpdatePayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Update organization settings. Requires admin role."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return org_mod.update_organization(conn, org_id, user["id"], body.name, body.description, body.domain)
+    finally:
+        conn.close()
+
+
+@app.delete("/api/orgs/{org_id}")
+def api_delete_org(org_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Delete organization. Requires admin role."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        org_mod.delete_organization(conn, org_id, user["id"])
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.post("/api/orgs/join")
+def api_join_org(body: OrgJoinPayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Join an organization via invite code."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return org_mod.join_by_invite(conn, user["id"], body.invite_code)
+    finally:
+        conn.close()
+
+
+@app.post("/api/orgs/{org_id}/regenerate-invite")
+def api_regenerate_invite(org_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Generate a new invite code. Requires admin role."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        code = org_mod.regenerate_invite_code(conn, org_id, user["id"])
+        return {"invite_code": code}
+    finally:
+        conn.close()
+
+
+# ─── Org membership ───
+
+@app.post("/api/orgs/{org_id}/members")
+def api_add_org_member(org_id: int, body: OrgMemberPayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Add a member to the organization by email. Requires admin role."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return org_mod.add_member(conn, org_id, user["id"], body.email, body.role)
+    finally:
+        conn.close()
+
+
+@app.patch("/api/orgs/{org_id}/members/{member_user_id}")
+def api_update_org_member(org_id: int, member_user_id: int, body: OrgMemberRolePayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Change a member's role. Requires admin role."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        org_mod.update_member_role(conn, org_id, user["id"], member_user_id, body.role)
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.delete("/api/orgs/{org_id}/members/{member_user_id}")
+def api_remove_org_member(org_id: int, member_user_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Remove a member or leave the organization."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        org_mod.remove_member(conn, org_id, user["id"], member_user_id)
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+# ─── Org billing ───
+
+@app.get("/api/orgs/{org_id}/billing/balance")
+def api_org_balance(org_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Get organization credit balance. Requires viewer+ role."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        org_mod.require_org_role(conn, org_id, user["id"], "viewer")
+        return bill.get_org_balance(conn, org_id)
+    finally:
+        conn.close()
+
+
+@app.get("/api/orgs/{org_id}/billing/transactions")
+def api_org_transactions(org_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """List organization credit transactions. Requires viewer+ role."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        org_mod.require_org_role(conn, org_id, user["id"], "viewer")
+        return bill.list_org_transactions(conn, org_id)
+    finally:
+        conn.close()
+
+
+@app.post("/api/orgs/{org_id}/billing/checkout")
+def api_org_checkout(org_id: int, body: dict, rubricgen_session: str | None = Cookie(default=None)):
+    """Create Stripe checkout session for org credits. Requires admin role."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        org_mod.require_org_role(conn, org_id, user["id"], "admin")
+        pack_id = body.get("pack_id")
+        if not pack_id:
+            raise HTTPException(400, "pack_id is required")
+        return bill.create_org_checkout_session(conn, org_id, user["id"], int(pack_id))
+    finally:
+        conn.close()
+
+
+@app.post("/api/orgs/{org_id}/billing/transfer")
+def api_org_transfer(org_id: int, body: OrgTransferPayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Transfer personal credits to org pool. Requires contributor+ role."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        org_mod.require_org_role(conn, org_id, user["id"], "contributor")
+        bill.transfer_credits_to_org(conn, user["id"], org_id, body.amount)
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+# ─── Org models ───
+
+@app.get("/api/orgs/{org_id}/models")
+def api_org_models(org_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """List models belonging to an organization. Requires viewer+ role."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        org_mod.require_org_role(conn, org_id, user["id"], "viewer")
+        from backend.models_registry import list_org_models
+        return list_org_models(conn, org_id)
+    finally:
+        conn.close()
+
+
+# ─── Org leaderboard ───
+
+@app.get("/api/leaderboard/organizations")
+def api_org_leaderboard(rubricgen_session: str | None = Cookie(default=None)):
+    """Organization leaderboard."""
+    require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """SELECT olc.*, o.name AS org_name, o.slug AS org_slug
+               FROM org_leaderboard_cache olc
+               JOIN organizations o ON o.id = olc.org_id
+               ORDER BY olc.total_points DESC"""
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+@app.get("/api/public/leaderboard/organizations")
+def api_public_org_leaderboard(request: Request):
+    """Public organization leaderboard — no auth, rate-limited."""
+    client_ip = request.client.host if request.client else "unknown"
+    if not analytics_mod.check_rate_limit(client_ip):
+        raise HTTPException(429, "Rate limit exceeded. Max 60 requests per minute.")
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """SELECT olc.total_models, olc.total_challenges, olc.total_points,
+                      olc.daily_points, olc.avg_accuracy, olc.best_model_id,
+                      o.name AS org_name, o.slug AS org_slug
+               FROM org_leaderboard_cache olc
+               JOIN organizations o ON o.id = olc.org_id
+               ORDER BY olc.total_points DESC"""
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+# ─────────────────────────────────────────────
+# Literature Search API
+# ─────────────────────────────────────────────
+
+class SearchChatPayload(BaseModel):
+    session_id: int | None = None
+    message: str
+
+class SearchExecutePayload(BaseModel):
+    session_id: int
+    database: str = "pubmed"
+    query: str | None = None
+    max_results: int = 100
+
+class SearchImportPayload(BaseModel):
+    session_id: int
+    result_ids: list[int]
+
+class SearchExportPayload(BaseModel):
+    session_id: int
+    result_ids: list[int]
+
+class SearchSelectionPayload(BaseModel):
+    result_ids: list[int]
+    selected: bool
+
+class SearchSelectAllPayload(BaseModel):
+    session_id: int
+    query_version: int
+    selected: bool
+
+
+@app.post("/api/search/chat")
+def api_search_chat(body: SearchChatPayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Send a message to the AI search strategist."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        session_id = body.session_id
+        if session_id is None:
+            sess = search_mod.create_session(conn, user["id"])
+            session_id = sess["id"]
+        return search_mod.chat(conn, session_id, user["id"], body.message)
+    finally:
+        conn.close()
+
+
+@app.post("/api/search/execute")
+def api_search_execute(body: SearchExecutePayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Execute a search against a database."""
+    user = require_user(rubricgen_session)
+    if not body.query:
+        raise HTTPException(400, "Query is required")
+    conn = get_db()
+    try:
+        return search_mod.execute_search(
+            conn, body.session_id, user["id"],
+            body.database, body.query, body.max_results,
+        )
+    finally:
+        conn.close()
+
+
+@app.get("/api/search/sessions")
+def api_search_sessions(rubricgen_session: str | None = Cookie(default=None)):
+    """List user's search sessions."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return search_mod.list_sessions(conn, user["id"])
+    finally:
+        conn.close()
+
+
+@app.get("/api/search/sessions/{session_id}")
+def api_search_session(session_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Get a search session with messages and results."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return search_mod.get_session(conn, session_id, user["id"])
+    finally:
+        conn.close()
+
+
+@app.delete("/api/search/sessions/{session_id}")
+def api_delete_search_session(session_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Delete a search session."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        search_mod.delete_session(conn, session_id, user["id"])
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.post("/api/search/import")
+def api_search_import(body: SearchImportPayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Import selected search results as papers."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return search_mod.import_results(
+            conn, body.session_id, body.result_ids, user["id"], PAPERS_DIR,
+        )
+    finally:
+        conn.close()
+
+
+@app.post("/api/search/export/ris")
+def api_search_export_ris(body: SearchExportPayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Export selected results as RIS."""
+    require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        ris = search_mod.export_ris(conn, body.session_id, body.result_ids)
+    finally:
+        conn.close()
+    return Response(
+        content=ris.encode("utf-8"),
+        media_type="application/x-research-info-systems",
+        headers={"Content-Disposition": "attachment; filename=search_results.ris"},
+    )
+
+
+@app.post("/api/search/export/bibtex")
+def api_search_export_bibtex(body: SearchExportPayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Export selected results as BibTeX."""
+    require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        bib = search_mod.export_bibtex(conn, body.session_id, body.result_ids)
+    finally:
+        conn.close()
+    return Response(
+        content=bib.encode("utf-8"),
+        media_type="application/x-bibtex",
+        headers={"Content-Disposition": "attachment; filename=search_results.bib"},
+    )
+
+
+@app.post("/api/search/results/select")
+def api_search_select(body: SearchSelectionPayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Toggle selection on search results."""
+    require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        search_mod.toggle_result_selection(conn, body.result_ids, body.selected)
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.post("/api/search/results/select-all")
+def api_search_select_all(body: SearchSelectAllPayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Select/deselect all results for a query version."""
+    require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        search_mod.select_all_results(conn, body.session_id, body.query_version, body.selected)
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+# ─────────────────────────────────────────────
+# Phase 8: Templates, Community Library & Ground Truth
+# ─────────────────────────────────────────────
+
+class TemplateCreatePayload(BaseModel):
+    name: str
+    description: str = ""
+    rubric_type: str = "custom"
+    template_json: str = "{}"
+
+class TemplateUpdatePayload(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    template_json: str | None = None
+
+class TemplatePublishPayload(BaseModel):
+    title: str
+    description: str = ""
+
+class TemplateRatePayload(BaseModel):
+    rating: int
+
+class TemplateFromRubricPayload(BaseModel):
+    rubric_id: int
+    name: str
+    description: str = ""
+
+class GroundTruthImportPayload(BaseModel):
+    rubric_id: int | None = None
+    challenge_id: int | None = None
+    annotations: list[dict]
+
+
+# ─── Template CRUD ───
+
+@app.post("/api/templates")
+def api_create_template(body: TemplateCreatePayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Create a new rubric template."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return tmpl_mod.create_template(conn, user["id"], body.name, body.description,
+                                        body.rubric_type, body.template_json)
+    finally:
+        conn.close()
+
+
+@app.post("/api/templates/from-rubric")
+def api_create_template_from_rubric(body: TemplateFromRubricPayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Create a template from an existing rubric."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return tmpl_mod.create_template_from_rubric(conn, body.rubric_id, user["id"], body.name, body.description)
+    finally:
+        conn.close()
+
+
+@app.get("/api/templates")
+def api_list_templates(rubricgen_session: str | None = Cookie(default=None)):
+    """List current user's templates."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return tmpl_mod.list_user_templates(conn, user["id"])
+    finally:
+        conn.close()
+
+
+@app.get("/api/templates/{template_id}")
+def api_get_template(template_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Get a template with question stats."""
+    require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return tmpl_mod.get_template(conn, template_id)
+    finally:
+        conn.close()
+
+
+@app.put("/api/templates/{template_id}")
+def api_update_template(template_id: int, body: TemplateUpdatePayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Update a template. Bumps version on content change."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return tmpl_mod.update_template(conn, template_id, user["id"], body.name, body.description, body.template_json)
+    finally:
+        conn.close()
+
+
+@app.delete("/api/templates/{template_id}")
+def api_delete_template(template_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Delete a template."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        tmpl_mod.delete_template(conn, template_id, user["id"])
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.post("/api/templates/{template_id}/fork")
+def api_fork_template(template_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Fork a template to your account."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return tmpl_mod.fork_template(conn, template_id, user["id"])
+    finally:
+        conn.close()
+
+
+@app.get("/api/templates/{template_id}/flagged")
+def api_flagged_questions(template_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Get questions flagged as too easy or broken."""
+    require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return tmpl_mod.get_flagged_questions(conn, template_id)
+    finally:
+        conn.close()
+
+
+# ─── Community library ───
+
+@app.post("/api/templates/{template_id}/publish")
+def api_publish_template(template_id: int, body: TemplatePublishPayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Publish a template to the community library."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return tmpl_mod.publish_template(conn, template_id, user["id"], body.title, body.description)
+    finally:
+        conn.close()
+
+
+@app.delete("/api/templates/{template_id}/publish")
+def api_unpublish_template(template_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Remove a template from the community library."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        tmpl_mod.unpublish_template(conn, template_id, user["id"])
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.get("/api/community/templates")
+def api_community_templates(
+    type: str | None = None,
+    sort: str = "recent",
+    search: str | None = None,
+    page: int = 1,
+    rubricgen_session: str | None = Cookie(default=None),
+):
+    """Browse the community template library."""
+    require_user(rubricgen_session)
+    limit = 20
+    offset = (page - 1) * limit
+    conn = get_db()
+    try:
+        return tmpl_mod.list_community_templates(conn, type, sort, search, limit, offset)
+    finally:
+        conn.close()
+
+
+@app.get("/api/community/templates/{community_id}")
+def api_get_community_template(community_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Preview a community template."""
+    require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return tmpl_mod.get_community_template(conn, community_id)
+    finally:
+        conn.close()
+
+
+@app.post("/api/community/templates/{community_id}/rate")
+def api_rate_community_template(community_id: int, body: TemplateRatePayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Rate a community template (1-5)."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return tmpl_mod.rate_template(conn, community_id, user["id"], body.rating)
+    finally:
+        conn.close()
+
+
+@app.post("/api/community/templates/{community_id}/fork")
+def api_fork_community_template(community_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Fork a community template to your account."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return tmpl_mod.fork_community_template(conn, community_id, user["id"])
+    finally:
+        conn.close()
+
+
+# ─── Comparative rubric generation ───
+
+@app.post("/api/rubrics/generate-comparative")
+def api_generate_comparative(body: dict, rubricgen_session: str | None = Cookie(default=None)):
+    """Generate a comparative rubric from multiple papers."""
+    user = require_user(rubricgen_session)
+    paper_ids = body.get("paper_ids", [])
+    if len(paper_ids) < 2:
+        raise HTTPException(400, "Comparative rubrics require at least 2 papers")
+    if len(paper_ids) > 5:
+        raise HTTPException(400, "Comparative rubrics support at most 5 papers")
+
+    conn = get_db()
+    try:
+        import base64
+        from backend.agents.generator import run_generator_agent
+        from backend.skills import get_active_skill
+
+        papers_b64 = []
+        for pid in paper_ids:
+            paper = conn.execute(
+                "SELECT filename, disk_filename FROM papers WHERE id=? AND user_id=?",
+                (pid, user["id"]),
+            ).fetchone()
+            if not paper:
+                raise HTTPException(404, f"Paper {pid} not found")
+            path = PAPERS_DIR / (paper["disk_filename"] or f"{paper['filename']}.pdf")
+            if not path.exists():
+                raise HTTPException(404, f"PDF file missing for paper {pid}")
+            b64 = base64.b64encode(path.read_bytes()).decode()
+            papers_b64.append({"id": pid, "filename": paper["filename"], "b64": b64})
+
+        skill = get_active_skill(conn, "generator")
+        rubric, elapsed_ms = run_generator_agent(
+            papers_b64, "__comparative__",
+            skill, difficulty=None, daily_composition=None,
+        )
+        rubric["rubric_type"] = "comparative"
+
+        # Save as a rubric linked to the first paper
+        rubric_json = json.dumps(rubric)
+        with conn:
+            cur = conn.execute(
+                """INSERT INTO rubrics (paper_id, user_id, rubric_type, rubric_json, instructions)
+                   VALUES (?, ?, 'comparative', ?, ?)""",
+                (paper_ids[0], user["id"], rubric_json,
+                 f"Comparative rubric across papers: {', '.join(str(p) for p in paper_ids)}"),
+            )
+            conn.commit()
+
+        return {
+            "rubric_id": cur.lastrowid,
+            "rubric": rubric,
+            "generation_time_ms": elapsed_ms,
+            "paper_ids": paper_ids,
+        }
+    finally:
+        conn.close()
+
+
+# ─── Ground truth / Annotator integration ───
+
+@app.post("/api/annotator/import")
+def api_import_ground_truth(body: GroundTruthImportPayload, request: Request,
+                            rubricgen_session: str | None = Cookie(default=None)):
+    """Import ground truth annotations. Accepts either authenticated user or HMAC-signed request from Annotator."""
+    # Try user auth first
+    user = _get_user_from_token(rubricgen_session)
+
+    # If no user auth, try HMAC verification from Annotator
+    if not user:
+        hmac_sig = request.headers.get("X-Annotator-Signature", "")
+        if not hmac_sig or not SSO_SECRET:
+            raise HTTPException(401, "Authentication required")
+        import hmac as hmac_mod
+        import hashlib
+        expected = hmac_mod.new(SSO_SECRET.encode(), request.url.path.encode(), hashlib.sha256).hexdigest()
+        if not hmac_mod.compare_digest(hmac_sig, expected):
+            raise HTTPException(401, "Invalid signature")
+
+    conn = get_db()
+    try:
+        count = tmpl_mod.import_ground_truth(
+            conn, body.annotations, body.rubric_id, body.challenge_id,
+        )
+        return {"imported": count}
+    finally:
+        conn.close()
+
+
+@app.get("/api/ground-truth")
+def api_get_ground_truth(rubric_id: int | None = None, challenge_id: int | None = None,
+                         rubricgen_session: str | None = Cookie(default=None)):
+    """Get ground truth annotations for a rubric or challenge."""
+    require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return tmpl_mod.get_ground_truth(conn, rubric_id, challenge_id)
+    finally:
+        conn.close()
+
+
+@app.get("/api/evaluations/{evaluation_id}/accuracy")
+def api_evaluation_accuracy(evaluation_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Compare judge grades to ground truth for an evaluation."""
+    require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return tmpl_mod.compare_judge_to_ground_truth(conn, evaluation_id)
+    finally:
+        conn.close()
+
+
+# ─── Template stats recording (internal use) ───
+
+@app.post("/api/templates/{template_id}/record-stats")
+def api_record_template_stats(template_id: int, body: dict, rubricgen_session: str | None = Cookie(default=None)):
+    """Record question stats from an evaluation. Called after grading."""
+    require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        tmpl_mod.update_question_stats(conn, template_id, body)
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+# ─────────────────────────────────────────────
+# Phase 6: Analytics & Reporting API
+# ─────────────────────────────────────────────
+
+@app.get("/api/analytics/filters")
+def api_analytics_filters(rubricgen_session: str | None = Cookie(default=None)):
+    """Available filter values for the analytics page."""
+    require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return analytics_mod.get_available_filters(conn)
+    finally:
+        conn.close()
+
+
+@app.get("/api/analytics/breakdown")
+def api_analytics_breakdown(
+    model: str | None = None,
+    theme: str | None = None,
+    difficulty: str | None = None,
+    date_from: str | None = Query(default=None, alias="from"),
+    date_to: str | None = Query(default=None, alias="to"),
+    rubricgen_session: str | None = Cookie(default=None),
+):
+    """Per-model performance breakdown by theme and difficulty."""
+    require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return analytics_mod.get_model_breakdown(conn, model, theme, difficulty, date_from, date_to)
+    finally:
+        conn.close()
+
+
+@app.get("/api/analytics/trends")
+def api_analytics_trends(
+    models: str | None = None,
+    date_from: str | None = Query(default=None, alias="from"),
+    date_to: str | None = Query(default=None, alias="to"),
+    rubricgen_session: str | None = Cookie(default=None),
+):
+    """Historical accuracy time-series per model."""
+    require_user(rubricgen_session)
+    model_ids = [m.strip() for m in models.split(",")] if models else None
+    conn = get_db()
+    try:
+        return analytics_mod.get_historical_trends(conn, model_ids, date_from, date_to)
+    finally:
+        conn.close()
+
+
+@app.get("/api/analytics/themes")
+def api_analytics_themes(rubricgen_session: str | None = Cookie(default=None)):
+    """Theme-level summary statistics."""
+    require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return analytics_mod.get_theme_stats(conn)
+    finally:
+        conn.close()
+
+
+@app.get("/api/analytics/export/csv")
+def api_analytics_export_csv(
+    model: str | None = None,
+    theme: str | None = None,
+    difficulty: str | None = None,
+    date_from: str | None = Query(default=None, alias="from"),
+    date_to: str | None = Query(default=None, alias="to"),
+    rubricgen_session: str | None = Cookie(default=None),
+):
+    """Download benchmark data as CSV."""
+    require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        csv_bytes = analytics_mod.generate_csv_report(conn, model, theme, difficulty, date_from, date_to)
+    finally:
+        conn.close()
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=benchmark_report.csv"},
+    )
+
+
+@app.get("/api/analytics/export/pdf")
+def api_analytics_export_pdf(
+    model: str | None = None,
+    theme: str | None = None,
+    difficulty: str | None = None,
+    date_from: str | None = Query(default=None, alias="from"),
+    date_to: str | None = Query(default=None, alias="to"),
+    rubricgen_session: str | None = Cookie(default=None),
+):
+    """Download benchmark report as PDF."""
+    require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        pdf_bytes = analytics_mod.generate_pdf_report(conn, model, theme, difficulty, date_from, date_to)
+    finally:
+        conn.close()
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=benchmark_report.pdf"},
+    )
+
+
+# ─── Notification preferences ───
+
+@app.get("/api/notifications/preferences")
+def api_get_notification_prefs(rubricgen_session: str | None = Cookie(default=None)):
+    """Get current user's notification preferences."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM notification_preferences WHERE user_id = ?", (user["id"],)
+    ).fetchone()
+    conn.close()
+    if row:
+        return dict(row)
+    return {"user_id": user["id"], "daily_complete": 0, "weekly_digest": 0}
+
+
+class NotificationPrefsBody(BaseModel):
+    daily_complete: bool = False
+    weekly_digest: bool = False
+
+@app.put("/api/notifications/preferences")
+def api_set_notification_prefs(body: NotificationPrefsBody, rubricgen_session: str | None = Cookie(default=None)):
+    """Update notification preferences."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    with conn:
+        conn.execute(
+            """INSERT INTO notification_preferences (user_id, daily_complete, weekly_digest, updated_at)
+               VALUES (?, ?, ?, datetime('now'))
+               ON CONFLICT(user_id) DO UPDATE SET
+                 daily_complete = excluded.daily_complete,
+                 weekly_digest = excluded.weekly_digest,
+                 updated_at = datetime('now')""",
+            (user["id"], int(body.daily_complete), int(body.weekly_digest)),
+        )
+        conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+# ─── Public leaderboard API (no auth, rate-limited) ───
+
+@app.get("/api/public/leaderboard")
+def api_public_leaderboard(request: Request):
+    """Public leaderboard — no auth required, rate-limited."""
+    client_ip = request.client.host if request.client else "unknown"
+    if not analytics_mod.check_rate_limit(client_ip):
+        raise HTTPException(429, "Rate limit exceeded. Max 60 requests per minute.")
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT model_id, provider, total_challenges, avg_accuracy,
+                  total_points, daily_points, daily_streak
+           FROM leaderboard_cache
+           ORDER BY total_points DESC"""
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@app.get("/api/public/leaderboard/daily")
+def api_public_daily_leaderboard(request: Request):
+    """Public daily leaderboard — no auth, rate-limited."""
+    client_ip = request.client.host if request.client else "unknown"
+    if not analytics_mod.check_rate_limit(client_ip):
+        raise HTTPException(429, "Rate limit exceeded. Max 60 requests per minute.")
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT model_id, provider, daily_points, daily_streak, daily_rank_change
+           FROM leaderboard_cache
+           WHERE daily_points > 0
+           ORDER BY daily_points DESC"""
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@app.get("/api/public/models")
+def api_public_models(request: Request):
+    """Public model list with aggregate stats — no auth, rate-limited."""
+    client_ip = request.client.host if request.client else "unknown"
+    if not analytics_mod.check_rate_limit(client_ip):
+        raise HTTPException(429, "Rate limit exceeded. Max 60 requests per minute.")
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT model_id, provider, total_challenges,
+                  avg_accuracy, total_points
+           FROM leaderboard_cache
+           ORDER BY total_points DESC"""
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 # ─────────────────────────────────────────────

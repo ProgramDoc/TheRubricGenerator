@@ -8,6 +8,7 @@ from ..helpers import call_anthropic, parse_json_response, time_ms
 def run_generator_agent(papers_b64: list[dict], theme: str, skill: dict,
                         difficulty: str | None = None,
                         daily_composition: dict | None = None,
+                        questions_per_paper: int = 5,
                         max_tokens: int = 4096) -> tuple[dict, int]:
     """
     papers_b64: list of {filename, b64} — the PDFs in the challenge
@@ -43,12 +44,41 @@ def run_generator_agent(papers_b64: list[dict], theme: str, skill: dict,
         )
     elif difficulty and difficulty in DIFFICULTY_LEVELS:
         d = DIFFICULTY_LEVELS[difficulty]
+        total_q = len(papers_b64) * questions_per_paper
         difficulty_block = (
             f"\n\nDIFFICULTY LEVEL: {d['label']}\n"
             f"{d['hint']}\n"
-            f"Still generate 10 questions total. The difficulty level controls "
-            f"the COGNITIVE COMPLEXITY of each question, not the question count."
+            f"Generate exactly {total_q} questions ({questions_per_paper} per paper). "
+            f"Each question MUST include a 'paper_ref' field with the filename of the paper it targets. "
+            f"The difficulty level controls the COGNITIVE COMPLEXITY of each question."
         )
+    else:
+        # Default: dynamic question count based on paper count
+        if not daily_composition:
+            total_q = len(papers_b64) * questions_per_paper
+            difficulty_block = (
+                f"\n\nGenerate exactly {total_q} questions ({questions_per_paper} per paper). "
+                f"Each question MUST include a 'paper_ref' field with the filename of the paper it targets."
+            )
+
+    # Phase 8: comparative rubric type (multi-paper synthesis)
+    comparative_block = ""
+    if not daily_composition and not difficulty and len(papers_b64) >= 2:
+        # Check if caller requested comparative type (passed via theme convention)
+        if theme and theme.startswith("__comparative__"):
+            comparative_block = (
+                "\n\nCOMPARATIVE RUBRIC — MULTI-PAPER SYNTHESIS\n"
+                "You are evaluating an LLM's ability to synthesize findings across multiple research papers.\n\n"
+                "Generate 10 questions that require cross-paper comparison:\n"
+                "- 2 questions: Identify contradictions or conflicting findings between papers\n"
+                "- 2 questions: Compare methodological approaches (study design, sample size, controls)\n"
+                "- 2 questions: Assess population overlap and generalizability across studies\n"
+                "- 2 questions: Synthesize outcome measures and effect sizes across papers\n"
+                "- 2 questions: Critical appraisal — which study provides stronger evidence and why\n\n"
+                "Each question MUST reference at least 2 papers by their filename.\n"
+                "Include a 'paper_refs' field in each question JSON listing referenced paper filenames.\n"
+                "Set rubric_type to 'comparative' in the output."
+            )
 
     # Build multi-document user message
     content: list[dict] = []
@@ -64,6 +94,7 @@ def run_generator_agent(papers_b64: list[dict], theme: str, skill: dict,
             f"Papers in this challenge:\n"
             + "\n".join(f"- {p['filename']}" for p in papers_b64)
             + difficulty_block
+            + comparative_block
             + "\n\nGenerate the benchmark rubric as specified. Respond with JSON only."
         ),
     })

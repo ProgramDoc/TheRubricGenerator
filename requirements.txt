@@ -3,3 +3,4 @@ uvicorn[standard]==0.34.0
 python-multipart==0.0.20
 pydantic==2.10.6
 stripe>=8.0.0
+reportlab>=4.0

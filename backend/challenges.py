@@ -11,6 +11,7 @@ import logging
 import sqlite3
 import threading
 import traceback
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -223,8 +224,8 @@ def create_challenge(get_db_fn, user_id: int, title: str, theme: str,
         raise ValueError(f"kind must be 'manual', 'daily', or 'dry_run', got {kind!r}")
     if not paper_ids:
         raise ValueError("At least one paper required")
-    if len(paper_ids) > 10:
-        raise ValueError("Maximum 10 papers per challenge")
+    if len(paper_ids) > 100:
+        raise ValueError("Maximum 100 papers per challenge")
     if not participant_models:
         raise ValueError("At least one participant model required")
     for m in participant_models:
@@ -267,13 +268,14 @@ def create_challenge(get_db_fn, user_id: int, title: str, theme: str,
             if not member:
                 raise ValueError("You must be a member of the registered model to use it")
 
+        run_id = f"RG-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:6]}"
         with conn:
             cur = conn.execute(
                 """INSERT INTO challenges
-                   (title, theme, kind, status, created_by, project_id, visibility, difficulty, registered_model_id)
-                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                   (title, theme, kind, status, created_by, project_id, visibility, difficulty, registered_model_id, run_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (title, theme, kind, "pending", user_id,
-                 project_id, visibility, difficulty, registered_model_id),
+                 project_id, visibility, difficulty, registered_model_id, run_id),
             )
             cid = cur.lastrowid
             for pid in paper_ids:
@@ -350,6 +352,7 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
             gen_skill,
             difficulty=challenge.get("difficulty"),
             daily_composition=DAILY_COMPOSITION if is_daily else None,
+            questions_per_paper=5 if not is_daily else 5,
         )
 
         with conn:
@@ -512,10 +515,34 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
         # 7. Refresh leaderboard cache
         refresh_leaderboard(conn)
 
-        # 8. Write Obsidian notes
+        # 7b. Refresh analytics snapshot
+        try:
+            from .analytics import refresh_analytics_snapshot
+            refresh_analytics_snapshot(conn, challenge_id)
+        except Exception as e:
+            logger.error("Analytics refresh failed: %s", e)
+
+        # 8. Write Obsidian notes (enriched with agent state + cost)
         challenge_row = conn.execute(
             "SELECT * FROM challenges WHERE id=?", (challenge_id,)
         ).fetchone()
+
+        # Gather enriched data for Obsidian
+        user_info = None
+        if challenge.get("created_by"):
+            u = conn.execute("SELECT display_name, email FROM users WHERE id=?", (challenge["created_by"],)).fetchone()
+            if u:
+                user_info = dict(u)
+
+        experiment_rows = conn.execute(
+            "SELECT * FROM skill_experiments ORDER BY created_at DESC LIMIT 20"
+        ).fetchall()
+        experiment_history = [dict(r) for r in experiment_rows] if experiment_rows else []
+
+        cost_est = None
+        if challenge_row and challenge_row["cost_estimate"]:
+            cost_est = {"total": challenge_row["cost_estimate"]}
+
         try:
             write_challenge_note(
                 vault_dir,
@@ -523,6 +550,11 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
                 rubric,
                 graded_participants,
                 papers_meta,
+                user_info=user_info,
+                generator_skill=gen_skill,
+                judge_skill=judge_skill,
+                experiment_history=experiment_history,
+                cost_estimate=cost_est,
             )
             write_skill_note(
                 vault_dir, "generator",
@@ -538,6 +570,23 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
             logger.error("Obsidian write failed: %s", e)
 
         logger.info("Challenge %s complete: gen=%s judge=%s", challenge_id, gen_score, judge_score_val)
+
+        # 8b. Send daily completion emails
+        if is_daily:
+            try:
+                import os
+                from .analytics import send_daily_complete_email
+                send_daily_complete_email(
+                    conn, challenge_id,
+                    smtp_host=os.environ.get("SMTP_HOST", ""),
+                    smtp_port=int(os.environ.get("SMTP_PORT", "587")),
+                    smtp_user=os.environ.get("SMTP_USER", ""),
+                    smtp_pass=os.environ.get("SMTP_PASS", ""),
+                    smtp_from=os.environ.get("SMTP_FROM", os.environ.get("SMTP_USER", "noreply@rubricgen.local")),
+                    app_base_url=os.environ.get("APP_BASE_URL", "http://localhost:8000"),
+                )
+            except Exception as e:
+                logger.error("Daily email notification failed: %s", e)
 
         # 9. Self-improvement experiment loop (daily challenges only)
         #    Uses the daily challenge's papers as the test bed — no extra PubMed fetch.
@@ -564,6 +613,21 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
                     (str(e)[:500], challenge_id),
                 )
                 conn.commit()
+            # Refund credits on failure
+            cost_row = conn.execute(
+                "SELECT cost_estimate, created_by FROM challenges WHERE id=?", (challenge_id,)
+            ).fetchone()
+            if cost_row and cost_row["cost_estimate"] and cost_row["created_by"]:
+                try:
+                    from .billing import refund_credits
+                    refund_credits(
+                        conn, cost_row["created_by"], cost_row["cost_estimate"],
+                        f"Refund: Challenge #{challenge_id} failed", challenge_id,
+                    )
+                    logger.info("Refunded %d credits for failed challenge %d",
+                                cost_row["cost_estimate"], challenge_id)
+                except Exception as refund_err:
+                    logger.error("Refund failed for challenge %d: %s", challenge_id, refund_err)
         except Exception:
             pass
     finally:
@@ -671,6 +735,62 @@ def refresh_leaderboard(conn: sqlite3.Connection) -> None:
                     r["daily_points"] or 0,
                     streaks.get(r["model_id"], 0),
                     rank_change,
+                ),
+            )
+        conn.commit()
+
+    # Phase 7: refresh org leaderboard
+    try:
+        refresh_org_leaderboard(conn)
+    except Exception as e:
+        logger.error("Org leaderboard refresh failed: %s", e)
+
+
+def refresh_org_leaderboard(conn: sqlite3.Connection) -> None:
+    """Recompute org_leaderboard_cache by aggregating challenge_submissions
+    for registered models that belong to an organization."""
+
+    # Aggregate graded submissions for org-owned models
+    rows = conn.execute("""
+        SELECT rm.org_id,
+               COUNT(DISTINCT rm.id) AS total_models,
+               COUNT(DISTINCT cs.challenge_id) AS total_challenges,
+               SUM(cs.points) AS total_points,
+               SUM(CASE WHEN c.kind='daily' THEN cs.points ELSE 0 END) AS daily_points,
+               AVG(cs.accuracy) AS avg_accuracy
+        FROM challenge_submissions cs
+        JOIN registered_models rm ON rm.id = cs.registered_model_id
+        JOIN challenges c ON c.id = cs.challenge_id
+        WHERE cs.status = 'graded'
+          AND rm.org_id IS NOT NULL
+        GROUP BY rm.org_id
+    """).fetchall()
+
+    with conn:
+        conn.execute("DELETE FROM org_leaderboard_cache")
+        for r in rows:
+            # Find best model for this org
+            best = conn.execute("""
+                SELECT rm.name AS model_name, SUM(cs.points) AS pts
+                FROM challenge_submissions cs
+                JOIN registered_models rm ON rm.id = cs.registered_model_id
+                WHERE cs.status='graded' AND rm.org_id=?
+                GROUP BY rm.id ORDER BY pts DESC LIMIT 1
+            """, (r["org_id"],)).fetchone()
+
+            conn.execute(
+                """INSERT INTO org_leaderboard_cache
+                   (org_id, total_models, total_challenges, total_points,
+                    daily_points, avg_accuracy, best_model_id, last_updated)
+                   VALUES (?,?,?,?,?,?,?,datetime('now'))""",
+                (
+                    r["org_id"],
+                    r["total_models"] or 0,
+                    r["total_challenges"] or 0,
+                    r["total_points"] or 0,
+                    r["daily_points"] or 0,
+                    round(r["avg_accuracy"] or 0, 4),
+                    best["model_name"] if best else None,
                 ),
             )
         conn.commit()

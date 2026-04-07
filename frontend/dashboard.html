@@ -131,6 +131,9 @@ tbody tr:last-child td { border-bottom: none; }
     <a href="/public-tests">Public Tests</a>
     <a href="/models">Models</a>
     <a href="/leaderboard">Leaderboard</a>
+    <a href="/analytics">Analytics</a>
+    <a href="/library">Library</a>
+    <a href="/search">Search</a>
     <a href="/billing">Billing</a>
     <a href="/papers">Papers</a>
     <a href="/api/sso/annotator">Annotator</a>
@@ -160,6 +163,11 @@ tbody tr:last-child td { border-bottom: none; }
     <div id="own-folders"></div>
     <div class="section-label" id="shared-label" style="display:none">Shared with me</div>
     <div id="shared-folders"></div>
+    <div class="sidebar-header" style="margin-top:16px">
+      Organizations
+      <button onclick="promptCreateOrg()" title="New organization">+</button>
+    </div>
+    <div id="org-list"></div>
   </div>
 
   <!-- MAIN CONTENT -->
@@ -171,6 +179,7 @@ tbody tr:last-child td { border-bottom: none; }
       <a href="/challenges" class="quick-btn primary">＋ New Challenge</a>
       <a href="/papers" class="quick-btn">Upload Papers</a>
       <a href="/leaderboard" class="quick-btn">Leaderboard</a>
+      <a href="/library" class="quick-btn">Community Library</a>
     </div>
 
     <div class="stats">
@@ -414,9 +423,39 @@ async function leaveProject(pid, name) {
   loadChallenges();
 }
 
+async function loadOrgs() {
+  const res = await fetch('/api/orgs');
+  const wrap = document.getElementById('org-list');
+  if (!res.ok) { wrap.innerHTML = ''; return; }
+  const orgs = await res.json();
+  if (!orgs.length) { wrap.innerHTML = '<div style="padding:8px 14px;font-size:11px;color:var(--muted)">No organizations</div>'; return; }
+  wrap.innerHTML = orgs.map(o => {
+    const roleColors = { admin: '#7c3aed', contributor: '#16a34a', viewer: '#64748b' };
+    const rc = roleColors[o.role] || '#64748b';
+    return `<a href="/org/${o.id}" class="folder-item" style="text-decoration:none;display:flex;align-items:center;justify-content:space-between">
+      <div class="folder-name">${o.name.replace(/</g,'&lt;')}</div>
+      <span style="font-size:9px;font-weight:700;color:${rc};text-transform:uppercase">${o.role}</span>
+    </a>`;
+  }).join('');
+}
+
+function promptCreateOrg() {
+  const name = prompt('Organization name:');
+  if (!name || !name.trim()) return;
+  fetch('/api/orgs', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ name: name.trim() }),
+  }).then(r => {
+    if (!r.ok) return r.json().then(e => { alert(e.detail || 'Failed'); });
+    return r.json().then(org => { window.location.href = '/org/' + org.id; });
+  });
+}
+
 (async () => {
   await loadMe();
   loadProjects();
+  loadOrgs();
   loadChallenges();
   loadLeaderboard();
 })();

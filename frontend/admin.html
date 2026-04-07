@@ -185,6 +185,23 @@ tbody tr:last-child td { border-bottom: none; }
       <div class="loading">Loading…</div>
     </div>
   </div>
+
+  <!-- OBSIDIAN VAULT -->
+  <div class="card">
+    <div class="card-header"><h2>Obsidian Vault Integration</h2></div>
+    <div style="padding:20px;font-size:12px;line-height:1.7;color:var(--text)">
+      <p>Challenge notes and agent skill history are automatically written as Markdown files to the <strong>Obsidian vault directory</strong>.</p>
+      <p style="margin-top:8px"><strong>Current vault path:</strong> <code style="background:#f0f4ff;padding:2px 6px;border-radius:3px;font-size:11px">Set via OBSIDIAN_VAULT_DIR env var</code></p>
+      <p style="margin-top:12px;font-weight:700;color:var(--navy)">How to link your Obsidian account:</p>
+      <ol style="margin-top:6px;padding-left:20px">
+        <li><strong>Obsidian Sync:</strong> Set <code>OBSIDIAN_VAULT_DIR</code> to point to the same folder that Obsidian Sync manages on your server.</li>
+        <li><strong>iCloud / Dropbox:</strong> Point <code>OBSIDIAN_VAULT_DIR</code> to a cloud-synced folder. Notes will auto-sync to your devices.</li>
+        <li><strong>Git sync:</strong> Point to a Git repository. Add a cron job to auto-commit and push (e.g. <code>cd $VAULT && git add -A && git commit -m "auto" && git push</code>).</li>
+        <li><strong>Self-hosted (Render):</strong> Use <code>rsync</code> or <code>scp</code> to periodically pull the vault directory from the server to your local Obsidian vault.</li>
+      </ol>
+      <p style="margin-top:10px;color:var(--muted)">The vault is write-only from the server — notes are created after each challenge completes. Open the vault folder in Obsidian to browse challenges, agent skills, and experiment history.</p>
+    </div>
+  </div>
 </div>
 
 <script>

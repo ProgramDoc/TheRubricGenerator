@@ -86,6 +86,9 @@ tbody tr:last-child td { border-bottom: none; }
     <a href="/public-tests">Public Tests</a>
     <a href="/models" class="active">Models</a>
     <a href="/leaderboard">Leaderboard</a>
+    <a href="/analytics">Analytics</a>
+    <a href="/library">Library</a>
+    <a href="/search">Search</a>
     <a href="/billing">Billing</a>
     <a href="/papers">Papers</a>
     <a href="/api/sso/annotator">Annotator</a>
@@ -126,8 +129,12 @@ tbody tr:last-child td { border-bottom: none; }
           </select>
         </div>
         <div class="field">
-          <label>Organization</label>
+          <label>Organization (display)</label>
           <input id="f-org" type="text" placeholder="e.g. UCLA Health" maxlength="100">
+        </div>
+        <div class="field">
+          <label>Assign to Org (shared billing)</label>
+          <select id="f-org-id"><option value="">None (personal)</option></select>
         </div>
       </div>
       <div class="field">
@@ -271,7 +278,7 @@ async function registerModel() {
     const res = await fetch('/api/models', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, version, provider, git_repo, organization, team_member_emails }),
+      body: JSON.stringify({ name, version, provider, git_repo, organization, team_member_emails, org_id: document.getElementById('f-org-id').value ? parseInt(document.getElementById('f-org-id').value) : null }),
     });
     const body = await res.json();
     if (!res.ok) { showBanner(body.detail || 'Registration failed.'); btn.disabled = false; btn.textContent = 'Register Model'; return; }
@@ -280,6 +287,7 @@ async function registerModel() {
     document.getElementById('f-version').value = '';
     document.getElementById('f-repo').value = '';
     document.getElementById('f-org').value = '';
+    document.getElementById('f-org-id').value = '';
     document.getElementById('f-team').value = '';
     document.getElementById('f-provider').value = '';
     loadModels();
@@ -325,9 +333,24 @@ async function regenKey(id) {
   loadModels();
 }
 
+async function loadOrgDropdown() {
+  try {
+    const r = await fetch('/api/orgs');
+    if (!r.ok) return;
+    const orgs = await r.json();
+    const sel = document.getElementById('f-org-id');
+    orgs.filter(o => o.role === 'contributor' || o.role === 'admin').forEach(o => {
+      const opt = document.createElement('option');
+      opt.value = o.id; opt.textContent = o.name;
+      sel.appendChild(opt);
+    });
+  } catch {}
+}
+
 (async () => {
   await loadMe();
   loadModels();
+  loadOrgDropdown();
 })();
 </script>
 </body>

@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OGAI · Rubric Generator — Literature Search</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root {
+  --navy: #161b2e; --blue: #274472; --sky: #5e9ad0;
+  --green: #16a34a; --red: #dc2626; --amber: #d97706; --purple: #7c3aed; --gold: #d4af37;
+  --bg: #f4f5f9; --card: #ffffff; --border: #dce4ee;
+  --text: #1e293b; --muted: #64748b;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; height: 100vh; overflow: hidden; }
+
+.topbar { background: var(--navy); color: #fff; padding: 10px 28px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,.15); z-index: 20; flex-shrink: 0; }
+.topbar .brand { font-size: 16px; font-weight: 700; letter-spacing: -.3px; }
+.topbar .brand span { color: var(--sky); }
+.topbar nav { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.topbar nav a { font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); padding: 5px 10px; border-radius: 5px; text-decoration: none; }
+.topbar nav a:hover { background: rgba(255,255,255,.08); color: #fff; }
+.topbar nav a.active { background: rgba(255,255,255,.15); color: #fff; }
+.topbar .user-badge { margin-left: 14px; padding: 4px 10px; background: rgba(255,255,255,.1); border-radius: 4px; font-size: 11px; color: rgba(255,255,255,.85); }
+.topbar .signout-btn { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); padding: 5px 10px; border-radius: 5px; font-size: 11px; font-weight: 600; cursor: pointer; margin-left: 8px; }
+
+/* Split layout */
+.split { display: flex; height: calc(100vh - 46px); }
+.panel-left { width: 50%; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: #fff; }
+.panel-right { width: 50%; display: flex; flex-direction: column; background: var(--bg); }
+@media (max-width: 900px) { .split { flex-direction: column; height: auto; } .panel-left, .panel-right { width: 100%; height: 50vh; } }
+
+/* Chat panel */
+.chat-header { padding: 10px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; background: #fafbfc; flex-shrink: 0; }
+.chat-header select { font-family: inherit; font-size: 11px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; flex: 1; max-width: 250px; }
+.chat-header .btn-sm { font-family: inherit; font-size: 11px; font-weight: 600; padding: 5px 12px; border-radius: 4px; cursor: pointer; border: none; }
+.chat-header .btn-new { background: var(--blue); color: #fff; }
+.chat-header .btn-del { background: transparent; color: var(--red); border: 1px solid rgba(220,38,38,.3); }
+
+.chat-messages { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+.chat-empty { color: var(--muted); text-align: center; padding: 40px 20px; font-size: 12px; line-height: 1.6; }
+
+.msg { max-width: 85%; }
+.msg.user { align-self: flex-end; }
+.msg.assistant { align-self: flex-start; }
+.msg-bubble { padding: 10px 14px; border-radius: 10px; font-size: 12.5px; line-height: 1.55; }
+.msg.user .msg-bubble { background: var(--blue); color: #fff; border-bottom-right-radius: 3px; }
+.msg.assistant .msg-bubble { background: #f0f4ff; color: var(--text); border-bottom-left-radius: 3px; }
+.msg.assistant .msg-bubble strong { color: var(--navy); }
+
+.follow-ups { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.follow-btn { font-family: inherit; font-size: 11px; padding: 5px 10px; background: #fff; border: 1px solid var(--sky); color: var(--blue); border-radius: 14px; cursor: pointer; }
+.follow-btn:hover { background: #e8f0fe; }
+
+.typing { display: none; align-self: flex-start; padding: 10px 14px; }
+.typing.show { display: flex; }
+.typing span { width: 6px; height: 6px; background: var(--muted); border-radius: 50%; margin: 0 2px; animation: typingBounce .6s infinite alternate; }
+.typing span:nth-child(2) { animation-delay: .2s; }
+.typing span:nth-child(3) { animation-delay: .4s; }
+@keyframes typingBounce { from { opacity: .3; transform: translateY(0); } to { opacity: 1; transform: translateY(-4px); } }
+
+.chat-input { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: end; background: #fff; flex-shrink: 0; }
+.chat-input textarea { flex: 1; font-family: inherit; font-size: 12.5px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; resize: none; min-height: 38px; max-height: 120px; line-height: 1.4; }
+.chat-input textarea:focus { outline: none; border-color: var(--sky); }
+.send-btn { font-family: inherit; font-size: 12px; font-weight: 700; padding: 9px 18px; background: var(--blue); color: #fff; border: none; border-radius: 8px; cursor: pointer; white-space: nowrap; }
+.send-btn:hover { background: var(--navy); }
+.send-btn:disabled { opacity: .5; cursor: default; }
+
+/* Workspace panel */
+.ws-tabs { display: flex; border-bottom: 2px solid var(--border); background: #fff; flex-shrink: 0; }
+.ws-tab { padding: 10px 20px; font-family: inherit; font-size: 12px; font-weight: 700; color: var(--muted); background: none; border: none; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; }
+.ws-tab:hover { color: var(--navy); }
+.ws-tab.active { color: var(--blue); border-bottom-color: var(--sky); }
+.ws-pane { display: none; flex: 1; overflow-y: auto; padding: 18px; }
+.ws-pane.active { display: block; }
+
+/* PICO strip */
+.pico-strip { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+.pico-card { padding: 10px; border-radius: 6px; }
+.pico-card.p { background: rgba(39,68,114,.08); border-left: 3px solid var(--blue); }
+.pico-card.i { background: rgba(22,163,74,.08); border-left: 3px solid var(--green); }
+.pico-card.c { background: rgba(217,119,6,.08); border-left: 3px solid var(--amber); }
+.pico-card.o { background: rgba(124,58,237,.08); border-left: 3px solid var(--purple); }
+.pico-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 3px; }
+.pico-text { font-size: 11.5px; color: var(--text); line-height: 1.4; }
+.mesh-pills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.mesh-pill { font-size: 9px; font-weight: 600; padding: 2px 6px; background: rgba(94,154,208,.15); color: var(--blue); border-radius: 3px; }
+
+/* Query card */
+.query-card { background: var(--navy); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+.query-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.query-card-header select { font-family: inherit; font-size: 10px; padding: 3px 6px; border-radius: 3px; background: rgba(255,255,255,.1); color: #fff; border: 1px solid rgba(255,255,255,.2); }
+.query-text { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--gold); line-height: 1.6; max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+.query-empty { color: rgba(255,255,255,.4); font-size: 11px; font-style: italic; }
+.query-actions { display: flex; gap: 8px; margin-top: 10px; }
+.query-actions .btn { font-family: inherit; font-size: 11px; font-weight: 600; padding: 6px 14px; border-radius: 5px; cursor: pointer; border: none; }
+.run-btn { background: var(--green); color: #fff; }
+.run-btn:hover { background: #15803d; }
+.run-btn:disabled { opacity: .5; }
+.copy-btn { background: rgba(255,255,255,.1); color: #fff; border: 1px solid rgba(255,255,255,.2) !important; }
+.copy-btn:hover { background: rgba(255,255,255,.15); }
+
+/* Database cards */
+.db-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 16px; }
+.db-card { background: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; }
+.db-card-name { font-size: 11px; font-weight: 700; color: var(--navy); margin-bottom: 4px; }
+.db-card-link { font-size: 10px; color: var(--blue); text-decoration: none; font-weight: 600; }
+.db-card-link:hover { text-decoration: underline; }
+.db-card .syntax { font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: var(--muted); margin-top: 4px; max-height: 40px; overflow: hidden; }
+
+/* Results */
+.results-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.results-toolbar label { font-size: 11px; display: flex; align-items: center; gap: 4px; }
+.results-count { font-size: 11px; color: var(--muted); font-weight: 600; }
+.results-toolbar .btn { font-family: inherit; font-size: 11px; font-weight: 600; padding: 5px 12px; border-radius: 5px; cursor: pointer; border: none; }
+.results-toolbar .btn-import { background: var(--green); color: #fff; }
+.results-toolbar .btn-export { background: transparent; color: var(--blue); border: 1px solid var(--border); }
+
+table.res-table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+table.res-table thead th { text-align: left; font-size: 10px; font-weight: 700; color: var(--muted); letter-spacing: .05em; text-transform: uppercase; padding: 9px 12px; background: #f8fafc; border-bottom: 1px solid var(--border); }
+table.res-table tbody td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; font-size: 11.5px; color: var(--text); vertical-align: top; }
+table.res-table tbody tr:hover { background: #f8fafc; }
+table.res-table tbody tr:last-child td { border-bottom: none; }
+.res-title { font-weight: 600; color: var(--navy); cursor: pointer; }
+.res-title:hover { color: var(--blue); }
+.res-abstract { display: none; padding: 8px 12px; background: #f8fafc; font-size: 11px; color: var(--muted); line-height: 1.5; }
+.res-abstract.open { display: table-row; }
+.res-imported { color: var(--green); font-weight: 700; font-size: 10px; }
+.db-badge { font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 3px; text-transform: uppercase; }
+.db-badge.pubmed { background: rgba(39,68,114,.1); color: var(--blue); }
+.db-badge.europe_pmc { background: rgba(22,163,74,.1); color: var(--green); }
+
+.empty { padding: 30px; text-align: center; color: var(--muted); font-size: 12px; }
+
+/* Database selector in search */
+.db-select { font-family: inherit; font-size: 11px; padding: 6px 8px; border: 1px solid rgba(255,255,255,.2); border-radius: 4px; background: rgba(255,255,255,.08); color: #fff; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">OGAI · <span>Rubric</span> Generator</div>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/challenges">Challenges</a>
+    <a href="/public-tests">Public Tests</a>
+    <a href="/models">Models</a>
+    <a href="/leaderboard">Leaderboard</a>
+    <a href="/analytics">Analytics</a>
+    <a href="/library">Library</a>
+    <a href="/search" class="active">Search</a>
+    <a href="/billing">Billing</a>
+    <a href="/papers">Papers</a>
+    <a href="/api/sso/annotator">Annotator</a>
+    <a href="/admin" id="nav-admin" style="display:none">Admin</a>
+    <span class="user-badge" id="user-badge">—</span>
+    <button class="signout-btn" onclick="signOut()">Sign Out</button>
+  </nav>
+</div>
+
+<div class="split">
+  <!-- LEFT: Chat -->
+  <div class="panel-left">
+    <div class="chat-header">
+      <select id="session-select" onchange="switchSession(this.value)">
+        <option value="">Select a search session...</option>
+      </select>
+      <button class="btn-sm btn-new" onclick="newSession()">+ New</button>
+      <button class="btn-sm btn-del" onclick="deleteCurrentSession()">Delete</button>
+    </div>
+    <div class="chat-messages" id="chat-messages">
+      <div class="chat-empty">
+        <strong>AI Search Strategist</strong><br><br>
+        Describe your research question and I'll help you build a comprehensive search strategy with PICO extraction, MeSH terms, and database-specific queries.<br><br>
+        Try: <em>"I'm looking for RCTs comparing ACE inhibitors to ARBs for hypertension in elderly patients"</em>
+      </div>
+    </div>
+    <div class="typing" id="typing"><span></span><span></span><span></span></div>
+    <div class="chat-input">
+      <textarea id="chat-input" placeholder="Describe your research question..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
+      <button class="send-btn" id="send-btn" onclick="sendMessage()">Send</button>
+    </div>
+  </div>
+
+  <!-- RIGHT: Workspace -->
+  <div class="panel-right">
+    <div class="ws-tabs">
+      <button class="ws-tab active" onclick="switchWsTab('query')">Query Builder</button>
+      <button class="ws-tab" onclick="switchWsTab('results')" id="results-tab-btn">Results</button>
+    </div>
+
+    <!-- Query Builder -->
+    <div class="ws-pane active" id="pane-query">
+      <div class="pico-strip" id="pico-strip" style="display:none">
+        <div class="pico-card p"><div class="pico-label">Population</div><div class="pico-text" id="pico-p">—</div></div>
+        <div class="pico-card i"><div class="pico-label">Intervention</div><div class="pico-text" id="pico-i">—</div></div>
+        <div class="pico-card c"><div class="pico-label">Comparator</div><div class="pico-text" id="pico-c">—</div></div>
+        <div class="pico-card o"><div class="pico-label">Outcomes</div><div class="pico-text" id="pico-o">—</div></div>
+      </div>
+      <div id="mesh-strip" class="mesh-pills" style="margin-bottom:12px"></div>
+
+      <div class="query-card" id="query-card">
+        <div class="query-card-header">
+          <select id="version-select" onchange="switchVersion(this.value)" style="display:none"></select>
+          <span style="font-size:10px;color:rgba(255,255,255,.5)">PubMed Query</span>
+        </div>
+        <div class="query-text" id="query-text"><span class="query-empty">No query yet. Start a conversation to generate one.</span></div>
+        <div class="query-actions">
+          <select class="db-select" id="search-db">
+            <option value="pubmed">PubMed</option>
+            <option value="europe_pmc">Europe PMC</option>
+          </select>
+          <button class="btn run-btn" id="run-btn" onclick="runSearch()" disabled>Search</button>
+          <button class="btn copy-btn" onclick="copyQuery()">Copy</button>
+        </div>
+      </div>
+
+      <div class="db-cards" id="db-cards" style="display:none">
+        <div class="db-card"><div class="db-card-name">Google Scholar</div><a class="db-card-link" id="link-scholar" href="#" target="_blank">Open in Scholar</a></div>
+        <div class="db-card"><div class="db-card-name">JSTOR</div><a class="db-card-link" id="link-jstor" href="#" target="_blank">Open in JSTOR</a></div>
+        <div class="db-card"><div class="db-card-name">Web of Science</div><a class="db-card-link" id="link-wos" href="#" target="_blank">Open in WoS</a></div>
+        <div class="db-card"><div class="db-card-name">ScienceDirect</div><a class="db-card-link" id="link-sciencedirect" href="#" target="_blank">Open in ScienceDirect</a></div>
+        <div class="db-card"><div class="db-card-name">Wiley Online</div><a class="db-card-link" id="link-wiley" href="#" target="_blank">Open in Wiley</a></div>
+        <div class="db-card"><div class="db-card-name">OVID</div><div style="font-size:10px;color:var(--muted)">Copy Ovid MEDLINE syntax above</div></div>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div class="ws-pane" id="pane-results">
+      <div class="results-toolbar" id="results-toolbar" style="display:none">
+        <label><input type="checkbox" id="select-all" onchange="toggleSelectAll(this.checked)"> Select all</label>
+        <span class="results-count" id="results-count">0 results</span>
+        <button class="btn btn-import" onclick="importSelected()">Import Selected</button>
+        <button class="btn btn-export" onclick="exportRIS()">RIS</button>
+        <button class="btn btn-export" onclick="exportBibTeX()">BibTeX</button>
+      </div>
+      <div id="results-body"><div class="empty">Run a search to see results here.</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentUser = null;
+let currentSessionId = null;
+let sessions = [];
+let queryVersions = [];
+let currentQuery = '';
+let results = [];
+
+// ── Auth ──
+async function checkAuth() {
+  try {
+    const r = await fetch('/api/auth/me');
+    if (!r.ok) { window.location.href = '/login'; return; }
+    currentUser = await r.json();
+    document.getElementById('user-badge').textContent = currentUser.display_name || currentUser.email;
+    if (currentUser.role === 'admin') document.getElementById('nav-admin').style.display = '';
+  } catch { window.location.href = '/login'; }
+}
+async function signOut() { await fetch('/api/auth/logout', { method: 'POST' }); window.location.href = '/login'; }
+
+function escapeHtml(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function renderMd(text) { return escapeHtml(text).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\n- /g, '\n• ').replace(/\n/g, '<br>'); }
+
+// ── Sessions ──
+async function loadSessions() {
+  const r = await fetch('/api/search/sessions');
+  if (!r.ok) return;
+  sessions = await r.json();
+  const sel = document.getElementById('session-select');
+  sel.innerHTML = '<option value="">Select a search session...</option>';
+  sessions.forEach(s => {
+    const o = document.createElement('option');
+    o.value = s.id; o.textContent = `${s.title} (${s.message_count} msgs)`;
+    if (s.id === currentSessionId) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+
+async function switchSession(id) {
+  if (!id) return;
+  currentSessionId = parseInt(id);
+  sessionStorage.setItem('search_session_id', currentSessionId);
+  const r = await fetch(`/api/search/sessions/${currentSessionId}`);
+  if (!r.ok) return;
+  const data = await r.json();
+
+  // Render messages
+  const container = document.getElementById('chat-messages');
+  container.innerHTML = '';
+  data.messages.forEach(m => appendMessage(m.role, m.content, m.metadata));
+
+  // Render PICO
+  if (data.pico && Object.keys(data.pico).length) renderPico(data.pico);
+
+  // Find latest query from messages
+  queryVersions = [];
+  data.messages.forEach(m => {
+    if (m.metadata?.search_query) {
+      queryVersions.push(m.metadata.search_query);
+    }
+  });
+  if (queryVersions.length) {
+    const latest = queryVersions[queryVersions.length - 1];
+    currentQuery = latest.pubmed || '';
+    renderQueryCard(currentQuery);
+    updateVersionDropdown();
+    updateDbLinks(currentQuery);
+  }
+
+  // Render results
+  results = data.results || [];
+  renderResults(results);
+}
+
+function newSession() {
+  currentSessionId = null;
+  currentQuery = '';
+  queryVersions = [];
+  results = [];
+  document.getElementById('chat-messages').innerHTML = '<div class="chat-empty"><strong>AI Search Strategist</strong><br><br>Describe your research question and I\'ll help you build a comprehensive search strategy.<br><br>Try: <em>"I\'m looking for RCTs comparing ACE inhibitors to ARBs for hypertension in elderly patients"</em></div>';
+  document.getElementById('pico-strip').style.display = 'none';
+  document.getElementById('mesh-strip').innerHTML = '';
+  document.getElementById('query-text').innerHTML = '<span class="query-empty">No query yet. Start a conversation to generate one.</span>';
+  document.getElementById('run-btn').disabled = true;
+  document.getElementById('db-cards').style.display = 'none';
+  document.getElementById('version-select').style.display = 'none';
+  document.getElementById('results-body').innerHTML = '<div class="empty">Run a search to see results here.</div>';
+  document.getElementById('results-toolbar').style.display = 'none';
+  document.getElementById('results-tab-btn').textContent = 'Results';
+  document.getElementById('session-select').value = '';
+  sessionStorage.removeItem('search_session_id');
+}
+
+async function deleteCurrentSession() {
+  if (!currentSessionId) return;
+  if (!confirm('Delete this search session?')) return;
+  await fetch(`/api/search/sessions/${currentSessionId}`, { method: 'DELETE' });
+  newSession();
+  loadSessions();
+}
+
+// ── Chat ──
+async function sendMessage() {
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+
+  // Clear empty state
+  const container = document.getElementById('chat-messages');
+  if (container.querySelector('.chat-empty')) container.innerHTML = '';
+
+  appendMessage('user', text);
+  document.getElementById('typing').classList.add('show');
+  document.getElementById('send-btn').disabled = true;
+  scrollToBottom();
+
+  try {
+    const r = await fetch('/api/search/chat', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ session_id: currentSessionId, message: text }),
+    });
+    document.getElementById('typing').classList.remove('show');
+    document.getElementById('send-btn').disabled = false;
+    if (!r.ok) { const e = await r.json(); appendMessage('assistant', 'Error: ' + (e.detail || 'Failed')); return; }
+    const data = await r.json();
+
+    currentSessionId = data.session_id;
+    sessionStorage.setItem('search_session_id', currentSessionId);
+
+    appendMessage('assistant', data.message.content, data.message.metadata);
+
+    if (data.pico) renderPico(data.pico);
+    if (data.search_query) {
+      currentQuery = data.search_query.pubmed || '';
+      queryVersions.push(data.search_query);
+      renderQueryCard(currentQuery);
+      updateVersionDropdown();
+      updateDbLinks(currentQuery);
+    }
+
+    loadSessions();
+  } catch (e) {
+    document.getElementById('typing').classList.remove('show');
+    document.getElementById('send-btn').disabled = false;
+    appendMessage('assistant', 'Network error: ' + e.message);
+  }
+  scrollToBottom();
+}
+
+function appendMessage(role, content, metadata) {
+  const container = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  let html = `<div class="msg-bubble">${renderMd(content || '')}</div>`;
+
+  if (role === 'assistant' && metadata?.follow_ups?.length) {
+    html += '<div class="follow-ups">';
+    metadata.follow_ups.forEach(q => {
+      html += `<button class="follow-btn" onclick="useSuggestion(this.textContent)">${escapeHtml(q)}</button>`;
+    });
+    html += '</div>';
+  }
+  div.innerHTML = html;
+  container.appendChild(div);
+}
+
+function useSuggestion(text) {
+  document.getElementById('chat-input').value = text;
+  sendMessage();
+}
+
+function scrollToBottom() {
+  const c = document.getElementById('chat-messages');
+  c.scrollTop = c.scrollHeight;
+}
+
+// ── PICO ──
+function renderPico(pico) {
+  document.getElementById('pico-strip').style.display = 'grid';
+  document.getElementById('pico-p').textContent = pico.population || '—';
+  document.getElementById('pico-i').textContent = pico.intervention || '—';
+  document.getElementById('pico-c').textContent = pico.comparator || '—';
+  document.getElementById('pico-o').textContent = pico.outcomes || '—';
+
+  const mesh = document.getElementById('mesh-strip');
+  if (pico.mesh_terms?.length) {
+    mesh.innerHTML = pico.mesh_terms.map(t => `<span class="mesh-pill">${escapeHtml(t)}</span>`).join('');
+  }
+}
+
+// ── Query card ──
+function renderQueryCard(query) {
+  const el = document.getElementById('query-text');
+  if (query) {
+    el.textContent = query;
+    document.getElementById('run-btn').disabled = false;
+    document.getElementById('db-cards').style.display = 'grid';
+  } else {
+    el.innerHTML = '<span class="query-empty">No query yet.</span>';
+    document.getElementById('run-btn').disabled = true;
+  }
+}
+
+function updateVersionDropdown() {
+  const sel = document.getElementById('version-select');
+  if (queryVersions.length <= 1) { sel.style.display = 'none'; return; }
+  sel.style.display = '';
+  sel.innerHTML = queryVersions.map((q, i) =>
+    `<option value="${i}"${i === queryVersions.length - 1 ? ' selected' : ''}>v${i}${q.version_note ? ': ' + q.version_note : ''}</option>`
+  ).join('');
+}
+
+function switchVersion(idx) {
+  const q = queryVersions[parseInt(idx)];
+  if (q) { currentQuery = q.pubmed || ''; renderQueryCard(currentQuery); updateDbLinks(currentQuery); }
+}
+
+function updateDbLinks(query) {
+  const enc = encodeURIComponent(query);
+  document.getElementById('link-scholar').href = `https://scholar.google.com/scholar?q=${enc}`;
+  document.getElementById('link-jstor').href = `https://www.jstor.org/action/doBasicSearch?Query=${enc}`;
+  document.getElementById('link-wos').href = `https://www.webofscience.com/wos/woscc/basic-search`;
+  document.getElementById('link-sciencedirect').href = `https://www.sciencedirect.com/search?qs=${enc}`;
+  document.getElementById('link-wiley').href = `https://onlinelibrary.wiley.com/action/doSearch?AllField=${enc}`;
+}
+
+function copyQuery() {
+  if (currentQuery) { navigator.clipboard.writeText(currentQuery); }
+}
+
+// ── Search ──
+async function runSearch() {
+  const db = document.getElementById('search-db').value;
+  const btn = document.getElementById('run-btn');
+  btn.disabled = true; btn.textContent = 'Searching...';
+
+  try {
+    const r = await fetch('/api/search/execute', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ session_id: currentSessionId, database: db, query: currentQuery, max_results: 100 }),
+    });
+    if (!r.ok) { const e = await r.json(); alert(e.detail || 'Search failed'); return; }
+    const data = await r.json();
+
+    if (data.linkout_url) {
+      window.open(data.linkout_url, '_blank');
+      return;
+    }
+
+    results = data.results || [];
+    renderResults(results);
+    switchWsTab('results');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Search';
+  }
+}
+
+function renderResults(res) {
+  const body = document.getElementById('results-body');
+  const toolbar = document.getElementById('results-toolbar');
+  const tabBtn = document.getElementById('results-tab-btn');
+
+  if (!res.length) {
+    body.innerHTML = '<div class="empty">No results found. Try refining your query.</div>';
+    toolbar.style.display = 'none';
+    tabBtn.textContent = 'Results';
+    return;
+  }
+
+  toolbar.style.display = 'flex';
+  tabBtn.textContent = `Results [${res.length}]`;
+  document.getElementById('results-count').textContent = `${res.length} results`;
+
+  let html = '<table class="res-table"><thead><tr><th style="width:30px"></th><th>Title</th><th>Authors</th><th>Journal</th><th>Year</th><th>Cites</th><th>DB</th><th>Status</th></tr></thead><tbody>';
+  res.forEach(r => {
+    const imported = r.imported ? '<span class="res-imported">Imported</span>' : '';
+    const dbClass = (r.database_name || 'pubmed').replace(/\s/g, '_');
+    html += `<tr>
+      <td><input type="checkbox" data-id="${r.id}" ${r.selected ? 'checked' : ''} onchange="toggleSelect(${r.id}, this.checked)"></td>
+      <td class="res-title" onclick="toggleAbstract(${r.id})">${escapeHtml(r.title)}</td>
+      <td style="font-size:10.5px;color:var(--muted);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(r.authors || '')}</td>
+      <td style="font-size:10.5px">${escapeHtml(r.journal || '')}</td>
+      <td style="font-size:10.5px">${escapeHtml((r.pub_date || '').slice(0, 4))}</td>
+      <td style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:600">${r.citation_count || 0}</td>
+      <td><span class="db-badge ${dbClass}">${(r.database_name || 'pubmed').replace('_', ' ')}</span></td>
+      <td>${imported}</td>
+    </tr>`;
+    if (r.abstract) {
+      html += `<tr class="res-abstract" id="abs-${r.id}"><td colspan="8" style="padding:10px 16px;font-size:11px;color:var(--muted);line-height:1.5;background:#f8fafc">${escapeHtml(r.abstract).slice(0, 500)}${r.abstract.length > 500 ? '...' : ''}</td></tr>`;
+    }
+  });
+  html += '</tbody></table>';
+  body.innerHTML = html;
+}
+
+function toggleAbstract(id) {
+  const row = document.getElementById('abs-' + id);
+  if (row) row.classList.toggle('open');
+}
+
+async function toggleSelect(id, checked) {
+  await fetch('/api/search/results/select', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ result_ids: [id], selected: checked }),
+  });
+}
+
+async function toggleSelectAll(checked) {
+  if (!currentSessionId) return;
+  await fetch('/api/search/results/select-all', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ session_id: currentSessionId, query_version: queryVersions.length - 1, selected: checked }),
+  });
+  document.querySelectorAll('.res-table input[type=checkbox][data-id]').forEach(cb => cb.checked = checked);
+}
+
+async function importSelected() {
+  const ids = [...document.querySelectorAll('.res-table input[type=checkbox][data-id]:checked')]
+    .map(cb => parseInt(cb.dataset.id));
+  if (!ids.length) { alert('Select at least one result to import'); return; }
+  const r = await fetch('/api/search/import', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ session_id: currentSessionId, result_ids: ids }),
+  });
+  if (!r.ok) { const e = await r.json(); alert(e.detail || 'Import failed'); return; }
+  const data = await r.json();
+  alert(`Imported: ${data.imported}, Skipped: ${data.skipped}, Failed: ${data.failed}`);
+  if (currentSessionId) switchSession(currentSessionId);
+}
+
+function getSelectedIds() {
+  return [...document.querySelectorAll('.res-table input[type=checkbox][data-id]:checked')]
+    .map(cb => parseInt(cb.dataset.id));
+}
+
+async function exportRIS() {
+  const ids = getSelectedIds();
+  if (!ids.length) { alert('Select results to export'); return; }
+  const r = await fetch('/api/search/export/ris', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ session_id: currentSessionId, result_ids: ids }),
+  });
+  if (!r.ok) return;
+  const blob = await r.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = 'search_results.ris'; a.click();
+}
+
+async function exportBibTeX() {
+  const ids = getSelectedIds();
+  if (!ids.length) { alert('Select results to export'); return; }
+  const r = await fetch('/api/search/export/bibtex', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ session_id: currentSessionId, result_ids: ids }),
+  });
+  if (!r.ok) return;
+  const blob = await r.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = 'search_results.bib'; a.click();
+}
+
+// ── Tabs ──
+function switchWsTab(tab) {
+  document.querySelectorAll('.ws-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.ws-pane').forEach(p => p.classList.remove('active'));
+  document.querySelector(`.ws-tab[onclick*="${tab}"]`).classList.add('active');
+  document.getElementById('pane-' + tab).classList.add('active');
+}
+
+// ── Auto-grow textarea ──
+document.getElementById('chat-input').addEventListener('input', function() {
+  this.style.height = '38px';
+  this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+});
+
+// ── Init ──
+async function init() {
+  await checkAuth();
+  await loadSessions();
+  const savedId = sessionStorage.getItem('search_session_id');
+  if (savedId) {
+    currentSessionId = parseInt(savedId);
+    document.getElementById('session-select').value = currentSessionId;
+    switchSession(currentSessionId);
+  }
+}
+init();
+</script>
+</body>
+</html>

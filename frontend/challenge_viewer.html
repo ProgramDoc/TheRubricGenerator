@@ -101,6 +101,9 @@ tbody tr:last-child td { border-bottom: none; }
     <a href="/public-tests">Public Tests</a>
     <a href="/models">Models</a>
     <a href="/leaderboard">Leaderboard</a>
+    <a href="/analytics">Analytics</a>
+    <a href="/library">Library</a>
+    <a href="/search">Search</a>
     <a href="/billing">Billing</a>
     <a href="/papers">Papers</a>
     <a href="/api/sso/annotator">Annotator</a>
@@ -113,7 +116,10 @@ tbody tr:last-child td { border-bottom: none; }
 <div class="container">
   <a class="back-link" href="/challenges">← Back to Challenges</a>
   <div class="page-title" id="challenge-title">Loading…</div>
-  <div class="page-subtitle" id="challenge-theme"></div>
+  <div style="display:flex;align-items:center;gap:10px">
+    <div class="page-subtitle" id="challenge-theme"></div>
+    <span id="run-id-badge" style="display:none;font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;padding:3px 8px;background:rgba(39,68,114,.1);color:var(--blue);border-radius:4px"></span>
+  </div>
 
   <div id="error-box" class="error-box" style="display:none"></div>
 
@@ -195,6 +201,11 @@ async function loadChallenge() {
 
   document.getElementById('challenge-title').textContent = c.title || `Challenge #${c.id}`;
   document.getElementById('challenge-theme').textContent = c.theme || '';
+  if (c.run_id) {
+    const badge = document.getElementById('run-id-badge');
+    badge.textContent = c.run_id;
+    badge.style.display = '';
+  }
 
   // Meta
   const levelLabels = { easy_breezy: 'Easy Breezy', minor_league: 'Minor League', professional: 'Professional', jedi: 'Jedi' };

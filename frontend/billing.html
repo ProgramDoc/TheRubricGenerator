@@ -87,6 +87,9 @@ tbody tr:last-child td { border-bottom: none; }
     <a href="/public-tests">Public Tests</a>
     <a href="/models">Models</a>
     <a href="/leaderboard">Leaderboard</a>
+    <a href="/analytics">Analytics</a>
+    <a href="/library">Library</a>
+    <a href="/search">Search</a>
     <a href="/billing" class="active">Billing</a>
     <a href="/papers">Papers</a>
     <a href="/api/sso/annotator">Annotator</a>
@@ -141,6 +144,11 @@ tbody tr:last-child td { border-bottom: none; }
   <div class="card">
     <div class="card-header"><h2>Transaction History</h2></div>
     <div id="txn-list"><div class="empty">Loading…</div></div>
+  </div>
+
+  <div class="card" id="org-credits-card" style="display:none">
+    <div class="card-header"><h2>Organization Credits</h2></div>
+    <div id="org-credits-list"></div>
   </div>
 </div>
 
@@ -298,11 +306,30 @@ async function applyPromo() {
   }
 }
 
+async function loadOrgCredits() {
+  try {
+    const r = await fetch('/api/orgs');
+    if (!r.ok) return;
+    const orgs = await r.json();
+    if (!orgs.length) return;
+    const card = document.getElementById('org-credits-card');
+    const wrap = document.getElementById('org-credits-list');
+    card.style.display = '';
+    let html = '<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:10px 16px;font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;background:#f8fafc;border-bottom:1px solid var(--border)">Organization</th><th style="text-align:left;padding:10px 16px;font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;background:#f8fafc;border-bottom:1px solid var(--border)">Role</th><th style="text-align:right;padding:10px 16px;font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;background:#f8fafc;border-bottom:1px solid var(--border)">Balance</th><th style="padding:10px 16px;background:#f8fafc;border-bottom:1px solid var(--border)"></th></tr></thead><tbody>';
+    orgs.forEach(o => {
+      html += `<tr><td style="padding:12px 16px;border-bottom:1px solid #f1f5f9;font-weight:600">${escapeHtml(o.name)}</td><td style="padding:12px 16px;border-bottom:1px solid #f1f5f9;font-size:11px;text-transform:uppercase;color:var(--muted)">${o.role}</td><td style="padding:12px 16px;border-bottom:1px solid #f1f5f9;text-align:right;font-family:'IBM Plex Mono',monospace;font-weight:700;color:var(--navy)">${(o.credit_balance || 0).toLocaleString()}</td><td style="padding:12px 16px;border-bottom:1px solid #f1f5f9"><a href="/org/${o.id}?tab=billing" style="font-size:11px;color:var(--blue);text-decoration:none;font-weight:600">Manage</a></td></tr>`;
+    });
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+  } catch {}
+}
+
 (async () => {
   await loadMe();
   loadBalance();
   loadPacks();
   loadTransactions();
+  loadOrgCredits();
 })();
 </script>
 </body>

@@ -20,18 +20,29 @@ def _now() -> str:
 
 
 def write_challenge_note(vault_dir: Path, challenge: dict, rubric: dict,
-                         participants: list[dict], papers: list[dict]) -> Path:
+                         participants: list[dict], papers: list[dict],
+                         user_info: dict | None = None,
+                         generator_skill: dict | None = None,
+                         judge_skill: dict | None = None,
+                         experiment_history: list[dict] | None = None,
+                         cost_estimate: dict | None = None) -> Path:
     """Write one markdown note summarizing a completed challenge.
 
     challenge: row dict from the challenges table
     rubric: the full rubric dict (parsed JSON)
     participants: list of model_participants rows with grades
     papers: list of paper rows {id, filename}
+    user_info: optional {display_name, email}
+    generator_skill: optional skill dict with version, prompt_text, avg_performance
+    judge_skill: optional skill dict
+    experiment_history: optional list of recent skill_experiments rows
+    cost_estimate: optional cost dict
 
     Returns the path of the written file.
     """
     cid = challenge["id"]
     theme = challenge.get("theme") or "untitled"
+    run_id = challenge.get("run_id") or f"#{cid}"
     filename = f"{cid:04d}_{_slug(theme)}.md"
     path = vault_dir / "challenges" / filename
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -39,6 +50,7 @@ def write_challenge_note(vault_dir: Path, challenge: dict, rubric: dict,
     lines: list[str] = []
     lines.append("---")
     lines.append(f"id: {cid}")
+    lines.append(f"run_id: \"{run_id}\"")
     lines.append(f"title: \"{challenge.get('title','')}\"")
     lines.append(f"theme: \"{theme}\"")
     lines.append(f"status: {challenge.get('status','')}")
@@ -49,11 +61,67 @@ def write_challenge_note(vault_dir: Path, challenge: dict, rubric: dict,
     lines.append("---")
     lines.append("")
     lines.append(f"# Challenge #{cid}: {challenge.get('title','')}")
+    lines.append(f"**Run ID:** `{run_id}`")
     lines.append("")
     lines.append(f"**Theme:** {theme}")
     lines.append(f"**Generator score:** {challenge.get('generator_score','—')}")
     lines.append(f"**Judge score:** {challenge.get('judge_score','—')}")
     lines.append("")
+
+    # User info
+    if user_info:
+        lines.append("## User")
+        lines.append(f"- **Name:** {user_info.get('display_name', '—')}")
+        lines.append(f"- **Email:** {user_info.get('email', '—')}")
+        lines.append("")
+
+    # Cost estimate
+    if cost_estimate:
+        lines.append("## Cost")
+        lines.append(f"- **Estimated total:** {cost_estimate.get('total', '—')} credits")
+        if "generator_cost" in cost_estimate:
+            lines.append(f"- **Generator:** {cost_estimate['generator_cost']} credits")
+        if "participant_cost" in cost_estimate:
+            lines.append(f"- **Participants:** {cost_estimate['participant_cost']} credits")
+        if "judge_cost" in cost_estimate:
+            lines.append(f"- **Judge:** {cost_estimate['judge_cost']} credits")
+        lines.append("")
+
+    # Generator agent state
+    if generator_skill:
+        lines.append("## Generator Agent")
+        lines.append(f"- **Skill version:** v{generator_skill.get('version', '?')}")
+        lines.append(f"- **Avg performance:** {generator_skill.get('avg_performance', '—')}")
+        lines.append(f"- **Times used:** {generator_skill.get('times_used', '—')}")
+        prompt_preview = (generator_skill.get("prompt_text") or "")[:200]
+        if prompt_preview:
+            lines.append(f"- **Prompt preview:** `{prompt_preview}...`")
+        lines.append("")
+
+    # Judge agent state
+    if judge_skill:
+        lines.append("## Judge Agent")
+        lines.append(f"- **Skill version:** v{judge_skill.get('version', '?')}")
+        lines.append(f"- **Avg performance:** {judge_skill.get('avg_performance', '—')}")
+        lines.append(f"- **Times used:** {judge_skill.get('times_used', '—')}")
+        prompt_preview = (judge_skill.get("prompt_text") or "")[:200]
+        if prompt_preview:
+            lines.append(f"- **Prompt preview:** `{prompt_preview}...`")
+        lines.append("")
+
+    # Autoresearch experiment history
+    if experiment_history:
+        lines.append("## Recent Autoresearch Experiments")
+        lines.append("")
+        lines.append("| # | Agent | Version | Before | After | Status | Description |")
+        lines.append("|---|-------|---------|--------|-------|--------|-------------|")
+        for i, exp in enumerate(experiment_history[:10]):
+            lines.append(
+                f"| {i+1} | {exp.get('agent_type','')} | v{exp.get('skill_version','')} "
+                f"| {exp.get('metric_before','—')} | {exp.get('metric_after','—')} "
+                f"| {exp.get('status','')} | {(exp.get('description','') or '')[:60]} |"
+            )
+        lines.append("")
 
     # Papers
     lines.append("## Papers")

@@ -349,6 +349,7 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
   <a href="/public-tests" class="tb-btn" style="text-decoration:none;">Public Tests</a>
   <a href="/models" class="tb-btn" style="text-decoration:none;">Models</a>
   <a href="/leaderboard" class="tb-btn" style="text-decoration:none;">Leaderboard</a>
+  <a href="/analytics" class="tb-btn" style="text-decoration:none;">Analytics</a>
   <a href="/billing" class="tb-btn" style="text-decoration:none;">Billing</a>
   <a href="/papers" class="tb-btn active" style="text-decoration:none;">Papers</a>
   <a href="/api/sso/annotator" class="tb-btn" style="text-decoration:none;">Annotator</a>
@@ -433,6 +434,7 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
           <option value="classification">Classification — study design &amp; taxonomy</option>
           <option value="extraction">Data Extraction — PICO/PICOS elements</option>
           <option value="risk_of_bias">Risk of Bias — bias domain appraisal</option>
+          <option value="comparative">Comparative — multi-paper synthesis</option>
           <option value="custom">Custom — based on instructions below</option>
         </select>
       </div>
@@ -459,6 +461,8 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
     <div class="rubric-actions" id="rubric-actions" style="display:none">
       <button id="add-question-btn" onclick="addBlankQuestion()">+ Add Question</button>
       <button id="save-rubric-btn" onclick="saveRubric()">💾 Save Rubric</button>
+      <button onclick="saveAsTemplate()" style="background:var(--purple);color:#fff;border:none;padding:8px 16px;border-radius:5px;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer">Save as Template</button>
+      <button onclick="loadTemplatePrompt()" style="background:transparent;color:var(--blue);border:1px solid var(--border);padding:8px 16px;border-radius:5px;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer">Load Template</button>
     </div>
   </div>
 
@@ -1281,6 +1285,79 @@ function clearAll() {
   clearResults();
   document.getElementById('pdf-scroll').innerHTML = '<div id="no-paper"><div class="hint">📐</div><strong>OGAI Rubric Generator</strong></div>';
   document.getElementById('no-paper').style.display = 'block';
+}
+
+// ── Phase 8: Template save/load ──
+async function saveAsTemplate() {
+  const name = prompt('Template name:');
+  if (!name || !name.trim()) return;
+  const desc = prompt('Description (optional):', '') || '';
+
+  // Build rubric JSON from current questions
+  const rubric = buildRubricJson();
+  if (!rubric || !rubric.questions || !rubric.questions.length) { alert('No rubric questions to save'); return; }
+
+  try {
+    const r = await fetch('/api/templates', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        name: name.trim(),
+        description: desc,
+        rubric_type: document.getElementById('rubric-type-select').value,
+        template_json: JSON.stringify(rubric),
+      }),
+    });
+    if (!r.ok) { const e = await r.json(); alert(e.detail || 'Failed'); return; }
+    alert('Template saved! View your templates in the Library.');
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function loadTemplatePrompt() {
+  try {
+    const r = await fetch('/api/templates');
+    if (!r.ok) { alert('Failed to load templates'); return; }
+    const templates = await r.json();
+    if (!templates.length) { alert('No templates yet. Save a rubric as a template first, or fork one from the Community Library.'); return; }
+
+    const choices = templates.map((t, i) => `${i + 1}. ${t.name} (${t.rubric_type}, v${t.version})`).join('\n');
+    const pick = prompt('Select a template number:\n\n' + choices);
+    if (!pick) return;
+    const idx = parseInt(pick) - 1;
+    if (isNaN(idx) || idx < 0 || idx >= templates.length) { alert('Invalid selection'); return; }
+
+    const detail = await fetch(`/api/templates/${templates[idx].id}`);
+    if (!detail.ok) { alert('Failed to load template'); return; }
+    const tmpl = await detail.json();
+    const data = tmpl.template_data;
+    if (data && data.questions) {
+      currentRubric = data;
+      renderRubric(data);
+      document.getElementById('rubric-type-select').value = tmpl.rubric_type || 'custom';
+      alert(`Loaded template "${tmpl.name}" with ${data.questions.length} questions. Edit as needed then Save.`);
+    }
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+function buildRubricJson() {
+  // Collect current rubric state from the DOM
+  const cards = document.querySelectorAll('.q-card');
+  if (!cards.length) return null;
+  const questions = [];
+  cards.forEach(card => {
+    const qid = card.querySelector('.q-id')?.textContent?.trim() || '';
+    const q = card.querySelector('.q-question')?.value || card.querySelector('.q-question')?.textContent || '';
+    const ideal = card.querySelector('.q-ideal')?.value || '';
+    const criteria = card.querySelector('.q-criteria')?.value || '';
+    const domain = card.querySelector('.q-domain')?.value || card.querySelector('.q-domain')?.textContent || '';
+    const maxPts = parseInt(card.querySelector('.q-max-pts')?.value || '1');
+    questions.push({ id: qid, question: q, ideal_answer: ideal, scoring_criteria: criteria, domain: domain, max_points: maxPts });
+  });
+  return {
+    rubric_type: document.getElementById('rubric-type-select').value,
+    questions: questions,
+    total_max_points: questions.reduce((s, q) => s + (q.max_points || 1), 0),
+  };
 }
 
 init();

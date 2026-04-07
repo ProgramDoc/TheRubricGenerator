@@ -174,6 +174,74 @@ def list_packs(conn: sqlite3.Connection) -> list[dict]:
 # ─────────────────────────────────────────────
 # Cost calculation
 # ─────────────────────────────────────────────
+
+def estimate_challenge_cost(model_ids: list[str], paper_count: int,
+                            conn: sqlite3.Connection | None = None) -> dict:
+    """Comprehensive cost estimate for a challenge run with breakdown."""
+    from .challenges import SUPPORTED_MODELS
+
+    questions_count = paper_count * 5
+
+    # Generator cost: scales with paper count (context length)
+    generator_cost = 5 + max(0, paper_count - 3) * 2
+
+    # Participant model costs
+    participant_cost = 0
+    model_breakdown = []
+    for mid in model_ids:
+        spec = SUPPORTED_MODELS.get(mid)
+        if spec:
+            cost = spec.get("cost_credits", 10)
+        elif conn and mid.startswith("custom:"):
+            try:
+                rm_id = int(mid.split(":", 1)[1])
+                row = conn.execute(
+                    "SELECT price_per_test_credits FROM registered_models WHERE id=?", (rm_id,)
+                ).fetchone()
+                cost = row["price_per_test_credits"] or 10 if row else 10
+            except (ValueError, IndexError):
+                cost = 10
+        else:
+            cost = 10
+        participant_cost += cost
+        model_breakdown.append({"model_id": mid, "cost": cost})
+
+    # Judge cost: ~5 credits per model, scaled by question count
+    judge_cost_per_model = 5
+    judge_cost = len(model_ids) * judge_cost_per_model
+    if questions_count > 10:
+        judge_cost = int(judge_cost * (questions_count / 10))
+
+    total = generator_cost + participant_cost + judge_cost
+
+    return {
+        "generator_cost": generator_cost,
+        "participant_cost": participant_cost,
+        "judge_cost": judge_cost,
+        "total": total,
+        "model_breakdown": model_breakdown,
+        "paper_count": paper_count,
+        "question_count": questions_count,
+    }
+
+
+def refund_credits(conn: sqlite3.Connection, user_id: int, amount: int,
+                   description: str, challenge_id: int | None = None) -> None:
+    """Refund credits to user (e.g. on failed challenge run)."""
+    _ensure_user_credits(conn, user_id)
+    with conn:
+        conn.execute(
+            "UPDATE user_credits SET balance = balance + ?, last_updated = datetime('now') WHERE user_id=?",
+            (amount, user_id),
+        )
+        conn.execute(
+            """INSERT INTO credit_transactions (user_id, amount, type, description, challenge_id)
+               VALUES (?,?,?,?,?)""",
+            (user_id, amount, "refund", description, challenge_id),
+        )
+        conn.commit()
+
+
 def calculate_test_cost(model_ids: list[str], conn: sqlite3.Connection | None = None) -> int:
     """Calculate total credits needed for a test with the given models.
     Frontier models use SUPPORTED_MODELS costs; custom models use registered price."""
@@ -238,7 +306,7 @@ def create_checkout_session(conn: sqlite3.Connection, user_id: int,
 
 def handle_stripe_webhook(payload: bytes, sig_header: str,
                           get_db_fn) -> dict:
-    """Process incoming Stripe webhook. Credits the user on successful payment."""
+    """Process incoming Stripe webhook. Credits the user or org on successful payment."""
     if not STRIPE_WEBHOOK_SECRET:
         raise HTTPException(500, "Stripe webhook secret not configured")
     stripe = _get_stripe()
@@ -253,12 +321,156 @@ def handle_stripe_webhook(payload: bytes, sig_header: str,
         user_id = int(meta.get("user_id", 0))
         credits = int(meta.get("credits", 0))
         session_id = session.get("id", "")
+        org_id = int(meta.get("org_id", 0))
 
-        if user_id and credits:
+        if credits and session_id:
             conn = get_db_fn()
             try:
-                credit_from_purchase(conn, user_id, credits, session_id)
-                logger.info("Stripe: credited %d to user %d (session=%s)", credits, user_id, session_id)
+                if org_id:
+                    credit_org_from_purchase(conn, org_id, user_id, credits, session_id)
+                    logger.info("Stripe: credited %d to org %d (session=%s)", credits, org_id, session_id)
+                elif user_id:
+                    credit_from_purchase(conn, user_id, credits, session_id)
+                    logger.info("Stripe: credited %d to user %d (session=%s)", credits, user_id, session_id)
             finally:
                 conn.close()
     return {"received": True}
+
+
+# ─────────────────────────────────────────────
+# Organization billing (Phase 7)
+# ─────────────────────────────────────────────
+
+def get_org_balance(conn: sqlite3.Connection, org_id: int) -> dict:
+    row = conn.execute("SELECT balance FROM org_credits WHERE org_id=?", (org_id,)).fetchone()
+    return {"org_id": org_id, "balance": row["balance"] if row else 0}
+
+
+def _ensure_org_credits(conn: sqlite3.Connection, org_id: int) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO org_credits (org_id, balance) VALUES (?,0)",
+        (org_id,),
+    )
+
+
+def debit_org_credits(conn: sqlite3.Connection, org_id: int, user_id: int,
+                      amount: int, description: str,
+                      challenge_id: int | None = None) -> bool:
+    """Debit credits from org pool. Returns False if insufficient balance."""
+    _ensure_org_credits(conn, org_id)
+    row = conn.execute("SELECT balance FROM org_credits WHERE org_id=?", (org_id,)).fetchone()
+    if (row["balance"] if row else 0) < amount:
+        return False
+    with conn:
+        conn.execute(
+            "UPDATE org_credits SET balance = balance - ?, last_updated = datetime('now') WHERE org_id=?",
+            (amount, org_id),
+        )
+        conn.execute(
+            """INSERT INTO org_credit_transactions (org_id, user_id, amount, type, description, challenge_id)
+               VALUES (?,?,?,?,?,?)""",
+            (org_id, user_id, -amount, "test_charge", description, challenge_id),
+        )
+        conn.commit()
+    return True
+
+
+def credit_org_from_purchase(conn: sqlite3.Connection, org_id: int,
+                             user_id: int, amount: int,
+                             stripe_session_id: str) -> None:
+    _ensure_org_credits(conn, org_id)
+    with conn:
+        conn.execute(
+            "UPDATE org_credits SET balance = balance + ?, last_updated = datetime('now') WHERE org_id=?",
+            (amount, org_id),
+        )
+        conn.execute(
+            """INSERT INTO org_credit_transactions (org_id, user_id, amount, type, description, stripe_session_id)
+               VALUES (?,?,?,?,?,?)""",
+            (org_id, user_id, amount, "purchase", f"Purchased {amount} credits", stripe_session_id),
+        )
+        conn.commit()
+
+
+def transfer_credits_to_org(conn: sqlite3.Connection, user_id: int,
+                            org_id: int, amount: int) -> None:
+    """Transfer personal credits to org pool."""
+    if amount <= 0:
+        raise HTTPException(400, "Amount must be positive")
+    _ensure_user_credits(conn, user_id)
+    _ensure_org_credits(conn, org_id)
+    balance = get_balance(conn, user_id)
+    if balance < amount:
+        raise HTTPException(400, f"Insufficient personal credits (have {balance}, need {amount})")
+    with conn:
+        # Debit user
+        conn.execute(
+            "UPDATE user_credits SET balance = balance - ?, last_updated = datetime('now') WHERE user_id=?",
+            (amount, user_id),
+        )
+        conn.execute(
+            """INSERT INTO credit_transactions (user_id, amount, type, description)
+               VALUES (?,?,?,?)""",
+            (user_id, -amount, "test_charge", f"Transferred {amount} credits to organization"),
+        )
+        # Credit org
+        conn.execute(
+            "UPDATE org_credits SET balance = balance + ?, last_updated = datetime('now') WHERE org_id=?",
+            (amount, org_id),
+        )
+        conn.execute(
+            """INSERT INTO org_credit_transactions (org_id, user_id, amount, type, description)
+               VALUES (?,?,?,?,?)""",
+            (org_id, user_id, amount, "transfer_in", f"Transfer from user {user_id}"),
+        )
+        conn.commit()
+
+
+def create_org_checkout_session(conn: sqlite3.Connection, org_id: int,
+                                user_id: int, pack_id: int) -> dict:
+    """Create Stripe Checkout for org credit purchase. Returns checkout URL."""
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(500, "Stripe is not configured")
+    stripe = _get_stripe()
+    pack = conn.execute("SELECT * FROM credit_packs WHERE id=? AND active=1", (pack_id,)).fetchone()
+    if not pack:
+        raise HTTPException(404, "Credit pack not found")
+
+    from os import environ
+    base_url = environ.get("APP_BASE_URL", "http://localhost:8000")
+
+    session = stripe.checkout.Session.create(
+        payment_method_types=["card"],
+        line_items=[{
+            "price_data": {
+                "currency": "usd",
+                "product_data": {"name": f"OGAI Org Credits — {pack['name']} ({pack['credits']} credits)"},
+                "unit_amount": pack["price_cents"],
+            },
+            "quantity": 1,
+        }],
+        mode="payment",
+        success_url=f"{base_url}/org/{org_id}?tab=billing&status=success",
+        cancel_url=f"{base_url}/org/{org_id}?tab=billing&status=cancelled",
+        metadata={
+            "user_id": str(user_id),
+            "org_id": str(org_id),
+            "pack_id": str(pack_id),
+            "credits": str(pack["credits"]),
+        },
+    )
+    return {"checkout_url": session.url}
+
+
+def list_org_transactions(conn: sqlite3.Connection, org_id: int,
+                          limit: int = 50) -> list[dict]:
+    rows = conn.execute(
+        """SELECT oct.id, oct.user_id, oct.amount, oct.type, oct.description,
+                  oct.challenge_id, oct.created_at, u.display_name AS user_name
+           FROM org_credit_transactions oct
+           LEFT JOIN users u ON u.id = oct.user_id
+           WHERE oct.org_id=?
+           ORDER BY oct.created_at DESC LIMIT ?""",
+        (org_id, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
