@@ -1455,10 +1455,23 @@ def api_get_challenge(cid: int, rubricgen_session: str | None = Cookie(default=N
             registered_model = _get_rm(conn, ch_dict["registered_model_id"])
         except HTTPException:
             registered_model = None
+    # Enrich with agent skill details (before closing conn)
+    generator_skill_detail = None
+    judge_skill_detail = None
+    if ch_dict.get("generator_skill_id"):
+        gs = conn.execute("SELECT version, avg_performance, times_used FROM agent_skills WHERE id=?",
+                          (ch_dict["generator_skill_id"],)).fetchone()
+        generator_skill_detail = dict(gs) if gs else None
+    if ch_dict.get("judge_skill_id"):
+        js = conn.execute("SELECT version, avg_performance, times_used FROM agent_skills WHERE id=?",
+                          (ch_dict["judge_skill_id"],)).fetchone()
+        judge_skill_detail = dict(js) if js else None
     conn.close()
 
     result: dict = dict(challenge)
     result["project"] = dict(project) if project else None
+    result["generator_skill"] = generator_skill_detail
+    result["judge_skill"] = judge_skill_detail
     result["registered_model"] = registered_model
     result["is_owner"] = (ch_dict.get("created_by") == user["id"])
     result["papers"] = [dict(p) for p in papers]
@@ -1483,17 +1496,6 @@ def api_get_challenge(cid: int, rubricgen_session: str | None = Cookie(default=N
     else:
         result["rubric"] = None
 
-    # Enrich with agent skill details
-    if result.get("generator_skill_id"):
-        gs = conn.execute("SELECT version, avg_performance, times_used FROM agent_skills WHERE id=?",
-                          (result["generator_skill_id"],)).fetchone()
-        result["generator_skill"] = dict(gs) if gs else None
-    if result.get("judge_skill_id"):
-        js = conn.execute("SELECT version, avg_performance, times_used FROM agent_skills WHERE id=?",
-                          (result["judge_skill_id"],)).fetchone()
-        result["judge_skill"] = dict(js) if js else None
-
-    conn.close()
     return result
 
 
