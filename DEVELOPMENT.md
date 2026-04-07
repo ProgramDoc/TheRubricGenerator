@@ -6,16 +6,17 @@
 
 ---
 
-## Current State (Phase 8 + Search Complete - April 2026)
+## Current State (April 7, 2026)
 
 ### Codebase Summary
 
 | Component | Files | Lines |
 |-----------|-------|-------|
-| `main.py` | 1 | ~3,850 |
-| `backend/` modules | 18 | ~4,985 |
-| `frontend/` pages | 17 | ~6,760 |
-| **Total** | **36** | **~15,595** |
+| `main.py` | 1 | ~4,500 |
+| `backend/` modules | 19 | ~5,400 |
+| `frontend/` pages | 18 | ~7,500 |
+| `tests/` | 3 | ~250 |
+| **Total** | **41** | **~17,650** |
 
 ### What's Live
 
@@ -48,6 +49,14 @@
 - **Community library:** Publish, browse, search, fork, and rate (1-5 stars) rubric templates
 - **Ground truth annotations:** Import expert answers from The AI Researcher Annotator, compare AI judge accuracy to human experts
 - **Literature search:** AI-powered multi-database search with chatbot strategist, PICO extraction, PubMed/Europe PMC full search, link-outs for Scholar/JSTOR/WoS/ScienceDirect/Wiley/OVID, import results as papers, RIS/BibTeX export
+- **Membership plans:** Free (20 PDFs), Pro ($29/mo, 500 PDFs, 1000 credits), Enterprise ($99/mo, unlimited, 5000 credits) via Stripe subscriptions
+- **Platform API:** User API keys (`rg_user_xxx`) authenticate all endpoints via `X-API-Key` header. Developers page with key management + full endpoint docs
+- **Challenge improvements:** Inline PDF upload, 5 questions per PDF (batched for large sets), cost estimation + credit enforcement, unique run IDs, AI Brain Window with real-time progress events, cancel/delete, per-question speed metrics, paper removal
+- **Enhanced Obsidian notes:** Run ID, user info, cost breakdown, generator/judge agent state, experiment history
+- **Rebranded:** "The AI Researcher" (no OGAI/UCLA/INOVAi references)
+- **Nav restructured:** Benchmark Lab dropdown (Challenges + Leaderboard), Settings gear (Billing + Preferences), Developers tab, user display name
+- **Unit tests:** pytest suite for Competition API (16 test cases covering full model lifecycle)
+- **Daily scheduler fix:** Removed restrictive OA filter, MeSH-based queries, broad PubMed search → rank by citations → top 10
 
 ---
 
@@ -207,6 +216,31 @@ The Obsidian vault is a **write-only local directory** configured via `OBSIDIAN_
 
 ---
 
+## Testing
+
+### Running Tests
+
+```bash
+pip install -r requirements.txt
+pytest tests/ -v
+```
+
+### Test Suite: `tests/test_compete_api.py`
+
+16 test cases covering the full Competition API lifecycle:
+- Model registration (create, duplicate name rejection)
+- Daily opt-in and admin approval flow
+- Competition API auth (valid key, invalid key, missing key, unapproved model)
+- Question fetching (verify ideal answers stripped)
+- Answer submission (valid, without slot, empty responses)
+- Results retrieval
+- API key regeneration (old key invalidated)
+- User API key auth (`X-API-Key` header on platform endpoints)
+
+Tests use FastAPI's TestClient with in-memory SQLite — no external API calls.
+
+---
+
 ## Architecture Notes
 
 ### Why Two Agents?
@@ -245,7 +279,7 @@ Write-only from the backend:
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `main.py` | ~3,850 | App entry, routes, auth, config, lifespan, all API endpoints |
+| `main.py` | ~4,500 | App entry, routes, auth (cookie + API key), config, all API endpoints |
 | `backend/challenges.py` | ~780 | Challenge orchestration, scoring, points, daily composition, org leaderboard |
 | `backend/self_improve.py` | ~500 | Autoresearch-style experiment loop |
 | `backend/templates.py` | ~350 | Rubric templates, community library, living stats, ground truth |
@@ -264,6 +298,9 @@ Write-only from the backend:
 | `backend/agents/participants.py` | ~142 | Frontier + custom model runner |
 | `backend/agents/generator.py` | ~83 | Rubric Generator Agent (daily composition support) |
 | `backend/agents/judge.py` | ~50 | Judge Agent + shadow regrade |
+| `backend/membership.py` | ~350 | Membership plans, Stripe subscriptions, PDF limits |
+| `tests/conftest.py` | ~120 | Test fixtures (in-memory DB, test users, challenges) |
+| `tests/test_compete_api.py` | ~200 | Competition API unit tests (16 cases) |
 
 ---
 
@@ -300,4 +337,4 @@ Write-only from the backend:
 
 ---
 
-**Last updated:** April 6, 2026
+**Last updated:** April 7, 2026

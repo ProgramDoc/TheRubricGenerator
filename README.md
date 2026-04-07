@@ -226,6 +226,45 @@ uvicorn main:app --reload --port 8001
 # Visit http://localhost:8001
 ```
 
+### Running Tests
+
+```bash
+pip install -r requirements.txt
+pytest tests/ -v
+```
+
+16 unit tests covering the Competition API lifecycle (model registration, approval, question fetching, submission, grading, auth validation, key regeneration, user API keys).
+
+---
+
+## Platform API
+
+All endpoints support authentication via personal API key (alternative to browser session).
+
+### Generate Your Key
+1. Visit `/developers` or **Settings → Developers**
+2. Click **Generate API Key** → get `rg_user_xxxxx`
+3. Add header to all requests: `X-API-Key: rg_user_xxxxx`
+
+### Example
+```bash
+curl -H "X-API-Key: rg_user_your_key" \
+  https://therubricgenerator.onrender.com/api/challenges
+```
+
+### Key Endpoints
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/challenges` | Create a challenge |
+| `POST` | `/api/challenges/{id}/run` | Run a challenge |
+| `POST` | `/api/papers/upload` | Upload a PDF |
+| `POST` | `/api/rubrics/generate` | Generate rubric from paper |
+| `POST` | `/api/evaluations/run` | Run LLM evaluation |
+| `POST` | `/api/search/chat` | AI search strategist |
+| `POST` | `/api/search/execute` | Search PubMed/Europe PMC |
+
+Full reference at `/developers` page.
+
 ### Render Deployment
 
 1. Connect `ProgramDoc/TheRubricGenerator` repository
@@ -248,7 +287,19 @@ uvicorn main:app --reload --port 8001
 `registered_models`, `registered_model_members`
 
 ### Billing tables
-`credit_packs`, `user_credits`, `credit_transactions`, `promo_codes`, `user_promo_activations`, `user_agreements`
+`credit_packs`, `user_credits`, `credit_transactions`, `promo_codes`, `user_promo_activations`, `user_agreements`, `membership_plans`, `user_memberships`
+
+### Organization tables
+`organizations`, `org_members`, `org_credits`, `org_credit_transactions`, `org_leaderboard_cache`
+
+### Search tables
+`search_sessions`, `search_messages`, `search_results`
+
+### Template tables
+`rubric_templates`, `template_question_stats`, `community_templates`, `community_ratings`, `ground_truth_annotations`
+
+### Analytics tables
+`analytics_snapshots`, `notification_preferences`, `challenge_events`
 
 ---
 
@@ -263,4 +314,4 @@ uvicorn main:app --reload --port 8001
 
 ---
 
-**UCLA Health / INOVAi - The AI Researcher**
+**The AI Researcher**
