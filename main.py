@@ -1334,31 +1334,34 @@ def api_run_challenge(cid: int, body: RunChallengePayload | None = None,
 
         estimate = bill.estimate_challenge_cost(model_ids, paper_count, conn)
         total_cost = estimate["total"]
+        is_admin = user.get("role") == "admin"
 
-        # Check balance
-        balance = bill.get_balance(conn, user["id"])
-        if balance < total_cost:
-            raise HTTPException(402, {
-                "detail": "Insufficient credits",
-                "estimate": estimate,
-                "balance": balance,
-            })
+        # Admins bypass credit checks (for testing and platform management)
+        if not is_admin:
+            # Check balance
+            balance = bill.get_balance(conn, user["id"])
+            if balance < total_cost:
+                raise HTTPException(402, {
+                    "detail": "Insufficient credits",
+                    "estimate": estimate,
+                    "balance": balance,
+                })
 
-        # Require approval if cost > 50 credits ($5) or user has <= 50 credits
-        APPROVAL_THRESHOLD = 50
-        if not approved and (total_cost > APPROVAL_THRESHOLD or balance <= APPROVAL_THRESHOLD):
-            return JSONResponse(status_code=402, content={
-                "approval_required": True,
-                "estimate": estimate,
-                "balance": balance,
-                "message": f"This challenge will cost approximately {total_cost} credits. Your balance is {balance} credits.",
-            })
+            # Require approval if cost > 50 credits ($5) or user has <= 50 credits
+            APPROVAL_THRESHOLD = 50
+            if not approved and (total_cost > APPROVAL_THRESHOLD or balance <= APPROVAL_THRESHOLD):
+                return JSONResponse(status_code=402, content={
+                    "approval_required": True,
+                    "estimate": estimate,
+                    "balance": balance,
+                    "message": f"This challenge will cost approximately {total_cost} credits. Your balance is {balance} credits.",
+                })
 
-        # Debit credits before running
-        success = bill.debit_credits(conn, user["id"], total_cost,
-                                     f"Challenge #{cid} ({row['title']})", cid)
-        if not success:
-            raise HTTPException(402, "Failed to debit credits — insufficient balance")
+            # Debit credits before running
+            success = bill.debit_credits(conn, user["id"], total_cost,
+                                         f"Challenge #{cid} ({row['title']})", cid)
+            if not success:
+                raise HTTPException(402, "Failed to debit credits — insufficient balance")
 
         # Store cost estimate on challenge
         with conn:
