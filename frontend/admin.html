@@ -124,6 +124,25 @@ tbody tr:last-child td { border-bottom: none; }
   display: none;
 }
 .error-banner.show { display: block; }
+.topbar nav { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.topbar nav a { font-family: inherit; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); padding: 6px 12px; border-radius: 5px; text-decoration: none; }
+.topbar nav a:hover { background: rgba(255,255,255,.08); color: #fff; }
+.topbar nav a.active { background: rgba(255,255,255,.15); color: #fff; }
+.topbar .user-badge { margin-left: 14px; padding: 4px 10px; background: rgba(255,255,255,.1); border-radius: 4px; font-size: 11px; color: rgba(255,255,255,.85); }
+.topbar .signout-btn { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); padding: 6px 12px; border-radius: 5px; font-family: inherit; font-size: 11px; font-weight: 600; cursor: pointer; margin-left: 10px; }
+.nav-dropdown { position: relative; display: inline-block; }
+.nav-dropdown > a { cursor: default; }
+.nav-dropdown-menu { display: none; position: absolute; top: 100%; left: 0; min-width: 160px; background: var(--navy); border: 1px solid rgba(255,255,255,.15); border-radius: 6px; padding: 4px 0; margin-top: 4px; z-index: 50; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+.nav-dropdown:hover .nav-dropdown-menu { display: block; }
+.nav-dropdown-menu a { display: block; padding: 8px 16px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); text-decoration: none; border-radius: 0; }
+.nav-dropdown-menu a:hover { background: rgba(255,255,255,.08); color: #fff; }
+.nav-settings { position: relative; display: inline-block; }
+.nav-settings .settings-icon { background: none; border: none; color: rgba(255,255,255,.7); font-size: 16px; cursor: pointer; padding: 4px 8px; }
+.nav-settings .settings-icon:hover { color: #fff; }
+.nav-settings-menu { display: none; position: absolute; top: 100%; right: 0; min-width: 150px; background: var(--navy); border: 1px solid rgba(255,255,255,.15); border-radius: 6px; padding: 4px 0; margin-top: 4px; z-index: 50; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+.nav-settings:hover .nav-settings-menu { display: block; }
+.nav-settings-menu a { display: block; padding: 8px 16px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); text-decoration: none; }
+.nav-settings-menu a:hover { background: rgba(255,255,255,.08); color: #fff; }
 </style>
 </head>
 <body>
@@ -133,11 +152,34 @@ tbody tr:last-child td { border-bottom: none; }
     The AI <span>Researcher</span>
     <span class="badge">Admin</span>
   </div>
-  <div class="actions">
-    <a href="/admin/daily">Daily Scheduler</a>
-    <a href="/">Main App</a>
-    <button onclick="logout()">Sign Out</button>
-  </div>
+  <nav>
+    <a href="/">Dashboard</a>
+    <div class="nav-dropdown">
+      <a href="/challenges">Benchmark Lab ▾</a>
+      <div class="nav-dropdown-menu">
+        <a href="/challenges">Challenges</a>
+        <a href="/leaderboard">Leaderboard</a>
+      </div>
+    </div>
+    <a href="/public-tests">Public Tests</a>
+    <a href="/models">Models</a>
+    <a href="/leaderboard">Leaderboard</a>
+    <a href="/analytics">Analytics</a>
+    <a href="/library">Library</a>
+    <a href="/search">Search</a>
+    <a href="/papers">Papers</a>
+    <a href="/api/sso/annotator">PDF Viewer</a>
+    <a href="/admin" id="nav-admin" class="active" style="display:none">Admin</a>
+    <span class="user-badge" id="user-badge">—</span>
+    <div class="nav-settings">
+      <button class="settings-icon" title="Settings">⚙</button>
+      <div class="nav-settings-menu">
+        <a href="/billing">Billing</a>
+        <a href="/billing?tab=preferences">Preferences</a>
+      </div>
+    </div>
+    <button class="signout-btn" onclick="logout()">Sign Out</button>
+  </nav>
 </div>
 
 <div class="container">
@@ -333,6 +375,17 @@ async function rejectModel(id) {
   if (res.ok) { loadPendingModels(); alert('Model rejected.'); }
 }
 
+// Show admin link and user badge
+(async () => {
+  try {
+    const r = await fetch('/api/auth/me');
+    if (r.ok) {
+      const me = await r.json();
+      document.getElementById('user-badge').textContent = me.display_name || me.email;
+      if (me.role === 'admin') document.getElementById('nav-admin').style.display = '';
+    }
+  } catch {}
+})();
 loadUsers();
 loadPendingModels();
 </script>

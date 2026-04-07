@@ -94,6 +94,19 @@ tbody tr:last-child td { border-bottom: none; }
 
 .error-box { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; padding: 10px 14px; border-radius: 6px; font-size: 12px; margin-bottom: 14px; display: none; }
 .empty { padding: 30px; text-align: center; color: var(--muted); font-size: 12px; }
+.nav-dropdown { position: relative; display: inline-block; }
+.nav-dropdown > a { cursor: default; }
+.nav-dropdown-menu { display: none; position: absolute; top: 100%; left: 0; min-width: 160px; background: var(--navy); border: 1px solid rgba(255,255,255,.15); border-radius: 6px; padding: 4px 0; margin-top: 4px; z-index: 50; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+.nav-dropdown:hover .nav-dropdown-menu { display: block; }
+.nav-dropdown-menu a { display: block; padding: 8px 16px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); text-decoration: none; border-radius: 0; }
+.nav-dropdown-menu a:hover { background: rgba(255,255,255,.08); color: #fff; }
+.nav-settings { position: relative; display: inline-block; }
+.nav-settings .settings-icon { background: none; border: none; color: rgba(255,255,255,.7); font-size: 16px; cursor: pointer; padding: 4px 8px; }
+.nav-settings .settings-icon:hover { color: #fff; }
+.nav-settings-menu { display: none; position: absolute; top: 100%; right: 0; min-width: 150px; background: var(--navy); border: 1px solid rgba(255,255,255,.15); border-radius: 6px; padding: 4px 0; margin-top: 4px; z-index: 50; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+.nav-settings:hover .nav-settings-menu { display: block; }
+.nav-settings-menu a { display: block; padding: 8px 16px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); text-decoration: none; }
+.nav-settings-menu a:hover { background: rgba(255,255,255,.08); color: #fff; }
 
 /* AI Brain Window */
 .brain-header { padding: 14px 16px; border-bottom: 1px solid rgba(255,255,255,.1); flex-shrink: 0; }
@@ -126,18 +139,30 @@ tbody tr:last-child td { border-bottom: none; }
   <div class="brand">The AI <span>Researcher</span></div>
   <nav>
     <a href="/">Dashboard</a>
-    <a href="/challenges" class="active">Challenges</a>
+    <div class="nav-dropdown">
+      <a href="/challenges" class="active">Benchmark Lab ▾</a>
+      <div class="nav-dropdown-menu">
+        <a href="/challenges">Challenges</a>
+        <a href="/leaderboard">Leaderboard</a>
+      </div>
+    </div>
     <a href="/public-tests">Public Tests</a>
     <a href="/models">Models</a>
     <a href="/leaderboard">Leaderboard</a>
     <a href="/analytics">Analytics</a>
     <a href="/library">Library</a>
     <a href="/search">Search</a>
-    <a href="/billing">Billing</a>
     <a href="/papers">Papers</a>
     <a href="/api/sso/annotator">PDF Viewer</a>
     <a href="/admin" id="nav-admin" style="display:none">Admin</a>
     <span class="user-badge" id="user-badge">—</span>
+    <div class="nav-settings">
+      <button class="settings-icon" title="Settings">⚙</button>
+      <div class="nav-settings-menu">
+        <a href="/billing">Billing</a>
+        <a href="/billing?tab=preferences">Preferences</a>
+      </div>
+    </div>
     <button class="signout-btn" onclick="signOut()">Sign Out</button>
   </nav>
 </div>
