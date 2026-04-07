@@ -165,10 +165,15 @@ def score_model_run(grades: dict, answer_time_ms: int) -> dict:
     max_s = float(grades.get("max_score", 0) or 0)
     accuracy = (total / max_s) if max_s > 0 else 0.0
     sb = speed_bonus(answer_time_ms, target_seconds=120)
+    # Per-question median speed (ms per question)
+    q_count = len(grades.get("grades", []))
+    per_question_ms = round(answer_time_ms / q_count) if q_count > 0 else answer_time_ms
     return {
         "accuracy": round(accuracy, 4),
         "speed_bonus": round(sb, 4),
         "total_score": round(accuracy * sb, 4),
+        "per_question_ms": per_question_ms,
+        "question_count": q_count,
     }
 
 
@@ -343,17 +348,49 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
         if not papers_b64:
             raise RuntimeError("No valid papers for challenge")
 
-        # 2. Generator agent
+        # 2. Generator agent — batch PDFs in groups of 3 to avoid context window limits
         gen_skill = get_active_skill(conn, "generator")
         is_daily = (challenge.get("kind") == "daily")
-        rubric, gen_ms = run_generator_agent(
-            papers_b64,
-            challenge.get("theme") or "",
-            gen_skill,
-            difficulty=challenge.get("difficulty"),
-            daily_composition=DAILY_COMPOSITION if is_daily else None,
-            questions_per_paper=5 if not is_daily else 5,
-        )
+
+        BATCH_SIZE = 3  # Max PDFs per generator call to stay within context limits
+        if is_daily or len(papers_b64) <= BATCH_SIZE:
+            # Small set or daily: single call
+            rubric, gen_ms = run_generator_agent(
+                papers_b64,
+                challenge.get("theme") or "",
+                gen_skill,
+                difficulty=challenge.get("difficulty"),
+                daily_composition=DAILY_COMPOSITION if is_daily else None,
+                questions_per_paper=5,
+            )
+        else:
+            # Large set: batch into groups, merge rubrics
+            logger.info("Batching %d papers in groups of %d", len(papers_b64), BATCH_SIZE)
+            all_questions = []
+            total_gen_ms = 0
+            q_counter = 0
+            for i in range(0, len(papers_b64), BATCH_SIZE):
+                batch = papers_b64[i:i + BATCH_SIZE]
+                batch_rubric, batch_ms = run_generator_agent(
+                    batch,
+                    challenge.get("theme") or "",
+                    gen_skill,
+                    difficulty=challenge.get("difficulty"),
+                    questions_per_paper=5,
+                )
+                total_gen_ms += batch_ms
+                # Re-number question IDs to avoid collisions
+                for q in batch_rubric.get("questions", []):
+                    q_counter += 1
+                    q["id"] = f"q{q_counter}"
+                    all_questions.append(q)
+            rubric = {
+                "rubric_type": "benchmark",
+                "theme": challenge.get("theme") or "",
+                "questions": all_questions,
+                "total_max_points": sum(q.get("max_points", 1) for q in all_questions),
+            }
+            gen_ms = total_gen_ms
 
         with conn:
             conn.execute(

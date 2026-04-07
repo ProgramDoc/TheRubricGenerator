@@ -61,7 +61,7 @@ def call_anthropic(messages: list, system: str, max_tokens: int = 4096,
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=180) as resp:
+        with urllib.request.urlopen(req, timeout=300) as resp:
             data = json.loads(resp.read())
         return data["content"][0]["text"]
     except urllib.error.HTTPError as e:
@@ -95,7 +95,7 @@ def call_gemini(system: str, user_text: str, model: str, pdf_b64: str | None = N
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=180) as resp:
+        with urllib.request.urlopen(req, timeout=300) as resp:
             data = json.loads(resp.read())
         candidates = data.get("candidates", [])
         if not candidates:
@@ -144,7 +144,7 @@ def call_openai_compatible(base_url: str, api_key: str, model: str,
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=180) as resp:
+        with urllib.request.urlopen(req, timeout=300) as resp:
             data = json.loads(resp.read())
         return data["choices"][0]["message"]["content"]
     except urllib.error.HTTPError as e:

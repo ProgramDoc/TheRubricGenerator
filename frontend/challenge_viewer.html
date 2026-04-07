@@ -106,7 +106,7 @@ tbody tr:last-child td { border-bottom: none; }
     <a href="/search">Search</a>
     <a href="/billing">Billing</a>
     <a href="/papers">Papers</a>
-    <a href="/api/sso/annotator">Annotator</a>
+    <a href="/api/sso/annotator">PDF Viewer</a>
     <a href="/admin" id="nav-admin" style="display:none">Admin</a>
     <span class="user-badge" id="user-badge">—</span>
     <button class="signout-btn" onclick="signOut()">Sign Out</button>
@@ -253,12 +253,13 @@ async function loadChallenge() {
         <td class="num">${fmtNum(p.speed_bonus, 3)}</td>
         <td class="num">${fmtNum(p.total_score, 3)}</td>
         <td class="num">${p.answer_time_ms ? (p.answer_time_ms / 1000).toFixed(1) + 's' : '—'}</td>
+        <td class="num">${p.answer_time_ms && p.grade_data?.grades?.length ? ((p.answer_time_ms / p.grade_data.grades.length) / 1000).toFixed(1) + 's/q' : '—'}</td>
         <td class="num">${p.judge_time_ms ? (p.judge_time_ms / 1000).toFixed(1) + 's' : '—'}</td>
       </tr>
     `).join('');
     document.getElementById('scores-body').innerHTML = `
       <table>
-        <thead><tr><th>Rank</th><th>Model</th><th>Status</th><th style="text-align:right">Accuracy</th><th style="text-align:right">Speed</th><th style="text-align:right">Total</th><th style="text-align:right">Answer</th><th style="text-align:right">Judge</th></tr></thead>
+        <thead><tr><th>Rank</th><th>Model</th><th>Status</th><th style="text-align:right">Accuracy</th><th style="text-align:right">Speed</th><th style="text-align:right">Total</th><th style="text-align:right">Answer</th><th style="text-align:right">Per Q</th><th style="text-align:right">Judge</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     `;

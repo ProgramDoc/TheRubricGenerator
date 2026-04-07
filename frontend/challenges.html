@@ -95,7 +95,7 @@ tbody tr:last-child td { border-bottom: none; }
     <a href="/search">Search</a>
     <a href="/billing">Billing</a>
     <a href="/papers">Papers</a>
-    <a href="/api/sso/annotator">Annotator</a>
+    <a href="/api/sso/annotator">PDF Viewer</a>
     <a href="/admin" id="nav-admin" style="display:none">Admin</a>
     <span class="user-badge" id="user-badge">—</span>
     <button class="signout-btn" onclick="signOut()">Sign Out</button>
@@ -329,7 +329,7 @@ async function loadChallenges() {
   }
   const rows = all.map(c => `
     <tr onclick="location.href='/challenges/${c.id}'">
-      <td><strong>${escapeHtml(c.title)}</strong><div style="color:var(--muted);font-size:11px;margin-top:2px;">${escapeHtml(c.theme || '')}</div></td>
+      <td><strong>${escapeHtml(c.title)}</strong><div style="color:var(--muted);font-size:11px;margin-top:2px;">${escapeHtml(c.theme || '')}${c.run_id ? ' · <code style="font-size:9px;background:#f0f4ff;padding:1px 4px;border-radius:2px">' + escapeHtml(c.run_id) + '</code>' : ''}</div></td>
       <td><span class="status status-${c.status}">${c.status}</span></td>
       <td>${c.paper_count} papers</td>
       <td>${c.participant_count} models</td>
@@ -518,16 +518,21 @@ async function handleFileSelect(files) {
 
 function addPaperToList(paperId, filename) {
   const list = document.getElementById('paper-list');
-  // Remove "Loading..." empty state
   const empty = list.querySelector('.empty');
   if (empty) empty.remove();
-  // Check if already in list
   if (list.querySelector(`input[value="${paperId}"]`)) return;
   const div = document.createElement('div');
   div.className = 'paper-item';
+  div.dataset.paperId = paperId;
   div.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 0;font-size:12px';
-  div.innerHTML = `<input type="checkbox" value="${paperId}" checked onchange="updateCostEstimate()"> ${filename.replace(/</g,'&lt;')}`;
+  div.innerHTML = `<input type="checkbox" value="${paperId}" checked onchange="updateCostEstimate()"> <span style="flex:1">${filename.replace(/</g,'&lt;')}</span> <button onclick="removePaper(this, ${paperId})" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0 4px;font-weight:700" title="Remove">&times;</button>`;
   list.appendChild(div);
+}
+
+function removePaper(btn, paperId) {
+  const item = btn.closest('.paper-item');
+  if (item) item.remove();
+  updateCostEstimate();
 }
 
 // ── Real-time cost estimate ──

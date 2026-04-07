@@ -6,7 +6,7 @@ from ..helpers import call_anthropic, parse_json_response, time_ms
 
 
 def run_judge_agent(rubric: dict, model_answers: dict, skill: dict,
-                    max_tokens: int = 4096) -> tuple[dict, int]:
+                    max_tokens: int = 16384) -> tuple[dict, int]:
     """
     rubric: the full rubric dict (with questions[].ideal_answer, scoring_criteria, max_points)
     model_answers: dict with shape {"responses": [{"question_id": "q1", "answer": "..."}]}

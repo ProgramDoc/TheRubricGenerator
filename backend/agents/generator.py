@@ -9,7 +9,7 @@ def run_generator_agent(papers_b64: list[dict], theme: str, skill: dict,
                         difficulty: str | None = None,
                         daily_composition: dict | None = None,
                         questions_per_paper: int = 5,
-                        max_tokens: int = 4096) -> tuple[dict, int]:
+                        max_tokens: int = 16384) -> tuple[dict, int]:
     """
     papers_b64: list of {filename, b64} — the PDFs in the challenge
     theme: the challenge theme (e.g. "RCT methodology in oncology")

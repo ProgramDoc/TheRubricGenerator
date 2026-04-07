@@ -44,7 +44,7 @@ def _build_question_block(rubric: dict) -> str:
 
 
 def run_participant_model(model_id: str, rubric: dict, papers_b64: list[dict],
-                          max_tokens: int = 4096,
+                          max_tokens: int = 16384,
                           custom_base_url: str | None = None,
                           custom_api_key: str | None = None) -> tuple[dict, int]:
     """
