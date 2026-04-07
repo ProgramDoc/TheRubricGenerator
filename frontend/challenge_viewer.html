@@ -219,6 +219,7 @@ const challengeId = parseInt(location.pathname.split('/').pop(), 10);
 let pollTimer = null;
 let currentUser = null;
 let challengeData = null;
+let openQuestions = new Set(); // Track which questions are expanded
 
 async function signOut() { await fetch('/api/auth/logout', { method: 'POST' }); location.href = '/login'; }
 function escapeHtml(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -300,7 +301,8 @@ async function loadChallenge() {
         const sc=grade&&grade.score===grade.max_points?'perfect':(grade&&grade.score===0?'zero':'');
         return`<div class="answer-card"><div class="answer-header"><div class="answer-model">${escapeHtml(p.model_id)}</div><div class="answer-score ${sc}">${grade?grade.score:'—'}/${q.max_points||1}</div></div><div class="answer-text">${escapeHtml(ans?ans.answer:'(no answer)')}</div>${grade&&grade.reasoning?`<div class="answer-reasoning">${escapeHtml(grade.reasoning)}</div>`:''}</div>`;
       }).join('');
-      return`<div class="question-block"><div class="question-header" onclick="this.nextElementSibling.classList.toggle('open')"><div><span class="q-title">${escapeHtml(q.id)}. ${escapeHtml(q.question.slice(0,80))}${q.question.length>80?'…':''}</span><span class="q-domain">${escapeHtml(q.domain||'')}</span>${q.paper_ref?`<span style="font-size:9px;color:var(--muted);margin-left:6px">📄 ${escapeHtml(q.paper_ref)}</span>`:''}</div><span class="q-maxpts">${q.max_points||1} pts</span></div><div class="question-body ${i===0?'open':''}"><div class="q-section"><div class="q-section-label">Question</div><div class="q-text">${escapeHtml(q.question)}</div></div><div class="q-section"><div class="q-section-label">Ideal Answer</div><div class="q-ideal">${escapeHtml(q.ideal_answer||'')}</div></div><div class="q-section"><div class="q-section-label">Scoring Criteria</div><div class="q-criteria">${escapeHtml(q.scoring_criteria||'')}</div></div><div class="q-section-label">Model Responses</div><div class="answers-grid">${answers}</div></div></div>`;
+      const isOpen = openQuestions.has(q.id) || (i===0 && openQuestions.size===0);
+      return`<div class="question-block"><div class="question-header" onclick="toggleQuestion('${escapeHtml(q.id)}')"><div><span class="q-title">${escapeHtml(q.id)}. ${escapeHtml(q.question.slice(0,80))}${q.question.length>80?'…':''}</span><span class="q-domain">${escapeHtml(q.domain||'')}</span>${q.paper_ref?`<span style="font-size:9px;color:var(--muted);margin-left:6px">📄 ${escapeHtml(q.paper_ref)}</span>`:''}</div><span class="q-maxpts">${q.max_points||1} pts</span></div><div class="question-body ${isOpen?'open':''}" id="qbody-${escapeHtml(q.id)}"><div class="q-section"><div class="q-section-label">Question</div><div class="q-text">${escapeHtml(q.question)}</div></div><div class="q-section"><div class="q-section-label">Ideal Answer</div><div class="q-ideal">${escapeHtml(q.ideal_answer||'')}</div></div><div class="q-section"><div class="q-section-label">Scoring Criteria</div><div class="q-criteria">${escapeHtml(q.scoring_criteria||'')}</div></div><div class="q-section-label">Model Responses</div><div class="answers-grid">${answers}</div></div></div>`;
     }).join('');
   }
 
@@ -318,6 +320,17 @@ async function loadChallenge() {
     if (pollTimer) { clearInterval(pollTimer); pollTimer=null; }
     loadEvents(); // Final load
   }
+}
+
+// ── Question toggle (persists across auto-refresh) ──
+function toggleQuestion(qid) {
+  if (openQuestions.has(qid)) {
+    openQuestions.delete(qid);
+  } else {
+    openQuestions.add(qid);
+  }
+  const el = document.getElementById('qbody-' + qid);
+  if (el) el.classList.toggle('open');
 }
 
 // ── AI Brain Window ──
