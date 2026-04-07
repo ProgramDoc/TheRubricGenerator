@@ -1,5 +1,5 @@
 """
-TheRubricGenerator — FastAPI backend
+The AI Researcher — FastAPI backend
 v1.0 — PDF upload, rubric generation (Claude), LLM evaluation (OpenAI), grading (Claude-as-judge)
 """
 
@@ -600,7 +600,7 @@ async def _lifespan(app: FastAPI):
             pass
 
 
-app = FastAPI(title="TheRubricGenerator", lifespan=_lifespan)
+app = FastAPI(title="The AI Researcher", lifespan=_lifespan)
 
 
 # ─────────────────────────────────────────────
@@ -1013,14 +1013,14 @@ def forgot_password(body: ForgotPasswordPayload):
         conn.close()
 
         reset_url = f"{APP_BASE_URL.rstrip('/')}/reset-password?token={token}"
-        subject   = "OGAI Rubric Generator — Password Reset"
+        subject   = "The AI Researcher — Password Reset"
         msg_body  = (
             f"Hi {row['display_name']},\n\n"
             f"We received a request to reset your password. Click the link below to set a new password. "
             f"This link expires in 1 hour.\n\n"
             f"{reset_url}\n\n"
             f"If you did not request this, you can safely ignore this email.\n\n"
-            f"— OGAI Rubric Generator"
+            f"— The AI Researcher"
         )
         try:
             _send_email(email, subject, msg_body)
@@ -2502,10 +2502,10 @@ def create_project(body: ProjectCreatePayload, rubricgen_session: str | None = C
             try:
                 _send_email(
                     email,
-                    "OGAI Rubric Generator — Project shared with you",
+                    "The AI Researcher — Project shared with you",
                     f"Hi {target['display_name']},\n\n"
                     f"{user['display_name']} has shared the project \"{name}\" with you.\n\n"
-                    f"Log in to view it: {APP_BASE_URL}\n\n— OGAI Rubric Generator",
+                    f"Log in to view it: {APP_BASE_URL}\n\n— The AI Researcher",
                 )
             except Exception:
                 pass
@@ -2624,10 +2624,10 @@ def share_project(pid: int, body: ShareProjectPayload,
     try:
         _send_email(
             email,
-            "OGAI Rubric Generator — Project shared with you",
+            "The AI Researcher — Project shared with you",
             f"Hi {target['display_name']},\n\n"
             f"{user['display_name']} has shared the project \"{proj['name']}\" with you.\n\n"
-            f"Log in to view it: {APP_BASE_URL}\n\n— OGAI Rubric Generator",
+            f"Log in to view it: {APP_BASE_URL}\n\n— The AI Researcher",
         )
     except Exception:
         pass

@@ -293,7 +293,7 @@ def generate_pdf_report(
     elements = []
 
     # Title
-    elements.append(Paragraph("OGAI Benchmark Analytics Report", styles["Title"]))
+    elements.append(Paragraph("AI Researcher Benchmark Report", styles["Title"]))
     now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     elements.append(Paragraph(f"Generated: {now_str}", styles["Normal"]))
     filters_text = []

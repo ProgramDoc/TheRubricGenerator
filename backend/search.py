@@ -3,7 +3,7 @@
 Provides session-based conversational search where an AI strategist helps
 build PICO-based queries, executes searches against PubMed and Europe PMC,
 generates link-out URLs for other databases, and supports importing results
-as papers into the existing RubricGenerator system.
+as papers into the existing AI Researcher system.
 """
 
 import hashlib

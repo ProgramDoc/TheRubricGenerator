@@ -32,12 +32,12 @@ CURRENT_VERSION = "v1"
 # ─────────────────────────────────────────────
 
 MODEL_PUBLISHING_AGREEMENT = """
-# OGAI Rubric Generator — Model Publishing Agreement
+# The AI Researcher — Model Publishing Agreement
 
 **Effective Date:** Date of Acceptance
 
 This Agreement ("Agreement") is between you ("Model Owner," "you") and the
-OGAI Rubric Generator platform ("Platform," "we") operated by UCLA Health / INOVAi.
+The AI Researcher platform ("Platform," "we") operated by UCLA Health / INOVAi.
 
 ## 1. MODEL REGISTRATION
 
@@ -119,7 +119,7 @@ and agree to be bound by this Agreement.**
 """
 
 PAYMENT_AGREEMENT = """
-# OGAI Rubric Generator — Payment & Usage Agreement
+# The AI Researcher — Payment & Usage Agreement
 
 **Effective Date:** Date of Acceptance
 

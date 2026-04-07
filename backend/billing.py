@@ -287,7 +287,7 @@ def create_checkout_session(conn: sqlite3.Connection, user_id: int,
         line_items=[{
             "price_data": {
                 "currency": "usd",
-                "product_data": {"name": f"OGAI Credits — {pack['name']} ({pack['credits']} credits)"},
+                "product_data": {"name": f"AI Researcher Credits — {pack['name']} ({pack['credits']} credits)"},
                 "unit_amount": pack["price_cents"],
             },
             "quantity": 1,
@@ -458,7 +458,7 @@ def create_org_checkout_session(conn: sqlite3.Connection, org_id: int,
         line_items=[{
             "price_data": {
                 "currency": "usd",
-                "product_data": {"name": f"OGAI Org Credits — {pack['name']} ({pack['credits']} credits)"},
+                "product_data": {"name": f"AI Researcher Credits — {pack['name']} ({pack['credits']} credits)"},
                 "unit_amount": pack["price_cents"],
             },
             "quantity": 1,

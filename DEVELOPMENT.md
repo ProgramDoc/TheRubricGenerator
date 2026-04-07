@@ -1,4 +1,4 @@
-# TheRubricGenerator - Development Log
+# The AI Researcher - Development Log
 
 **Repository:** https://github.com/ProgramDoc/TheRubricGenerator
 **Platform:** FastAPI + SQLite + Static HTML frontend
@@ -32,7 +32,7 @@
 - **Billing:** Stripe prepaid credits ($10/$25/$50), per-test deduction, daily pricing ($3/day or $10/week)
 - **Promo codes:** Admin-created (free/breakeven), 48h auto-approve then admin gate
 - **Legal agreements:** Model Publishing Agreement + Payment Agreement (acceptance tracked)
-- **SSO:** Cross-app auth to OGAI Annotator via HMAC-signed tokens
+- **SSO:** Cross-app auth to The AI Researcher Annotator via HMAC-signed tokens
 - **Obsidian vault:** Persistent markdown notes per challenge + agent skill version history
 - **Password reset:** SMTP email flow with 1hr token expiry
 - **Admin dashboard:** User management, daily scheduler controls, skill improvement panel, model approval queue
@@ -46,7 +46,7 @@
 - **Multi-paper comparative rubrics:** New `comparative` rubric type for cross-paper synthesis (contradictions, methodology, population, outcomes, evidence strength)
 - **Rubric templates:** Reusable, versioned templates with living question stats (auto-flag too-easy/broken questions)
 - **Community library:** Publish, browse, search, fork, and rate (1-5 stars) rubric templates
-- **Ground truth annotations:** Import expert answers from OGAI Annotator, compare AI judge accuracy to human experts
+- **Ground truth annotations:** Import expert answers from The AI Researcher Annotator, compare AI judge accuracy to human experts
 - **Literature search:** AI-powered multi-database search with chatbot strategist, PICO extraction, PubMed/Europe PMC full search, link-outs for Scholar/JSTOR/WoS/ScienceDirect/Wiley/OVID, import results as papers, RIS/BibTeX export
 
 ---
@@ -105,7 +105,7 @@ Two-LLM evaluation platform. Claude generates rubrics from PDFs, a second LLM (o
 - Dashboard left sidebar with project folders (admin/member roles)
 - Project sharing, admin transfer, protected delete, self-removal
 - Model team `can_run` permissions with credit warning acknowledgment
-- SSO to OGAI Annotator via HMAC-signed redirect tokens
+- SSO to The AI Researcher Annotator via HMAC-signed redirect tokens
 
 ### Phase 4 - Agent Self-Improvement Loop (April 5, 2026)
 

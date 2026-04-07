@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>OGAI · Rubric Generator</title>
+<title>The AI Researcher</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
@@ -341,7 +341,7 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
 <!-- ── TOPBAR ── -->
 <div id="topbar">
   <div class="brand">
-    OGAI · <span>Rubric</span>&nbsp;Generator
+    The AI <span>Researcher</span>
   </div>
   <div class="tb-sep"></div>
   <a href="/" class="tb-btn" style="text-decoration:none;">Dashboard</a>
@@ -402,7 +402,7 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
   <div id="pdf-scroll">
     <div id="no-paper">
       <div class="hint">📐</div>
-      <strong>OGAI Rubric Generator</strong><br>
+      <strong>The AI Researcher</strong><br>
       Upload a PDF and generate an evaluation rubric.<br>
       A second LLM will answer your questions — graded by Claude.
     </div>
@@ -1283,7 +1283,7 @@ function clearAll() {
   currentRubric   = null;
   clearRubricDisplay();
   clearResults();
-  document.getElementById('pdf-scroll').innerHTML = '<div id="no-paper"><div class="hint">📐</div><strong>OGAI Rubric Generator</strong></div>';
+  document.getElementById('pdf-scroll').innerHTML = '<div id="no-paper"><div class="hint">📐</div><strong>The AI Researcher</strong></div>';
   document.getElementById('no-paper').style.display = 'block';
 }
 

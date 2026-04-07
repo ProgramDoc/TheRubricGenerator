@@ -2,7 +2,7 @@
 
 Rubric templates (reusable, versioned), community library (publish/fork/rate),
 living template stats (per-question performance tracking), and ground-truth
-annotation import from OGAI Annotator.
+annotation import from The AI Researcher Annotator.
 """
 
 import json
@@ -557,7 +557,7 @@ def import_ground_truth(conn: sqlite3.Connection,
                         annotations: list[dict],
                         rubric_id: int | None = None,
                         challenge_id: int | None = None) -> int:
-    """Import ground truth annotations from OGAI Annotator.
+    """Import ground truth annotations from The AI Researcher Annotator.
     Each annotation: {question_id, expert_answer, expert_score?, annotator_email?, annotation_id?}
     Returns count of imported annotations.
     """

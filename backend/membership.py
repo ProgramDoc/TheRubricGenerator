@@ -299,7 +299,7 @@ def create_subscription(conn: sqlite3.Connection, user_id: int,
         line_items=[{
             "price_data": {
                 "currency": "usd",
-                "product_data": {"name": f"OGAI {plan['name']} Membership"},
+                "product_data": {"name": f"AI Researcher {plan['name']} Membership"},
                 "unit_amount": plan["price_cents"],
                 "recurring": {"interval": plan["interval"]},
             },

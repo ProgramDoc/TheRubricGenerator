@@ -1,6 +1,6 @@
-# TheRubricGenerator
+# The AI Researcher
 
-**OGAI Rubric Generator - Clinical Research LLM Benchmarking Platform**
+**The AI Researcher - Clinical Research LLM Benchmarking Platform**
 
 Repository: [github.com/ProgramDoc/TheRubricGenerator](https://github.com/ProgramDoc/TheRubricGenerator)
 
@@ -8,7 +8,7 @@ Repository: [github.com/ProgramDoc/TheRubricGenerator](https://github.com/Progra
 
 ## Overview
 
-TheRubricGenerator is a platform for benchmarking frontier LLMs on clinical research comprehension. It uses a **two-agent architecture** where one Claude agent generates difficult evaluation rubrics from research papers and another Claude agent judges competing models' answers. The agents autonomously improve their own prompts using an autoresearch-style experiment loop.
+The AI Researcher is a platform for benchmarking frontier LLMs on clinical research comprehension. It uses a **two-agent architecture** where one Claude agent generates difficult evaluation rubrics from research papers and another Claude agent judges competing models' answers. The agents autonomously improve their own prompts using an autoresearch-style experiment loop.
 
 The platform supports four modes of operation:
 
@@ -257,10 +257,10 @@ uvicorn main:app --reload --port 8001
 | Repo | Description |
 |------|-------------|
 | [OGAI_Annotator](https://ogai-annotator.onrender.com) | Human annotation platform for clinical studies |
-| StudyTaxonomy | OGAI taxonomy v2.1 (33 study types) |
+| StudyTaxonomy | The AI Researcher taxonomy v2.1 (33 study types) |
 | [TheReviewer](https://github.com/ProgramDoc/TheReviewer) | Evidence reviewer interface |
-| **TheRubricGenerator** | This repository |
+| **The AI Researcher** | This repository |
 
 ---
 
-**UCLA Health / INOVAi - OGAI Research**
+**UCLA Health / INOVAi - The AI Researcher**

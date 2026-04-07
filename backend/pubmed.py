@@ -28,7 +28,7 @@ ICITE_API     = "https://icite.od.nih.gov/api/pubs"
 PMC_PDF_URL   = "https://www.ncbi.nlm.nih.gov/pmc/articles/{pmcid}/pdf/"
 
 NCBI_API_KEY = os.environ.get("NCBI_API_KEY", "")
-USER_AGENT   = "TheRubricGenerator/1.0 (mailto:tck936@mail.harvard.edu)"
+USER_AGENT   = "TheAIResearcher/1.0 (mailto:tck936@mail.harvard.edu)"
 
 # Polite throttling: 3 req/sec without key, 10 with. We sleep 0.4s (no key)
 # or 0.15s (key) between eutils calls.
