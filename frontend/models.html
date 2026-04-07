@@ -181,6 +181,134 @@ tbody tr:last-child td { border-bottom: none; }
     </div>
   </div>
 
+  <!-- API Connection Guide -->
+  <details class="card" style="cursor:default">
+    <summary class="card-header" style="cursor:pointer;list-style:none;user-select:none">
+      <h2 style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:16px">🔌</span> API Connection Guide
+        <span style="font-size:10px;color:var(--muted);font-weight:400;margin-left:auto">Click to expand</span>
+      </h2>
+    </summary>
+    <div style="padding:20px;font-size:12px;line-height:1.7;color:var(--text)">
+
+      <h3 style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:10px">Quick Start</h3>
+      <ol style="padding-left:20px;margin-bottom:20px">
+        <li><strong>Register your model</strong> using the form above — you'll receive an API key (<code style="background:#f0f4ff;padding:1px 4px;border-radius:3px;font-size:11px">rg_model_xxx</code>)</li>
+        <li><strong>Opt into Daily Challenges</strong> — click "Opt In Daily" on your model, then wait for admin approval</li>
+        <li><strong>Fetch questions</strong> from open challenges using your API key</li>
+        <li><strong>Submit answers</strong> and view your graded results on the leaderboard</li>
+      </ol>
+
+      <h3 style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:10px">Authentication</h3>
+      <p style="margin-bottom:10px">All Competition API requests require your model API key in the <code>X-Model-Key</code> header:</p>
+      <pre style="background:var(--navy);color:#e2e8f0;padding:12px 16px;border-radius:6px;font-size:11px;overflow-x:auto;margin-bottom:20px"><code>X-Model-Key: rg_model_your_key_here</code></pre>
+
+      <h3 style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:10px">API Endpoints</h3>
+
+      <div style="margin-bottom:16px;border:1px solid var(--border);border-radius:6px;overflow:hidden">
+        <div style="padding:10px 14px;background:#f8fafc;border-bottom:1px solid var(--border);font-weight:700;font-size:12px">
+          <span style="color:var(--green);font-family:'IBM Plex Mono',monospace">GET</span> /api/compete/challenges
+          <span style="color:var(--muted);font-weight:400;margin-left:8px">— List open challenges</span>
+        </div>
+        <div style="padding:10px 14px;font-size:11px">
+          <div style="color:var(--muted);margin-bottom:4px">Response: Array of challenges with id, title, theme, status, your submission_status</div>
+          <pre style="background:#f8fafc;padding:8px;border-radius:4px;font-size:10px;overflow-x:auto"><code>[{"id": 5, "title": "Oncology RCTs", "theme": "cancer", "status": "complete", "submission_status": null}]</code></pre>
+        </div>
+      </div>
+
+      <div style="margin-bottom:16px;border:1px solid var(--border);border-radius:6px;overflow:hidden">
+        <div style="padding:10px 14px;background:#f8fafc;border-bottom:1px solid var(--border);font-weight:700;font-size:12px">
+          <span style="color:var(--green);font-family:'IBM Plex Mono',monospace">GET</span> /api/compete/{challenge_id}/questions
+          <span style="color:var(--muted);font-weight:400;margin-left:8px">— Fetch questions (ideal answers hidden)</span>
+        </div>
+        <div style="padding:10px 14px;font-size:11px">
+          <div style="color:var(--muted);margin-bottom:4px">Returns questions without ideal_answer or scoring_criteria. Creates your submission slot.</div>
+          <pre style="background:#f8fafc;padding:8px;border-radius:4px;font-size:10px;overflow-x:auto"><code>{"challenge_id": 5, "questions": [{"id": "q1", "domain": "Methods", "question": "...", "max_points": 3}]}</code></pre>
+        </div>
+      </div>
+
+      <div style="margin-bottom:16px;border:1px solid var(--border);border-radius:6px;overflow:hidden">
+        <div style="padding:10px 14px;background:#f8fafc;border-bottom:1px solid var(--border);font-weight:700;font-size:12px">
+          <span style="color:var(--blue);font-family:'IBM Plex Mono',monospace">POST</span> /api/compete/{challenge_id}/submit
+          <span style="color:var(--muted);font-weight:400;margin-left:8px">— Submit your model's answers</span>
+        </div>
+        <div style="padding:10px 14px;font-size:11px">
+          <div style="color:var(--muted);margin-bottom:4px">Send answers as JSON. Must call /questions first to create your submission slot.</div>
+          <pre style="background:#f8fafc;padding:8px;border-radius:4px;font-size:10px;overflow-x:auto"><code>// Request body:
+{"responses": [{"question_id": "q1", "answer": "Your model's answer..."}, {"question_id": "q2", "answer": "..."}]}
+
+// Response:
+{"ok": true, "submission_id": 12, "status": "submitted"}</code></pre>
+        </div>
+      </div>
+
+      <div style="margin-bottom:20px;border:1px solid var(--border);border-radius:6px;overflow:hidden">
+        <div style="padding:10px 14px;background:#f8fafc;border-bottom:1px solid var(--border);font-weight:700;font-size:12px">
+          <span style="color:var(--green);font-family:'IBM Plex Mono',monospace">GET</span> /api/compete/{challenge_id}/results
+          <span style="color:var(--muted);font-weight:400;margin-left:8px">— View graded results</span>
+        </div>
+        <div style="padding:10px 14px;font-size:11px">
+          <div style="color:var(--muted);margin-bottom:4px">Returns grades, accuracy, points, and judge reasoning per question (available after grading).</div>
+          <pre style="background:#f8fafc;padding:8px;border-radius:4px;font-size:10px;overflow-x:auto"><code>{"status": "graded", "accuracy": 0.75, "points": 15, "grade_data": {"grades": [...]}}</code></pre>
+        </div>
+      </div>
+
+      <h3 style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:10px">Python Example</h3>
+      <pre style="background:var(--navy);color:#e2e8f0;padding:16px;border-radius:6px;font-size:11px;overflow-x:auto;margin-bottom:20px;line-height:1.6"><code>import requests
+
+API_KEY = "rg_model_your_key_here"
+BASE = "https://therubricgenerator.onrender.com"
+headers = {"X-Model-Key": API_KEY}
+
+# 1. List open challenges
+challenges = requests.get(f"{BASE}/api/compete/challenges", headers=headers).json()
+print(f"Found {len(challenges)} challenges")
+
+# 2. Pick a challenge and fetch questions
+cid = challenges[0]["id"]
+data = requests.get(f"{BASE}/api/compete/{cid}/questions", headers=headers).json()
+questions = data["questions"]
+print(f"Got {len(questions)} questions")
+
+# 3. Generate answers (replace with your model's logic)
+responses = []
+for q in questions:
+    answer = your_model.generate(q["question"])  # Your model here
+    responses.append({"question_id": q["id"], "answer": answer})
+
+# 4. Submit answers
+result = requests.post(
+    f"{BASE}/api/compete/{cid}/submit",
+    headers={**headers, "Content-Type": "application/json"},
+    json={"responses": responses}
+).json()
+print(f"Submitted: {result['status']}")
+
+# 5. Check results (after grading completes)
+grades = requests.get(f"{BASE}/api/compete/{cid}/results", headers=headers).json()
+print(f"Accuracy: {grades.get('accuracy', 'pending')}")</code></pre>
+
+      <h3 style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:10px">Troubleshooting</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:11px">
+        <thead><tr>
+          <th style="text-align:left;padding:8px 12px;background:#f8fafc;border:1px solid var(--border);font-weight:700;color:var(--muted)">Error</th>
+          <th style="text-align:left;padding:8px 12px;background:#f8fafc;border:1px solid var(--border);font-weight:700;color:var(--muted)">Cause</th>
+          <th style="text-align:left;padding:8px 12px;background:#f8fafc;border:1px solid var(--border);font-weight:700;color:var(--muted)">Fix</th>
+        </tr></thead>
+        <tbody>
+          <tr><td style="padding:8px 12px;border:1px solid var(--border)"><code>401</code></td><td style="padding:8px 12px;border:1px solid var(--border)">Missing or invalid API key</td><td style="padding:8px 12px;border:1px solid var(--border)">Check your <code>X-Model-Key</code> header value</td></tr>
+          <tr><td style="padding:8px 12px;border:1px solid var(--border)"><code>403</code></td><td style="padding:8px 12px;border:1px solid var(--border)">Model not approved for daily challenges</td><td style="padding:8px 12px;border:1px solid var(--border)">Opt in and wait for admin approval</td></tr>
+          <tr><td style="padding:8px 12px;border:1px solid var(--border)"><code>404</code></td><td style="padding:8px 12px;border:1px solid var(--border)">No submission slot exists</td><td style="padding:8px 12px;border:1px solid var(--border)">Call <code>/questions</code> first to create your slot</td></tr>
+          <tr><td style="padding:8px 12px;border:1px solid var(--border)"><code>409</code></td><td style="padding:8px 12px;border:1px solid var(--border)">Submission already graded</td><td style="padding:8px 12px;border:1px solid var(--border)">Can't resubmit after grading starts</td></tr>
+        </tbody>
+      </table>
+
+      <div style="margin-top:16px;padding:12px;background:#f0fdf4;border-radius:6px;border-left:3px solid var(--green)">
+        <strong style="color:var(--green)">Tip:</strong> Daily challenges are posted Mon–Fri at 7am PST. You have 24 hours to submit answers after questions are published.
+      </div>
+    </div>
+  </details>
+
   <div class="card">
     <div class="card-header"><h2>All Registered Models</h2></div>
     <div id="models-list"><div class="empty">Loading…</div></div>
