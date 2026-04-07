@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>OGAI · Rubric Generator — Challenge Detail</title>
+<title>OGAI · Benchmark Lab — Challenge Detail</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
 
@@ -15,86 +15,115 @@
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; min-height: 100vh; }
+html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; height: 100vh; overflow: hidden; }
 
-.topbar { background: var(--navy); color: #fff; padding: 12px 28px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
-.topbar .brand { font-size: 16px; font-weight: 700; letter-spacing: -.3px; }
-.topbar .brand span { color: var(--sky); }
-.topbar nav { display: flex; gap: 4px; align-items: center; }
-.topbar nav a { font-family: inherit; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); padding: 6px 12px; border-radius: 5px; text-decoration: none; }
+.topbar { background: var(--navy); color: #fff; padding: 10px 28px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,.15); flex-shrink: 0; }
+.topbar .brand { font-size: 16px; font-weight: 700; } .topbar .brand span { color: var(--sky); }
+.topbar nav { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.topbar nav a { font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); padding: 5px 10px; border-radius: 5px; text-decoration: none; }
 .topbar nav a:hover { background: rgba(255,255,255,.08); color: #fff; }
 .topbar nav a.active { background: rgba(255,255,255,.15); color: #fff; }
-.topbar .user-badge { margin-left: 14px; padding: 4px 10px; background: rgba(255,255,255,.1); border-radius: 4px; font-size: 11px; color: rgba(255,255,255,.85); }
-.topbar .signout-btn { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); padding: 6px 12px; border-radius: 5px; font-family: inherit; font-size: 11px; font-weight: 600; cursor: pointer; margin-left: 10px; }
+.topbar .user-badge { margin-left: 14px; padding: 4px 10px; background: rgba(255,255,255,.1); border-radius: 4px; font-size: 11px; }
+.topbar .signout-btn { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); padding: 5px 10px; border-radius: 5px; font-size: 11px; font-weight: 600; cursor: pointer; margin-left: 8px; }
 
-.container { max-width: 1200px; margin: 0 auto; padding: 28px; }
+/* Split layout */
+.split { display: flex; height: calc(100vh - 44px); }
+.panel-left { flex: 1; overflow-y: auto; padding: 20px 24px; }
+.panel-right { width: 340px; min-width: 300px; background: var(--navy); color: #fff; display: flex; flex-direction: column; border-left: 1px solid rgba(255,255,255,.1); }
+@media (max-width: 900px) { .split { flex-direction: column; height: auto; } .panel-right { width: 100%; min-height: 300px; } }
+
 .back-link { font-size: 11px; color: var(--muted); text-decoration: none; font-weight: 600; }
 .back-link:hover { color: var(--blue); }
-.page-title { font-size: 22px; font-weight: 700; color: var(--navy); margin-top: 6px; margin-bottom: 4px; letter-spacing: -.3px; }
-.page-subtitle { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
 
-.meta-row { display: flex; gap: 20px; margin-bottom: 22px; flex-wrap: wrap; }
-.meta-item { font-size: 11px; color: var(--muted); }
-.meta-item strong { color: var(--navy); font-size: 13px; font-family: 'IBM Plex Mono', monospace; font-weight: 600; display: block; margin-top: 2px; }
+.challenge-header { display: flex; align-items: center; gap: 10px; margin: 6px 0 4px; flex-wrap: wrap; }
+.page-title { font-size: 20px; font-weight: 700; color: var(--navy); letter-spacing: -.3px; }
+.run-badge { font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-weight: 700; padding: 3px 8px; background: rgba(39,68,114,.1); color: var(--blue); border-radius: 4px; }
+.agent-badge { font-size: 9px; font-weight: 700; padding: 2px 6px; background: rgba(124,58,237,.1); color: var(--purple); border-radius: 3px; }
 
-.status { display: inline-block; padding: 3px 10px; border-radius: 4px; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
-.status-complete { background: #dcfce7; color: #15803d; }
-.status-running { background: #fef3c7; color: #a16207; }
-.status-pending { background: #e2e8f0; color: #475569; }
-.status-failed { background: #fee2e2; color: #b91c1c; }
+.action-bar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.action-bar .btn { font-family: inherit; font-size: 11px; font-weight: 600; padding: 5px 12px; border-radius: 5px; cursor: pointer; border: none; }
+.btn-refresh { background: var(--sky); color: #fff; }
+.btn-cancel { background: transparent; color: var(--red); border: 1px solid rgba(220,38,38,.3) !important; }
+.btn-delete { background: transparent; color: var(--red); border: 1px solid rgba(220,38,38,.3) !important; }
+.btn-annotate { background: var(--purple); color: #fff; }
 
-.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 20px; }
-.card-header { padding: 14px 20px; border-bottom: 1px solid var(--border); }
-.card-header h2 { font-size: 13px; font-weight: 700; color: var(--navy); letter-spacing: .02em; }
-.card-body { padding: 20px; }
+.meta-row { display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+.meta-item { font-size: 10px; color: var(--muted); }
+.meta-item strong { color: var(--navy); font-size: 12px; font-family: 'IBM Plex Mono', monospace; font-weight: 600; display: block; margin-top: 2px; }
+
+.status { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.status-complete { background: #dcfce7; color: #15803d; } .status-running { background: #fef3c7; color: #a16207; }
+.status-pending { background: #e2e8f0; color: #475569; } .status-failed { background: #fee2e2; color: #b91c1c; }
+
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 16px; }
+.card-header { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.card-header h2 { font-size: 12px; font-weight: 700; color: var(--navy); }
 
 table { width: 100%; border-collapse: collapse; }
-thead th { text-align: left; font-size: 10.5px; font-weight: 700; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; padding: 11px 16px; background: #f8fafc; border-bottom: 1px solid var(--border); }
-tbody td { padding: 12px 16px; border-bottom: 1px solid #f1f5f9; font-size: 12px; color: var(--text); vertical-align: top; }
+thead th { text-align: left; font-size: 10px; font-weight: 700; color: var(--muted); letter-spacing: .05em; text-transform: uppercase; padding: 9px 12px; background: #f8fafc; border-bottom: 1px solid var(--border); }
+tbody td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; font-size: 11.5px; vertical-align: top; }
 tbody tr:last-child td { border-bottom: none; }
 .num { font-family: 'IBM Plex Mono', monospace; font-weight: 600; color: var(--navy); text-align: right; }
 
-.model-badge { font-size: 9.5px; font-weight: 700; padding: 2px 7px; border-radius: 3px; text-transform: uppercase; letter-spacing: .05em; }
+.model-badge { font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 3px; text-transform: uppercase; }
 .badge-openai { background: rgba(16,163,127,.15); color: #047857; }
 .badge-anthropic { background: rgba(124,58,237,.15); color: var(--purple); }
 .badge-google { background: rgba(66,133,244,.15); color: #1a56db; }
 
-.question-block { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 14px; overflow: hidden; }
-.question-header { padding: 10px 14px; background: #f8fafc; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; align-items: center; justify-content: space-between; }
+.question-block { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 10px; overflow: hidden; }
+.question-header { padding: 8px 12px; background: #f8fafc; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; align-items: center; justify-content: space-between; }
 .question-header:hover { background: #eff6ff; }
-.q-title { font-size: 12px; font-weight: 700; color: var(--navy); }
-.q-domain { font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-left: 8px; }
-.q-maxpts { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--blue); }
-.question-body { padding: 14px; display: none; }
+.q-title { font-size: 11.5px; font-weight: 700; color: var(--navy); }
+.q-domain { font-size: 9px; font-weight: 600; color: var(--muted); text-transform: uppercase; margin-left: 6px; }
+.q-maxpts { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--blue); }
+.question-body { padding: 12px; display: none; }
 .question-body.open { display: block; }
+.q-section { margin-bottom: 10px; }
+.q-section-label { font-size: 9px; font-weight: 700; color: var(--muted); text-transform: uppercase; margin-bottom: 3px; }
+.q-text { font-size: 12px; color: var(--text); line-height: 1.5; }
+.q-ideal { font-size: 11.5px; line-height: 1.5; background: #f0fdf4; padding: 6px 8px; border-left: 3px solid var(--green); border-radius: 3px; }
+.q-criteria { font-size: 11px; color: var(--muted); line-height: 1.4; font-style: italic; }
+.answers-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; margin-top: 8px; }
+.answer-card { border: 1px solid var(--border); border-radius: 5px; padding: 8px 10px; background: #fcfcfd; }
+.answer-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.answer-model { font-size: 10px; font-weight: 700; color: var(--navy); font-family: 'IBM Plex Mono', monospace; }
+.answer-score { font-size: 10px; font-weight: 700; color: var(--blue); font-family: 'IBM Plex Mono', monospace; }
+.answer-score.perfect { color: var(--green); } .answer-score.zero { color: var(--red); }
+.answer-text { font-size: 11px; color: var(--text); line-height: 1.4; white-space: pre-wrap; max-height: 100px; overflow: hidden; }
+.answer-reasoning { font-size: 10px; color: var(--muted); line-height: 1.3; margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--border); font-style: italic; }
 
-.q-section { margin-bottom: 12px; }
-.q-section-label { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
-.q-text { font-size: 12.5px; color: var(--text); line-height: 1.5; }
-.q-ideal { font-size: 12px; color: var(--text); line-height: 1.5; background: #f0fdf4; padding: 8px 10px; border-left: 3px solid var(--green); border-radius: 3px; }
-.q-criteria { font-size: 11.5px; color: var(--muted); line-height: 1.4; font-style: italic; }
+.error-box { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; padding: 10px 14px; border-radius: 6px; font-size: 12px; margin-bottom: 14px; display: none; }
+.empty { padding: 30px; text-align: center; color: var(--muted); font-size: 12px; }
 
-.answers-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin-top: 12px; }
-.answer-card { border: 1px solid var(--border); border-radius: 5px; padding: 10px 12px; background: #fcfcfd; }
-.answer-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
-.answer-model { font-size: 11px; font-weight: 700; color: var(--navy); font-family: 'IBM Plex Mono', monospace; }
-.answer-score { font-size: 11px; font-weight: 700; color: var(--blue); font-family: 'IBM Plex Mono', monospace; }
-.answer-score.perfect { color: var(--green); }
-.answer-score.zero { color: var(--red); }
-.answer-text { font-size: 11.5px; color: var(--text); line-height: 1.4; white-space: pre-wrap; }
-.answer-reasoning { font-size: 10.5px; color: var(--muted); line-height: 1.4; margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--border); font-style: italic; }
+/* AI Brain Window */
+.brain-header { padding: 14px 16px; border-bottom: 1px solid rgba(255,255,255,.1); flex-shrink: 0; }
+.brain-header h2 { font-size: 13px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 6px; }
+.brain-header h2::before { content: '🧠'; font-size: 16px; }
+.brain-body { flex: 1; overflow-y: auto; padding: 12px 16px; }
+.brain-empty { color: rgba(255,255,255,.4); font-size: 11px; text-align: center; padding: 30px 10px; }
 
-.empty { padding: 40px; text-align: center; color: var(--muted); font-size: 12px; }
-.refresh-btn { background: var(--sky); color: #fff; border: none; padding: 6px 12px; border-radius: 4px; font-family: inherit; font-size: 11px; font-weight: 600; cursor: pointer; }
-.refresh-btn:hover { background: #4a8ac0; }
+.event { padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,.06); }
+.event:last-child { border-bottom: none; }
+.event-time { font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: rgba(255,255,255,.35); }
+.event-msg { font-size: 11.5px; color: rgba(255,255,255,.85); line-height: 1.4; margin-top: 2px; }
+.event-icon { display: inline-block; margin-right: 4px; }
 
-.error-box { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; padding: 12px 16px; border-radius: 6px; font-size: 12px; margin-bottom: 20px; }
+.event[data-type="papers_loaded"] .event-icon::before { content: '📄'; }
+.event[data-type="generator_started"] .event-icon::before { content: '⚙️'; }
+.event[data-type="generator_batch"] .event-icon::before { content: '🔄'; }
+.event[data-type="generator_batch_done"] .event-icon::before { content: '✅'; }
+.event[data-type="generator_complete"] .event-icon::before { content: '📝'; }
+.event[data-type="model_answering"] .event-icon::before { content: '🤖'; }
+.event[data-type="model_answered"] .event-icon::before { content: '💬'; }
+.event[data-type="model_grading"] .event-icon::before { content: '⚖️'; }
+.event[data-type="model_graded"] .event-icon::before { content: '✅'; }
+.event[data-type="challenge_complete"] .event-icon::before { content: '🏆'; }
 </style>
 </head>
 <body>
 
 <div class="topbar">
-  <div class="brand">OGAI · <span>Rubric</span> Generator</div>
+  <div class="brand">OGAI · <span>Benchmark</span> Lab</div>
   <nav>
     <a href="/">Dashboard</a>
     <a href="/challenges" class="active">Challenges</a>
@@ -113,228 +142,188 @@ tbody tr:last-child td { border-bottom: none; }
   </nav>
 </div>
 
-<div class="container">
-  <a class="back-link" href="/challenges">← Back to Challenges</a>
-  <div class="page-title" id="challenge-title">Loading…</div>
-  <div style="display:flex;align-items:center;gap:10px">
-    <div class="page-subtitle" id="challenge-theme"></div>
-    <span id="run-id-badge" style="display:none;font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;padding:3px 8px;background:rgba(39,68,114,.1);color:var(--blue);border-radius:4px"></span>
-  </div>
-
-  <div id="error-box" class="error-box" style="display:none"></div>
-
-  <div class="meta-row" id="meta-row"></div>
-
-  <!-- SCORES TABLE -->
-  <div class="card" id="scores-card" style="display:none">
-    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">
-      <h2>Model Results</h2>
-      <button class="refresh-btn" onclick="loadChallenge()">⟳ Refresh</button>
+<div class="split">
+  <!-- LEFT: Challenge Content -->
+  <div class="panel-left">
+    <a class="back-link" href="/challenges">← Back to Benchmark Lab</a>
+    <div class="challenge-header">
+      <div class="page-title" id="challenge-title">Loading…</div>
+      <span class="run-badge" id="run-id-badge" style="display:none"></span>
+      <span class="agent-badge" id="gen-badge" style="display:none"></span>
+      <span class="agent-badge" id="judge-badge" style="display:none"></span>
     </div>
-    <div id="scores-body"></div>
+    <div id="challenge-theme" style="color:var(--muted);font-size:12px;margin-bottom:10px"></div>
+
+    <div class="action-bar">
+      <button class="btn btn-refresh" onclick="loadChallenge()">↻ Refresh</button>
+      <button class="btn btn-annotate" id="annotate-btn" style="display:none" onclick="location.href='/annotate/'+challengeId">👤 Human Review</button>
+      <button class="btn btn-cancel" id="cancel-btn" style="display:none" onclick="cancelChallenge()">Cancel</button>
+      <button class="btn btn-delete" id="delete-btn" style="display:none" onclick="deleteChallenge()">Delete</button>
+    </div>
+
+    <div id="error-box" class="error-box"></div>
+    <div class="meta-row" id="meta-row"></div>
+
+    <div class="card" id="scores-card" style="display:none">
+      <div class="card-header"><h2>Model Results</h2></div>
+      <div id="scores-body"><div class="empty">Loading…</div></div>
+    </div>
+
+    <div class="card" id="rubric-card" style="display:none">
+      <div class="card-header"><h2>Rubric & Responses</h2></div>
+      <div id="rubric-body"></div>
+    </div>
+
+    <div class="card" id="papers-card" style="display:none">
+      <div class="card-header"><h2>Papers in Challenge</h2></div>
+      <div id="papers-body" style="padding:12px 16px"></div>
+    </div>
   </div>
 
-  <!-- RUBRIC + ANSWERS -->
-  <div class="card" id="rubric-card" style="display:none">
-    <div class="card-header"><h2>Rubric & Responses</h2></div>
-    <div class="card-body" id="rubric-body"></div>
-  </div>
-
-  <!-- PAPERS -->
-  <div class="card" id="papers-card" style="display:none">
-    <div class="card-header"><h2>Papers in Challenge</h2></div>
-    <div class="card-body" id="papers-body"></div>
+  <!-- RIGHT: AI Brain Window -->
+  <div class="panel-right">
+    <div class="brain-header"><h2>AI Brain Window</h2></div>
+    <div class="brain-body" id="brain-body">
+      <div class="brain-empty">Waiting for challenge to start...</div>
+    </div>
   </div>
 </div>
 
 <script>
 const challengeId = parseInt(location.pathname.split('/').pop(), 10);
 let pollTimer = null;
+let currentUser = null;
+let challengeData = null;
 
-async function signOut() {
-  await fetch('/api/auth/logout', { method: 'POST' });
-  window.location.href = '/login';
-}
-
-function escapeHtml(s) {
-  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-
-function fmtDate(iso) {
-  if (!iso) return '—';
-  try {
-    const d = new Date(iso.replace(' ', 'T') + 'Z');
-    return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-  } catch (_) { return iso; }
-}
-
-function fmtNum(n, d = 3) {
-  if (n === null || n === undefined) return '—';
-  return Number(n).toFixed(d);
-}
-
-function providerBadge(provider) {
-  const p = (provider || '').toLowerCase();
-  if (p === 'openai') return '<span class="model-badge badge-openai">OpenAI</span>';
-  if (p === 'anthropic') return '<span class="model-badge badge-anthropic">Claude</span>';
-  if (p === 'google') return '<span class="model-badge badge-google">Gemini</span>';
-  return `<span class="model-badge">${escapeHtml(provider || '?')}</span>`;
-}
+async function signOut() { await fetch('/api/auth/logout', { method: 'POST' }); location.href = '/login'; }
+function escapeHtml(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function fmtDate(iso) { if (!iso) return '—'; try { return new Date(iso.replace(' ','T')+'Z').toLocaleString(undefined, {dateStyle:'medium',timeStyle:'short'}); } catch { return iso; } }
+function fmtNum(n, d=3) { return (n === null || n === undefined) ? '—' : Number(n).toFixed(d); }
+function providerBadge(p) { p=(p||'').toLowerCase(); if(p==='openai')return'<span class="model-badge badge-openai">OpenAI</span>'; if(p==='anthropic')return'<span class="model-badge badge-anthropic">Claude</span>'; if(p==='google')return'<span class="model-badge badge-google">Gemini</span>'; return''; }
 
 async function loadMe() {
-  const res = await fetch('/api/auth/me');
-  if (!res.ok) { window.location.href = '/login'; return; }
-  const me = await res.json();
-  document.getElementById('user-badge').textContent = me.role || 'reviewer';
-  if (me.role === 'admin') document.getElementById('nav-admin').style.display = '';
+  const r = await fetch('/api/auth/me');
+  if (!r.ok) { location.href = '/login'; return; }
+  currentUser = await r.json();
+  document.getElementById('user-badge').textContent = currentUser.display_name || currentUser.email;
+  if (currentUser.role === 'admin') document.getElementById('nav-admin').style.display = '';
 }
 
 async function loadChallenge() {
   const res = await fetch(`/api/challenges/${challengeId}`);
-  if (res.status === 404) {
-    document.getElementById('error-box').style.display = 'block';
-    document.getElementById('error-box').textContent = 'Challenge not found.';
-    return;
-  }
-  if (!res.ok) return;
+  if (!res.ok) { document.getElementById('error-box').style.display='block'; document.getElementById('error-box').textContent='Challenge not found.'; return; }
   const c = await res.json();
+  challengeData = c;
 
   document.getElementById('challenge-title').textContent = c.title || `Challenge #${c.id}`;
   document.getElementById('challenge-theme').textContent = c.theme || '';
-  if (c.run_id) {
-    const badge = document.getElementById('run-id-badge');
-    badge.textContent = c.run_id;
-    badge.style.display = '';
-  }
+  if (c.run_id) { const b=document.getElementById('run-id-badge'); b.textContent=c.run_id; b.style.display=''; }
+
+  // Agent version badges
+  if (c.generator_skill) { const b=document.getElementById('gen-badge'); b.textContent=`Generator v${c.generator_skill.version}`; b.style.display=''; }
+  if (c.judge_skill) { const b=document.getElementById('judge-badge'); b.textContent=`Judge v${c.judge_skill.version}`; b.style.display=''; }
+
+  // Action buttons
+  const isOwner = currentUser && c.created_by === currentUser.id;
+  document.getElementById('cancel-btn').style.display = (isOwner && (c.status==='pending'||c.status==='running')) ? '' : 'none';
+  document.getElementById('delete-btn').style.display = (isOwner && c.visibility==='private' && (c.status==='complete'||c.status==='failed')) ? '' : 'none';
+  document.getElementById('annotate-btn').style.display = c.status==='complete' ? '' : 'none';
 
   // Meta
-  const levelLabels = { easy_breezy: 'Easy Breezy', minor_league: 'Minor League', professional: 'Professional', jedi: 'Jedi' };
-  const visibilityBadge = c.visibility === 'public'
-    ? '<span style="background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;">Public</span>'
-    : '<span style="background:#e2e8f0;color:#475569;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;">Private</span>';
-  const difficultyBadge = c.difficulty
-    ? `<span style="background:#fef3c7;color:#a16207;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;">${levelLabels[c.difficulty] || c.difficulty}</span>`
-    : '—';
-  const modelInfo = c.registered_model
-    ? `<strong style="font-family:'IBM Plex Mono',monospace;">${escapeHtml(c.registered_model.name)}</strong><div style="font-size:10px;color:var(--muted);">${escapeHtml(c.registered_model.version)}</div>`
-    : '—';
-  const projectInfo = c.project ? `<strong>${escapeHtml(c.project.name)}</strong>` : '<strong>—</strong>';
+  const ll = {easy_breezy:'Easy Breezy',minor_league:'Minor League',professional:'Professional',jedi:'Jedi'};
+  const vBadge = c.visibility==='public' ? '<span class="status status-complete">Public</span>' : '<span class="status status-pending">Private</span>';
+  const dBadge = c.difficulty ? `<span style="background:#fef3c7;color:#a16207;padding:2px 6px;border-radius:3px;font-size:9px;font-weight:700">${ll[c.difficulty]||c.difficulty}</span>` : '—';
   document.getElementById('meta-row').innerHTML = `
     <div class="meta-item">Status<strong><span class="status status-${c.status}">${c.status}</span></strong></div>
-    <div class="meta-item">Visibility<strong>${visibilityBadge}</strong></div>
-    <div class="meta-item">Difficulty<strong>${difficultyBadge}</strong></div>
-    <div class="meta-item">Project${projectInfo}</div>
-    <div class="meta-item">Model Under Test<div>${modelInfo}</div></div>
+    <div class="meta-item">Visibility<strong>${vBadge}</strong></div>
+    <div class="meta-item">Difficulty<strong>${dBadge}</strong></div>
+    <div class="meta-item">Project<strong>${c.project ? escapeHtml(c.project.name) : '—'}</strong></div>
     <div class="meta-item">Created<strong>${fmtDate(c.created_at)}</strong></div>
     <div class="meta-item">Completed<strong>${fmtDate(c.completed_at)}</strong></div>
-    <div class="meta-item">Generator Score<strong>${fmtNum(c.generator_score)}</strong></div>
+    <div class="meta-item">Gen Score<strong>${fmtNum(c.generator_score)}</strong></div>
     <div class="meta-item">Judge Score<strong>${fmtNum(c.judge_score)}</strong></div>
-    <div class="meta-item">Rubric Gen Time<strong>${c.generation_time_ms ? (c.generation_time_ms / 1000).toFixed(1) + 's' : '—'}</strong></div>
   `;
 
-  if (c.error_message) {
-    const box = document.getElementById('error-box');
-    box.style.display = 'block';
-    box.innerHTML = '<strong>Error:</strong> ' + escapeHtml(c.error_message);
-  }
+  if (c.error_message) { const b=document.getElementById('error-box'); b.style.display='block'; b.innerHTML='<strong>Error:</strong> '+escapeHtml(c.error_message); }
 
   // Scores table
   document.getElementById('scores-card').style.display = '';
-  const participants = c.participants || [];
-  if (participants.length === 0) {
-    document.getElementById('scores-body').innerHTML = '<div class="empty">No participants.</div>';
-  } else {
-    const rows = participants.map((p, i) => `
-      <tr>
-        <td><strong>#${i + 1}</strong></td>
-        <td><strong style="font-family:'IBM Plex Mono',monospace">${escapeHtml(p.model_id)}</strong> ${providerBadge(p.provider)}</td>
-        <td><span class="status status-${p.status === 'graded' ? 'complete' : p.status === 'failed' ? 'failed' : 'running'}">${p.status}</span></td>
-        <td class="num">${fmtNum(p.accuracy, 3)}</td>
-        <td class="num">${fmtNum(p.speed_bonus, 3)}</td>
-        <td class="num">${fmtNum(p.total_score, 3)}</td>
-        <td class="num">${p.answer_time_ms ? (p.answer_time_ms / 1000).toFixed(1) + 's' : '—'}</td>
-        <td class="num">${p.answer_time_ms && p.grade_data?.grades?.length ? ((p.answer_time_ms / p.grade_data.grades.length) / 1000).toFixed(1) + 's/q' : '—'}</td>
-        <td class="num">${p.judge_time_ms ? (p.judge_time_ms / 1000).toFixed(1) + 's' : '—'}</td>
-      </tr>
-    `).join('');
-    document.getElementById('scores-body').innerHTML = `
-      <table>
-        <thead><tr><th>Rank</th><th>Model</th><th>Status</th><th style="text-align:right">Accuracy</th><th style="text-align:right">Speed</th><th style="text-align:right">Total</th><th style="text-align:right">Answer</th><th style="text-align:right">Per Q</th><th style="text-align:right">Judge</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    `;
+  const ps = c.participants || [];
+  if (!ps.length) { document.getElementById('scores-body').innerHTML='<div class="empty">No participants.</div>'; }
+  else {
+    const rows = ps.map((p,i)=>`<tr>
+      <td><strong>#${i+1}</strong></td>
+      <td><strong style="font-family:'IBM Plex Mono',monospace;font-size:11px">${escapeHtml(p.model_id)}</strong> ${providerBadge(p.provider)}</td>
+      <td><span class="status status-${p.status==='graded'?'complete':p.status==='failed'?'failed':'running'}">${p.status}</span></td>
+      <td class="num">${fmtNum(p.accuracy)}</td>
+      <td class="num">${fmtNum(p.speed_bonus)}</td>
+      <td class="num">${fmtNum(p.total_score)}</td>
+      <td class="num">${p.answer_time_ms?(p.answer_time_ms/1000).toFixed(1)+'s':'—'}</td>
+      <td class="num">${p.answer_time_ms&&p.grade_data?.grades?.length?((p.answer_time_ms/p.grade_data.grades.length)/1000).toFixed(1)+'s/q':'—'}</td>
+      <td class="num">${p.judge_time_ms?(p.judge_time_ms/1000).toFixed(1)+'s':'—'}</td>
+    </tr>`).join('');
+    document.getElementById('scores-body').innerHTML=`<table><thead><tr><th>Rank</th><th>Model</th><th>Status</th><th style="text-align:right">Accuracy</th><th style="text-align:right">Speed</th><th style="text-align:right">Total</th><th style="text-align:right">Answer</th><th style="text-align:right">Per Q</th><th style="text-align:right">Judge</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
 
-  // Rubric + answers
+  // Rubric
   if (c.rubric && c.rubric.questions) {
-    document.getElementById('rubric-card').style.display = '';
-    const questions = c.rubric.questions;
-    const html = questions.map((q, i) => {
-      const answers = participants.map(p => {
-        const ans = (p.answer_data?.responses || []).find(r => r.question_id === q.id);
-        const grade = (p.grade_data?.grades || []).find(g => g.question_id === q.id);
-        const scoreClass = grade && grade.score === grade.max_points ? 'perfect' : (grade && grade.score === 0 ? 'zero' : '');
-        return `
-          <div class="answer-card">
-            <div class="answer-header">
-              <div class="answer-model">${escapeHtml(p.model_id)}</div>
-              <div class="answer-score ${scoreClass}">${grade ? grade.score : '—'}/${q.max_points || 1}</div>
-            </div>
-            <div class="answer-text">${escapeHtml(ans ? ans.answer : '(no answer)')}</div>
-            ${grade && grade.reasoning ? `<div class="answer-reasoning">${escapeHtml(grade.reasoning)}</div>` : ''}
-          </div>
-        `;
+    document.getElementById('rubric-card').style.display='';
+    document.getElementById('rubric-body').innerHTML = c.rubric.questions.map((q,i)=>{
+      const answers = ps.map(p=>{
+        const ans=(p.answer_data?.responses||[]).find(r=>r.question_id===q.id);
+        const grade=(p.grade_data?.grades||[]).find(g=>g.question_id===q.id);
+        const sc=grade&&grade.score===grade.max_points?'perfect':(grade&&grade.score===0?'zero':'');
+        return`<div class="answer-card"><div class="answer-header"><div class="answer-model">${escapeHtml(p.model_id)}</div><div class="answer-score ${sc}">${grade?grade.score:'—'}/${q.max_points||1}</div></div><div class="answer-text">${escapeHtml(ans?ans.answer:'(no answer)')}</div>${grade&&grade.reasoning?`<div class="answer-reasoning">${escapeHtml(grade.reasoning)}</div>`:''}</div>`;
       }).join('');
-      return `
-        <div class="question-block">
-          <div class="question-header" onclick="this.nextElementSibling.classList.toggle('open')">
-            <div>
-              <span class="q-title">${escapeHtml(q.id)}. ${escapeHtml(q.question.slice(0, 80))}${q.question.length > 80 ? '…' : ''}</span>
-              <span class="q-domain">${escapeHtml(q.domain || '')}</span>
-            </div>
-            <span class="q-maxpts">${q.max_points || 1} pts</span>
-          </div>
-          <div class="question-body ${i === 0 ? 'open' : ''}">
-            <div class="q-section">
-              <div class="q-section-label">Question</div>
-              <div class="q-text">${escapeHtml(q.question)}</div>
-            </div>
-            <div class="q-section">
-              <div class="q-section-label">Ideal Answer</div>
-              <div class="q-ideal">${escapeHtml(q.ideal_answer || '')}</div>
-            </div>
-            <div class="q-section">
-              <div class="q-section-label">Scoring Criteria</div>
-              <div class="q-criteria">${escapeHtml(q.scoring_criteria || '')}</div>
-            </div>
-            <div class="q-section-label">Model Responses</div>
-            <div class="answers-grid">${answers}</div>
-          </div>
-        </div>
-      `;
+      return`<div class="question-block"><div class="question-header" onclick="this.nextElementSibling.classList.toggle('open')"><div><span class="q-title">${escapeHtml(q.id)}. ${escapeHtml(q.question.slice(0,80))}${q.question.length>80?'…':''}</span><span class="q-domain">${escapeHtml(q.domain||'')}</span>${q.paper_ref?`<span style="font-size:9px;color:var(--muted);margin-left:6px">📄 ${escapeHtml(q.paper_ref)}</span>`:''}</div><span class="q-maxpts">${q.max_points||1} pts</span></div><div class="question-body ${i===0?'open':''}"><div class="q-section"><div class="q-section-label">Question</div><div class="q-text">${escapeHtml(q.question)}</div></div><div class="q-section"><div class="q-section-label">Ideal Answer</div><div class="q-ideal">${escapeHtml(q.ideal_answer||'')}</div></div><div class="q-section"><div class="q-section-label">Scoring Criteria</div><div class="q-criteria">${escapeHtml(q.scoring_criteria||'')}</div></div><div class="q-section-label">Model Responses</div><div class="answers-grid">${answers}</div></div></div>`;
     }).join('');
-    document.getElementById('rubric-body').innerHTML = html;
   }
 
   // Papers
-  if (c.papers && c.papers.length > 0) {
-    document.getElementById('papers-card').style.display = '';
-    document.getElementById('papers-body').innerHTML = c.papers.map(p =>
-      `<div style="padding:6px 0;"><a href="/api/papers/${p.id}/pdf" target="_blank" style="color:var(--blue);text-decoration:none;font-weight:500;">📄 ${escapeHtml(p.filename)}</a></div>`
-    ).join('');
+  if (c.papers?.length) {
+    document.getElementById('papers-card').style.display='';
+    document.getElementById('papers-body').innerHTML=c.papers.map(p=>`<div style="padding:4px 0"><a href="/api/papers/${p.id}/pdf" target="_blank" style="color:var(--blue);text-decoration:none;font-size:12px">📄 ${escapeHtml(p.filename)}</a></div>`).join('');
   }
 
-  // Auto-refresh if running
-  if (c.status === 'running' || c.status === 'pending') {
-    if (!pollTimer) {
-      pollTimer = setInterval(loadChallenge, 5000);
-    }
+  // Auto-refresh + events
+  if (c.status==='running'||c.status==='pending') {
+    if (!pollTimer) pollTimer = setInterval(()=>{ loadChallenge(); loadEvents(); }, 5000);
+    loadEvents();
   } else {
-    if (pollTimer) {
-      clearInterval(pollTimer);
-      pollTimer = null;
-    }
+    if (pollTimer) { clearInterval(pollTimer); pollTimer=null; }
+    loadEvents(); // Final load
   }
+}
+
+// ── AI Brain Window ──
+async function loadEvents() {
+  try {
+    const r = await fetch(`/api/challenges/${challengeId}/events`);
+    if (!r.ok) return;
+    const events = await r.json();
+    const body = document.getElementById('brain-body');
+    if (!events.length) { body.innerHTML='<div class="brain-empty">Waiting for challenge to start...</div>'; return; }
+    body.innerHTML = events.map(e=>{
+      const time = e.created_at ? new Date(e.created_at.replace(' ','T')+'Z').toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '';
+      return `<div class="event" data-type="${escapeHtml(e.event_type)}"><div class="event-time">${time}</div><div class="event-msg"><span class="event-icon"></span>${escapeHtml(e.message)}</div></div>`;
+    }).join('');
+    body.scrollTop = body.scrollHeight;
+  } catch {}
+}
+
+// ── Cancel & Delete ──
+async function cancelChallenge() {
+  if (!confirm('Cancel this challenge? Credits will be refunded.')) return;
+  const r = await fetch(`/api/challenges/${challengeId}/cancel`, { method: 'POST' });
+  if (r.ok) loadChallenge();
+  else { const e=await r.json(); alert(e.detail||'Failed to cancel'); }
+}
+
+async function deleteChallenge() {
+  if (!confirm('Permanently delete this challenge? This cannot be undone.')) return;
+  const r = await fetch(`/api/challenges/${challengeId}`, { method: 'DELETE' });
+  if (r.ok) location.href = '/challenges';
+  else { const e=await r.json(); alert(e.detail||'Failed to delete'); }
 }
 
 loadMe();

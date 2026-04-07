@@ -103,7 +103,7 @@ tbody tr:last-child td { border-bottom: none; }
 </div>
 
 <div class="container">
-  <div class="page-title">Challenges</div>
+  <div class="page-title">Benchmark Lab</div>
   <div class="page-subtitle">Create benchmark runs pitting frontier models against each other</div>
 
   <!-- CREATE CHALLENGE -->
@@ -122,6 +122,12 @@ tbody tr:last-child td { border-bottom: none; }
         <label>Project (optional)</label>
         <select id="f-project">
           <option value="">— No project —</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Organization (optional)</label>
+        <select id="f-org">
+          <option value="">— No organization —</option>
         </select>
       </div>
       <div class="field">
@@ -277,15 +283,26 @@ async function loadProjects() {
   const uploadSel = document.getElementById('upload-project');
   projects.forEach(p => {
     const opt = document.createElement('option');
-    opt.value = p.id;
-    opt.textContent = p.name;
+    opt.value = p.id; opt.textContent = p.name;
     sel.appendChild(opt);
-    // Also populate upload project selector
     const opt2 = document.createElement('option');
-    opt2.value = p.id;
-    opt2.textContent = p.name;
+    opt2.value = p.id; opt2.textContent = p.name;
     uploadSel.appendChild(opt2);
   });
+}
+
+async function loadOrgs() {
+  try {
+    const r = await fetch('/api/orgs');
+    if (!r.ok) return;
+    const orgs = await r.json();
+    const sel = document.getElementById('f-org');
+    orgs.forEach(o => {
+      const opt = document.createElement('option');
+      opt.value = o.id; opt.textContent = o.name;
+      sel.appendChild(opt);
+    });
+  } catch {}
 }
 
 async function loadRegisteredModels() {
@@ -383,6 +400,7 @@ async function createAndRun() {
       body: JSON.stringify({
         title, theme, paper_ids, participant_models,
         project_id, visibility, difficulty, registered_model_id,
+        org_id: document.getElementById('f-org').value ? parseInt(document.getElementById('f-org').value) : null,
       }),
     });
     const body = await res.json();
@@ -563,6 +581,7 @@ document.querySelectorAll('#model-list input[type="checkbox"]').forEach(cb => {
 loadMe();
 loadPapers();
 loadProjects();
+loadOrgs();
 loadRegisteredModels();
 setTimeout(updateCostEstimate, 1000);
 loadChallenges();

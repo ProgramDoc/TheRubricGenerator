@@ -25,6 +25,21 @@ from .skills import (
 
 logger = logging.getLogger("rubricgen")
 
+
+def _log_event(conn: sqlite3.Connection, challenge_id: int,
+               event_type: str, message: str, detail: dict | None = None) -> None:
+    """Log a progress event for real-time UI updates (AI Brain Window)."""
+    try:
+        detail_json = json.dumps(detail) if detail else None
+        conn.execute(
+            "INSERT INTO challenge_events (challenge_id, event_type, message, detail_json) VALUES (?,?,?,?)",
+            (challenge_id, event_type, message, detail_json),
+        )
+        conn.commit()
+    except Exception as e:
+        logger.warning("Failed to log event: %s", e)
+
+
 # Frontier models — updated April 2026
 # Each entry maps model_id → {provider, caller, cost_credits, ...}
 SUPPORTED_MODELS = {
@@ -347,14 +362,21 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
         papers_b64, papers_meta = _load_papers_b64(conn, challenge_id, papers_dir)
         if not papers_b64:
             raise RuntimeError("No valid papers for challenge")
+        total_size_mb = sum(len(p.get("b64", "")) * 3 / 4 / 1024 / 1024 for p in papers_b64)
+        _log_event(conn, challenge_id, "papers_loaded",
+                   f"Loaded {len(papers_b64)} papers ({total_size_mb:.1f} MB)",
+                   {"count": len(papers_b64), "size_mb": round(total_size_mb, 1)})
 
         # 2. Generator agent — batch PDFs in groups of 3 to avoid context window limits
         gen_skill = get_active_skill(conn, "generator")
         is_daily = (challenge.get("kind") == "daily")
 
         BATCH_SIZE = 3  # Max PDFs per generator call to stay within context limits
+        _log_event(conn, challenge_id, "generator_started",
+                   f"Generator v{gen_skill.get('version', '?')} starting — {len(papers_b64)} papers, 5 questions each",
+                   {"skill_version": gen_skill.get("version"), "paper_count": len(papers_b64)})
+
         if is_daily or len(papers_b64) <= BATCH_SIZE:
-            # Small set or daily: single call
             rubric, gen_ms = run_generator_agent(
                 papers_b64,
                 challenge.get("theme") or "",
@@ -364,13 +386,16 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
                 questions_per_paper=5,
             )
         else:
-            # Large set: batch into groups, merge rubrics
+            num_batches = (len(papers_b64) + BATCH_SIZE - 1) // BATCH_SIZE
             logger.info("Batching %d papers in groups of %d", len(papers_b64), BATCH_SIZE)
             all_questions = []
             total_gen_ms = 0
             q_counter = 0
             for i in range(0, len(papers_b64), BATCH_SIZE):
+                batch_num = (i // BATCH_SIZE) + 1
                 batch = papers_b64[i:i + BATCH_SIZE]
+                _log_event(conn, challenge_id, "generator_batch",
+                           f"Generating questions for batch {batch_num}/{num_batches} ({len(batch)} papers)")
                 batch_rubric, batch_ms = run_generator_agent(
                     batch,
                     challenge.get("theme") or "",
@@ -379,11 +404,12 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
                     questions_per_paper=5,
                 )
                 total_gen_ms += batch_ms
-                # Re-number question IDs to avoid collisions
                 for q in batch_rubric.get("questions", []):
                     q_counter += 1
                     q["id"] = f"q{q_counter}"
                     all_questions.append(q)
+                _log_event(conn, challenge_id, "generator_batch_done",
+                           f"Batch {batch_num} complete: {len(batch_rubric.get('questions', []))} questions generated")
             rubric = {
                 "rubric_type": "benchmark",
                 "theme": challenge.get("theme") or "",
@@ -405,6 +431,11 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
             )
             conn.commit()
 
+        q_count = len(rubric.get("questions", []))
+        _log_event(conn, challenge_id, "generator_complete",
+                   f"Rubric complete: {q_count} questions generated in {gen_ms/1000:.1f}s",
+                   {"question_count": q_count, "gen_ms": gen_ms})
+
         # 3. Participant models
         participant_rows = conn.execute(
             "SELECT * FROM model_participants WHERE challenge_id=?",
@@ -412,11 +443,16 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
         ).fetchall()
 
         judge_skill = get_active_skill(conn, "judge")
+        total_models = len(participant_rows)
 
-        for mp_row in participant_rows:
+        for mi, mp_row in enumerate(participant_rows):
             mp = dict(mp_row)
             model_id = mp["model_id"]
             try:
+                _log_event(conn, challenge_id, "model_answering",
+                           f"Model {model_id} answering {q_count} questions ({mi+1}/{total_models})...",
+                           {"model_id": model_id, "index": mi+1, "total": total_models})
+
                 with conn:
                     conn.execute(
                         "UPDATE model_participants SET status='answering' WHERE id=?",
@@ -426,6 +462,10 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
 
                 answers, answer_ms = run_participant_model(model_id, rubric, papers_b64)
 
+                _log_event(conn, challenge_id, "model_answered",
+                           f"Model {model_id} finished answering ({answer_ms/1000:.1f}s)",
+                           {"model_id": model_id, "answer_ms": answer_ms})
+
                 with conn:
                     conn.execute(
                         "UPDATE model_participants SET status='answered', answer_json=?, answer_time_ms=? WHERE id=?",
@@ -434,6 +474,8 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
                     conn.commit()
 
                 # 4. Judge this model
+                _log_event(conn, challenge_id, "model_grading",
+                           f"Judge v{judge_skill.get('version', '?')} grading {model_id}...")
                 grades, judge_ms = run_judge_agent(rubric, answers, judge_skill)
 
                 run_score = score_model_run(grades, answer_ms)
@@ -491,6 +533,9 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
                         ),
                     )
                     conn.commit()
+                _log_event(conn, challenge_id, "model_graded",
+                           f"Model {model_id} graded: {run_score['accuracy']*100:.1f}% accuracy, {pts} pts",
+                           {"model_id": model_id, "accuracy": run_score["accuracy"], "points": pts})
 
             except Exception as e:
                 logger.error("Participant %s failed: %s\n%s", model_id, e, traceback.format_exc())
@@ -607,6 +652,9 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
             logger.error("Obsidian write failed: %s", e)
 
         logger.info("Challenge %s complete: gen=%s judge=%s", challenge_id, gen_score, judge_score_val)
+        _log_event(conn, challenge_id, "challenge_complete",
+                   f"Challenge complete! Generator score: {gen_score}, Judge score: {judge_score_val}",
+                   {"generator_score": gen_score, "judge_score": judge_score_val})
 
         # 8b. Send daily completion emails
         if is_daily:

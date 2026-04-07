@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OGAI · Rubric Generator — Human Annotation</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+:root { --navy: #161b2e; --blue: #274472; --sky: #5e9ad0; --green: #16a34a; --bg: #f4f5f9; --card: #ffffff; --border: #dce4ee; --text: #1e293b; --muted: #64748b; --purple: #7c3aed; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; min-height: 100vh; }
+.topbar { background: var(--navy); color: #fff; padding: 12px 28px; display: flex; align-items: center; justify-content: space-between; }
+.topbar .brand { font-size: 16px; font-weight: 700; } .topbar .brand span { color: var(--sky); }
+.topbar nav { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.topbar nav a { font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); padding: 6px 12px; border-radius: 5px; text-decoration: none; }
+.topbar nav a:hover { background: rgba(255,255,255,.08); color: #fff; }
+.topbar .user-badge { margin-left: 14px; padding: 4px 10px; background: rgba(255,255,255,.1); border-radius: 4px; font-size: 11px; }
+.topbar .signout-btn { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); padding: 6px 12px; border-radius: 5px; font-size: 11px; font-weight: 600; cursor: pointer; margin-left: 10px; }
+.container { max-width: 800px; margin: 0 auto; padding: 40px 28px; text-align: center; }
+.icon { font-size: 64px; margin-bottom: 16px; }
+.title { font-size: 24px; font-weight: 700; color: var(--navy); margin-bottom: 8px; }
+.subtitle { font-size: 14px; color: var(--muted); margin-bottom: 30px; line-height: 1.6; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 30px; text-align: left; }
+.card h3 { font-size: 14px; font-weight: 700; color: var(--navy); margin-bottom: 12px; }
+.feature { display: flex; gap: 10px; padding: 10px 0; border-bottom: 1px solid #f1f5f9; align-items: start; }
+.feature:last-child { border-bottom: none; }
+.feature-icon { font-size: 18px; flex-shrink: 0; }
+.feature-text { font-size: 12px; line-height: 1.5; }
+.feature-text strong { color: var(--navy); }
+.back { display: inline-block; margin-top: 20px; font-size: 12px; color: var(--blue); font-weight: 600; text-decoration: none; }
+.back:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">OGAI · <span>Rubric</span> Generator</div>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/challenges">Challenges</a>
+    <a href="/public-tests">Public Tests</a>
+    <a href="/models">Models</a>
+    <a href="/leaderboard">Leaderboard</a>
+    <a href="/analytics">Analytics</a>
+    <a href="/library">Library</a>
+    <a href="/search">Search</a>
+    <a href="/billing">Billing</a>
+    <a href="/papers">Papers</a>
+    <a href="/api/sso/annotator">PDF Viewer</a>
+    <a href="/admin" id="nav-admin" style="display:none">Admin</a>
+    <span class="user-badge" id="user-badge">--</span>
+    <button class="signout-btn" onclick="fetch('/api/auth/logout',{method:'POST'}).then(()=>location.href='/login')">Sign Out</button>
+  </nav>
+</div>
+<div class="container">
+  <div class="icon">&#128100;&#9878;&#65039;</div>
+  <div class="title">Human Annotation</div>
+  <div class="subtitle">Expert human review of AI-generated rubrics and model responses.<br>Compare AI judge scores with human expert assessments.</div>
+
+  <div class="card">
+    <h3>Coming Soon</h3>
+    <div class="feature">
+      <div class="feature-icon">&#128203;</div>
+      <div class="feature-text"><strong>Question-by-question review</strong> — Rate each AI-generated question for clarity, relevance, and difficulty calibration</div>
+    </div>
+    <div class="feature">
+      <div class="feature-icon">&#9878;&#65039;</div>
+      <div class="feature-text"><strong>Answer validation</strong> — Compare model responses against your expert interpretation of the paper</div>
+    </div>
+    <div class="feature">
+      <div class="feature-icon">&#128200;</div>
+      <div class="feature-text"><strong>Judge accuracy scoring</strong> — See how well the AI judge matches your human assessments, identifying systematic biases</div>
+    </div>
+    <div class="feature">
+      <div class="feature-icon">&#128279;</div>
+      <div class="feature-text"><strong>Ground truth integration</strong> — Export annotations as ground truth data for improving the AI judge over time</div>
+    </div>
+  </div>
+
+  <a class="back" href="javascript:history.back()">← Back to Challenge</a>
+</div>
+<script>
+fetch('/api/auth/me').then(r => {
+  if (!r.ok) location.href = '/login';
+  return r.json();
+}).then(u => {
+  document.getElementById('user-badge').textContent = u.display_name || u.email;
+  if (u.role === 'admin') document.getElementById('nav-admin').style.display = '';
+});
+</script>
+</body>
+</html>

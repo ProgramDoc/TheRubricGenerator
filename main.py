@@ -496,7 +496,7 @@ def _migrate_org_columns(conn) -> None:
 
 
 def _migrate_challenge_columns_v2(conn) -> None:
-    """Add run_id, cost_estimate, cost_approved to challenges if missing."""
+    """Add run_id, cost_estimate, cost_approved, org_id to challenges if missing."""
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(challenges)").fetchall()}
     with conn:
         if "run_id" not in cols:
@@ -505,6 +505,20 @@ def _migrate_challenge_columns_v2(conn) -> None:
             conn.execute("ALTER TABLE challenges ADD COLUMN cost_estimate INTEGER")
         if "cost_approved" not in cols:
             conn.execute("ALTER TABLE challenges ADD COLUMN cost_approved INTEGER NOT NULL DEFAULT 0")
+        if "org_id" not in cols:
+            conn.execute("ALTER TABLE challenges ADD COLUMN org_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL")
+        # Challenge events table
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS challenge_events (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                challenge_id INTEGER NOT NULL REFERENCES challenges(id) ON DELETE CASCADE,
+                event_type   TEXT NOT NULL,
+                message      TEXT NOT NULL,
+                detail_json  TEXT,
+                created_at   TEXT DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_ce_challenge ON challenge_events(challenge_id);
+        """)
         conn.commit()
 
 
@@ -815,6 +829,14 @@ def search_page(rubricgen_session: str | None = Cookie(default=None)):
     if not user:
         return RedirectResponse("/login", status_code=302)
     return FileResponse(str(FRONTEND / "search.html"), media_type="text/html")
+
+
+@app.get("/annotate/{cid}", include_in_schema=False)
+def annotate_page(cid: int, rubricgen_session: str | None = Cookie(default=None)):
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return FileResponse(str(FRONTEND / "annotate.html"), media_type="text/html")
 
 
 @app.get("/login", include_in_schema=False)
@@ -1161,6 +1183,7 @@ class CreateChallengePayload(BaseModel):
     paper_ids: list[int]
     participant_models: list[str]
     project_id: Optional[int] = None
+    org_id: Optional[int] = None
     visibility: Optional[str] = "private"
     difficulty: Optional[str] = None
     registered_model_id: Optional[int] = None
@@ -1265,7 +1288,6 @@ def api_update_challenge(cid: int, body: UpdateChallengePayload,
     return {"ok": True}
 
 
-@app.post("/api/challenges/{cid}/run", status_code=202)
 @app.get("/api/challenges/estimate-cost")
 def api_estimate_cost(paper_count: int = 1, models: str = "",
                       rubricgen_session: str | None = Cookie(default=None)):
@@ -1286,6 +1308,7 @@ def api_estimate_cost(paper_count: int = 1, models: str = "",
 class RunChallengePayload(BaseModel):
     approved: bool = False
 
+@app.post("/api/challenges/{cid}/run", status_code=202)
 def api_run_challenge(cid: int, body: RunChallengePayload | None = None,
                       rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
@@ -1456,7 +1479,88 @@ def api_get_challenge(cid: int, rubricgen_session: str | None = Cookie(default=N
         result["generation_time_ms"] = rubric_row["generation_time_ms"]
     else:
         result["rubric"] = None
+
+    # Enrich with agent skill details
+    if result.get("generator_skill_id"):
+        gs = conn.execute("SELECT version, avg_performance, times_used FROM agent_skills WHERE id=?",
+                          (result["generator_skill_id"],)).fetchone()
+        result["generator_skill"] = dict(gs) if gs else None
+    if result.get("judge_skill_id"):
+        js = conn.execute("SELECT version, avg_performance, times_used FROM agent_skills WHERE id=?",
+                          (result["judge_skill_id"],)).fetchone()
+        result["judge_skill"] = dict(js) if js else None
+
+    conn.close()
     return result
+
+
+@app.get("/api/challenges/{cid}/events")
+def api_challenge_events(cid: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Get real-time progress events for a challenge (AI Brain Window)."""
+    require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM challenge_events WHERE challenge_id=? ORDER BY created_at ASC",
+            (cid,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+@app.post("/api/challenges/{cid}/cancel")
+def api_cancel_challenge(cid: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Cancel a pending/running challenge. Refunds credits."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM challenges WHERE id=?", (cid,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Challenge not found")
+        if row["created_by"] != user["id"]:
+            raise HTTPException(403, "Only the owner can cancel")
+        if row["status"] not in ("pending", "running"):
+            raise HTTPException(400, "Can only cancel pending or running challenges")
+        with conn:
+            conn.execute(
+                "UPDATE challenges SET status='failed', error_message='Cancelled by user', completed_at=datetime('now') WHERE id=?",
+                (cid,),
+            )
+            conn.commit()
+        # Refund credits
+        if row["cost_estimate"] and row["created_by"]:
+            try:
+                bill.refund_credits(conn, row["created_by"], row["cost_estimate"],
+                                    f"Cancelled: Challenge #{cid}", cid)
+            except Exception:
+                pass
+        return {"ok": True, "status": "failed"}
+    finally:
+        conn.close()
+
+
+@app.delete("/api/challenges/{cid}")
+def api_delete_challenge(cid: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Delete a private challenge. Only owner, only if not running."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM challenges WHERE id=?", (cid,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Challenge not found")
+        if row["created_by"] != user["id"]:
+            raise HTTPException(403, "Only the owner can delete")
+        if row["status"] == "running":
+            raise HTTPException(400, "Cannot delete a running challenge. Cancel it first.")
+        if row["visibility"] == "public":
+            raise HTTPException(400, "Cannot delete public challenges")
+        with conn:
+            conn.execute("DELETE FROM challenges WHERE id=?", (cid,))
+            conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
 
 
 @app.get("/api/leaderboard")
