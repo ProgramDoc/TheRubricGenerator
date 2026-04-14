@@ -676,6 +676,7 @@ function switchAgent(agentType) {
   if (agentType === currentAgentType) return;
   currentAgentType = agentType;
   currentSessionId = null;
+  _searchSessionId = null;
   sessionStorage.removeItem('lab_session_id');
   sessionStorage.setItem('lab_agent_type', agentType);
 
@@ -1993,6 +1994,22 @@ function switchSearchDb(db, btnEl) {
   if (title) title.textContent = (DB_LABELS[db] || db) + ' Query';
 }
 
+var _searchSessionId = null;
+
+async function _ensureSearchSession() {
+  if (_searchSessionId) return _searchSessionId;
+  var r = await fetch('/api/search/chat', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ message: 'init' }),
+  });
+  if (r.ok) {
+    var data = await r.json();
+    _searchSessionId = data.session_id;
+  }
+  return _searchSessionId;
+}
+
 /* -- Search execution -- */
 async function runSearch(page) {
   searchPage = page || 1;
@@ -2001,10 +2018,13 @@ async function runSearch(page) {
   if (btn) { btn.disabled = true; btn.textContent = 'Searching...'; }
 
   try {
+    var searchSid = await _ensureSearchSession();
+    if (!searchSid) { showToast('Failed to create search session', 'error'); return; }
+
     var r = await fetch('/api/search/execute', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ session_id: currentSessionId, database: dbVal, query: currentQuery, page: searchPage, page_size: 50 }),
+      body: JSON.stringify({ session_id: searchSid, database: dbVal, query: currentQuery, page: searchPage, page_size: 50 }),
     });
     if (!r.ok) { var e = await r.json(); showToast(e.detail || 'Search failed', 'error'); return; }
     var data = await r.json();
