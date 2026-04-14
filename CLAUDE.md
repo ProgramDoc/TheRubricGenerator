@@ -20,6 +20,11 @@
 | Modify challenge scoring | `backend/challenges.py` (scoring functions + `run_challenge()`) |
 | Call an LLM | `backend/helpers.py` — `call_anthropic()`, `call_gemini()`, `call_openai_compatible()` |
 | Modify billing/credits | `backend/billing.py` |
+| Modify membership/storage limits | `backend/membership.py` |
+| Modify file storage (S3/local) | `backend/storage.py` |
+| Add a new lab agent | `backend/agents/lab_agents.py` + `backend/skills.py` (prompt) + `backend/lab.py` (routing) |
+| Modify lab chat/sessions | `backend/lab.py` |
+| Modify exports | `backend/exports.py` |
 | Modify the daily scheduler | `backend/scheduler.py` + `backend/pubmed.py` |
 | Modify search | `backend/search.py` |
 | Add organization feature | `backend/organizations.py` |
@@ -29,11 +34,11 @@
 ## Architecture at a Glance
 
 ```
-main.py (4500 lines)
-  ├── Database init + migrations (lines 120-530)
-  ├── Auth: cookie sessions + X-API-Key header (lines 620-660)
-  ├── Page routes: GET /, /challenges, /search, etc. (lines 700-850)
-  ├── API endpoints grouped by resource (~lines 850-4500)
+main.py (5040 lines)
+  ├── Database init + migrations (lines 120-560)
+  ├── Auth: cookie sessions + X-API-Key header (lines 650-690)
+  ├── Page routes: GET /, /lab, /challenges, /search, etc. (lines 730-880)
+  ├── API endpoints grouped by resource (~lines 880-5040)
   └── Static files mount: /static → frontend/
 
 backend/
@@ -43,22 +48,27 @@ backend/
   ├── agents/
   │   ├── generator.py  — Rubric generation from PDFs (batched for >3 papers)
   │   ├── judge.py      — Answer grading + shadow regrade
-  │   └── participants.py — Run competing models against rubric
+  │   ├── participants.py — Run competing models against rubric
+  │   └── lab_agents.py — Lab agent runners (6 new agent types)
+  ├── lab.py            — Lab session CRUD, chat orchestrator, document management
+  ├── storage.py        — S3/local file storage abstraction
+  ├── exports.py        — Export converters (Word, LaTeX, Excel, CSV, Python, R)
+  ├── code_runner.py    — Sandboxed Python/R code execution
   ├── pubmed.py         — PubMed E-utilities, iCite citations, PMC PDF download
   ├── scheduler.py      — Daily challenge automation (7am PST Mon-Fri)
   ├── search.py         — AI search chatbot, PubMed/Europe PMC, import/export
   ├── billing.py        — Stripe credits, cost estimation, refunds
-  ├── membership.py     — Free/Pro/Enterprise plans, PDF limits
+  ├── membership.py     — Free/Pro/Enterprise plans, PDF limits, storage limits
   ├── organizations.py  — Multi-tenant orgs with roles
   ├── templates.py      — Rubric templates, community library
   ├── analytics.py      — Performance breakdown, CSV/PDF export
-  ├── skills.py         — Agent skill versioning
+  ├── skills.py         — Agent skill versioning (10 agent types)
   ├── self_improve.py   — Autoresearch experiment loop
   ├── obsidian.py       — Markdown vault writer
   ├── agreements.py     — Legal text
   └── promo.py          — Promo codes
 
-frontend/ — 18 self-contained HTML files (inline CSS + JS, no build step)
+frontend/ — 19 self-contained HTML files (inline CSS + JS, no build step)
 tests/    — pytest suite (Competition API lifecycle)
 ```
 
@@ -117,6 +127,7 @@ Challenges run on daemon threads (`threading.Thread`). Progress is logged to `ch
 **Required**: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `ADMIN_SECRET`
 **Database**: `DATABASE_URL` (PostgreSQL connection string — set on Render, omit locally for SQLite fallback)
 **Billing**: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
+**Cloud storage**: `AWS_S3_BUCKET`, `AWS_S3_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (omit all for local fallback)
 **Optional**: `NCBI_API_KEY` (PubMed rate boost), `MOONSHOT_API_KEY` (Kimi), SMTP vars (email)
 
 See `DEVELOPMENT.md` for full list.

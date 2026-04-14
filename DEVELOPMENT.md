@@ -6,17 +6,17 @@
 
 ---
 
-## Current State (April 13, 2026)
+## Current State (April 14, 2026)
 
 ### Codebase Summary
 
 | Component | Files | Lines |
 |-----------|-------|-------|
-| `main.py` | 1 | ~4,700 |
-| `backend/` modules | 20 | ~8,200 |
-| `frontend/` pages | 18 | ~10,200 |
+| `main.py` | 1 | ~5,040 |
+| `backend/` modules | 23 | ~10,060 |
+| `frontend/` pages | 19 | ~12,430 |
 | `tests/` | 3 | ~250 |
-| **Total** | **42** | **~23,350** |
+| **Total** | **46** | **~27,780** |
 
 ### What's Live
 
@@ -52,11 +52,13 @@
 - **Search sidebar:** Left sidebar with saved searches (auto-named from first prompt), project folders, drag-and-drop organization, context menu with rename/move/delete, collapsible folders with search counts
 - **Project sharing & invitations:** Share projects by email, invite unregistered users (registration invite email sent, auto-added on sign-up), transfer ownership, leave/remove members, share modal with member management
 - **PostgreSQL migration:** Primary database switched from SQLite to PostgreSQL for Render deployment persistence. Compatibility wrapper (`backend/db.py`) auto-converts SQL syntax between PostgreSQL and SQLite, enabling SQLite fallback for local dev and tests
-- **Membership plans:** Free (20 PDFs), Pro ($29/mo, 500 PDFs, 1000 credits), Enterprise ($99/mo, unlimited, 5000 credits) via Stripe subscriptions
+- **Membership plans:** Free (20 PDFs, 100MB storage), Pro ($29/mo, 500 PDFs, 5GB storage, 1000 credits), Enterprise ($99/mo, unlimited, 50GB storage, 5000 credits) via Stripe subscriptions
+- **Cloud storage:** S3-based file storage with local fallback (`backend/storage.py`), per-plan storage limits, usage tracking endpoint
 - **Platform API:** User API keys (`rg_user_xxx`) authenticate all endpoints via `X-API-Key` header. Developers page with key management + full endpoint docs
 - **Challenge improvements:** Inline PDF upload, 5 questions per PDF (batched for large sets), cost estimation + credit enforcement, unique run IDs, AI Brain Window with real-time progress events, cancel/delete, per-question speed metrics, paper removal
 - **Enhanced Obsidian notes:** Run ID, user info, cost breakdown, generator/judge agent state, experiment history
 - **Rebranded:** "The AI Researcher" (no OGAI/UCLA/INOVAi references)
+- **The AI Researcher Lab:** 3-pane interface (sidebar + chat + tabbed workspace) with 8 AI agent speed buttons (Research Chat, Search Strategist, Statistician, Study Appraiser, Hypothesis Generator, Literature Reviewer, Study Builder, Protocol Evaluator), contextual right-pane tabs per agent, chat-first file uploads with context prompt, clipboard paste screenshot support, drag-and-drop documents
 - **Nav restructured:** Benchmark Lab dropdown (Challenges + Leaderboard), Settings gear (Billing + Preferences), Developers tab, user display name
 - **Unit tests:** pytest suite for Competition API (16 test cases covering full model lifecycle)
 - **Daily scheduler fix:** Removed restrictive OA filter, MeSH-based queries, broad PubMed search → rank by citations → top 10
@@ -222,6 +224,33 @@ External models submit answers to OUR API (we don't call theirs):
 - New endpoints: `PATCH /api/search/sessions/{id}` (rename/move), modified `POST /api/projects/{pid}/share` (unregistered invitations)
 - 1 new DB table: `project_invitations`; 1 new column: `search_sessions.project_id`
 
+### The AI Researcher Lab (April 13-14, 2026)
+
+New primary interface replacing dashboard as homepage — a 3-pane research workspace:
+
+- **`frontend/lab.html`** — 3-pane layout: left sidebar (conversations, other interfaces, context documents, projects) + center chat + right tabbed workspace
+- **8 AI agent speed buttons**: Research Chat (default), AI Search Strategist, AI Statistician, Study Appraiser, Hypothesis Generator, Literature Reviewer, The Study Builder, The Protocol Evaluator
+- **`backend/lab.py`** — Lab session CRUD, chat orchestrator routing by `agent_type`, document management (`lab_documents` table)
+- **`backend/agents/lab_agents.py`** — Agent runner functions for Statistician, Study Appraiser, Hypothesis Generator, Literature Reviewer, Study Builder, Protocol Evaluator
+- **`backend/skills.py`** — 10 agent types (expanded CHECK constraint), v1 skill prompts for all new agents, extended `seed_v1_skills()`
+- **`backend/exports.py`** — Export format converters (Word, LaTeX, Excel, CSV, Python script, R script)
+- **`backend/code_runner.py`** — Sandboxed Python/R code execution with timeout
+- **`backend/self_improve.py`** — Program.md templates for all new agent types
+- **Contextual right-pane tabs**: each agent type opens relevant tabs (e.g., Search Strategist opens Query Builder + Results)
+- **Chat-first file uploads**: files attach to chat messages, user prompted to save to Context section after sending
+- **Clipboard paste**: screenshots paste directly into chat input
+- **Drag-and-drop**: files to chat input, context documents to project folders
+- **Agent-specific exports**: text agents show Word/LaTeX, stats agents show all formats including Python/R scripts
+
+### Cloud Storage & Per-Plan Limits (April 14, 2026)
+
+- **`backend/storage.py`** (NEW) — S3/local file storage abstraction. When `AWS_S3_BUCKET` is set, uploads go to S3; otherwise falls back to local `uploads/` directory
+- **Per-plan storage limits**: Free (100MB), Pro (5GB), Enterprise (50GB) — enforced at upload time via `check_storage_limit()`
+- **`storage_mb` column** added to `membership_plans` table with migration for existing databases
+- **File download endpoint**: `GET /api/lab/documents/{id}/download` serves files from S3 or local with proper content-disposition
+- **Storage usage endpoint**: `GET /api/lab/storage` returns used vs. limit for the user's plan
+- **Env vars**: `AWS_S3_BUCKET`, `AWS_S3_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
+
 ### Search Results Improvements (April 13, 2026)
 
 - **Sortable columns**: click Title, Authors, Journal, Year, or Cites headers to sort ascending/descending with arrow indicators; Cites defaults to descending
@@ -312,27 +341,32 @@ Write-only from the backend:
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `main.py` | ~4,700 | App entry, routes, auth (cookie + API key), config, all API endpoints |
-| `backend/challenges.py` | ~780 | Challenge orchestration, scoring, points, daily composition, org leaderboard |
-| `backend/self_improve.py` | ~500 | Autoresearch-style experiment loop |
-| `backend/templates.py` | ~350 | Rubric templates, community library, living stats, ground truth |
-| `backend/analytics.py` | ~350 | Analytics queries, CSV/PDF export, email notifications, rate limiter |
-| `backend/db.py` | ~220 | Database compatibility layer (PostgreSQL + SQLite fallback) |
-| `backend/search.py` | ~850 | Literature search: AI chat, PubMed/Europe PMC, import, export, session management |
-| `backend/organizations.py` | ~300 | Organization CRUD, membership, roles, invite/domain-join |
-| `backend/pubmed.py` | ~330 | PubMed/PMC/iCite client, 14 seed themes |
+| `main.py` | ~5,040 | App entry, routes, auth (cookie + API key), config, all API endpoints |
+| `backend/challenges.py` | ~1,090 | Challenge orchestration, scoring, points, daily composition, org leaderboard |
+| `backend/self_improve.py` | ~900 | Autoresearch-style experiment loop, program.md templates for 10 agent types |
+| `backend/search.py` | ~840 | Literature search: AI chat, PubMed/Europe PMC, import, export, session management |
+| `backend/skills.py` | ~725 | Agent skill versioning, 10 agent type prompts, seed function |
+| `backend/obsidian.py` | ~720 | Markdown vault writer (challenge notes, agent skill files, history) |
+| `backend/templates.py` | ~680 | Rubric templates, community library, living stats, ground truth |
+| `backend/membership.py` | ~515 | Membership plans, Stripe subscriptions, PDF limits, storage limits |
+| `backend/analytics.py` | ~510 | Analytics queries, CSV/PDF export, email notifications, rate limiter |
+| `backend/billing.py` | ~490 | Stripe credit system, checkout, webhooks, org billing |
+| `backend/lab.py` | ~440 | Lab session CRUD, chat orchestrator, document management |
+| `backend/organizations.py` | ~435 | Organization CRUD, membership, roles, invite/domain-join |
+| `backend/models_registry.py` | ~375 | Model CRUD, team management, API key generation, org models |
+| `backend/pubmed.py` | ~315 | PubMed/PMC/iCite client, 14 seed themes |
 | `backend/scheduler.py` | ~270 | Daily scheduler (7am PST Mon-Fri) |
-| `backend/models_registry.py` | ~285 | Model CRUD, team management, API key generation, org models |
-| `backend/billing.py` | ~415 | Stripe credit system, checkout, webhooks, org billing |
-| `backend/agreements.py` | ~237 | Legal agreement text + acceptance tracking |
-| `backend/promo.py` | ~180 | Promo codes, 48h auto-approve |
-| `backend/skills.py` | ~178 | Agent skill versioning, seed prompts |
+| `backend/agreements.py` | ~240 | Legal agreement text + acceptance tracking |
+| `backend/exports.py` | ~230 | Export converters (Word, LaTeX, Excel, CSV, Python, R) |
+| `backend/code_runner.py` | ~225 | Sandboxed Python/R code execution |
+| `backend/db.py` | ~220 | Database compatibility layer (PostgreSQL + SQLite fallback) |
 | `backend/helpers.py` | ~163 | LLM callers (Anthropic, Gemini, OpenAI-compatible) |
-| `backend/obsidian.py` | ~640 | Markdown vault writer (challenge notes, agent skill files, history) |
+| `backend/storage.py` | ~152 | S3/local file storage abstraction |
+| `backend/promo.py` | ~180 | Promo codes, 48h auto-approve |
 | `backend/agents/participants.py` | ~142 | Frontier + custom model runner |
+| `backend/agents/lab_agents.py` | ~130 | Lab agent runners (6 new agent types) |
 | `backend/agents/generator.py` | ~83 | Rubric Generator Agent (daily composition support) |
 | `backend/agents/judge.py` | ~50 | Judge Agent + shadow regrade |
-| `backend/membership.py` | ~350 | Membership plans, Stripe subscriptions, PDF limits |
 | `tests/conftest.py` | ~120 | Test fixtures (in-memory DB, test users, challenges) |
 | `tests/test_compete_api.py` | ~200 | Competition API unit tests (16 cases) |
 
@@ -362,6 +396,11 @@ Write-only from the backend:
 | `SMTP_PASS` | For email | — | SMTP password |
 | `SMTP_FROM` | No | SMTP_USER | Email sender address |
 | `APP_BASE_URL` | For email | `http://localhost:8000` | Base URL for email links |
+| `AWS_S3_BUCKET` | For cloud storage | — | S3 bucket name (omit for local fallback) |
+| `AWS_S3_REGION` | No | `us-east-1` | S3 bucket region |
+| `AWS_ACCESS_KEY_ID` | For cloud storage | — | AWS IAM access key |
+| `AWS_SECRET_ACCESS_KEY` | For cloud storage | — | AWS IAM secret key |
+| `AWS_S3_PREFIX` | No | `lab-documents/` | S3 key prefix for uploads |
 | `DAILY_ENABLED` | No | `true` | Enable daily scheduler |
 | `DAILY_MAX_PAPERS` | No | `10` | Papers per daily run |
 | `DAILY_TIMEZONE` | No | `America/Los_Angeles` | Scheduler timezone |
@@ -372,4 +411,4 @@ Write-only from the backend:
 
 ---
 
-**Last updated:** April 13, 2026
+**Last updated:** April 14, 2026
