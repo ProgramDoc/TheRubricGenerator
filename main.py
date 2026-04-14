@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import Cookie, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Cookie, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -388,28 +388,35 @@ def init_db() -> None:
         from backend.skills import (
             get_active_skill, list_skill_versions,
             GENERATOR_SKILL_DESCRIPTION, JUDGE_SKILL_DESCRIPTION,
+            RESEARCH_CHAT_SKILL_DESCRIPTION,
             SEARCH_STRATEGIST_SKILL_DESCRIPTION, STATISTICIAN_SKILL_DESCRIPTION,
             STUDY_APPRAISER_SKILL_DESCRIPTION, HYPOTHESIS_GENERATOR_SKILL_DESCRIPTION,
             LITERATURE_REVIEWER_SKILL_DESCRIPTION,
+            STUDY_BUILDER_SKILL_DESCRIPTION, PROTOCOL_EVALUATOR_SKILL_DESCRIPTION,
         )
         from backend.obsidian import (
             write_agent_skill_file, write_agent_program_file, write_agent_history_file,
         )
         from backend.self_improve import (
             GENERATOR_PROGRAM_MD, JUDGE_PROGRAM_MD,
+            RESEARCH_CHAT_PROGRAM_MD,
             SEARCH_STRATEGIST_PROGRAM_MD, STATISTICIAN_PROGRAM_MD,
             STUDY_APPRAISER_PROGRAM_MD, HYPOTHESIS_GENERATOR_PROGRAM_MD,
             LITERATURE_REVIEWER_PROGRAM_MD,
+            STUDY_BUILDER_PROGRAM_MD, PROTOCOL_EVALUATOR_PROGRAM_MD,
         )
 
         for at, program_seed, desc in (
             ("generator", GENERATOR_PROGRAM_MD, GENERATOR_SKILL_DESCRIPTION),
             ("judge", JUDGE_PROGRAM_MD, JUDGE_SKILL_DESCRIPTION),
+            ("research_chat", RESEARCH_CHAT_PROGRAM_MD, RESEARCH_CHAT_SKILL_DESCRIPTION),
             ("search_strategist", SEARCH_STRATEGIST_PROGRAM_MD, SEARCH_STRATEGIST_SKILL_DESCRIPTION),
             ("statistician", STATISTICIAN_PROGRAM_MD, STATISTICIAN_SKILL_DESCRIPTION),
             ("study_appraiser", STUDY_APPRAISER_PROGRAM_MD, STUDY_APPRAISER_SKILL_DESCRIPTION),
             ("hypothesis_generator", HYPOTHESIS_GENERATOR_PROGRAM_MD, HYPOTHESIS_GENERATOR_SKILL_DESCRIPTION),
             ("literature_reviewer", LITERATURE_REVIEWER_PROGRAM_MD, LITERATURE_REVIEWER_SKILL_DESCRIPTION),
+            ("study_builder", STUDY_BUILDER_PROGRAM_MD, STUDY_BUILDER_SKILL_DESCRIPTION),
+            ("protocol_evaluator", PROTOCOL_EVALUATOR_PROGRAM_MD, PROTOCOL_EVALUATOR_SKILL_DESCRIPTION),
         ):
             try:
                 active = get_active_skill(conn, at)
@@ -4322,6 +4329,81 @@ def api_lab_execute_code(body: CodeExecutePayload, rubricgen_session: str | None
     if body.language == "r":
         return run_r_analysis(body.code, user["id"])
     return run_python_analysis(body.code, user["id"])
+
+
+# ── Lab Document Context ──
+
+UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(exist_ok=True)
+
+
+@app.post("/api/lab/documents/upload")
+async def api_lab_upload_document(
+    file: UploadFile = File(...),
+    project_id: int | None = Form(default=None),
+    rubricgen_session: str | None = Cookie(default=None),
+):
+    """Upload a document to the lab context."""
+    user = require_user(rubricgen_session)
+    import uuid
+    ext = Path(file.filename or "file").suffix.lower()
+    safe_name = f"{uuid.uuid4().hex}{ext}"
+    dest = UPLOAD_DIR / safe_name
+    content = await file.read()
+    dest.write_bytes(content)
+    conn = get_db()
+    try:
+        doc = lab_mod.save_document(
+            conn, user["id"], file.filename or "file", ext.lstrip("."),
+            len(content), str(dest), project_id,
+        )
+    finally:
+        conn.close()
+    return doc
+
+
+@app.get("/api/lab/documents")
+def api_lab_list_documents(
+    project_id: int | None = None,
+    rubricgen_session: str | None = Cookie(default=None),
+):
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return lab_mod.list_documents(conn, user["id"], project_id)
+    finally:
+        conn.close()
+
+
+class DocUpdatePayload(BaseModel):
+    project_id: int | None = None
+
+
+@app.patch("/api/lab/documents/{doc_id}")
+def api_lab_update_document(doc_id: int, body: DocUpdatePayload, rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        lab_mod.update_document(conn, doc_id, user["id"], body.project_id)
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+@app.delete("/api/lab/documents/{doc_id}")
+def api_lab_delete_document(doc_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        file_path = lab_mod.delete_document(conn, doc_id, user["id"])
+    finally:
+        conn.close()
+    if file_path:
+        try:
+            Path(file_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+    return {"ok": True}
 
 
 # ─────────────────────────────────────────────

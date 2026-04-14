@@ -25,11 +25,14 @@ logger = logging.getLogger("rubricgen")
 
 # Valid agent types for the lab
 AGENT_TYPES = (
+    "research_chat",
     "search_strategist",
     "statistician",
     "study_appraiser",
     "hypothesis_generator",
     "literature_reviewer",
+    "study_builder",
+    "protocol_evaluator",
 )
 
 # ─────────────────────────────────────────────
@@ -42,7 +45,7 @@ CREATE TABLE IF NOT EXISTS lab_sessions (
     title         TEXT    NOT NULL DEFAULT 'New Conversation',
     user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     project_id    INTEGER REFERENCES projects(id) ON DELETE SET NULL,
-    agent_type    TEXT    NOT NULL DEFAULT 'search_strategist',
+    agent_type    TEXT    NOT NULL DEFAULT 'research_chat',
     pico_json     TEXT,
     metadata_json TEXT,
     created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -81,6 +84,19 @@ CREATE TABLE IF NOT EXISTS lab_exports (
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_le_session ON lab_exports(session_id);
+
+CREATE TABLE IF NOT EXISTS lab_documents (
+    id          SERIAL PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    project_id  INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+    filename    TEXT    NOT NULL,
+    file_type   TEXT    NOT NULL DEFAULT 'pdf',
+    file_size   INTEGER NOT NULL DEFAULT 0,
+    file_path   TEXT    NOT NULL,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_ld_user ON lab_documents(user_id);
+CREATE INDEX IF NOT EXISTS idx_ld_project ON lab_documents(user_id, project_id);
 """
 
 
@@ -88,7 +104,7 @@ CREATE INDEX IF NOT EXISTS idx_le_session ON lab_exports(session_id);
 # Session CRUD
 # ─────────────────────────────────────────────
 
-def create_session(conn, user_id: int, agent_type: str = "search_strategist",
+def create_session(conn, user_id: int, agent_type: str = "research_chat",
                    title: str = "New Conversation") -> dict:
     if agent_type not in AGENT_TYPES:
         raise HTTPException(400, f"Invalid agent_type: {agent_type}")
@@ -368,3 +384,58 @@ def _chat_lab_agent(conn, session_id: int, user_id: int,
         "agent_type": agent_type,
         **{k: v for k, v in metadata.items() if k != "follow_ups"},
     }
+
+
+# ─────────────────────────────────────────────
+# Document context CRUD
+# ─────────────────────────────────────────────
+
+def save_document(conn, user_id: int, filename: str, file_type: str,
+                  file_size: int, file_path: str, project_id: int | None = None) -> dict:
+    cur = conn.execute(
+        "INSERT INTO lab_documents (user_id, project_id, filename, file_type, file_size, file_path) "
+        "VALUES (?,?,?,?,?,?) RETURNING id",
+        (user_id, project_id, filename, file_type, file_size, file_path),
+    )
+    conn.commit()
+    doc_id = cur.lastrowid
+    return {"id": doc_id, "filename": filename, "file_type": file_type,
+            "file_size": file_size, "project_id": project_id}
+
+
+def list_documents(conn, user_id: int, project_id: int | None = None) -> list:
+    if project_id is not None:
+        rows = conn.execute(
+            "SELECT id, filename, file_type, file_size, project_id, created_at "
+            "FROM lab_documents WHERE user_id=? AND project_id=? ORDER BY created_at DESC",
+            (user_id, project_id),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, filename, file_type, file_size, project_id, created_at "
+            "FROM lab_documents WHERE user_id=? ORDER BY created_at DESC",
+            (user_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_document(conn, doc_id: int, user_id: int, project_id: int | None) -> bool:
+    conn.execute(
+        "UPDATE lab_documents SET project_id=? WHERE id=? AND user_id=?",
+        (project_id, doc_id, user_id),
+    )
+    conn.commit()
+    return True
+
+
+def delete_document(conn, doc_id: int, user_id: int) -> str | None:
+    row = conn.execute(
+        "SELECT file_path FROM lab_documents WHERE id=? AND user_id=?",
+        (doc_id, user_id),
+    ).fetchone()
+    if not row:
+        return None
+    file_path = row["file_path"] if isinstance(row, dict) else row[0]
+    conn.execute("DELETE FROM lab_documents WHERE id=? AND user_id=?", (doc_id, user_id))
+    conn.commit()
+    return file_path

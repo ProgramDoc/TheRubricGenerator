@@ -257,6 +257,89 @@ and clear identification of evidence gaps.
 - Make multiple unrelated edits in one proposal
 """
 
+RESEARCH_CHAT_PROGRAM_MD = """# Research Chat Skill — Meta-Learner Program
+
+Human-editable control plane for the research chat autoresearch loop.
+Re-read on every self-improvement experiment.
+
+## Objective
+Maximize helpfulness and accuracy as a general research assistant:
+provide clear, well-reasoned answers that connect to the user's
+specific context and guide them toward the right specialized tools.
+
+## Current hypotheses (2026-04)
+1. Proactive suggestions to switch to specialized agents improves outcomes.
+2. Asking clarifying questions before giving advice reduces misunderstandings.
+3. Contextual citations increase user trust in responses.
+
+## Search directions
+- Improve ability to triage questions to the right specialized agent
+- Add domain-specific reasoning when discussing clinical research
+- Refine follow-up question quality
+
+## Do NOT
+- Change the output JSON schema
+- Provide overly hedged or vague answers
+- Replace specialized agent functionality
+- Make multiple unrelated edits in one proposal
+"""
+
+STUDY_BUILDER_PROGRAM_MD = """# Study Builder Skill — Meta-Learner Program
+
+Human-editable control plane for the study builder autoresearch loop.
+Re-read on every self-improvement experiment.
+
+## Objective
+Maximize the quality and completeness of study protocol outputs:
+designs should be rigorous, feasible, and compliant with SPIRIT 2013
+and relevant regulatory guidelines.
+
+## Current hypotheses (2026-04)
+1. Structured protocol section output improves iterative refinement.
+2. Explicit design decision tracking helps researchers justify choices.
+3. Feasibility warnings prevent impractical protocol submissions.
+
+## Search directions
+- Improve adaptive design recommendations
+- Add cost/timeline estimation heuristics
+- Refine inclusion/exclusion criteria generation
+- Better integration with protocol evaluator for self-checking
+
+## Do NOT
+- Change the output JSON schema
+- Skip feasibility considerations for methodological purity
+- Produce incomplete protocol sections without flagging gaps
+- Make multiple unrelated edits in one proposal
+"""
+
+PROTOCOL_EVALUATOR_PROGRAM_MD = """# Protocol Evaluator Skill — Meta-Learner Program
+
+Human-editable control plane for the protocol evaluator autoresearch loop.
+Re-read on every self-improvement experiment.
+
+## Objective
+Maximize the accuracy and thoroughness of protocol evaluations:
+reviews should identify genuine issues, rate severity appropriately,
+and provide actionable improvement recommendations.
+
+## Current hypotheses (2026-04)
+1. Structured checklist scoring alongside narrative critique is most useful.
+2. Distinguishing critical vs. minor issues prevents alarm fatigue.
+3. Specific fix suggestions (not just problem identification) improve uptake.
+
+## Search directions
+- Improve calibration of overall_rating assignment
+- Add regulatory-specific evaluation modes (FDA IND, EMA CTA)
+- Refine feasibility assessment heuristics
+- Better handling of non-standard study designs
+
+## Do NOT
+- Change the output JSON schema
+- Be purely negative — always acknowledge strengths
+- Conflate methodological preferences with genuine flaws
+- Make multiple unrelated edits in one proposal
+"""
+
 
 def _read_program_file(vault_dir: Path, agent_type: str) -> str:
     """Read the agent's program.md meta-learner guidance.

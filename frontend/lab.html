@@ -17,22 +17,13 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; height: 100vh; overflow: hidden; }
 
-/* ── Topbar ── */
+/* -- Topbar -- */
 .topbar { background: var(--navy); color: #fff; padding: 10px 28px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,.15); z-index: 20; flex-shrink: 0; }
 .topbar .brand { font-size: 16px; font-weight: 700; letter-spacing: -.3px; }
 .topbar .brand span { color: var(--sky); }
-.topbar nav { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
-.topbar nav a { font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); padding: 5px 10px; border-radius: 5px; text-decoration: none; }
-.topbar nav a:hover { background: rgba(255,255,255,.08); color: #fff; }
-.topbar nav a.active { background: rgba(255,255,255,.15); color: #fff; }
-.topbar .user-badge { margin-left: 14px; padding: 4px 10px; background: rgba(255,255,255,.1); border-radius: 4px; font-size: 11px; color: rgba(255,255,255,.85); }
-.topbar .signout-btn { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); padding: 5px 10px; border-radius: 5px; font-size: 11px; font-weight: 600; cursor: pointer; margin-left: 8px; font-family: inherit; }
-.nav-dropdown { position: relative; display: inline-block; }
-.nav-dropdown > a { cursor: default; }
-.nav-dropdown-menu { display: none; position: absolute; top: 100%; left: 0; min-width: 160px; background: var(--navy); border: 1px solid rgba(255,255,255,.15); border-radius: 6px; padding: 4px 0; margin-top: 4px; z-index: 50; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
-.nav-dropdown:hover .nav-dropdown-menu { display: block; }
-.nav-dropdown-menu a { display: block; padding: 8px 16px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); text-decoration: none; border-radius: 0; }
-.nav-dropdown-menu a:hover { background: rgba(255,255,255,.08); color: #fff; }
+.topbar .topbar-right { display: flex; align-items: center; gap: 8px; }
+.topbar .user-badge { padding: 4px 10px; background: rgba(255,255,255,.1); border-radius: 4px; font-size: 11px; color: rgba(255,255,255,.85); }
+.topbar .signout-btn { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); padding: 5px 10px; border-radius: 5px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit; }
 .nav-settings { position: relative; display: inline-block; }
 .nav-settings .settings-icon { background: none; border: none; color: rgba(255,255,255,.7); font-size: 16px; cursor: pointer; padding: 4px 8px; }
 .nav-settings .settings-icon:hover { color: #fff; }
@@ -41,7 +32,7 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 .nav-settings-menu a { display: block; padding: 8px 16px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); text-decoration: none; }
 .nav-settings-menu a:hover { background: rgba(255,255,255,.08); color: #fff; }
 
-/* ── 3-pane split ── */
+/* -- 3-pane split -- */
 .split { display: flex; height: calc(100vh - 46px); }
 
 /* Left pane */
@@ -82,12 +73,23 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 .new-project-inline.show { display: block; }
 .new-project-inline input { width: 100%; font-family: inherit; font-size: 11px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; }
 
-/* Other Interfaces links */
+/* Interface links (no icons — placeholder for future graphics) */
 .interface-link { padding: 7px 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--blue); font-weight: 500; text-decoration: none; }
 .interface-link:hover { background: #f0f4ff; }
-.interface-link-icon { font-size: 14px; width: 20px; text-align: center; }
 
-/* ── Middle pane ── */
+/* Context documents */
+.doc-item { padding: 6px 14px; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text); position: relative; cursor: default; }
+.doc-item:hover { background: #f8fafc; }
+.doc-item[draggable="true"] { cursor: grab; }
+.doc-item.dragging { opacity: .4; }
+.doc-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.doc-size { font-size: 9px; color: var(--muted); }
+.doc-actions { display: none; position: absolute; right: 8px; top: 50%; transform: translateY(-50%); }
+.doc-item:hover .doc-actions { display: flex; gap: 2px; }
+.doc-actions button { background: none; border: none; font-size: 11px; cursor: pointer; color: var(--muted); padding: 2px 4px; border-radius: 3px; font-family: inherit; }
+.doc-actions button:hover { background: rgba(0,0,0,.06); color: var(--text); }
+
+/* -- Middle pane -- */
 .panel-center { flex: 1; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: #fff; min-width: 0; }
 .agent-label { padding: 10px 18px; border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 700; color: var(--navy); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .agent-label-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
@@ -132,15 +134,17 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 .chat-input { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: end; background: #fff; flex-shrink: 0; }
 .chat-input textarea { flex: 1; font-family: inherit; font-size: 12.5px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; resize: none; min-height: 38px; max-height: 120px; line-height: 1.4; }
 .chat-input textarea:focus { outline: none; border-color: var(--sky); }
+.upload-btn { background: none; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; cursor: pointer; color: var(--muted); font-size: 16px; line-height: 1; flex-shrink: 0; }
+.upload-btn:hover { border-color: var(--sky); color: var(--blue); background: #f0f4ff; }
 .send-btn { font-family: inherit; font-size: 12px; font-weight: 700; padding: 9px 18px; background: var(--blue); color: #fff; border: none; border-radius: 8px; cursor: pointer; white-space: nowrap; }
 .send-btn:hover { background: var(--navy); }
 .send-btn:disabled { opacity: .5; cursor: default; }
 
-/* ── Right pane ── */
+/* -- Right pane -- */
 .panel-right { width: 50%; display: flex; flex-direction: column; background: var(--bg); }
 
 /* Tab bar */
-.tab-bar { display: flex; background: #fff; border-bottom: 2px solid var(--border); flex-shrink: 0; overflow-x: auto; }
+.tab-bar { display: flex; background: #fff; border-bottom: 2px solid var(--border); flex-shrink: 0; overflow-x: auto; min-height: 36px; }
 .tab-bar::-webkit-scrollbar { height: 3px; }
 .tab-bar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 .tab-item { padding: 9px 14px; font-family: inherit; font-size: 11.5px; font-weight: 600; color: var(--muted); background: none; border: none; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; display: flex; align-items: center; gap: 6px; white-space: nowrap; flex-shrink: 0; }
@@ -149,8 +153,9 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 .tab-close { font-size: 14px; color: var(--muted); cursor: pointer; margin-left: 4px; border: none; background: none; padding: 0 2px; line-height: 1; border-radius: 3px; }
 .tab-close:hover { color: var(--red); background: rgba(220,38,38,.08); }
 
-/* Export toolbar */
-.export-toolbar { display: flex; gap: 4px; padding: 6px 14px; background: #fff; border-bottom: 1px solid var(--border); flex-shrink: 0; align-items: center; }
+/* Export toolbar (contextual) */
+.export-toolbar { display: none; gap: 4px; padding: 6px 14px; background: #fff; border-bottom: 1px solid var(--border); flex-shrink: 0; align-items: center; }
+.export-toolbar.show { display: flex; }
 .export-toolbar-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-right: 6px; }
 .export-btn { font-family: inherit; font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 4px; cursor: pointer; border: 1px solid var(--border); background: #fff; color: var(--text); }
 .export-btn:hover { border-color: var(--sky); color: var(--blue); background: #f0f4ff; }
@@ -160,6 +165,11 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 .tab-pane { display: none; position: absolute; inset: 0; }
 .tab-pane.active { display: block; }
 .tab-pane iframe { width: 100%; height: 100%; border: none; }
+
+/* Right pane empty / welcome */
+.right-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--muted); text-align: center; padding: 40px; }
+.right-empty-title { font-size: 14px; font-weight: 700; color: var(--navy); margin-bottom: 6px; }
+.right-empty-sub { font-size: 11.5px; line-height: 1.5; }
 
 /* Native workspace panes (Query Builder, Results) */
 .ws-native { padding: 18px; overflow-y: auto; height: 100%; }
@@ -217,7 +227,7 @@ table.res-table tbody tr:hover { background: #f8fafc; }
 .ctx-menu-sub-item { padding: 5px 8px; font-size: 11px; cursor: pointer; border-radius: 4px; display: block; width: 100%; border: none; background: none; text-align: left; font-family: inherit; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ctx-menu-sub-item:hover { background: #f0f4ff; }
 
-/* ── Toast ── */
+/* -- Toast -- */
 .toast-container { position: fixed; top: 60px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
 .toast { padding: 10px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; color: #fff; box-shadow: 0 4px 12px rgba(0,0,0,.15); animation: toastIn .3s ease; max-width: 360px; pointer-events: auto; }
 .toast.success { background: var(--green); }
@@ -226,7 +236,7 @@ table.res-table tbody tr:hover { background: #f8fafc; }
 @keyframes toastIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
 @keyframes toastOut { from { opacity: 1; } to { opacity: 0; transform: translateX(40px); } }
 
-/* ── Responsive ── */
+/* -- Responsive -- */
 @media (max-width: 1100px) {
   .panel-right { width: 40%; }
 }
@@ -241,11 +251,6 @@ table.res-table tbody tr:hover { background: #f8fafc; }
 @media (max-width: 600px) {
   .topbar { padding: 10px 14px; flex-wrap: wrap; gap: 6px; }
   .topbar .brand { font-size: 14px; }
-  .topbar nav { gap: 2px; }
-  .topbar nav a { font-size: 10px; padding: 4px 6px; }
-  .topbar nav a[href="/developers"], .topbar nav a[href="/library"] { display: none; }
-  .topbar .user-badge { font-size: 9px; margin-left: 4px; padding: 3px 6px; }
-  .topbar .signout-btn { font-size: 9px; padding: 4px 8px; margin-left: 4px; }
   .speed-buttons { gap: 4px; }
   .speed-btn { font-size: 9px; padding: 4px 7px; }
 }
@@ -255,23 +260,9 @@ table.res-table tbody tr:hover { background: #f8fafc; }
 
 <div class="topbar">
   <div class="brand">The AI <span>Researcher</span><sub style="font-size:9px;color:rgba(255,255,255,.35);display:block;margin-top:2px">Aitheia LLC</sub></div>
-  <nav>
-    <a href="/" class="active">Lab</a>
-    <a href="/dashboard">Dashboard</a>
-    <div class="nav-dropdown">
-      <a href="/challenges">Benchmark Lab &#9662;</a>
-      <div class="nav-dropdown-menu">
-        <a href="/challenges">Challenges</a>
-        <a href="/leaderboard">Leaderboard</a>
-      </div>
-    </div>
-    <a href="/search">Search</a>
-    <a href="/analytics">Analytics</a>
-    <a href="/library">Library</a>
-    <a href="/models">Models</a>
-    <a href="/developers">Developers</a>
-    <a href="/admin" id="nav-admin" style="display:none">Admin</a>
+  <div class="topbar-right">
     <span class="user-badge" id="user-badge">&mdash;</span>
+    <a href="/admin" id="nav-admin" style="display:none;font-size:12px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:5px 10px;border-radius:5px">Admin</a>
     <div class="nav-settings">
       <button class="settings-icon" title="Settings">&#9881;</button>
       <div class="nav-settings-menu">
@@ -280,17 +271,33 @@ table.res-table tbody tr:hover { background: #f8fafc; }
       </div>
     </div>
     <button class="signout-btn" onclick="signOut()">Sign Out</button>
-  </nav>
+  </div>
 </div>
 
 <button class="sidebar-toggle" onclick="document.getElementById('lab-sidebar').style.display='flex'">&#9776; Menu</button>
 
 <div class="split">
-  <!-- LEFT PANE: Sessions + Projects + Other Interfaces -->
+  <!-- LEFT PANE: Sessions + Context + Other Interfaces + Projects -->
   <div class="lab-sidebar" id="lab-sidebar">
     <div class="sidebar-section">
       <div class="sidebar-header">Conversations <button onclick="newSession()" title="New conversation">+</button></div>
       <div id="unsorted-sessions"></div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-header">Other Interfaces</div>
+      <a class="interface-link" onclick="openTab('Dashboard','iframe','/dashboard')">Dashboard</a>
+      <a class="interface-link" onclick="openTab('Benchmark Lab','iframe','/challenges')">Benchmark Lab</a>
+      <a class="interface-link" onclick="openTab('Analytics','iframe','/analytics')">Analytics</a>
+      <a class="interface-link" onclick="openTab('Leaderboard','iframe','/leaderboard')">Leaderboard</a>
+      <a class="interface-link" onclick="openTab('Library','iframe','/library')">Library</a>
+      <a class="interface-link" onclick="openTab('Models','iframe','/models')">Models</a>
+      <a class="interface-link" onclick="openTab('Search','iframe','/search')">Search</a>
+      <a class="interface-link" onclick="openTab('Developers','iframe','/developers')">Developers</a>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-header">Context <button onclick="document.getElementById('doc-upload-input').click()" title="Upload document">+</button></div>
+      <input type="file" id="doc-upload-input" style="display:none" multiple accept=".pdf,.doc,.docx,.txt,.csv,.xlsx" onchange="uploadDocuments(this.files)">
+      <div id="context-docs"></div>
     </div>
     <div class="sidebar-section">
       <div class="sidebar-header">Projects <button onclick="toggleNewProject()" title="New project">+</button></div>
@@ -299,44 +306,29 @@ table.res-table tbody tr:hover { background: #f8fafc; }
       </div>
       <div id="project-folders"></div>
     </div>
-    <div class="sidebar-section">
-      <div class="sidebar-header">Other Interfaces</div>
-      <a class="interface-link" onclick="openTab('Benchmark Lab','iframe','/challenges')">
-        <span class="interface-link-icon">&#9881;</span> Benchmark Lab
-      </a>
-      <a class="interface-link" onclick="openTab('Analytics','iframe','/analytics')">
-        <span class="interface-link-icon">&#128202;</span> Analytics
-      </a>
-      <a class="interface-link" onclick="openTab('Leaderboard','iframe','/leaderboard')">
-        <span class="interface-link-icon">&#127942;</span> Leaderboard
-      </a>
-      <a class="interface-link" onclick="openTab('Library','iframe','/library')">
-        <span class="interface-link-icon">&#128218;</span> Library
-      </a>
-      <a class="interface-link" onclick="openTab('Models','iframe','/models')">
-        <span class="interface-link-icon">&#129302;</span> Models
-      </a>
-    </div>
   </div>
 
   <!-- MIDDLE PANE: Agent + Chat -->
   <div class="panel-center">
     <div class="agent-label">
       <span class="agent-label-dot"></span>
-      <span id="agent-label-text">AI Search Strategist</span>
+      <span id="agent-label-text">Research Chat</span>
     </div>
 
     <div class="chat-messages" id="chat-messages">
       <div class="chat-empty" id="chat-empty">
-        <strong>AI Search Strategist</strong><br><br>
-        Describe your research question and I'll help you build a comprehensive search strategy with PICO extraction, MeSH terms, and database-specific queries.<br><br>
-        Try: <em>"I'm looking for RCTs comparing ACE inhibitors to ARBs for hypertension in elderly patients"</em>
+        <strong>Research Chat</strong><br><br>
+        Ask anything about clinical research — methodology, study design, evidence appraisal, or general questions. Use the speed buttons below to switch to a specialized agent.<br><br>
+        Try: <em>"What's the best study design for comparing two surgical techniques?"</em>
       </div>
     </div>
     <div class="typing" id="typing"><span></span><span></span><span></span></div>
 
     <div class="speed-buttons">
-      <button class="speed-btn active" onclick="switchAgent('search_strategist')" data-agent="search_strategist">
+      <button class="speed-btn active" onclick="switchAgent('research_chat')" data-agent="research_chat">
+        <span class="speed-btn-icon">&#128172;</span> Research Chat
+      </button>
+      <button class="speed-btn" onclick="switchAgent('search_strategist')" data-agent="search_strategist">
         <span class="speed-btn-icon">&#128269;</span> AI Search Strategist
       </button>
       <button class="speed-btn" onclick="switchAgent('statistician')" data-agent="statistician">
@@ -351,33 +343,35 @@ table.res-table tbody tr:hover { background: #f8fafc; }
       <button class="speed-btn" onclick="switchAgent('literature_reviewer')" data-agent="literature_reviewer">
         <span class="speed-btn-icon">&#128214;</span> Literature Reviewer
       </button>
+      <button class="speed-btn" onclick="switchAgent('study_builder')" data-agent="study_builder">
+        <span class="speed-btn-icon">&#128736;</span> The Study Builder
+      </button>
+      <button class="speed-btn" onclick="switchAgent('protocol_evaluator')" data-agent="protocol_evaluator">
+        <span class="speed-btn-icon">&#9989;</span> The Protocol Evaluator
+      </button>
     </div>
 
     <div class="chat-input">
-      <textarea id="chat-input" placeholder="Describe your research question..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}" oninput="autoGrow(this)"></textarea>
+      <button class="upload-btn" onclick="document.getElementById('chat-upload-input').click()" title="Upload document">&#128206;</button>
+      <input type="file" id="chat-upload-input" style="display:none" multiple accept=".pdf,.doc,.docx,.txt,.csv,.xlsx" onchange="uploadDocuments(this.files)">
+      <textarea id="chat-input" placeholder="Ask a research question..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}" oninput="autoGrow(this)"></textarea>
       <button class="send-btn" id="send-btn" onclick="sendMessage()">Send</button>
     </div>
   </div>
 
   <!-- RIGHT PANE: Tabbed workspace -->
   <div class="panel-right">
-    <div class="tab-bar" id="tab-bar">
-      <button class="tab-item active" data-tab-id="dashboard" onclick="switchTab('dashboard')">
-        Dashboard
-      </button>
-    </div>
+    <div class="tab-bar" id="tab-bar"></div>
     <div class="export-toolbar" id="export-toolbar">
       <span class="export-toolbar-label">Export</span>
-      <button class="export-btn" onclick="exportAs('docx')">Word</button>
-      <button class="export-btn" onclick="exportAs('latex')">LaTeX</button>
-      <button class="export-btn" onclick="exportAs('xlsx')">Excel</button>
-      <button class="export-btn" onclick="exportAs('csv')">CSV</button>
-      <button class="export-btn" onclick="exportAs('python')">Python</button>
-      <button class="export-btn" onclick="exportAs('r')">R</button>
+      <span id="export-buttons"></span>
     </div>
     <div class="tab-content" id="tab-content">
-      <div class="tab-pane active" data-tab-id="dashboard">
-        <iframe src="/dashboard"></iframe>
+      <div class="tab-pane active" data-tab-id="_empty">
+        <div class="right-empty">
+          <div class="right-empty-title">Workspace</div>
+          <div class="right-empty-sub">Select a speed button to open agent-specific tools here,<br>or open an interface from the left pane.</div>
+        </div>
       </div>
     </div>
   </div>
@@ -387,17 +381,18 @@ table.res-table tbody tr:hover { background: #f8fafc; }
 <div class="ctx-menu" id="ctx-menu" style="display:none"></div>
 
 <script>
-/* ══════════════════════════════════════════════
+/* ==============================
    STATE
-   ══════════════════════════════════════════════ */
+   ============================== */
 let currentUser = null;
 let currentSessionId = null;
-let currentAgentType = 'search_strategist';
+let currentAgentType = 'research_chat';
 let sessions = [];
 let projects = [];
+let documents = [];
 let openFolders = JSON.parse(localStorage.getItem('lab_open_folders') || '{}');
 let tabCounter = 0;
-let activeTabId = 'dashboard';
+let activeTabId = '_empty';
 
 // Search-strategist specific state
 let queryVersions = [];
@@ -408,59 +403,102 @@ let searchTotalPages = 1;
 let searchTotalResults = 0;
 
 const AGENT_CONFIG = {
+  research_chat: {
+    label: 'Research Chat',
+    icon: '&#128172;',
+    placeholder: 'Ask a research question...',
+    empty: '<strong>Research Chat</strong><br><br>Ask anything about clinical research \u2014 methodology, study design, evidence appraisal, or general questions. Use the speed buttons below to switch to a specialized agent.<br><br>Try: <em>"What\'s the best study design for comparing two surgical techniques?"</em>',
+    tabs: [],
+    exports: ['docx', 'latex']
+  },
   search_strategist: {
     label: 'AI Search Strategist',
+    icon: '&#128269;',
     placeholder: 'Describe your research question...',
-    empty: '<strong>AI Search Strategist</strong><br><br>Describe your research question and I\'ll help you build a comprehensive search strategy with PICO extraction, MeSH terms, and database-specific queries.<br><br>Try: <em>"I\'m looking for RCTs comparing ACE inhibitors to ARBs for hypertension in elderly patients"</em>'
+    empty: '<strong>AI Search Strategist</strong><br><br>Describe your research question and I\'ll help you build a comprehensive search strategy with PICO extraction, MeSH terms, and database-specific queries.<br><br>Try: <em>"I\'m looking for RCTs comparing ACE inhibitors to ARBs for hypertension in elderly patients"</em>',
+    tabs: ['query_builder', 'results'],
+    exports: ['docx', 'latex', 'csv']
   },
   statistician: {
     label: 'AI Statistician',
+    icon: '&#128200;',
     placeholder: 'Ask a statistics question or describe your data...',
-    empty: '<strong>AI Statistician</strong><br><br>I can help with statistical analysis, study design, power calculations, and data interpretation.<br><br>Try: <em>"What sample size do I need for a two-arm RCT with 80% power to detect a 15% difference?"</em>'
+    empty: '<strong>AI Statistician</strong><br><br>I can help with statistical analysis, study design, power calculations, and data interpretation.<br><br>Try: <em>"What sample size do I need for a two-arm RCT with 80% power to detect a 15% difference?"</em>',
+    tabs: ['analysis_workspace'],
+    exports: ['docx', 'latex', 'xlsx', 'csv', 'python', 'r']
   },
   study_appraiser: {
     label: 'Study Appraiser',
+    icon: '&#128203;',
     placeholder: 'Paste a study abstract or ask about study quality...',
-    empty: '<strong>Study Appraiser</strong><br><br>I evaluate the quality and rigor of research studies using frameworks like GRADE, Cochrane RoB, and CASP.<br><br>Try: <em>"Appraise this RCT: [paste abstract]"</em>'
+    empty: '<strong>Study Appraiser</strong><br><br>I evaluate the quality and rigor of research studies using frameworks like GRADE, Cochrane RoB, and CASP.<br><br>Try: <em>"Appraise this RCT: [paste abstract]"</em>',
+    tabs: ['appraisal_report'],
+    exports: ['docx', 'latex']
   },
   hypothesis_generator: {
     label: 'Hypothesis Generator',
+    icon: '&#128161;',
     placeholder: 'Describe your research area or observations...',
-    empty: '<strong>Hypothesis Generator</strong><br><br>I help generate and refine research hypotheses based on existing evidence, gaps in the literature, and mechanistic reasoning.<br><br>Try: <em>"What hypotheses could explain the link between gut microbiome and depression?"</em>'
+    empty: '<strong>Hypothesis Generator</strong><br><br>I help generate and refine research hypotheses based on existing evidence, gaps in the literature, and mechanistic reasoning.<br><br>Try: <em>"What hypotheses could explain the link between gut microbiome and depression?"</em>',
+    tabs: ['hypothesis_board'],
+    exports: ['docx', 'latex']
   },
   literature_reviewer: {
     label: 'Literature Reviewer',
+    icon: '&#128214;',
     placeholder: 'Describe the topic for your literature review...',
-    empty: '<strong>Literature Reviewer</strong><br><br>I help structure and synthesize literature reviews, identify themes, and organize findings.<br><br>Try: <em>"Help me review the literature on CRISPR applications in sickle cell disease"</em>'
+    empty: '<strong>Literature Reviewer</strong><br><br>I help structure and synthesize literature reviews, identify themes, and organize findings.<br><br>Try: <em>"Help me review the literature on CRISPR applications in sickle cell disease"</em>',
+    tabs: ['review_outline'],
+    exports: ['docx', 'latex']
+  },
+  study_builder: {
+    label: 'The Study Builder',
+    icon: '&#128736;',
+    placeholder: 'Describe the study you want to design...',
+    empty: '<strong>The Study Builder</strong><br><br>I help you design clinical studies from concept to protocol-ready specifications, including endpoints, sample size, randomization, and regulatory considerations.<br><br>Try: <em>"Design a phase III RCT comparing a novel anticoagulant to warfarin for atrial fibrillation"</em>',
+    tabs: ['protocol_draft'],
+    exports: ['docx', 'latex']
+  },
+  protocol_evaluator: {
+    label: 'The Protocol Evaluator',
+    icon: '&#9989;',
+    placeholder: 'Paste a study protocol or describe it...',
+    empty: '<strong>The Protocol Evaluator</strong><br><br>I critically evaluate study protocols for scientific rigor, feasibility, regulatory compliance, and ethical considerations using SPIRIT 2013, ICH-GCP, and other frameworks.<br><br>Try: <em>"Evaluate this protocol: [paste protocol summary]"</em>',
+    tabs: ['evaluation_report'],
+    exports: ['docx', 'latex']
   }
 };
 
-/* ══════════════════════════════════════════════
+// Tab definitions per agent — label includes the agent icon for association
+var AGENT_TAB_DEFS = {
+  query_builder:      { label: '&#128269; Query Builder', type: 'native' },
+  results:            { label: '&#128269; Results', type: 'native' },
+  analysis_workspace: { label: '&#128200; Analysis', type: 'native' },
+  appraisal_report:   { label: '&#128203; Appraisal', type: 'native' },
+  hypothesis_board:   { label: '&#128161; Hypotheses', type: 'native' },
+  review_outline:     { label: '&#128214; Review', type: 'native' },
+  protocol_draft:     { label: '&#128736; Protocol', type: 'native' },
+  evaluation_report:  { label: '&#9989; Evaluation', type: 'native' }
+};
+
+/* ==============================
    UTILITIES
-   ══════════════════════════════════════════════ */
+   ============================== */
 function escapeHtml(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function renderMd(text) {
-  let html = escapeHtml(text);
-  // Code blocks
+  var html = escapeHtml(text);
   html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function(m, lang, code) {
     return '<pre><code>' + code.trim() + '</code></pre>';
   });
-  // Inline code
   html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-  // Bold
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  // Italic
   html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-  // Headers
   html = html.replace(/^### (.+)$/gm, '<strong style="font-size:13px;display:block;margin:8px 0 4px">$1</strong>');
   html = html.replace(/^## (.+)$/gm, '<strong style="font-size:14px;display:block;margin:10px 0 4px">$1</strong>');
-  // Lists
   html = html.replace(/\n- /g, '\n&#8226; ');
-  html = html.replace(/\n\d+\. /g, function(m) { return m; });
-  // Line breaks
   html = html.replace(/\n/g, '<br>');
   return html;
 }
@@ -470,29 +508,35 @@ function autoGrow(el) {
   el.style.height = Math.min(el.scrollHeight, 120) + 'px';
 }
 
-/* ── Toast ── */
+function formatFileSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+/* -- Toast -- */
 function _ensureToastContainer() {
-  let c = document.querySelector('.toast-container');
+  var c = document.querySelector('.toast-container');
   if (!c) { c = document.createElement('div'); c.className = 'toast-container'; document.body.appendChild(c); }
   return c;
 }
 function showToast(msg, type, duration) {
   type = type || 'info';
   duration = duration || 4000;
-  const c = _ensureToastContainer();
-  const t = document.createElement('div');
+  var c = _ensureToastContainer();
+  var t = document.createElement('div');
   t.className = 'toast ' + type;
   t.textContent = msg;
   c.appendChild(t);
   setTimeout(function() { t.style.animation = 'toastOut .3s ease forwards'; setTimeout(function() { t.remove(); }, 300); }, duration);
 }
 
-/* ══════════════════════════════════════════════
+/* ==============================
    AUTH
-   ══════════════════════════════════════════════ */
+   ============================== */
 async function checkAuth() {
   try {
-    const r = await fetch('/api/auth/me');
+    var r = await fetch('/api/auth/me');
     if (!r.ok) { window.location.href = '/login'; return; }
     currentUser = await r.json();
     document.getElementById('user-badge').textContent = currentUser.display_name || currentUser.email;
@@ -505,14 +549,15 @@ async function signOut() {
   window.location.href = '/login';
 }
 
-/* ══════════════════════════════════════════════
+/* ==============================
    AGENT SWITCHING
-   ══════════════════════════════════════════════ */
+   ============================== */
 function switchAgent(agentType) {
   if (agentType === currentAgentType) return;
   currentAgentType = agentType;
   currentSessionId = null;
   sessionStorage.removeItem('lab_session_id');
+  sessionStorage.setItem('lab_agent_type', agentType);
 
   // Update speed buttons
   document.querySelectorAll('.speed-btn').forEach(function(btn) {
@@ -530,24 +575,27 @@ function switchAgent(agentType) {
   // Re-render sidebar for this agent type
   renderSidebar();
 
-  // If switching to search_strategist, ensure Query Builder tab is available
-  if (agentType === 'search_strategist') {
-    // Query/Results tabs will be opened on demand
-  }
+  // Close all agent-specific tabs, then open tabs for this agent
+  closeAllAgentTabs();
+  openAgentTabs(agentType);
+  updateExportToolbar();
 }
 
-/* ══════════════════════════════════════════════
-   SIDEBAR — Sessions + Projects
-   ══════════════════════════════════════════════ */
+/* ==============================
+   SIDEBAR — Sessions + Projects + Context
+   ============================== */
 async function renderSidebar() {
   try {
     var sUrl = '/api/lab/sessions?agent_type=' + encodeURIComponent(currentAgentType);
     var pUrl = '/api/projects';
-    var responses = await Promise.all([fetch(sUrl), fetch(pUrl)]);
+    var dUrl = '/api/lab/documents';
+    var responses = await Promise.all([fetch(sUrl), fetch(pUrl), fetch(dUrl)]);
     if (responses[0].ok) sessions = await responses[0].json();
     else sessions = [];
     if (responses[1].ok) projects = await responses[1].json();
     else projects = [];
+    if (responses[2].ok) documents = await responses[2].json();
+    else documents = [];
   } catch (e) { return; }
 
   var unsorted = sessions.filter(function(s) { return !s.project_id; });
@@ -576,11 +624,22 @@ async function renderSidebar() {
     renderSidebar();
   };
 
+  // Context documents (unsorted = no project)
+  var contextEl = document.getElementById('context-docs');
+  var unsortedDocs = documents.filter(function(d) { return !d.project_id; });
+  if (unsortedDocs.length) {
+    contextEl.innerHTML = '';
+    unsortedDocs.forEach(function(d) { contextEl.appendChild(makeDocItem(d)); });
+  } else {
+    contextEl.innerHTML = '<div style="padding:6px 14px;font-size:10px;color:var(--muted)">No documents uploaded</div>';
+  }
+
   // Projects
   var projectEl = document.getElementById('project-folders');
   projectEl.innerHTML = '';
   projects.forEach(function(p) {
-    projectEl.appendChild(makeFolderItem(p, byProject[p.id] || []));
+    var projectDocs = documents.filter(function(d) { return d.project_id === p.id; });
+    projectEl.appendChild(makeFolderItem(p, byProject[p.id] || [], projectDocs));
   });
 }
 
@@ -607,7 +666,27 @@ function makeSessionItem(s) {
   return div;
 }
 
-function makeFolderItem(p, children) {
+function makeDocItem(d) {
+  var div = document.createElement('div');
+  div.className = 'doc-item';
+  div.draggable = true;
+  div.dataset.docId = d.id;
+  div.ondragstart = function(e) {
+    e.dataTransfer.setData('application/x-doc-id', d.id);
+    e.dataTransfer.effectAllowed = 'move';
+    div.classList.add('dragging');
+  };
+  div.ondragend = function() { div.classList.remove('dragging'); };
+  div.innerHTML =
+    '<span class="doc-name">' + escapeHtml(d.filename) + '</span>' +
+    '<span class="doc-size">' + formatFileSize(d.file_size) + '</span>' +
+    '<span class="doc-actions">' +
+      '<button onclick="event.stopPropagation();showDocCtx(event,' + d.id + ')" title="More">...</button>' +
+    '</span>';
+  return div;
+}
+
+function makeFolderItem(p, children, projectDocs) {
   var wrapper = document.createElement('div');
   var isOpen = openFolders[p.id];
 
@@ -619,19 +698,32 @@ function makeFolderItem(p, children) {
   folder.ondragleave = function() { folder.classList.remove('drag-over'); };
   folder.ondrop = async function(e) {
     e.preventDefault(); folder.classList.remove('drag-over');
+    // Handle session drop
     var sessionId = parseInt(e.dataTransfer.getData('text/plain'));
-    if (!sessionId) return;
-    await fetch('/api/lab/sessions/' + sessionId, {
-      method: 'PATCH', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ project_id: p.id }),
-    });
-    renderSidebar();
+    if (sessionId) {
+      await fetch('/api/lab/sessions/' + sessionId, {
+        method: 'PATCH', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ project_id: p.id }),
+      });
+      renderSidebar();
+      return;
+    }
+    // Handle document drop
+    var docId = parseInt(e.dataTransfer.getData('application/x-doc-id'));
+    if (docId) {
+      await fetch('/api/lab/documents/' + docId, {
+        method: 'PATCH', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ project_id: p.id }),
+      });
+      renderSidebar();
+    }
   };
+  var totalItems = children.length + (projectDocs ? projectDocs.length : 0);
   var folderIcon = isOpen ? '&#128194;' : '&#128193;';
   folder.innerHTML =
     '<span class="folder-icon">' + folderIcon + '</span>' +
     '<span class="folder-name">' + escapeHtml(p.name) + '</span>' +
-    '<span class="folder-badge">' + children.length + '</span>' +
+    '<span class="folder-badge">' + totalItems + '</span>' +
     '<span class="folder-actions">' +
       '<button onclick="event.stopPropagation();showFolderCtx(event,' + p.id + ')" title="More">...</button>' +
     '</span>';
@@ -640,10 +732,14 @@ function makeFolderItem(p, children) {
   var childDiv = document.createElement('div');
   childDiv.className = 'folder-children' + (isOpen ? ' open' : '');
   childDiv.id = 'folder-children-' + p.id;
+  if (projectDocs && projectDocs.length) {
+    projectDocs.forEach(function(d) { childDiv.appendChild(makeDocItem(d)); });
+  }
   if (children.length) {
     children.forEach(function(s) { childDiv.appendChild(makeSessionItem(s)); });
-  } else {
-    childDiv.innerHTML = '<div style="padding:4px 14px;font-size:10px;color:var(--muted);font-style:italic">No conversations</div>';
+  }
+  if (!children.length && (!projectDocs || !projectDocs.length)) {
+    childDiv.innerHTML = '<div style="padding:4px 14px;font-size:10px;color:var(--muted);font-style:italic">Empty</div>';
   }
   wrapper.appendChild(childDiv);
   return wrapper;
@@ -655,7 +751,7 @@ function toggleFolder(pid) {
   renderSidebar();
 }
 
-/* ── Project CRUD ── */
+/* -- Project CRUD -- */
 function toggleNewProject() {
   var form = document.getElementById('new-project-form');
   form.classList.toggle('show');
@@ -677,7 +773,25 @@ async function createNewProject() {
   renderSidebar();
 }
 
-/* ── Context menus ── */
+/* -- Document upload -- */
+async function uploadDocuments(files) {
+  if (!files || !files.length) return;
+  for (var i = 0; i < files.length; i++) {
+    var formData = new FormData();
+    formData.append('file', files[i]);
+    try {
+      var r = await fetch('/api/lab/documents/upload', { method: 'POST', body: formData });
+      if (!r.ok) { showToast('Upload failed: ' + files[i].name, 'error'); continue; }
+    } catch (e) { showToast('Upload error', 'error'); }
+  }
+  // Reset file inputs
+  document.getElementById('doc-upload-input').value = '';
+  document.getElementById('chat-upload-input').value = '';
+  showToast('Document(s) uploaded', 'success');
+  renderSidebar();
+}
+
+/* -- Context menus -- */
 function hideCtxMenu() { document.getElementById('ctx-menu').style.display = 'none'; }
 document.addEventListener('click', hideCtxMenu);
 
@@ -701,6 +815,30 @@ function showSessionCtx(e, sessionId) {
   menu.style.top = Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 10) + 'px';
 }
 
+function showDocCtx(e, docId) {
+  e.stopPropagation();
+  var menu = document.getElementById('ctx-menu');
+  var items = '';
+  if (projects.length) {
+    items += '<div class="ctx-menu-sub"><div class="ctx-menu-sub-label">Move to project</div>';
+    projects.forEach(function(p) {
+      items += '<button class="ctx-menu-sub-item" onclick="hideCtxMenu();moveDocToProject(' + docId + ',' + p.id + ')">' + escapeHtml(p.name) + '</button>';
+    });
+    items += '</div>';
+    // Also allow removing from project
+    var doc = documents.find(function(d) { return d.id === docId; });
+    if (doc && doc.project_id) {
+      items += '<button class="ctx-menu-item" onclick="hideCtxMenu();moveDocToProject(' + docId + ',null)">Remove from project</button>';
+    }
+  }
+  items += '<div class="ctx-menu-sep"></div>';
+  items += '<button class="ctx-menu-item danger" onclick="hideCtxMenu();deleteDoc(' + docId + ')">Delete</button>';
+  menu.innerHTML = items;
+  menu.style.display = 'block';
+  menu.style.left = Math.min(e.clientX, window.innerWidth - 180) + 'px';
+  menu.style.top = Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 10) + 'px';
+}
+
 function showFolderCtx(e, pid) {
   e.stopPropagation();
   var menu = document.getElementById('ctx-menu');
@@ -714,7 +852,7 @@ function showFolderCtx(e, pid) {
   menu.style.top = Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 10) + 'px';
 }
 
-/* ── Session actions ── */
+/* -- Session actions -- */
 async function renameSession(sessionId) {
   var s = sessions.find(function(s) { return s.id === sessionId; });
   var name = prompt('Rename conversation:', s ? s.title : '');
@@ -759,15 +897,28 @@ async function deleteProject(pid) {
   renderSidebar();
 }
 
-/* ══════════════════════════════════════════════
+async function moveDocToProject(docId, projectId) {
+  await fetch('/api/lab/documents/' + docId, {
+    method: 'PATCH', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ project_id: projectId }),
+  });
+  renderSidebar();
+}
+
+async function deleteDoc(docId) {
+  if (!confirm('Delete this document?')) return;
+  await fetch('/api/lab/documents/' + docId, { method: 'DELETE' });
+  renderSidebar();
+}
+
+/* ==============================
    SESSIONS
-   ══════════════════════════════════════════════ */
+   ============================== */
 async function switchSession(id) {
   if (!id) return;
   currentSessionId = parseInt(id);
   sessionStorage.setItem('lab_session_id', currentSessionId);
 
-  // Highlight active
   document.querySelectorAll('.session-item').forEach(function(el) {
     el.classList.toggle('active', parseInt(el.dataset.sessionId) === currentSessionId);
   });
@@ -776,7 +927,6 @@ async function switchSession(id) {
   if (!r.ok) { showToast('Failed to load session', 'error'); return; }
   var data = await r.json();
 
-  // Render messages
   var container = document.getElementById('chat-messages');
   container.innerHTML = '';
   if (data.messages && data.messages.length) {
@@ -809,6 +959,7 @@ async function switchSession(id) {
     }
   }
 
+  updateExportToolbar();
   scrollToBottom();
 }
 
@@ -823,11 +974,12 @@ function newSession() {
   document.getElementById('chat-messages').innerHTML = '<div class="chat-empty" id="chat-empty">' + cfg.empty + '</div>';
 
   document.querySelectorAll('.session-item').forEach(function(el) { el.classList.remove('active'); });
+  updateExportToolbar();
 }
 
-/* ══════════════════════════════════════════════
+/* ==============================
    CHAT
-   ══════════════════════════════════════════════ */
+   ============================== */
 async function sendMessage() {
   var input = document.getElementById('chat-input');
   var text = input.value.trim();
@@ -882,6 +1034,7 @@ async function sendMessage() {
       }
     }
 
+    updateExportToolbar();
     renderSidebar();
   } catch (e) {
     document.getElementById('typing').classList.remove('show');
@@ -899,7 +1052,6 @@ function appendMessage(role, content, metadata) {
 
   var html = '<div class="msg-bubble">';
 
-  // Check for images (statistician agent)
   if (role === 'assistant' && metadata && metadata.images) {
     metadata.images.forEach(function(img) {
       html += '<img src="data:image/png;base64,' + img.data + '" alt="' + escapeHtml(img.title || 'Chart') + '">';
@@ -909,7 +1061,6 @@ function appendMessage(role, content, metadata) {
   html += renderMd(content || '');
   html += '</div>';
 
-  // Follow-up buttons
   if (role === 'assistant' && metadata && metadata.follow_ups && metadata.follow_ups.length) {
     html += '<div class="follow-ups">';
     metadata.follow_ups.forEach(function(q) {
@@ -922,10 +1073,6 @@ function appendMessage(role, content, metadata) {
   container.appendChild(div);
 }
 
-function renderMessage(msg) {
-  appendMessage(msg.role, msg.content, msg.metadata);
-}
-
 function useSuggestion(text) {
   document.getElementById('chat-input').value = text;
   sendMessage();
@@ -936,11 +1083,10 @@ function scrollToBottom() {
   c.scrollTop = c.scrollHeight;
 }
 
-/* ══════════════════════════════════════════════
+/* ==============================
    TAB MANAGEMENT
-   ══════════════════════════════════════════════ */
+   ============================== */
 function openTab(label, type, url) {
-  // Check if tab with same label already exists
   var existing = document.querySelector('.tab-item[data-tab-label="' + label + '"]');
   if (existing) {
     switchTab(existing.dataset.tabId);
@@ -950,7 +1096,6 @@ function openTab(label, type, url) {
   tabCounter++;
   var tabId = 'tab-' + tabCounter;
 
-  // Create tab button
   var tabBtn = document.createElement('button');
   tabBtn.className = 'tab-item';
   tabBtn.dataset.tabId = tabId;
@@ -959,7 +1104,6 @@ function openTab(label, type, url) {
   tabBtn.innerHTML = escapeHtml(label) + ' <span class="tab-close" onclick="event.stopPropagation();closeTab(\'' + tabId + '\')">&times;</span>';
   document.getElementById('tab-bar').appendChild(tabBtn);
 
-  // Create tab pane
   var pane = document.createElement('div');
   pane.className = 'tab-pane';
   pane.dataset.tabId = tabId;
@@ -971,130 +1115,185 @@ function openTab(label, type, url) {
   }
 
   document.getElementById('tab-content').appendChild(pane);
-
   switchTab(tabId);
 }
 
 function closeTab(tabId) {
-  if (tabId === 'dashboard') return; // Dashboard cannot be closed
-
+  if (tabId === '_empty') return;
   var tabBtn = document.querySelector('.tab-item[data-tab-id="' + tabId + '"]');
   var pane = document.querySelector('.tab-pane[data-tab-id="' + tabId + '"]');
   if (tabBtn) tabBtn.remove();
   if (pane) pane.remove();
 
-  // If closing active tab, switch to dashboard
   if (activeTabId === tabId) {
-    switchTab('dashboard');
+    // Switch to first available tab or empty state
+    var remaining = document.querySelector('.tab-item');
+    if (remaining) {
+      switchTab(remaining.dataset.tabId);
+    } else {
+      switchTab('_empty');
+    }
   }
+}
+
+function closeAllAgentTabs() {
+  var tabs = document.querySelectorAll('.tab-item[data-agent-tab]');
+  tabs.forEach(function(t) {
+    var tabId = t.dataset.tabId;
+    var pane = document.querySelector('.tab-pane[data-tab-id="' + tabId + '"]');
+    if (pane) pane.remove();
+    t.remove();
+  });
+}
+
+function openAgentTabs(agentType) {
+  var cfg = AGENT_CONFIG[agentType];
+  if (!cfg || !cfg.tabs || !cfg.tabs.length) {
+    // No tabs — show empty state
+    switchTab('_empty');
+    return;
+  }
+
+  var firstTabId = null;
+  cfg.tabs.forEach(function(tabKey) {
+    var def = AGENT_TAB_DEFS[tabKey];
+    if (!def) return;
+    tabCounter++;
+    var tabId = 'tab-' + tabCounter;
+    if (!firstTabId) firstTabId = tabId;
+
+    var tabBtn = document.createElement('button');
+    tabBtn.className = 'tab-item';
+    tabBtn.dataset.tabId = tabId;
+    tabBtn.dataset.tabLabel = tabKey;
+    tabBtn.dataset.agentTab = 'true';
+    tabBtn.onclick = function() { switchTab(tabId); };
+    tabBtn.innerHTML = def.label + ' <span class="tab-close" onclick="event.stopPropagation();closeTab(\'' + tabId + '\')">&times;</span>';
+    document.getElementById('tab-bar').appendChild(tabBtn);
+
+    var pane = document.createElement('div');
+    pane.className = 'tab-pane';
+    pane.dataset.tabId = tabId;
+
+    // Build content based on tab key
+    if (tabKey === 'query_builder') {
+      pane.innerHTML = buildQueryBuilderHTML(tabId);
+    } else if (tabKey === 'results') {
+      pane.innerHTML = buildResultsHTML(tabId);
+    } else {
+      // Generic agent workspace
+      pane.innerHTML = '<div class="ws-native" id="ws-' + tabKey + '"><div class="empty">Interact with the ' + escapeHtml(cfg.label) + ' in the chat to populate this workspace.</div></div>';
+    }
+    document.getElementById('tab-content').appendChild(pane);
+  });
+
+  if (firstTabId) switchTab(firstTabId);
 }
 
 function switchTab(tabId) {
   activeTabId = tabId;
-
-  // Update tab buttons
   document.querySelectorAll('.tab-item').forEach(function(btn) {
     btn.classList.toggle('active', btn.dataset.tabId === tabId);
   });
-
-  // Update tab panes
   document.querySelectorAll('.tab-pane').forEach(function(pane) {
     pane.classList.toggle('active', pane.dataset.tabId === tabId);
   });
 }
 
-/* ══════════════════════════════════════════════
-   SEARCH STRATEGIST — Query Builder & Results Tabs
-   ══════════════════════════════════════════════ */
+/* ==============================
+   EXPORT TOOLBAR (contextual)
+   ============================== */
+function updateExportToolbar() {
+  var toolbar = document.getElementById('export-toolbar');
+  var btnContainer = document.getElementById('export-buttons');
+  if (!currentSessionId) {
+    toolbar.classList.remove('show');
+    return;
+  }
+
+  var cfg = AGENT_CONFIG[currentAgentType];
+  if (!cfg || !cfg.exports || !cfg.exports.length) {
+    toolbar.classList.remove('show');
+    return;
+  }
+
+  var labels = { docx: 'Word', latex: 'LaTeX', xlsx: 'Excel', csv: 'CSV', python: 'Python', r: 'R' };
+  var html = '';
+  cfg.exports.forEach(function(fmt) {
+    html += '<button class="export-btn" onclick="exportAs(\'' + fmt + '\')">' + (labels[fmt] || fmt) + '</button> ';
+  });
+  btnContainer.innerHTML = html;
+  toolbar.classList.add('show');
+}
+
+/* ==============================
+   SEARCH STRATEGIST — Query Builder & Results
+   ============================== */
+function buildQueryBuilderHTML() {
+  return '<div class="ws-native" id="ws-query-builder">' +
+    '<div class="pico-strip" id="pico-strip" style="display:none">' +
+      '<div class="pico-card p"><div class="pico-label">Population</div><div class="pico-text" id="pico-p">&mdash;</div></div>' +
+      '<div class="pico-card i"><div class="pico-label">Intervention</div><div class="pico-text" id="pico-i">&mdash;</div></div>' +
+      '<div class="pico-card c"><div class="pico-label">Comparator</div><div class="pico-text" id="pico-c">&mdash;</div></div>' +
+      '<div class="pico-card o"><div class="pico-label">Outcomes</div><div class="pico-text" id="pico-o">&mdash;</div></div>' +
+    '</div>' +
+    '<div id="mesh-strip" class="mesh-pills" style="margin-bottom:12px"></div>' +
+    '<div class="query-card" id="query-card">' +
+      '<div class="query-card-header">' +
+        '<span style="font-size:10px;color:rgba(255,255,255,.5)">PubMed Query</span>' +
+        '<select id="version-select" onchange="switchQueryVersion(this.value)" style="display:none;font-family:inherit;font-size:10px;padding:3px 6px;border-radius:3px;background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.2)"></select>' +
+      '</div>' +
+      '<div class="query-text" id="query-text"><span class="query-empty">No query yet. Start a conversation to generate one.</span></div>' +
+      '<div class="query-actions">' +
+        '<select class="db-select" id="search-db">' +
+          '<option value="pubmed">PubMed</option>' +
+          '<option value="europe_pmc">Europe PMC</option>' +
+        '</select>' +
+        '<button class="btn run-btn" id="run-btn" onclick="runSearch()" disabled>Search</button>' +
+        '<button class="btn copy-btn" onclick="copyQuery()">Copy</button>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+function buildResultsHTML() {
+  return '<div class="ws-native" id="ws-results">' +
+    '<div class="results-toolbar" id="results-toolbar" style="display:none">' +
+      '<label><input type="checkbox" id="select-all" onchange="toggleSelectAll(this.checked)"> Select all</label>' +
+      '<span class="results-count" id="results-count">0 results</span>' +
+      '<button class="btn btn-import" onclick="importSelected()">Import Selected</button>' +
+      '<button class="btn btn-export" onclick="exportRIS()">RIS</button>' +
+      '<button class="btn btn-export" onclick="exportBibTeX()">BibTeX</button>' +
+    '</div>' +
+    '<div id="results-body"><div class="empty">Run a search to see results here.</div></div>' +
+    '<div id="pagination-bar" style="display:none;text-align:center;padding:12px;display:flex;gap:6px;justify-content:center;flex-wrap:wrap"></div>' +
+  '</div>';
+}
+
 function openQueryBuilderTab() {
-  var existing = document.querySelector('.tab-item[data-tab-label="Query Builder"]');
+  var existing = document.querySelector('.tab-item[data-tab-label="query_builder"]');
   if (existing) {
     switchTab(existing.dataset.tabId);
     return existing.dataset.tabId;
   }
-
-  tabCounter++;
-  var tabId = 'tab-' + tabCounter;
-
-  var tabBtn = document.createElement('button');
-  tabBtn.className = 'tab-item';
-  tabBtn.dataset.tabId = tabId;
-  tabBtn.dataset.tabLabel = 'Query Builder';
-  tabBtn.onclick = function() { switchTab(tabId); };
-  tabBtn.innerHTML = 'Query Builder <span class="tab-close" onclick="event.stopPropagation();closeTab(\'' + tabId + '\')">&times;</span>';
-  document.getElementById('tab-bar').appendChild(tabBtn);
-
-  var pane = document.createElement('div');
-  pane.className = 'tab-pane';
-  pane.dataset.tabId = tabId;
-  pane.innerHTML =
-    '<div class="ws-native" id="ws-query-builder">' +
-      '<div class="pico-strip" id="pico-strip" style="display:none">' +
-        '<div class="pico-card p"><div class="pico-label">Population</div><div class="pico-text" id="pico-p">&mdash;</div></div>' +
-        '<div class="pico-card i"><div class="pico-label">Intervention</div><div class="pico-text" id="pico-i">&mdash;</div></div>' +
-        '<div class="pico-card c"><div class="pico-label">Comparator</div><div class="pico-text" id="pico-c">&mdash;</div></div>' +
-        '<div class="pico-card o"><div class="pico-label">Outcomes</div><div class="pico-text" id="pico-o">&mdash;</div></div>' +
-      '</div>' +
-      '<div id="mesh-strip" class="mesh-pills" style="margin-bottom:12px"></div>' +
-      '<div class="query-card" id="query-card">' +
-        '<div class="query-card-header">' +
-          '<span style="font-size:10px;color:rgba(255,255,255,.5)">PubMed Query</span>' +
-          '<select id="version-select" onchange="switchQueryVersion(this.value)" style="display:none;font-family:inherit;font-size:10px;padding:3px 6px;border-radius:3px;background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.2)"></select>' +
-        '</div>' +
-        '<div class="query-text" id="query-text"><span class="query-empty">No query yet. Start a conversation to generate one.</span></div>' +
-        '<div class="query-actions">' +
-          '<select class="db-select" id="search-db">' +
-            '<option value="pubmed">PubMed</option>' +
-            '<option value="europe_pmc">Europe PMC</option>' +
-          '</select>' +
-          '<button class="btn run-btn" id="run-btn" onclick="runSearch()" disabled>Search</button>' +
-          '<button class="btn copy-btn" onclick="copyQuery()">Copy</button>' +
-        '</div>' +
-      '</div>' +
-    '</div>';
-  document.getElementById('tab-content').appendChild(pane);
-
-  switchTab(tabId);
-  return tabId;
+  // Tabs may not be open yet — open agent tabs
+  if (!document.querySelector('.tab-item[data-agent-tab]')) {
+    openAgentTabs('search_strategist');
+  }
+  var el = document.querySelector('.tab-item[data-tab-label="query_builder"]');
+  if (el) { switchTab(el.dataset.tabId); return el.dataset.tabId; }
+  return null;
 }
 
 function openResultsTab() {
-  var existing = document.querySelector('.tab-item[data-tab-label="Results"]');
+  var existing = document.querySelector('.tab-item[data-tab-label="results"]');
   if (existing) {
     switchTab(existing.dataset.tabId);
     return existing.dataset.tabId;
   }
-
-  tabCounter++;
-  var tabId = 'tab-' + tabCounter;
-
-  var tabBtn = document.createElement('button');
-  tabBtn.className = 'tab-item';
-  tabBtn.dataset.tabId = tabId;
-  tabBtn.dataset.tabLabel = 'Results';
-  tabBtn.onclick = function() { switchTab(tabId); };
-  tabBtn.innerHTML = 'Results <span class="tab-close" onclick="event.stopPropagation();closeTab(\'' + tabId + '\')">&times;</span>';
-  document.getElementById('tab-bar').appendChild(tabBtn);
-
-  var pane = document.createElement('div');
-  pane.className = 'tab-pane';
-  pane.dataset.tabId = tabId;
-  pane.innerHTML =
-    '<div class="ws-native" id="ws-results">' +
-      '<div class="results-toolbar" id="results-toolbar" style="display:none">' +
-        '<label><input type="checkbox" id="select-all" onchange="toggleSelectAll(this.checked)"> Select all</label>' +
-        '<span class="results-count" id="results-count">0 results</span>' +
-        '<button class="btn btn-import" onclick="importSelected()">Import Selected</button>' +
-        '<button class="btn btn-export" onclick="exportRIS()">RIS</button>' +
-        '<button class="btn btn-export" onclick="exportBibTeX()">BibTeX</button>' +
-      '</div>' +
-      '<div id="results-body"><div class="empty">Run a search to see results here.</div></div>' +
-      '<div id="pagination-bar" style="display:none;text-align:center;padding:12px;display:flex;gap:6px;justify-content:center;flex-wrap:wrap"></div>' +
-    '</div>';
-  document.getElementById('tab-content').appendChild(pane);
-
-  switchTab(tabId);
-  return tabId;
+  var el = document.querySelector('.tab-item[data-tab-label="results"]');
+  if (el) { switchTab(el.dataset.tabId); return el.dataset.tabId; }
+  return null;
 }
 
 function renderPicoInTab(pico) {
@@ -1123,7 +1322,6 @@ function renderQueryInTab(query) {
     el.innerHTML = '<span class="query-empty">No query yet.</span>';
   }
 
-  // Update version dropdown
   var sel = document.getElementById('version-select');
   if (sel) {
     if (queryVersions.length <= 1) { sel.style.display = 'none'; }
@@ -1151,7 +1349,7 @@ function copyQuery() {
   }
 }
 
-/* ── Search execution ── */
+/* -- Search execution -- */
 async function runSearch(page) {
   searchPage = page || 1;
   var db = document.getElementById('search-db');
@@ -1281,7 +1479,6 @@ async function importSelected() {
   var ids = getSelectedResultIds();
   if (!ids.length) { showToast('Select results first', 'info'); return; }
   showToast('Importing ' + ids.length + ' results...', 'info');
-  // Import logic would use appropriate API endpoint
 }
 
 function renderSearchPagination() {
@@ -1302,23 +1499,23 @@ function renderSearchPagination() {
   bar.innerHTML = html;
 }
 
-/* ══════════════════════════════════════════════
+/* ==============================
    EXPORT
-   ══════════════════════════════════════════════ */
+   ============================== */
 async function exportAs(format) {
   if (!currentSessionId) {
     showToast('No active session to export', 'info');
     return;
   }
 
-  var contentType = 'chat'; // Default export is chat transcript
-  if (activeTabId && activeTabId !== 'dashboard') {
-    var activePane = document.querySelector('.tab-pane.active');
-    var label = '';
+  var contentType = 'chat';
+  if (activeTabId && activeTabId !== '_empty') {
     var activeBtn = document.querySelector('.tab-item.active');
-    if (activeBtn) label = activeBtn.dataset.tabLabel || '';
-    if (label === 'Results') contentType = 'results';
-    else if (label === 'Query Builder') contentType = 'query';
+    if (activeBtn) {
+      var label = activeBtn.dataset.tabLabel || '';
+      if (label === 'results') contentType = 'results';
+      else if (label === 'query_builder') contentType = 'query';
+    }
   }
 
   try {
@@ -1352,12 +1549,27 @@ async function exportAs(format) {
   }
 }
 
-/* ══════════════════════════════════════════════
+/* ==============================
    INIT
-   ══════════════════════════════════════════════ */
+   ============================== */
 async function init() {
   await checkAuth();
   await renderSidebar();
+
+  // Restore agent type if any
+  var savedAgent = sessionStorage.getItem('lab_agent_type');
+  if (savedAgent && AGENT_CONFIG[savedAgent]) {
+    currentAgentType = savedAgent;
+    document.querySelectorAll('.speed-btn').forEach(function(btn) {
+      btn.classList.toggle('active', btn.dataset.agent === savedAgent);
+    });
+    var cfg = AGENT_CONFIG[savedAgent];
+    document.getElementById('agent-label-text').textContent = cfg.label;
+    document.getElementById('chat-input').placeholder = cfg.placeholder;
+    document.getElementById('chat-messages').innerHTML = '<div class="chat-empty" id="chat-empty">' + cfg.empty + '</div>';
+    // Open agent tabs if any
+    openAgentTabs(savedAgent);
+  }
 
   // Restore session if any
   var savedSession = sessionStorage.getItem('lab_session_id');
@@ -1365,19 +1577,8 @@ async function init() {
     switchSession(parseInt(savedSession));
   }
 
-  // Restore agent type if any
-  var savedAgent = sessionStorage.getItem('lab_agent_type');
-  if (savedAgent && AGENT_CONFIG[savedAgent]) {
-    switchAgent(savedAgent);
-  }
+  updateExportToolbar();
 }
-
-// Save agent type on switch
-var _origSwitch = switchAgent;
-switchAgent = function(agentType) {
-  sessionStorage.setItem('lab_agent_type', agentType);
-  _origSwitch(agentType);
-};
 
 init();
 </script>
