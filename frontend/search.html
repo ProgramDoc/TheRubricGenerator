@@ -77,6 +77,18 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 .ctx-menu-item.danger { color: var(--red); }
 .ctx-menu-item.danger:hover { background: rgba(220,38,38,.06); }
 .ctx-menu-sep { height: 1px; background: var(--border); margin: 4px 0; }
+.ctx-menu-sub { padding: 0 6px 4px; }
+.ctx-menu-sub-label { font-size: 9px; font-weight: 700; text-transform: uppercase; color: var(--muted); padding: 6px 8px 2px; letter-spacing: .04em; }
+.ctx-menu-sub-item { padding: 5px 8px; font-size: 11px; cursor: pointer; border-radius: 4px; display: block; width: 100%; border: none; background: none; text-align: left; font-family: inherit; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctx-menu-sub-item:hover { background: #f0f4ff; }
+
+/* Drag and drop */
+.search-item[draggable="true"] { cursor: grab; }
+.search-item[draggable="true"]:active { cursor: grabbing; }
+.search-item.dragging { opacity: .4; }
+.folder-item.drag-over { background: rgba(94,154,208,.12); outline: 2px dashed var(--sky); outline-offset: -2px; border-radius: 4px; }
+.sidebar-section.drag-over-unsorted { background: rgba(94,154,208,.06); }
+#unsorted-searches.drag-over { background: rgba(94,154,208,.08); border-radius: 4px; min-height: 30px; }
 
 /* Share modal */
 .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 200; align-items: center; justify-content: center; }
@@ -448,10 +460,22 @@ async function renderSidebar() {
   const byProject = {};
   sessions.forEach(s => { if (s.project_id) { (byProject[s.project_id] = byProject[s.project_id] || []).push(s); } });
 
-  // Unsorted searches
+  // Unsorted searches (also a drop target to remove from project)
   const unsortedEl = document.getElementById('unsorted-searches');
   unsortedEl.innerHTML = unsorted.length ? '' : '<div style="padding:6px 14px;font-size:10px;color:var(--muted)">No searches yet</div>';
   unsorted.forEach(s => unsortedEl.appendChild(makeSearchItem(s)));
+  unsortedEl.ondragover = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; unsortedEl.classList.add('drag-over'); };
+  unsortedEl.ondragleave = () => unsortedEl.classList.remove('drag-over');
+  unsortedEl.ondrop = async (e) => {
+    e.preventDefault(); unsortedEl.classList.remove('drag-over');
+    const sessionId = parseInt(e.dataTransfer.getData('text/plain'));
+    if (!sessionId) return;
+    await fetch(`/api/search/sessions/${sessionId}`, {
+      method: 'PATCH', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ remove_from_project: true }),
+    });
+    renderSidebar();
+  };
 
   // Own projects
   const ownProjects = projects.filter(p => p.role === 'admin' && !p.owner_name);
@@ -485,7 +509,14 @@ function makeSearchItem(s) {
   const div = document.createElement('div');
   div.className = 'search-item' + (s.id === currentSessionId ? ' active' : '');
   div.dataset.sessionId = s.id;
+  div.draggable = true;
   div.onclick = (e) => { if (!e.target.closest('.search-item-actions')) switchSession(s.id); };
+  div.ondragstart = (e) => {
+    e.dataTransfer.setData('text/plain', s.id);
+    e.dataTransfer.effectAllowed = 'move';
+    div.classList.add('dragging');
+  };
+  div.ondragend = () => div.classList.remove('dragging');
   div.innerHTML = `
     <span class="search-item-title">${escapeHtml(s.title)}</span>
     <span class="search-item-meta">${s.message_count || 0}</span>
@@ -502,7 +533,20 @@ function makeFolderItem(p, children, isOwner) {
 
   const folder = document.createElement('div');
   folder.className = 'folder-item';
+  folder.dataset.projectId = p.id;
   folder.onclick = (e) => { if (!e.target.closest('.folder-actions')) toggleFolder(p.id); };
+  folder.ondragover = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; folder.classList.add('drag-over'); };
+  folder.ondragleave = () => folder.classList.remove('drag-over');
+  folder.ondrop = async (e) => {
+    e.preventDefault(); folder.classList.remove('drag-over');
+    const sessionId = parseInt(e.dataTransfer.getData('text/plain'));
+    if (!sessionId) return;
+    await fetch(`/api/search/sessions/${sessionId}`, {
+      method: 'PATCH', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ project_id: p.id }),
+    });
+    renderSidebar();
+  };
   folder.innerHTML = `
     <span class="folder-icon">${isOpen ? '&#128194;' : '&#128193;'}</span>
     <span class="folder-name">${escapeHtml(p.name)}</span>
@@ -559,17 +603,34 @@ function showCtxAt(x, y, items) {
 
 function showSearchCtx(e, sessionId) {
   e.stopPropagation();
+  const s = sessions.find(s => s.id === sessionId);
   const items = [
     { label: 'Rename', action: `renameSession(${sessionId})` },
-    { label: 'Move to project', action: `moveSessionToProject(${sessionId})` },
   ];
-  const s = sessions.find(s => s.id === sessionId);
   if (s && s.project_id) {
     items.push({ label: 'Remove from project', action: `removeSessionFromProject(${sessionId})` });
   }
   items.push('sep');
   items.push({ label: 'Delete', action: `deleteSession(${sessionId})`, danger: true });
-  showCtxAt(e.clientX, e.clientY, items);
+  // Build menu with project picker submenu
+  const menu = document.getElementById('ctx-menu');
+  let html = items.map(i => {
+    if (i === 'sep') return '<div class="ctx-menu-sep"></div>';
+    return `<button class="ctx-menu-item${i.danger ? ' danger' : ''}" onclick="hideCtxMenu();${i.action}">${escapeHtml(i.label)}</button>`;
+  }).join('');
+  // Insert project picker before the separator
+  if (projects.length) {
+    const sepIdx = html.indexOf('<div class="ctx-menu-sep">');
+    const picker = `<div class="ctx-menu-sub">
+      <div class="ctx-menu-sub-label">Move to project</div>
+      ${projects.map(p => `<button class="ctx-menu-sub-item" onclick="hideCtxMenu();moveSessionToProject(${sessionId},${p.id})">${escapeHtml(p.name)}</button>`).join('')}
+    </div>`;
+    html = html.slice(0, sepIdx) + picker + html.slice(sepIdx);
+  }
+  menu.innerHTML = html;
+  menu.style.display = 'block';
+  menu.style.left = Math.min(e.clientX, window.innerWidth - 180) + 'px';
+  menu.style.top = Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 10) + 'px';
 }
 
 function showFolderCtx(e, pid, isOwner) {
@@ -600,16 +661,10 @@ async function renameSession(sessionId) {
   renderSidebar();
 }
 
-async function moveSessionToProject(sessionId) {
-  if (!projects.length) { showToast('Create a project first', 'info'); return; }
-  const opts = projects.map(p => `${p.id}: ${p.name}`).join('\n');
-  const choice = prompt('Enter project ID to move to:\n\n' + opts);
-  if (!choice) return;
-  const pid = parseInt(choice);
-  if (!pid) return;
+async function moveSessionToProject(sessionId, projectId) {
   await fetch(`/api/search/sessions/${sessionId}`, {
     method: 'PATCH', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ project_id: pid }),
+    body: JSON.stringify({ project_id: projectId }),
   });
   renderSidebar();
 }
