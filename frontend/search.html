@@ -210,6 +210,18 @@ table.res-table tbody tr:last-child td { border-bottom: none; }
 
 .empty { padding: 30px; text-align: center; color: var(--muted); font-size: 12px; }
 
+/* Sortable columns */
+table.res-table thead th.sortable { cursor: pointer; user-select: none; position: relative; padding-right: 18px; }
+table.res-table thead th.sortable:hover { color: var(--blue); }
+table.res-table thead th.sortable::after { content: '⇅'; position: absolute; right: 4px; font-size: 9px; opacity: .3; }
+table.res-table thead th.sortable.sort-asc::after { content: '↑'; opacity: .8; color: var(--blue); }
+table.res-table thead th.sortable.sort-desc::after { content: '↓'; opacity: .8; color: var(--blue); }
+
+/* Results search bar */
+.results-search { font-family: inherit; font-size: 11px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 5px; width: 200px; }
+.results-search:focus { outline: none; border-color: var(--sky); }
+.results-search::placeholder { color: var(--muted); }
+
 /* Database selector in search */
 .db-select { font-family: inherit; font-size: 11px; padding: 6px 8px; border: 1px solid rgba(255,255,255,.2); border-radius: 4px; background: rgba(255,255,255,.08); color: #fff; }
 .nav-dropdown { position: relative; display: inline-block; }
@@ -364,6 +376,7 @@ table.res-table tbody tr:last-child td { border-bottom: none; }
       <div class="results-toolbar" id="results-toolbar" style="display:none">
         <label><input type="checkbox" id="select-all" onchange="toggleSelectAll(this.checked)"> Select all</label>
         <span class="results-count" id="results-count">0 results</span>
+        <input type="text" class="results-search" id="results-search" placeholder="Filter results..." oninput="filterResultsDebounced()">
         <select id="import-project" style="font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:4px">
           <option value="">Import to: Unassigned</option>
         </select>
@@ -428,6 +441,9 @@ let currentPage = 1;
 let totalPages = 1;
 let totalResults = 0;
 let shareModalProjectId = null;
+let sortColumn = null;
+let sortDir = 'asc';
+let filterQuery = '';
 let openFolders = JSON.parse(localStorage.getItem('search_open_folders') || '{}');
 
 // ── Auth ──
@@ -871,7 +887,7 @@ async function switchSession(id) {
 
   // Render results
   results = data.results || [];
-  renderResults(results);
+  renderResults();
 }
 
 function newSession() {
@@ -889,6 +905,8 @@ function newSession() {
   document.getElementById('results-body').innerHTML = '<div class="empty">Run a search to see results here.</div>';
   document.getElementById('results-toolbar').style.display = 'none';
   document.getElementById('results-tab-btn').textContent = 'Results';
+  document.getElementById('results-search').value = '';
+  filterQuery = ''; sortColumn = null; sortDir = 'asc';
   sessionStorage.removeItem('search_session_id');
   // Clear sidebar active state
   document.querySelectorAll('.search-item').forEach(el => el.classList.remove('active'));
@@ -1054,7 +1072,7 @@ async function runSearch(page) {
     totalResults = data.total || results.length;
     totalPages = data.total_pages || 1;
     currentPage = data.page || 1;
-    renderResults(results);
+    renderResults();
     renderPagination();
     switchWsTab('results');
   } finally {
@@ -1079,12 +1097,43 @@ function renderPagination() {
   bar.innerHTML = html;
 }
 
-function renderResults(res) {
+function getFilteredSortedResults() {
+  let res = results;
+  // Filter
+  if (filterQuery) {
+    const q = filterQuery.toLowerCase();
+    res = res.filter(r =>
+      (r.title || '').toLowerCase().includes(q) ||
+      (r.authors || '').toLowerCase().includes(q) ||
+      (r.journal || '').toLowerCase().includes(q) ||
+      (r.abstract || '').toLowerCase().includes(q) ||
+      (r.pub_date || '').includes(q)
+    );
+  }
+  // Sort
+  if (sortColumn) {
+    const col = sortColumn;
+    const dir = sortDir === 'asc' ? 1 : -1;
+    res = [...res].sort((a, b) => {
+      let va, vb;
+      if (col === 'year') { va = (a.pub_date || '').slice(0, 4); vb = (b.pub_date || '').slice(0, 4); }
+      else if (col === 'cites') { va = a.citation_count || 0; vb = b.citation_count || 0; return (va - vb) * dir; }
+      else if (col === 'title') { va = (a.title || '').toLowerCase(); vb = (b.title || '').toLowerCase(); }
+      else if (col === 'authors') { va = (a.authors || '').toLowerCase(); vb = (b.authors || '').toLowerCase(); }
+      else if (col === 'journal') { va = (a.journal || '').toLowerCase(); vb = (b.journal || '').toLowerCase(); }
+      else { va = a[col] || ''; vb = b[col] || ''; }
+      return va < vb ? -dir : va > vb ? dir : 0;
+    });
+  }
+  return res;
+}
+
+function renderResults() {
   const body = document.getElementById('results-body');
   const toolbar = document.getElementById('results-toolbar');
   const tabBtn = document.getElementById('results-tab-btn');
 
-  if (!res.length) {
+  if (!results.length) {
     body.innerHTML = '<div class="empty">No results found. Try refining your query.</div>';
     toolbar.style.display = 'none';
     tabBtn.textContent = 'Results';
@@ -1092,11 +1141,32 @@ function renderResults(res) {
   }
 
   toolbar.style.display = 'flex';
-  const totalLabel = totalResults > res.length ? `${totalResults.toLocaleString()} total` : `${res.length}`;
+  const totalLabel = totalResults > results.length ? `${totalResults.toLocaleString()} total` : `${results.length}`;
   tabBtn.textContent = `Results [${totalLabel}]`;
-  document.getElementById('results-count').textContent = `${res.length} shown of ${totalResults.toLocaleString()} results`;
 
-  let html = '<table class="res-table"><thead><tr><th style="width:30px"></th><th>Title</th><th>Authors</th><th>Journal</th><th>Year</th><th>Cites</th><th>DB</th><th>Status</th></tr></thead><tbody>';
+  const res = getFilteredSortedResults();
+  const countText = filterQuery ? `${res.length} matching of ${results.length} shown` : `${results.length} shown of ${totalResults.toLocaleString()} results`;
+  document.getElementById('results-count').textContent = countText;
+
+  function thSortable(col, label) {
+    const cls = sortColumn === col ? (sortDir === 'asc' ? 'sortable sort-asc' : 'sortable sort-desc') : 'sortable';
+    return `<th class="${cls}" onclick="toggleSort('${col}')">${label}</th>`;
+  }
+
+  let html = `<table class="res-table"><thead><tr>
+    <th style="width:30px"></th>
+    ${thSortable('title', 'Title')}
+    ${thSortable('authors', 'Authors')}
+    ${thSortable('journal', 'Journal')}
+    ${thSortable('year', 'Year')}
+    ${thSortable('cites', 'Cites')}
+    <th>DB</th><th>Status</th>
+  </tr></thead><tbody>`;
+
+  if (!res.length && filterQuery) {
+    html += `<tr><td colspan="8" class="empty">No results match "${escapeHtml(filterQuery)}"</td></tr>`;
+  }
+
   res.forEach(r => {
     const imported = r.imported ? '<span class="res-imported">Imported</span>' : '';
     const dbClass = (r.database_name || 'pubmed').replace(/\s/g, '_');
@@ -1116,6 +1186,25 @@ function renderResults(res) {
   });
   html += '</tbody></table>';
   body.innerHTML = html;
+}
+
+function toggleSort(col) {
+  if (sortColumn === col) {
+    sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    sortColumn = col;
+    sortDir = col === 'cites' ? 'desc' : 'asc'; // default descending for citations
+  }
+  renderResults();
+}
+
+let _filterTimer;
+function filterResultsDebounced() {
+  clearTimeout(_filterTimer);
+  _filterTimer = setTimeout(() => {
+    filterQuery = document.getElementById('results-search').value.trim();
+    renderResults();
+  }, 300);
 }
 
 function toggleAbstract(id) {
@@ -1148,9 +1237,14 @@ async function importSelected() {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ session_id: currentSessionId, result_ids: ids, project_id: projectId ? parseInt(projectId) : null }),
   });
-  if (!r.ok) { const e = await r.json(); alert(e.detail || 'Import failed'); return; }
+  if (!r.ok) {
+    const e = await r.json();
+    const msg = typeof e.detail === 'string' ? e.detail : Array.isArray(e.detail) ? e.detail.map(d => d.msg || JSON.stringify(d)).join('; ') : 'Import failed';
+    showToast(msg, 'error');
+    return;
+  }
   const data = await r.json();
-  alert(`Imported: ${data.imported}, Skipped: ${data.skipped}, Failed: ${data.failed}`);
+  showToast(`Imported: ${data.imported}, Skipped: ${data.skipped}, Failed: ${data.failed}`, data.imported > 0 ? 'success' : 'info');
   if (currentSessionId) switchSession(currentSessionId);
 }
 

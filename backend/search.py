@@ -305,8 +305,15 @@ Rules:
 - Group related terms with parentheses
 - Include both MeSH and free-text variants for comprehensiveness
 - Number each query version in version_note (v0, v1, v2...)
-- If the user's question is vague, ask clarifying questions before generating a query
-- When refining, explain what changed and why"""
+- If the user's question is vague, ask clarifying questions in the "text" field
+- When refining, explain what changed and why
+
+IMPORTANT — follow_up_questions style:
+- follow_up_questions are rendered as clickable buttons the user can tap. They must be specific, actionable choices — NOT open-ended questions.
+- Good examples: "Narrow to adults ≥18 years", "Add date filter: last 5 years", "Include observational studies", "Exclude animal studies", "Add outcome: all-cause mortality"
+- Bad examples: "What age group are you interested in?", "What outcomes matter most?"
+- If you need to ask an open-ended clarifying question, put it in the "text" field as part of your conversational response. The user can always type a free-text reply.
+- Think of follow_up_questions as pre-built refinement options the user can click to quickly improve their search."""
 
 
 def chat(conn: sqlite3.Connection, session_id: int, user_id: int,
