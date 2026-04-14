@@ -1351,18 +1351,28 @@ async function sendInvitations() {
   var btn = document.getElementById('send-invitations-btn');
   btn.disabled = true; btn.textContent = 'Sending...';
   var errors = [];
+  var messages = [];
   for (var i = 0; i < shareRecipients.length; i++) {
     var r = await fetch('/api/projects/' + shareModalPid + '/share', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ email: shareRecipients[i].email })
     });
-    if (!r.ok) { var e = await r.json(); errors.push(shareRecipients[i].email + ': ' + (e.detail || 'failed')); }
+    if (!r.ok) {
+      var e = await r.json();
+      errors.push(shareRecipients[i].email + ': ' + (e.detail || 'failed'));
+    } else {
+      var data = await r.json();
+      messages.push(data.message || 'Invited');
+    }
   }
   btn.disabled = false; btn.textContent = 'Send Invitations';
   shareRecipients = [];
   renderRecipientChips();
-  if (errors.length) showToast('Some invitations failed: ' + errors.join('; '), 'error', 5000);
-  else showToast('Invitations sent!', 'success');
+  if (errors.length) {
+    showToast('Some invitations failed: ' + errors.join('; '), 'error', 5000);
+  } else if (messages.length) {
+    showToast(messages.join('. '), 'success', 5000);
+  }
   loadShareModalData(shareModalPid);
   renderSidebar();
 }

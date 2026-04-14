@@ -2998,6 +2998,7 @@ def share_project(pid: int, body: ShareProjectPayload,
         )
         conn.commit()
     conn.close()
+    email_sent = False
     if target:
         # Registered user — send notification
         try:
@@ -3008,10 +3009,13 @@ def share_project(pid: int, body: ShareProjectPayload,
                 f"{user['display_name']} has invited you to the project \"{proj['name']}\".\n\n"
                 f"Log in to accept the invitation: {APP_BASE_URL}\n\n— The AI Researcher",
             )
-        except Exception:
-            pass
-        return {"ok": True, "status": "invitation_sent",
-                "message": f"Invitation sent to {target['display_name']}"}
+            email_sent = True
+        except Exception as e:
+            logger.warning("Email to %s failed: %s", email, e)
+        msg = f"Invitation sent to {target['display_name']}"
+        if not email_sent:
+            msg += " (email notification could not be delivered — they will see it when they log in)"
+        return {"ok": True, "status": "invitation_sent", "email_sent": email_sent, "message": msg}
     else:
         # Unregistered user — send registration invite
         try:
@@ -3025,10 +3029,15 @@ def share_project(pid: int, body: ShareProjectPayload,
                 f"{APP_BASE_URL}/login\n\n"
                 f"— The AI Researcher",
             )
-        except Exception:
-            pass
-        return {"ok": True, "status": "invitation_sent",
-                "message": f"Registration invitation sent to {email}"}
+            email_sent = True
+        except Exception as e:
+            logger.warning("Email to %s failed: %s", email, e)
+        msg = f"Invitation created for {email}"
+        if email_sent:
+            msg = f"Registration invitation sent to {email}"
+        else:
+            msg += " (email could not be delivered — configure SMTP to enable email notifications)"
+        return {"ok": True, "status": "invitation_sent", "email_sent": email_sent, "message": msg}
 
 
 # ─── Project Invitation Management ───
