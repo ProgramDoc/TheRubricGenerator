@@ -12,11 +12,11 @@
 
 | Component | Files | Lines |
 |-----------|-------|-------|
-| `main.py` | 1 | ~4,500 |
-| `backend/` modules | 19 | ~5,400 |
-| `frontend/` pages | 18 | ~7,500 |
+| `main.py` | 1 | ~4,700 |
+| `backend/` modules | 20 | ~8,200 |
+| `frontend/` pages | 18 | ~10,200 |
 | `tests/` | 3 | ~250 |
-| **Total** | **41** | **~17,650** |
+| **Total** | **42** | **~23,350** |
 
 ### What's Live
 
@@ -209,6 +209,36 @@ External models submit answers to OUR API (we don't call theirs):
 - **Enhanced Obsidian notes** — now includes: run ID, user info, cost breakdown, generator agent state (version, performance, prompt preview), judge agent state, recent autoresearch experiment history table
 - **Obsidian linking docs** — admin page now explains how to sync vault via Obsidian Sync, iCloud, Git, or rsync
 
+### Search Sidebar & Project Organization (April 13, 2026)
+
+- **Left sidebar** replaces session dropdown: saved searches listed above project folders, collapsible folder tree, active search highlighting
+- **Auto-named searches**: first user message generates a cleaned title (strips preambles like "I'm looking for")
+- **Project folders**: create, rename, delete from sidebar; collapsible with search counts; open/close state persists in localStorage
+- **Search organization**: context menu ("...") on each search with rename, move to project (clickable project list), remove from project, delete
+- **Drag and drop**: drag searches onto project folders to move; drag back to "Searches" section to unassign; visual feedback with dashed blue outline
+- **Project sharing**: share modal with email input, member list, role badges; invite unregistered users (registration invite email sent, auto-added on sign-up); transfer ownership; leave/remove members
+- **Pending invitations**: new `project_invitations` table; `POST /api/projects/{pid}/share` handles unregistered emails; `POST /api/auth/register` auto-fulfills pending invitations
+- **Chat follow-up improvements**: `SEARCH_SYSTEM_PROMPT` updated so `follow_up_questions` are specific clickable choices ("Narrow to adults ≥18 years") not open-ended questions
+- New endpoints: `PATCH /api/search/sessions/{id}` (rename/move), modified `POST /api/projects/{pid}/share` (unregistered invitations)
+- 1 new DB table: `project_invitations`; 1 new column: `search_sessions.project_id`
+
+### Search Results Improvements (April 13, 2026)
+
+- **Sortable columns**: click Title, Authors, Journal, Year, or Cites headers to sort ascending/descending with arrow indicators; Cites defaults to descending
+- **Filter bar**: text input in results toolbar filters across title, authors, journal, and abstract; 300ms debounce; shows "X matching of Y shown" count
+- **Import error fix**: validation error arrays now display properly as toast messages instead of `[object Object]`; success uses green/blue toasts
+
+### PostgreSQL Migration (April 13, 2026)
+
+Migrated from SQLite to PostgreSQL for persistent data across Render deploys:
+- **`backend/db.py`**: dual-mode database layer — `PgConnection` (PostgreSQL) and `SqliteConnection` (SQLite fallback); auto-converts `?` → `%s` params, strips `RETURNING` for SQLite, converts PG DDL to SQLite at runtime (`SERIAL` → `AUTOINCREMENT`, `CURRENT_TIMESTAMP` → `datetime('now')`)
+- **All DDL converted** to PostgreSQL syntax across 15+ files: `SERIAL PRIMARY KEY`, `CURRENT_TIMESTAMP`, `ON CONFLICT DO NOTHING`, `ILIKE`, `RETURNING id`
+- **Migration functions** use `column_exists()` helper instead of `PRAGMA table_info()`
+- **FK ordering**: `agent_skills` table created before `challenges` (PostgreSQL validates FKs at CREATE TABLE time)
+- **`render.yaml`**: provisions free PostgreSQL database, `DATABASE_URL` env var auto-set from database connection string
+- **Tests**: continue using SQLite fallback (no DATABASE_URL needed)
+- **`IntegrityError`**: imported from `backend.db` (not `sqlite3`) across all backend modules
+
 ### Obsidian Integration Architecture
 
 The Obsidian vault is a **write-only local directory** configured via `OBSIDIAN_VAULT_DIR` env var. After each challenge completes, markdown notes are written to `{vault}/challenges/` and agent skill files to `{vault}/SKILL_generator.md` / `SKILL_judge.md`. Users sync the vault externally:
@@ -282,7 +312,7 @@ Write-only from the backend:
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `main.py` | ~4,500 | App entry, routes, auth (cookie + API key), config, all API endpoints |
+| `main.py` | ~4,700 | App entry, routes, auth (cookie + API key), config, all API endpoints |
 | `backend/challenges.py` | ~780 | Challenge orchestration, scoring, points, daily composition, org leaderboard |
 | `backend/self_improve.py` | ~500 | Autoresearch-style experiment loop |
 | `backend/templates.py` | ~350 | Rubric templates, community library, living stats, ground truth |
@@ -298,7 +328,7 @@ Write-only from the backend:
 | `backend/promo.py` | ~180 | Promo codes, 48h auto-approve |
 | `backend/skills.py` | ~178 | Agent skill versioning, seed prompts |
 | `backend/helpers.py` | ~163 | LLM callers (Anthropic, Gemini, OpenAI-compatible) |
-| `backend/obsidian.py` | ~156 | Markdown vault writer |
+| `backend/obsidian.py` | ~640 | Markdown vault writer (challenge notes, agent skill files, history) |
 | `backend/agents/participants.py` | ~142 | Frontier + custom model runner |
 | `backend/agents/generator.py` | ~83 | Rubric Generator Agent (daily composition support) |
 | `backend/agents/judge.py` | ~50 | Judge Agent + shadow regrade |
