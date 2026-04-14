@@ -674,11 +674,14 @@ def write_lab_conversation_note(vault_dir: Path, agent_type: str,
     lines.append("")
 
     agent_labels = {
+        "research_chat": "Research Chat",
         "search_strategist": "AI Search Strategist",
         "statistician": "AI Statistician",
         "study_appraiser": "Study Appraiser",
         "hypothesis_generator": "Hypothesis Generator",
         "literature_reviewer": "Literature Reviewer",
+        "study_builder": "Study Builder",
+        "protocol_evaluator": "Protocol Evaluator",
     }
     lines.append(f"**Agent:** {agent_labels.get(agent_type, agent_type)}")
     lines.append("")

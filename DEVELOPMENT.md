@@ -324,16 +324,87 @@ Originally used SQLite with persistent disk on Render. Migrated to PostgreSQL to
 
 Inspired by karpathy/autoresearch: a single mutable file (the agent prompt) iterated on autonomously. Each iteration: modify ONE thing → run → measure → binary keep/discard. The key insight: many small experiments with clear metrics, not one big rewrite.
 
-### Competition API (Not "We Call Them")
+### Competition API (External Model Integration)
 
 External models don't give us their API keys. We expose an API they submit answers to — like Kaggle. We publish questions, they fetch + submit, we grade. Cleaner security model.
 
+**How an external model connects (full flow):**
+
+```
+1. User registers a model on the platform (POST /api/models)
+   → receives model_api_key (rg_model_xxx)
+
+2. User accepts the Model Publishing Agreement (POST /api/models/{id}/accept-agreement)
+
+3. User opts into daily challenges (POST /api/models/{id}/opt-in-daily)
+
+4. Admin approves the model (POST /api/admin/models/{id}/approve-daily)
+
+5. Model's automation script uses the API:
+   GET  /api/compete/challenges              — list available challenges
+   GET  /api/compete/{id}/questions           — fetch questions (answers stripped)
+   POST /api/compete/{id}/submit              — submit responses
+   GET  /api/compete/{id}/results             — view grades after grading
+```
+
+**Authentication:** All `/api/compete/*` endpoints require `X-Model-Key: rg_model_xxx` header.
+
+**Two key types:**
+- `rg_user_*` — personal API key for platform endpoints (X-API-Key header)
+- `rg_model_*` — model competition key for `/api/compete/*` only (X-Model-Key header)
+
+**Example script for external model:**
+```python
+import httpx
+
+API_KEY = "rg_model_xxx"  # from model registration
+BASE = "https://therubricgenerator.onrender.com"
+HEADERS = {"X-Model-Key": API_KEY}
+
+# 1. List available challenges
+challenges = httpx.get(f"{BASE}/api/compete/challenges", headers=HEADERS).json()
+
+for ch in challenges:
+    if ch["submission_status"]:  # already submitted
+        continue
+    cid = ch["id"]
+
+    # 2. Fetch questions
+    data = httpx.get(f"{BASE}/api/compete/{cid}/questions", headers=HEADERS).json()
+
+    # 3. Generate answers (your model logic here)
+    responses = []
+    for q in data["questions"]:
+        answer = your_model.answer(q["question"])
+        responses.append({"question_id": q["id"], "answer": answer})
+
+    # 4. Submit
+    httpx.post(f"{BASE}/api/compete/{cid}/submit", headers=HEADERS,
+               json={"responses": responses})
+
+    # 5. Check results (available after admin grades)
+    results = httpx.get(f"{BASE}/api/compete/{cid}/results", headers=HEADERS).json()
+```
+
 ### Obsidian Vault
 
-Write-only from the backend:
-- `SKILL_generator.md` / `SKILL_judge.md` — active prompts + version history
-- `challenges/{id}_{theme}.md` — full challenge record
-- User syncs to local machine via Obsidian Sync/iCloud/rsync/git
+Write-only from the backend. Vault path: `OBSIDIAN_VAULT_DIR` env var (default: `{DATA_DIR}/obsidian_vault`).
+
+```
+obsidian_vault/
+├── skills/{agent_type}/
+│   ├── SKILL.md        — active prompt (regenerated on challenge completion + startup)
+│   ├── history.md      — version table (regenerated)
+│   ├── program.md      — human-editable meta-learner guidance (written once, never overwritten)
+│   └── experiments/    — autoresearch iteration artifacts
+├── challenges/
+│   └── {id}_{theme}.md — full challenge record with rubric + model results
+├── lab/{agent_type}/
+│   └── {sid}_{title}.md — lab conversation archives (written after each chat turn)
+└── papers/             — placeholder for future paper notes
+```
+
+User syncs to local machine via Obsidian Sync/iCloud/rsync/git.
 
 ---
 

@@ -25,6 +25,8 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
   padding: 0 16px; gap: 14px; flex-shrink: 0; z-index: 100;
   border-bottom: 1px solid rgba(255,255,255,.08);
 }
+.in-iframe .topbar, .in-iframe #topbar { display: none !important; }
+.in-iframe body { padding-top: 0 !important; }
 #topbar .brand { font-weight: 700; font-size: 15px; color: #fff; letter-spacing: -.2px; display: flex; align-items: center; gap: 8px; }
 #topbar .brand .icon { font-size: 18px; }
 #topbar .brand span { color: var(--sky); }
@@ -365,6 +367,7 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
 </style>
 </head>
 <body>
+<script>if(window.self!==window.top)document.documentElement.classList.add('in-iframe')</script>
 
 <!-- ── TOPBAR ── -->
 <div id="topbar">

@@ -3,11 +3,15 @@ AI Researcher Lab agents. The 'active' version is used on each run.
 
 Agent types:
   generator, judge — benchmark agents
-  search_strategist, statistician, study_appraiser,
-  hypothesis_generator, literature_reviewer — lab agents
+  research_chat, search_strategist, statistician, study_appraiser,
+  hypothesis_generator, literature_reviewer, study_builder,
+  protocol_evaluator — lab agents
 """
 
+import logging
 import sqlite3
+
+logger = logging.getLogger("rubricgen")
 
 
 # ─────────────────────────────────────────────
@@ -573,15 +577,16 @@ def migrate_agent_skills_check(conn) -> None:
 
     NEW_CHECK = "agent_type IN ('generator','judge','research_chat','search_strategist','statistician','study_appraiser','hypothesis_generator','literature_reviewer','study_builder','protocol_evaluator')"
 
-    # Check if new agent types are already allowed by trying a dummy query
+    # Check if new agent types are already allowed by trying a dummy query.
+    # Use protocol_evaluator (the newest type) — if it works, all types are present.
     try:
         conn.execute(
             "INSERT INTO agent_skills (agent_type, version, prompt_text, active) VALUES (?,?,?,0)",
-            ("search_strategist", 99999, "__migration_test__"),
+            ("protocol_evaluator", 99999, "__migration_test__"),
         )
         # It worked — constraint is already expanded. Roll back the test row.
         conn.execute(
-            "DELETE FROM agent_skills WHERE agent_type='search_strategist' AND version=99999"
+            "DELETE FROM agent_skills WHERE agent_type='protocol_evaluator' AND version=99999"
         )
         conn.commit()
         return
@@ -590,20 +595,20 @@ def migrate_agent_skills_check(conn) -> None:
 
     if is_postgres():
         try:
-            # Find and replace the CHECK constraint on agent_type
-            row = conn.execute(
+            # Drop ALL existing check constraints, then add one with a known name
+            rows = conn.execute(
                 "SELECT conname FROM pg_constraint "
-                "WHERE conrelid = 'agent_skills'::regclass AND contype = 'c' "
-                "LIMIT 1"
-            ).fetchone()
-            if row:
+                "WHERE conrelid = 'agent_skills'::regclass AND contype = 'c'"
+            ).fetchall()
+            for row in rows:
                 conname = row["conname"] if isinstance(row, dict) else row[0]
                 conn.execute(f"ALTER TABLE agent_skills DROP CONSTRAINT {conname}")
-                conn.execute(
-                    f"ALTER TABLE agent_skills ADD CONSTRAINT {conname} CHECK({NEW_CHECK})"
-                )
-                conn.commit()
-        except Exception:
+            conn.execute(
+                f"ALTER TABLE agent_skills ADD CONSTRAINT agent_skills_agent_type_check CHECK({NEW_CHECK})"
+            )
+            conn.commit()
+        except Exception as e:
+            logger.error("migrate_agent_skills_check PG failed: %s", e)
             conn.rollback()
     else:
         try:
@@ -652,7 +657,8 @@ def seed_v1_skills(conn: sqlite3.Connection) -> None:
                     "INSERT INTO agent_skills (agent_type, version, prompt_text, active) VALUES (?,?,?,1)",
                     (agent_type, 1, prompt),
                 )
-            except Exception:
+            except Exception as e:
+                logger.error("seed_v1_skills INSERT failed for %s: %s", agent_type, e)
                 conn.rollback()
     conn.commit()
 

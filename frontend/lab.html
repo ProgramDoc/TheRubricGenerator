@@ -19,10 +19,28 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 
 /* -- Topbar -- */
 .topbar { background: var(--navy); color: #fff; padding: 10px 28px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,.15); z-index: 20; flex-shrink: 0; }
-.topbar .brand { font-size: 16px; font-weight: 700; letter-spacing: -.3px; }
+.topbar .brand { font-size: 16px; font-weight: 700; letter-spacing: -.3px; white-space: nowrap; }
 .topbar .brand span { color: var(--sky); }
-.topbar .topbar-right { display: flex; align-items: center; gap: 8px; }
-.topbar .user-badge { padding: 4px 10px; background: rgba(255,255,255,.1); border-radius: 4px; font-size: 11px; color: rgba(255,255,255,.85); }
+.topbar .topbar-center { flex: 1; max-width: 420px; margin: 0 24px; position: relative; }
+.topbar-search { width: 100%; font-family: inherit; font-size: 12px; padding: 6px 12px 6px 30px; border: 1px solid rgba(255,255,255,.2); border-radius: 6px; background: rgba(255,255,255,.08); color: #fff; outline: none; }
+.topbar-search::placeholder { color: rgba(255,255,255,.4); }
+.topbar-search:focus { border-color: var(--sky); background: rgba(255,255,255,.12); }
+.topbar-search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: 12px; color: rgba(255,255,255,.4); pointer-events: none; }
+.search-dropdown { display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: #fff; border: 1px solid var(--border); border-radius: 6px; max-height: 320px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,.15); z-index: 60; }
+.search-dropdown.open { display: block; }
+.search-dropdown-group { padding: 6px 0; border-bottom: 1px solid var(--border); }
+.search-dropdown-group:last-child { border-bottom: none; }
+.search-dropdown-label { padding: 4px 12px; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.search-dropdown-item { padding: 7px 12px; cursor: pointer; font-size: 12px; color: var(--text); display: flex; align-items: center; gap: 8px; }
+.search-dropdown-item:hover { background: #f0f4ff; }
+.search-dropdown-item .sdi-icon { font-size: 13px; width: 18px; text-align: center; flex-shrink: 0; }
+.topbar .topbar-right { display: flex; align-items: center; gap: 10px; }
+.user-identity { display: flex; align-items: center; gap: 8px; cursor: default; }
+.user-avatar { width: 28px; height: 28px; border-radius: 50%; background: var(--blue); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #fff; overflow: hidden; flex-shrink: 0; }
+.user-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.user-info { display: flex; flex-direction: column; }
+.user-info-name { font-size: 11px; font-weight: 600; color: #fff; line-height: 1.2; }
+.user-info-email { font-size: 9px; color: rgba(255,255,255,.5); line-height: 1.2; }
 .topbar .signout-btn { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); padding: 5px 10px; border-radius: 5px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit; }
 .nav-settings { position: relative; display: inline-block; }
 .nav-settings .settings-icon { background: none; border: none; color: rgba(255,255,255,.7); font-size: 16px; cursor: pointer; padding: 4px 8px; }
@@ -73,9 +91,15 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 .new-project-inline.show { display: block; }
 .new-project-inline input { width: 100%; font-family: inherit; font-size: 11px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; }
 
-/* Interface links (no icons — placeholder for future graphics) */
+/* Interface links */
 .interface-link { padding: 7px 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--blue); font-weight: 500; text-decoration: none; }
 .interface-link:hover { background: #f0f4ff; }
+.interface-group-children { display: none; }
+.interface-group.open .interface-group-children { display: block; }
+.interface-sub { padding-left: 28px; font-size: 11px; }
+.interface-caret { font-size: 8px; color: var(--muted); transition: transform .15s; }
+.interface-group.open .interface-caret { transform: rotate(90deg); }
+.interface-admin { color: var(--purple); font-weight: 600; }
 
 /* Context documents */
 .doc-item { padding: 6px 14px; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text); position: relative; cursor: default; }
@@ -277,8 +301,19 @@ table.res-table tbody tr:hover { background: #f8fafc; }
 
 <div class="topbar">
   <div class="brand">The AI <span>Researcher</span><sub style="font-size:9px;color:rgba(255,255,255,.35);display:block;margin-top:2px">Aitheia LLC</sub></div>
+  <div class="topbar-center">
+    <span class="topbar-search-icon">&#128269;</span>
+    <input class="topbar-search" id="topbar-search" type="text" placeholder="Search interfaces, projects, conversations..." autocomplete="off" oninput="onTopbarSearch(this.value)" onfocus="onTopbarSearch(this.value)" onblur="setTimeout(function(){closeSearchDropdown()},200)">
+    <div class="search-dropdown" id="search-dropdown"></div>
+  </div>
   <div class="topbar-right">
-    <span class="user-badge" id="user-badge">&mdash;</span>
+    <div class="user-identity">
+      <div class="user-avatar" id="user-avatar"></div>
+      <div class="user-info">
+        <span class="user-info-name" id="user-badge">&mdash;</span>
+        <span class="user-info-email" id="user-email"></span>
+      </div>
+    </div>
     <a href="/admin" id="nav-admin" style="display:none;font-size:12px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:5px 10px;border-radius:5px">Admin</a>
     <div class="nav-settings">
       <button class="settings-icon" title="Settings">&#9881;</button>
@@ -294,22 +329,11 @@ table.res-table tbody tr:hover { background: #f8fafc; }
 <button class="sidebar-toggle" onclick="document.getElementById('lab-sidebar').style.display='flex'">&#9776; Menu</button>
 
 <div class="split">
-  <!-- LEFT PANE: Sessions + Context + Other Interfaces + Projects -->
+  <!-- LEFT PANE: Conversations + Context + Projects + Interfaces -->
   <div class="lab-sidebar" id="lab-sidebar">
     <div class="sidebar-section">
       <div class="sidebar-header">Conversations <button onclick="newSession()" title="New conversation">+</button></div>
       <div id="unsorted-sessions"></div>
-    </div>
-    <div class="sidebar-section">
-      <div class="sidebar-header">Other Interfaces</div>
-      <a class="interface-link" onclick="openTab('Dashboard','iframe','/dashboard')">Dashboard</a>
-      <a class="interface-link" onclick="openTab('Benchmark Lab','iframe','/challenges')">Benchmark Lab</a>
-      <a class="interface-link" onclick="openTab('Analytics','iframe','/analytics')">Analytics</a>
-      <a class="interface-link" onclick="openTab('Leaderboard','iframe','/leaderboard')">Leaderboard</a>
-      <a class="interface-link" onclick="openTab('Library','iframe','/library')">Library</a>
-      <a class="interface-link" onclick="openTab('Models','iframe','/models')">Models</a>
-      <a class="interface-link" onclick="openTab('Search','iframe','/search')">Search</a>
-      <a class="interface-link" onclick="openTab('Developers','iframe','/developers')">Developers</a>
     </div>
     <div class="sidebar-section">
       <div class="sidebar-header">Context <button onclick="document.getElementById('doc-upload-input').click()" title="Upload document">+</button></div>
@@ -322,6 +346,23 @@ table.res-table tbody tr:hover { background: #f8fafc; }
         <input type="text" id="new-project-input" placeholder="Project name..." onkeydown="if(event.key==='Enter'){event.preventDefault();createNewProject();}">
       </div>
       <div id="project-folders"></div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-header">Interfaces</div>
+      <a class="interface-link" onclick="openTab('Dashboard','iframe','/dashboard')">Dashboard</a>
+      <div class="interface-group">
+        <a class="interface-link" onclick="toggleInterfaceGroup(this)">Benchmark Lab <span class="interface-caret">&#9654;</span></a>
+        <div class="interface-group-children">
+          <a class="interface-link interface-sub" onclick="openTab('Challenges','iframe','/challenges')">Challenges</a>
+          <a class="interface-link interface-sub" onclick="openTab('Leaderboard','iframe','/leaderboard')">Leaderboard</a>
+        </div>
+      </div>
+      <a class="interface-link" onclick="openTab('Analytics','iframe','/analytics')">Analytics</a>
+      <a class="interface-link" onclick="openTab('Library','iframe','/library')">Library</a>
+      <a class="interface-link" onclick="openTab('Models','iframe','/models')">Models</a>
+      <a class="interface-link" onclick="openTab('PDF Viewer','iframe','/pdf-viewer')">PDF Viewer</a>
+      <a class="interface-link" onclick="openTab('Developers','iframe','/developers')">Developers</a>
+      <a class="interface-link interface-admin" id="sidebar-admin-link" style="display:none" onclick="openTab('Admin','iframe','/admin')">Admin</a>
     </div>
   </div>
 
@@ -558,8 +599,22 @@ async function checkAuth() {
     var r = await fetch('/api/auth/me');
     if (!r.ok) { window.location.href = '/login'; return; }
     currentUser = await r.json();
-    document.getElementById('user-badge').textContent = currentUser.display_name || currentUser.email;
-    if (currentUser.role === 'admin') document.getElementById('nav-admin').style.display = '';
+    var displayName = currentUser.display_name || currentUser.email;
+    document.getElementById('user-badge').textContent = displayName;
+    document.getElementById('user-email').textContent = currentUser.email || '';
+    // Avatar: show photo if available, otherwise initials
+    var avatarEl = document.getElementById('user-avatar');
+    if (currentUser.avatar_url) {
+      avatarEl.innerHTML = '<img src="' + currentUser.avatar_url + '" alt="">';
+    } else {
+      var initials = (displayName || '?').split(' ').map(function(w){return w[0]}).join('').slice(0,2).toUpperCase();
+      avatarEl.textContent = initials;
+    }
+    if (currentUser.role === 'admin') {
+      document.getElementById('nav-admin').style.display = '';
+      var adminLink = document.getElementById('sidebar-admin-link');
+      if (adminLink) adminLink.style.display = '';
+    }
   } catch (e) { window.location.href = '/login'; }
 }
 
@@ -1054,7 +1109,7 @@ async function switchSession(id) {
   scrollToBottom();
 }
 
-function newSession() {
+async function newSession() {
   currentSessionId = null;
   queryVersions = [];
   currentQuery = '';
@@ -1063,9 +1118,124 @@ function newSession() {
 
   var cfg = AGENT_CONFIG[currentAgentType];
   document.getElementById('chat-messages').innerHTML = '<div class="chat-empty" id="chat-empty">' + cfg.empty + '</div>';
-
   document.querySelectorAll('.session-item').forEach(function(el) { el.classList.remove('active'); });
   updateExportToolbar();
+
+  // Create a real session via API so it appears in the sidebar
+  try {
+    var r = await fetch('/api/lab/sessions', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({agent_type: currentAgentType})
+    });
+    if (r.ok) {
+      var sess = await r.json();
+      currentSessionId = sess.id;
+      sessionStorage.setItem('lab_session_id', String(sess.id));
+      renderSidebar();
+    }
+  } catch (e) { /* best-effort */ }
+}
+
+function toggleInterfaceGroup(el) {
+  var group = el.closest('.interface-group');
+  if (group) group.classList.toggle('open');
+}
+
+/* ==============================
+   TOPBAR SEARCH
+   ============================== */
+var INTERFACE_ITEMS = [
+  {label:'Dashboard', icon:'&#128202;', action:function(){openTab('Dashboard','iframe','/dashboard')}},
+  {label:'Challenges', icon:'&#127942;', action:function(){openTab('Challenges','iframe','/challenges')}},
+  {label:'Leaderboard', icon:'&#127941;', action:function(){openTab('Leaderboard','iframe','/leaderboard')}},
+  {label:'Analytics', icon:'&#128200;', action:function(){openTab('Analytics','iframe','/analytics')}},
+  {label:'Library', icon:'&#128218;', action:function(){openTab('Library','iframe','/library')}},
+  {label:'Models', icon:'&#129302;', action:function(){openTab('Models','iframe','/models')}},
+  {label:'PDF Viewer', icon:'&#128196;', action:function(){openTab('PDF Viewer','iframe','/pdf-viewer')}},
+  {label:'Developers', icon:'&#128187;', action:function(){openTab('Developers','iframe','/developers')}},
+  {label:'Admin', icon:'&#128736;', action:function(){openTab('Admin','iframe','/admin')}, admin:true},
+  {label:'Billing', icon:'&#128179;', action:function(){openTab('Billing','iframe','/billing')}},
+  {label:'Settings', icon:'&#9881;', action:function(){openTab('Settings','iframe','/billing?tab=preferences')}},
+];
+var _searchCache = {sessions:[], projects:[]};
+
+async function _refreshSearchCache() {
+  try {
+    var [sr, pr] = await Promise.all([
+      fetch('/api/lab/sessions'),
+      fetch('/api/projects')
+    ]);
+    if (sr.ok) _searchCache.sessions = await sr.json();
+    if (pr.ok) _searchCache.projects = await pr.json();
+  } catch(e) {}
+}
+
+function onTopbarSearch(query) {
+  var dd = document.getElementById('search-dropdown');
+  query = (query || '').trim().toLowerCase();
+  if (!query) { dd.classList.remove('open'); dd.innerHTML = ''; return; }
+
+  var html = '';
+  // Interfaces
+  var ifaceMatches = INTERFACE_ITEMS.filter(function(it) {
+    if (it.admin && (!currentUser || currentUser.role !== 'admin')) return false;
+    return it.label.toLowerCase().indexOf(query) !== -1;
+  });
+  if (ifaceMatches.length) {
+    html += '<div class="search-dropdown-group"><div class="search-dropdown-label">Interfaces</div>';
+    ifaceMatches.forEach(function(it, i) {
+      html += '<div class="search-dropdown-item" onmousedown="INTERFACE_ITEMS.filter(function(x){return x.label===\'' + it.label + '\'})[0].action()"><span class="sdi-icon">' + it.icon + '</span>' + escapeHtml(it.label) + '</div>';
+    });
+    html += '</div>';
+  }
+  // Projects
+  var projMatches = (_searchCache.projects || []).filter(function(p) {
+    return (p.name || '').toLowerCase().indexOf(query) !== -1;
+  }).slice(0, 8);
+  if (projMatches.length) {
+    html += '<div class="search-dropdown-group"><div class="search-dropdown-label">Projects</div>';
+    projMatches.forEach(function(p) {
+      html += '<div class="search-dropdown-item" onmousedown="openProjectFromSearch(' + p.id + ')"><span class="sdi-icon">&#128193;</span>' + escapeHtml(p.name) + '</div>';
+    });
+    html += '</div>';
+  }
+  // Conversations
+  var sessMatches = (_searchCache.sessions || []).filter(function(s) {
+    return (s.title || '').toLowerCase().indexOf(query) !== -1;
+  }).slice(0, 8);
+  if (sessMatches.length) {
+    html += '<div class="search-dropdown-group"><div class="search-dropdown-label">Conversations</div>';
+    sessMatches.forEach(function(s) {
+      html += '<div class="search-dropdown-item" onmousedown="loadSessionFromSearch(' + s.id + ',\'' + (s.agent_type || 'research_chat') + '\')"><span class="sdi-icon">&#128172;</span>' + escapeHtml(s.title || 'Untitled') + '</div>';
+    });
+    html += '</div>';
+  }
+
+  if (!html) html = '<div class="search-dropdown-item" style="color:var(--muted)">No results</div>';
+  dd.innerHTML = html;
+  dd.classList.add('open');
+}
+
+function closeSearchDropdown() {
+  document.getElementById('search-dropdown').classList.remove('open');
+  document.getElementById('topbar-search').value = '';
+}
+
+function openProjectFromSearch(projectId) {
+  closeSearchDropdown();
+  // Expand the project folder in the sidebar
+  var folderEl = document.querySelector('.folder-item[data-project-id="' + projectId + '"]');
+  if (folderEl) {
+    folderEl.click();
+    folderEl.scrollIntoView({behavior:'smooth', block:'nearest'});
+  }
+}
+
+function loadSessionFromSearch(sessionId, agentType) {
+  closeSearchDropdown();
+  if (agentType !== currentAgentType) switchAgent(agentType);
+  loadSession(sessionId);
 }
 
 /* ==============================
@@ -1693,6 +1863,7 @@ async function exportAs(format) {
 async function init() {
   await checkAuth();
   await renderSidebar();
+  _refreshSearchCache(); // populate search index (non-blocking)
 
   // Restore agent type if any
   var savedAgent = sessionStorage.getItem('lab_agent_type');

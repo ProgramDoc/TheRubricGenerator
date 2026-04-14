@@ -15,7 +15,7 @@ def test_register_model(client, test_user):
         "version": "1.0",
         "provider": "custom",
     }, cookies={"rubricgen_session": test_user["cookie"]})
-    assert r.status_code == 200
+    assert r.status_code == 201
     data = r.json()
     assert data["name"] == "TestModel-v1"
     assert data["model_api_key"].startswith("rg_model_")
@@ -47,6 +47,11 @@ def test_opt_in_daily(client, test_user):
     }, cookies={"rubricgen_session": test_user["cookie"]})
     model_id = reg.json()["id"]
 
+    # Accept agreement (required before opt-in)
+    r = client.post(f"/api/models/{model_id}/accept-agreement",
+                    cookies={"rubricgen_session": test_user["cookie"]})
+    assert r.status_code == 200
+
     r = client.post(f"/api/models/{model_id}/opt-in-daily",
                     cookies={"rubricgen_session": test_user["cookie"]})
     assert r.status_code == 200
@@ -59,9 +64,12 @@ def test_compete_list_unapproved(client, test_user, test_challenge):
         "version": "1.0",
     }, cookies={"rubricgen_session": test_user["cookie"]})
     api_key = reg.json()["model_api_key"]
+    model_id = reg.json()["id"]
 
-    # Opt in but don't approve
-    client.post(f"/api/models/{reg.json()['id']}/opt-in-daily",
+    # Accept agreement and opt in but don't admin-approve
+    client.post(f"/api/models/{model_id}/accept-agreement",
+                cookies={"rubricgen_session": test_user["cookie"]})
+    client.post(f"/api/models/{model_id}/opt-in-daily",
                 cookies={"rubricgen_session": test_user["cookie"]})
 
     r = client.get("/api/compete/challenges",
@@ -77,6 +85,8 @@ def test_admin_approve_model(client, test_user, admin_user):
     }, cookies={"rubricgen_session": test_user["cookie"]})
     model_id = reg.json()["id"]
 
+    client.post(f"/api/models/{model_id}/accept-agreement",
+                cookies={"rubricgen_session": test_user["cookie"]})
     client.post(f"/api/models/{model_id}/opt-in-daily",
                 cookies={"rubricgen_session": test_user["cookie"]})
 
@@ -88,7 +98,7 @@ def test_admin_approve_model(client, test_user, admin_user):
 # ─── Competition API Flow ───
 
 def _register_and_approve(client, test_user, admin_user, name="CompeteModel"):
-    """Helper: register, opt-in, and approve a model. Returns API key."""
+    """Helper: register, accept agreement, opt-in, and approve a model. Returns API key."""
     reg = client.post("/api/models", json={
         "name": name,
         "version": "1.0",
@@ -96,6 +106,8 @@ def _register_and_approve(client, test_user, admin_user, name="CompeteModel"):
     model_id = reg.json()["id"]
     api_key = reg.json()["model_api_key"]
 
+    client.post(f"/api/models/{model_id}/accept-agreement",
+                cookies={"rubricgen_session": test_user["cookie"]})
     client.post(f"/api/models/{model_id}/opt-in-daily",
                 cookies={"rubricgen_session": test_user["cookie"]})
     client.post(f"/api/admin/models/{model_id}/approve-daily",
@@ -260,15 +272,17 @@ def test_user_api_key_auth(client, test_user):
     api_key = r.json()["api_key"]
     assert api_key.startswith("rg_user_")
 
-    # Use key to access challenges endpoint
+    # Use key to access challenges endpoint (clear cookies so only API key is used)
+    client.cookies.clear()
     r = client.get("/api/challenges", headers={"X-API-Key": api_key})
     assert r.status_code == 200
 
-    # Revoke key
+    # Revoke key (needs session cookie)
     r = client.delete("/api/developers/revoke-key",
                       cookies={"rubricgen_session": test_user["cookie"]})
     assert r.status_code == 200
 
-    # Revoked key fails
+    # Revoked key fails (clear cookies so only API key is tested)
+    client.cookies.clear()
     r = client.get("/api/challenges", headers={"X-API-Key": api_key})
     assert r.status_code == 401

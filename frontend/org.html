@@ -18,6 +18,8 @@
 html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; min-height: 100vh; }
 
 .topbar { background: var(--navy); color: #fff; padding: 12px 28px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+.in-iframe .topbar { display: none !important; }
+.in-iframe body { padding-top: 0 !important; }
 .topbar .brand { font-size: 16px; font-weight: 700; letter-spacing: -.3px; }
 .topbar .brand span { color: var(--sky); }
 .topbar nav { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
@@ -107,6 +109,7 @@ tbody tr:last-child td { border-bottom: none; }
 </style>
 </head>
 <body>
+<script>if(window.self!==window.top)document.documentElement.classList.add('in-iframe')</script>
 
 <div class="topbar">
   <div class="brand">The AI <span>Researcher</span><sub style="font-size:9px;color:rgba(255,255,255,.35);display:block;margin-top:2px">Aitheia LLC</sub></div>

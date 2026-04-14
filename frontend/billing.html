@@ -18,6 +18,8 @@
 html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; min-height: 100vh; }
 
 .topbar { background: var(--navy); color: #fff; padding: 12px 28px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+.in-iframe .topbar { display: none !important; }
+.in-iframe body { padding-top: 0 !important; }
 .topbar .brand { font-size: 16px; font-weight: 700; letter-spacing: -.3px; }
 .topbar .brand span { color: var(--sky); }
 .topbar nav { display: flex; gap: 4px; align-items: center; }
@@ -113,6 +115,7 @@ tbody tr:last-child td { border-bottom: none; }
 </style>
 </head>
 <body>
+<script>if(window.self!==window.top)document.documentElement.classList.add('in-iframe')</script>
 
 <div class="topbar">
   <div class="brand">The AI <span>Researcher</span><sub style="font-size:9px;color:rgba(255,255,255,.35);display:block;margin-top:2px">Aitheia LLC</sub></div>
@@ -152,6 +155,20 @@ tbody tr:last-child td { border-bottom: none; }
 
   <div class="page-title">Billing & Credits</div>
   <div class="page-subtitle">Manage your membership, credit balance, and purchase packs</div>
+
+  <!-- PROFILE -->
+  <div class="card" style="margin-bottom:20px">
+    <div class="card-header"><h2>Profile</h2></div>
+    <div style="padding:20px;display:flex;align-items:center;gap:20px">
+      <div id="profile-avatar" style="width:64px;height:64px;border-radius:50%;background:var(--blue);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;color:#fff;overflow:hidden;flex-shrink:0;cursor:pointer" title="Click to change photo" onclick="document.getElementById('avatar-upload-input').click()"></div>
+      <input type="file" id="avatar-upload-input" style="display:none" accept="image/*" onchange="uploadAvatar(this.files[0])">
+      <div>
+        <div id="profile-name" style="font-size:14px;font-weight:600;color:var(--text)"></div>
+        <div id="profile-email" style="font-size:12px;color:var(--muted);margin-top:2px"></div>
+        <button onclick="document.getElementById('avatar-upload-input').click()" style="margin-top:8px;font-family:inherit;font-size:11px;font-weight:600;padding:5px 12px;border:1px solid var(--border);border-radius:5px;background:#fff;color:var(--blue);cursor:pointer">Upload Photo</button>
+      </div>
+    </div>
+  </div>
 
   <!-- MEMBERSHIP -->
   <div class="card" style="margin-bottom:20px">
@@ -266,12 +283,39 @@ async function loadMe() {
   if (!res.ok) { window.location.href = '/login'; return; }
   const me = await res.json();
   if (me.role === 'admin') document.getElementById('nav-admin').style.display = '';
+  // Populate profile section
+  var displayName = me.display_name || me.email || '';
+  document.getElementById('profile-name').textContent = displayName;
+  document.getElementById('profile-email').textContent = me.email || '';
+  var avatarEl = document.getElementById('profile-avatar');
+  if (me.avatar_url) {
+    avatarEl.innerHTML = '<img src="' + me.avatar_url + '" style="width:100%;height:100%;object-fit:cover" alt="">';
+  } else {
+    var initials = displayName.split(' ').map(function(w){return w[0]}).join('').slice(0,2).toUpperCase();
+    avatarEl.textContent = initials || '?';
+  }
   // Check payment agreement
   const agRes = await fetch('/api/agreements/status');
   if (agRes.ok) {
     const status = await agRes.json();
     agreementAccepted = !!status.payment;
   }
+}
+
+async function uploadAvatar(file) {
+  if (!file) return;
+  if (!file.type.startsWith('image/')) { showToast('Please select an image file', 'error'); return; }
+  if (file.size > 5 * 1024 * 1024) { showToast('Image must be under 5 MB', 'error'); return; }
+  var form = new FormData();
+  form.append('file', file);
+  try {
+    var r = await fetch('/api/auth/avatar', { method: 'POST', body: form });
+    if (!r.ok) { showToast('Upload failed', 'error'); return; }
+    var data = await r.json();
+    var avatarEl = document.getElementById('profile-avatar');
+    avatarEl.innerHTML = '<img src="' + data.avatar_url + '?t=' + Date.now() + '" style="width:100%;height:100%;object-fit:cover" alt="">';
+    showToast('Photo updated!', 'success');
+  } catch (e) { showToast('Upload failed', 'error'); }
 }
 
 async function loadBalance() {

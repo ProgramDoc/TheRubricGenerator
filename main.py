@@ -74,6 +74,7 @@ OBSIDIAN_VAULT_DIR = Path(os.environ.get("OBSIDIAN_VAULT_DIR", str(DATA_DIR / "o
 OBSIDIAN_VAULT_DIR.mkdir(parents=True, exist_ok=True)
 (OBSIDIAN_VAULT_DIR / "challenges").mkdir(exist_ok=True)
 (OBSIDIAN_VAULT_DIR / "papers").mkdir(exist_ok=True)
+(OBSIDIAN_VAULT_DIR / "lab").mkdir(exist_ok=True)
 
 ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "")
 ADMIN_EMAIL  = os.environ.get("ADMIN_EMAIL",  "tck936@mail.harvard.edu")
@@ -578,6 +579,9 @@ def _migrate_challenge_columns_v2(conn) -> None:
             conn.execute("ALTER TABLE users ADD COLUMN api_key TEXT")
             conn.execute("ALTER TABLE users ADD COLUMN api_key_created_at TEXT")
             conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_api_key ON users(api_key)")
+        # User avatar
+        if not column_exists(conn, "users", "avatar_path"):
+            conn.execute("ALTER TABLE users ADD COLUMN avatar_path TEXT")
         # Model version history table
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS model_versions (
@@ -720,7 +724,7 @@ def _get_user_from_token(token: str | None) -> dict | None:
     now = datetime.now(timezone.utc).isoformat()
     conn = get_db()
     row  = conn.execute(
-        """SELECT u.id, u.email, u.display_name, u.role
+        """SELECT u.id, u.email, u.display_name, u.role, u.avatar_path
            FROM sessions s JOIN users u ON u.id = s.user_id
            WHERE s.token=? AND s.expires_at > ?""",
         (token, now),
@@ -746,7 +750,7 @@ def require_user(rubricgen_session: str | None = Cookie(default=None),
                  x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> dict:
     """Authenticate via session cookie OR API key header."""
     user = _get_user_from_token(rubricgen_session)
-    if not user and x_api_key:
+    if not user and isinstance(x_api_key, str):
         user = _get_user_by_api_key(x_api_key)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -1085,7 +1089,53 @@ def me(rubricgen_session: str | None = Cookie(default=None)):
     user = _get_user_from_token(rubricgen_session)
     if not user:
         raise HTTPException(401, "Not authenticated")
+    # Add avatar URL if avatar_path is set
+    if user.get("avatar_path"):
+        user["avatar_url"] = f"/api/auth/avatar/{user['id']}"
+    else:
+        user["avatar_url"] = None
+    user.pop("avatar_path", None)
     return user
+
+
+@app.post("/api/auth/avatar")
+async def upload_avatar(file: UploadFile = File(...),
+                        rubricgen_session: str | None = Cookie(default=None)):
+    """Upload a profile photo. Stores via S3 (or local fallback)."""
+    user = require_user(rubricgen_session)
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(400, "File must be an image")
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(400, "Image must be under 5 MB")
+    from backend.storage import upload_file as storage_upload
+    disk_name = f"avatars/user_{user['id']}_{file.filename}"
+    storage_upload(disk_name, content)
+    conn = get_db()
+    try:
+        with conn:
+            conn.execute("UPDATE users SET avatar_path=? WHERE id=?", (disk_name, user["id"]))
+            conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "avatar_url": f"/api/auth/avatar/{user['id']}"}
+
+
+@app.get("/api/auth/avatar/{user_id}")
+def serve_avatar(user_id: int):
+    """Serve a user's avatar image."""
+    conn = get_db()
+    row = conn.execute("SELECT avatar_path FROM users WHERE id=?", (user_id,)).fetchone()
+    conn.close()
+    if not row or not row["avatar_path"]:
+        raise HTTPException(404, "No avatar")
+    from backend.storage import download_file as storage_download, get_content_type
+    data = storage_download(row["avatar_path"])
+    if not data:
+        raise HTTPException(404, "Avatar file not found")
+    ct = get_content_type(row["avatar_path"])
+    return Response(content=data, media_type=ct,
+                    headers={"Cache-Control": "public, max-age=3600"})
 
 
 class AdminLoginPayload(BaseModel):
@@ -1534,8 +1584,9 @@ def api_run_challenge(cid: int, body: RunChallengePayload | None = None,
 @app.get("/api/challenges")
 def api_list_challenges(project_id: Optional[int] = None,
                         visibility: Optional[str] = None,
-                        rubricgen_session: str | None = Cookie(default=None)):
-    user = require_user(rubricgen_session)
+                        rubricgen_session: str | None = Cookie(default=None),
+                        x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
     conn = get_db()
     # Default view: user's own challenges (any visibility) + all public challenges
     where_parts = ["(c.created_by=? OR c.visibility='public')"]
@@ -2410,9 +2461,10 @@ def compete_get_questions(challenge_id: int, request: Request):
         if not model.get("daily_admin_approved"):
             raise HTTPException(403, "Model not approved for daily challenges")
 
-        challenge = conn.execute("SELECT * FROM challenges WHERE id=?", (challenge_id,)).fetchone()
-        if not challenge:
+        challenge_row = conn.execute("SELECT * FROM challenges WHERE id=?", (challenge_id,)).fetchone()
+        if not challenge_row:
             raise HTTPException(404, "Challenge not found")
+        challenge = dict(challenge_row)
 
         rubric_row = conn.execute(
             "SELECT rubric_json FROM challenge_rubrics WHERE challenge_id=?",
@@ -2569,6 +2621,28 @@ def admin_reject_model(model_id: int, rubricgen_session: str | None = Cookie(def
 
 
 # ─── User: opt in/out of daily ───
+
+@app.post("/api/models/{model_id}/accept-agreement")
+def model_accept_agreement(model_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Accept the Model Publishing Agreement (required before opt-in to daily challenges)."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    row = conn.execute("SELECT created_by FROM registered_models WHERE id=?", (model_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "Model not found")
+    if row["created_by"] != user["id"]:
+        conn.close()
+        raise HTTPException(403, "Only the model creator can accept the agreement")
+    with conn:
+        conn.execute(
+            "UPDATE registered_models SET agreement_signed_at=CURRENT_TIMESTAMP WHERE id=?",
+            (model_id,),
+        )
+        conn.commit()
+    conn.close()
+    return {"ok": True, "message": "Model Publishing Agreement accepted."}
+
 
 @app.post("/api/models/{model_id}/opt-in-daily")
 def model_opt_in_daily(model_id: int, rubricgen_session: str | None = Cookie(default=None)):
@@ -4192,7 +4266,34 @@ def api_lab_chat(body: LabChatPayload, rubricgen_session: str | None = Cookie(de
         if session_id is None:
             sess = lab_mod.create_session(conn, user["id"], body.agent_type)
             session_id = sess["id"]
-        return lab_mod.chat(conn, session_id, user["id"], body.message, body.agent_type)
+        result = lab_mod.chat(conn, session_id, user["id"], body.message, body.agent_type)
+        # Write conversation to Obsidian vault (best-effort)
+        try:
+            from backend.obsidian import write_lab_conversation_note
+            sess_data = lab_mod.get_session(conn, session_id, user["id"])
+            write_lab_conversation_note(
+                OBSIDIAN_VAULT_DIR, body.agent_type,
+                sess_data, sess_data.get("messages", []), user,
+            )
+        except Exception:
+            pass
+        return result
+    finally:
+        conn.close()
+
+
+class LabCreateSessionPayload(BaseModel):
+    agent_type: str = "research_chat"
+    title: str = "New Conversation"
+
+
+@app.post("/api/lab/sessions", status_code=201)
+def api_lab_create_session(body: LabCreateSessionPayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Create a new lab session."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return lab_mod.create_session(conn, user["id"], body.agent_type, body.title)
     finally:
         conn.close()
 
