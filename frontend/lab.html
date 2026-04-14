@@ -151,6 +151,15 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 .msg.assistant .msg-bubble table th, .msg.assistant .msg-bubble table td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
 .msg.assistant .msg-bubble table th { background: #e8ecf2; font-weight: 700; }
 
+/* Inline content action buttons */
+.content-actions { position: absolute; top: 4px; right: 4px; display: none; gap: 3px; z-index: 2; }
+.content-action-wrap { position: relative; }
+.content-action-wrap:hover .content-actions { display: flex; }
+.content-action-btn { font-family: inherit; font-size: 9px; font-weight: 600; padding: 3px 7px; border-radius: 4px; cursor: pointer; border: 1px solid var(--border); background: rgba(255,255,255,.92); color: var(--text); backdrop-filter: blur(4px); }
+.content-action-btn:hover { background: var(--blue); color: #fff; border-color: var(--blue); }
+.table-action-bar { display: none; margin-bottom: 4px; }
+.content-action-wrap:hover .table-action-bar { display: flex; gap: 3px; }
+
 .follow-ups { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .follow-btn { font-family: inherit; font-size: 11px; padding: 5px 10px; background: #fff; border: 1px solid var(--sky); color: var(--blue); border-radius: 14px; cursor: pointer; }
 .follow-btn:hover { background: #e8f0fe; }
@@ -1451,7 +1460,10 @@ function appendMessage(role, content, metadata) {
   // Assistant images (statistician charts etc.)
   if (role === 'assistant' && metadata && metadata.images) {
     metadata.images.forEach(function(img) {
-      html += '<img src="data:image/png;base64,' + img.data + '" alt="' + escapeHtml(img.title || 'Chart') + '">';
+      html += '<div class="content-action-wrap" style="display:inline-block;position:relative">' +
+        '<div class="content-actions"><button class="content-action-btn" onclick="downloadImage(this.closest(\'.content-action-wrap\').querySelector(\'img\'))">Download</button></div>' +
+        '<img src="data:image/png;base64,' + img.data + '" alt="' + escapeHtml(img.title || 'Chart') + '">' +
+        '</div>';
     });
   }
 
@@ -1467,7 +1479,74 @@ function appendMessage(role, content, metadata) {
   }
 
   div.innerHTML = html;
+
+  // Add inline action buttons to code blocks, images, and tables in assistant messages
+  if (role === 'assistant') {
+    _addInlineActions(div);
+    // Update export toolbar based on new content
+    setTimeout(updateExportToolbar, 50);
+  }
+
   container.appendChild(div);
+}
+
+function _addInlineActions(msgDiv) {
+  // Code blocks: wrap in content-action-wrap, add Copy + Download buttons
+  msgDiv.querySelectorAll('pre').forEach(function(pre) {
+    var wrap = document.createElement('div');
+    wrap.className = 'content-action-wrap';
+    wrap.style.position = 'relative';
+    pre.parentNode.insertBefore(wrap, pre);
+    wrap.appendChild(pre);
+
+    var code = pre.querySelector('code');
+    var text = code ? code.textContent : pre.textContent;
+    var lang = _detectCodeLang(text);
+    var ext = lang === 'python' ? '.py' : lang === 'r' ? '.R' : '.txt';
+
+    var actions = document.createElement('div');
+    actions.className = 'content-actions';
+    actions.innerHTML =
+      '<button class="content-action-btn" onclick="copyText(this.closest(\'.content-action-wrap\').querySelector(\'pre\').textContent)">Copy</button>' +
+      '<button class="content-action-btn" onclick="downloadText(this.closest(\'.content-action-wrap\').querySelector(\'pre\').textContent,\'code' + ext + '\')">Download</button>';
+    wrap.insertBefore(actions, pre);
+  });
+
+  // Standalone images (not already wrapped by metadata images handler)
+  msgDiv.querySelectorAll('.msg-bubble > img').forEach(function(img) {
+    var wrap = document.createElement('div');
+    wrap.className = 'content-action-wrap';
+    wrap.style.position = 'relative';
+    wrap.style.display = 'inline-block';
+    img.parentNode.insertBefore(wrap, img);
+    wrap.appendChild(img);
+
+    var actions = document.createElement('div');
+    actions.className = 'content-actions';
+    actions.innerHTML = '<button class="content-action-btn" onclick="downloadImage(this.closest(\'.content-action-wrap\').querySelector(\'img\'))">Download</button>';
+    wrap.insertBefore(actions, img);
+  });
+
+  // Tables: add Copy CSV button
+  msgDiv.querySelectorAll('table').forEach(function(tbl) {
+    var wrap = document.createElement('div');
+    wrap.className = 'content-action-wrap';
+    tbl.parentNode.insertBefore(wrap, tbl);
+    wrap.appendChild(tbl);
+
+    var bar = document.createElement('div');
+    bar.className = 'table-action-bar';
+    bar.innerHTML = '<button class="content-action-btn" onclick="copyTableAsCsv(this.closest(\'.content-action-wrap\').querySelector(\'table\'))">Copy CSV</button>' +
+      '<button class="content-action-btn" onclick="downloadTableAsCsv(this.closest(\'.content-action-wrap\').querySelector(\'table\'))">Download CSV</button>';
+    wrap.insertBefore(bar, tbl);
+  });
+}
+
+function _detectCodeLang(text) {
+  if (/\bimport\s+\w|^from\s+\w|def\s+\w+\(|print\s*\(/m.test(text)) return 'python';
+  if (/library\s*\(|ggplot\s*\(|tidyverse|<-\s/m.test(text)) return 'r';
+  if (/SELECT\s+|FROM\s+|INSERT\s+INTO/mi.test(text)) return 'sql';
+  return 'text';
 }
 
 function useSuggestion(text) {
@@ -1600,6 +1679,26 @@ function switchTab(tabId) {
 /* ==============================
    EXPORT TOOLBAR (contextual)
    ============================== */
+function detectContentTypes() {
+  var types = new Set(['copy', 'docx', 'latex']);
+  var msgs = document.querySelectorAll('.msg.assistant .msg-bubble');
+  if (!msgs.length) return types;
+
+  // Scan ALL assistant messages for content types
+  msgs.forEach(function(bubble) {
+    bubble.querySelectorAll('pre code, pre').forEach(function(cb) {
+      var text = cb.textContent || '';
+      var lang = _detectCodeLang(text);
+      if (lang === 'python') types.add('python');
+      if (lang === 'r') types.add('r');
+      types.add('code');
+    });
+    if (bubble.querySelectorAll('img').length) types.add('image');
+    if (bubble.querySelectorAll('table').length) { types.add('csv'); types.add('xlsx'); }
+  });
+  return types;
+}
+
 function updateExportToolbar() {
   var toolbar = document.getElementById('export-toolbar');
   var btnContainer = document.getElementById('export-buttons');
@@ -1608,19 +1707,104 @@ function updateExportToolbar() {
     return;
   }
 
-  var cfg = AGENT_CONFIG[currentAgentType];
-  if (!cfg || !cfg.exports || !cfg.exports.length) {
-    toolbar.classList.remove('show');
-    return;
+  var types = detectContentTypes();
+  if (types.size <= 3) {
+    // Only copy/docx/latex (always-on) — still show toolbar if session exists
   }
 
-  var labels = { docx: 'Word', latex: 'LaTeX', xlsx: 'Excel', csv: 'CSV', python: 'Python', r: 'R' };
+  var buttons = [];
+  // Copy all — always
+  buttons.push({label: 'Copy All', action: 'copyAllContent()'});
+  // File exports — always
+  buttons.push({label: 'Word', action: "exportAs('docx')"});
+  buttons.push({label: 'LaTeX', action: "exportAs('latex')"});
+  // Content-aware exports
+  if (types.has('csv'))    buttons.push({label: 'CSV', action: "exportAs('csv')"});
+  if (types.has('xlsx'))   buttons.push({label: 'Excel', action: "exportAs('xlsx')"});
+  if (types.has('python')) buttons.push({label: 'Python', action: "exportAs('python')"});
+  if (types.has('r'))      buttons.push({label: 'R', action: "exportAs('r')"});
+  if (types.has('image'))  buttons.push({label: 'Images', action: 'downloadAllImages()'});
+  if (types.has('code'))   buttons.push({label: 'Copy Code', action: 'copyAllCode()'});
+
   var html = '';
-  cfg.exports.forEach(function(fmt) {
-    html += '<button class="export-btn" onclick="exportAs(\'' + fmt + '\')">' + (labels[fmt] || fmt) + '</button> ';
+  buttons.forEach(function(b) {
+    html += '<button class="export-btn" onclick="' + b.action + '">' + b.label + '</button> ';
   });
   btnContainer.innerHTML = html;
   toolbar.classList.add('show');
+}
+
+/* ── Content action helpers ── */
+function copyText(text) {
+  navigator.clipboard.writeText(text).then(function() { showToast('Copied!', 'success', 2000); });
+}
+
+function downloadText(text, filename) {
+  var blob = new Blob([text], {type: 'text/plain'});
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function downloadImage(img) {
+  var a = document.createElement('a');
+  a.href = img.src;
+  a.download = (img.alt || 'image') + '.png';
+  a.click();
+}
+
+function copyTableAsCsv(tbl) {
+  var csv = _tableToCSV(tbl);
+  navigator.clipboard.writeText(csv).then(function() { showToast('Table copied as CSV', 'success', 2000); });
+}
+
+function downloadTableAsCsv(tbl) {
+  var csv = _tableToCSV(tbl);
+  downloadText(csv, 'table.csv');
+}
+
+function _tableToCSV(tbl) {
+  var rows = [];
+  tbl.querySelectorAll('tr').forEach(function(tr) {
+    var cells = [];
+    tr.querySelectorAll('th, td').forEach(function(cell) {
+      var text = cell.textContent.replace(/"/g, '""');
+      cells.push('"' + text + '"');
+    });
+    rows.push(cells.join(','));
+  });
+  return rows.join('\n');
+}
+
+function copyAllContent() {
+  var msgs = document.querySelectorAll('.msg.assistant .msg-bubble');
+  var text = [];
+  msgs.forEach(function(b) { text.push(b.innerText); });
+  navigator.clipboard.writeText(text.join('\n\n---\n\n')).then(function() {
+    showToast('All content copied', 'success', 2000);
+  });
+}
+
+function copyAllCode() {
+  var blocks = document.querySelectorAll('.msg.assistant pre code, .msg.assistant pre');
+  var code = [];
+  blocks.forEach(function(b) { code.push(b.textContent); });
+  navigator.clipboard.writeText(code.join('\n\n')).then(function() {
+    showToast('Code copied', 'success', 2000);
+  });
+}
+
+function downloadAllImages() {
+  var imgs = document.querySelectorAll('.msg.assistant img');
+  imgs.forEach(function(img, i) {
+    var a = document.createElement('a');
+    a.href = img.src;
+    a.download = (img.alt || 'image_' + (i + 1)) + '.png';
+    a.click();
+  });
+  showToast('Downloading ' + imgs.length + ' image(s)', 'success', 2000);
 }
 
 /* ==============================
