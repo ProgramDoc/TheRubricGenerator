@@ -459,12 +459,16 @@ CREATE INDEX IF NOT EXISTS idx_agent_skills_active ON agent_skills(agent_type, a
 """
 
 
-def migrate_agent_skills_check(conn: sqlite3.Connection) -> None:
+def migrate_agent_skills_check(conn) -> None:
     """Expand the CHECK constraint on agent_skills to include new agent types.
 
-    SQLite doesn't support ALTER CONSTRAINT, so we recreate the table if the
-    old constraint is detected.
+    PostgreSQL: ALTER TABLE to drop/add the constraint.
+    SQLite: Recreate the table (no ALTER CONSTRAINT support).
     """
+    from backend.db import is_postgres
+
+    NEW_CHECK = "agent_type IN ('generator','judge','search_strategist','statistician','study_appraiser','hypothesis_generator','literature_reviewer')"
+
     # Check if new agent types are already allowed by trying a dummy query
     try:
         conn.execute(
@@ -478,28 +482,45 @@ def migrate_agent_skills_check(conn: sqlite3.Connection) -> None:
         conn.commit()
         return
     except Exception:
-        # Constraint failed — need to recreate the table
-        conn.rollback() if hasattr(conn, 'rollback') else None
+        conn.rollback()
 
-    try:
-        # Copy existing data, recreate table with new constraint, restore data
-        rows = conn.execute(
-            "SELECT agent_type, version, prompt_text, avg_performance, times_used, active FROM agent_skills"
-        ).fetchall()
+    if is_postgres():
+        try:
+            # Find and replace the CHECK constraint on agent_type
+            row = conn.execute(
+                "SELECT conname FROM pg_constraint "
+                "WHERE conrelid = 'agent_skills'::regclass AND contype = 'c' "
+                "LIMIT 1"
+            ).fetchone()
+            if row:
+                conname = row["conname"] if isinstance(row, dict) else row[0]
+                conn.execute(f"ALTER TABLE agent_skills DROP CONSTRAINT {conname}")
+                conn.execute(
+                    f"ALTER TABLE agent_skills ADD CONSTRAINT {conname} CHECK({NEW_CHECK})"
+                )
+                conn.commit()
+        except Exception:
+            conn.rollback()
+    else:
+        try:
+            # SQLite: copy data, recreate table with new constraint, restore data
+            rows = conn.execute(
+                "SELECT agent_type, version, prompt_text, avg_performance, times_used, active FROM agent_skills"
+            ).fetchall()
 
-        conn.execute("DROP TABLE IF EXISTS agent_skills")
-        conn.executescript(SKILLS_TABLE_SQL)
+            conn.execute("DROP TABLE IF EXISTS agent_skills")
+            conn.executescript(SKILLS_TABLE_SQL)
 
-        for r in rows:
-            conn.execute(
-                "INSERT INTO agent_skills (agent_type, version, prompt_text, avg_performance, times_used, active) "
-                "VALUES (?,?,?,?,?,?)",
-                (r["agent_type"], r["version"], r["prompt_text"],
-                 r["avg_performance"], r["times_used"], r["active"]),
-            )
-        conn.commit()
-    except Exception:
-        pass  # Table might not exist yet (fresh DB) — that's fine
+            for r in rows:
+                conn.execute(
+                    "INSERT INTO agent_skills (agent_type, version, prompt_text, avg_performance, times_used, active) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (r["agent_type"], r["version"], r["prompt_text"],
+                     r["avg_performance"], r["times_used"], r["active"]),
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
 
 
 def seed_v1_skills(conn: sqlite3.Connection) -> None:
@@ -513,21 +534,20 @@ def seed_v1_skills(conn: sqlite3.Connection) -> None:
         ("hypothesis_generator", HYPOTHESIS_GENERATOR_SKILL_V1),
         ("literature_reviewer", LITERATURE_REVIEWER_SKILL_V1),
     )
-    with conn:
-        for agent_type, prompt in all_skills:
-            existing = conn.execute(
-                "SELECT id FROM agent_skills WHERE agent_type=? AND version=1",
-                (agent_type,),
-            ).fetchone()
-            if not existing:
-                try:
-                    conn.execute(
-                        "INSERT INTO agent_skills (agent_type, version, prompt_text, active) VALUES (?,?,?,1)",
-                        (agent_type, 1, prompt),
-                    )
-                except Exception:
-                    pass  # CHECK constraint may block if migration hasn't run yet
-        conn.commit()
+    for agent_type, prompt in all_skills:
+        existing = conn.execute(
+            "SELECT id FROM agent_skills WHERE agent_type=? AND version=1",
+            (agent_type,),
+        ).fetchone()
+        if not existing:
+            try:
+                conn.execute(
+                    "INSERT INTO agent_skills (agent_type, version, prompt_text, active) VALUES (?,?,?,1)",
+                    (agent_type, 1, prompt),
+                )
+            except Exception:
+                conn.rollback()
+    conn.commit()
 
 
 def get_active_skill(conn: sqlite3.Connection, agent_type: str) -> dict:
