@@ -343,6 +343,52 @@ table.res-table tbody tr:hover { background: #f8fafc; }
   .speed-buttons { gap: 4px; }
   .speed-btn { font-size: 9px; padding: 4px 7px; }
 }
+
+/* Share modal */
+.share-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 200; display: flex; align-items: center; justify-content: center; }
+.share-modal { background: #fff; border-radius: 10px; width: 92%; max-width: 500px; max-height: 80vh; display: flex; flex-direction: column; box-shadow: 0 12px 40px rgba(0,0,0,.2); }
+.share-modal-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+.share-modal-header h3 { font-size: 14px; font-weight: 700; color: var(--navy); margin: 0; }
+.share-modal-header button { background: none; border: none; font-size: 22px; color: var(--muted); cursor: pointer; padding: 0 4px; line-height: 1; }
+.share-modal-header button:hover { color: var(--text); }
+.share-modal-body { padding: 16px 18px; overflow-y: auto; flex: 1; }
+.share-input-wrap { position: relative; margin-bottom: 12px; }
+.share-input-wrap input[type="email"] { width: 100%; font-family: inherit; font-size: 12px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; }
+.share-input-wrap input[type="email"]:focus { outline: none; border-color: var(--sky); }
+#lookup-result { margin-top: 6px; }
+.lookup-registered { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--green); font-weight: 500; }
+.lookup-avatar { width: 22px; height: 22px; border-radius: 50%; background: var(--blue); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; overflow: hidden; flex-shrink: 0; }
+.lookup-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.lookup-unregistered { font-size: 11px; color: var(--amber); font-weight: 500; }
+#add-recipient-btn { margin-top: 6px; font-family: inherit; font-size: 11px; font-weight: 600; padding: 5px 14px; background: var(--blue); color: #fff; border: none; border-radius: 5px; cursor: pointer; }
+#add-recipient-btn:hover { background: var(--navy); }
+.recipient-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; background: #f0f4ff; border: 1px solid var(--border); border-radius: 14px; font-size: 11px; font-weight: 500; color: var(--text); margin: 2px 4px 2px 0; }
+#send-invitations-btn { margin-top: 10px; font-family: inherit; font-size: 12px; font-weight: 700; padding: 8px 18px; background: var(--green); color: #fff; border: none; border-radius: 6px; cursor: pointer; width: 100%; }
+#send-invitations-btn:hover { background: #15803d; }
+#send-invitations-btn:disabled { opacity: .5; cursor: default; }
+.share-section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 6px; }
+.share-member-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f1f5f9; gap: 8px; }
+.share-member-row:last-child { border-bottom: none; }
+.share-member-info { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.share-member-name { font-size: 12px; font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-member-email { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-member-role { font-size: 10px; font-weight: 600; color: var(--muted); text-transform: capitalize; flex-shrink: 0; }
+.share-member-remove { font-family: inherit; font-size: 10px; font-weight: 600; padding: 3px 8px; background: none; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--red); flex-shrink: 0; }
+.share-member-remove:hover { background: rgba(220,38,38,.06); border-color: var(--red); }
+.pending-pill { font-size: 9px; font-weight: 700; padding: 2px 7px; background: rgba(217,119,6,.12); color: var(--amber); border-radius: 8px; flex-shrink: 0; }
+
+/* Invitation sidebar items */
+.invitation-badge { font-size: 9px; font-weight: 700; background: var(--red); color: #fff; padding: 1px 6px; border-radius: 8px; margin-left: 4px; }
+.invitation-item { padding: 8px 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid #f1f5f9; }
+.invitation-item:last-child { border-bottom: none; }
+.inv-info { min-width: 0; flex: 1; }
+.inv-project { font-size: 11.5px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inv-from { font-size: 10px; color: var(--muted); }
+.inv-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.inv-accept { font-family: inherit; font-size: 10px; font-weight: 600; padding: 3px 8px; background: var(--green); color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+.inv-accept:hover { background: #15803d; }
+.inv-reject { font-family: inherit; font-size: 10px; font-weight: 600; padding: 3px 8px; background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 4px; cursor: pointer; }
+.inv-reject:hover { border-color: var(--red); color: var(--red); }
 </style>
 </head>
 <body>
@@ -395,6 +441,10 @@ table.res-table tbody tr:hover { background: #f8fafc; }
         <input type="text" id="new-project-input" placeholder="Project name..." onkeydown="if(event.key==='Enter'){event.preventDefault();createNewProject();}">
       </div>
       <div id="project-folders"></div>
+    </div>
+    <div class="sidebar-section" id="invitations-section" style="display:none">
+      <div class="sidebar-header">Invitations <span class="invitation-badge" id="invitation-badge"></span></div>
+      <div id="invitation-list"></div>
     </div>
     <div class="sidebar-section">
       <div class="sidebar-header">Interfaces</div>
@@ -470,6 +520,30 @@ table.res-table tbody tr:hover { background: #f8fafc; }
           <div class="right-empty-sub">Select a speed button to open agent-specific tools here,<br>or open an interface from the left pane.</div>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Share modal -->
+<div class="share-modal-overlay" id="share-modal" style="display:none" onclick="if(event.target===this)closeShareModal()">
+  <div class="share-modal">
+    <div class="share-modal-header">
+      <h3 id="share-modal-title">Share Project</h3>
+      <button onclick="closeShareModal()">&times;</button>
+    </div>
+    <div class="share-modal-body">
+      <div class="share-input-wrap">
+        <input type="email" id="share-email-input" placeholder="Enter email address..." oninput="debounceLookup(this.value)">
+        <div id="lookup-result"></div>
+        <button id="add-recipient-btn" style="display:none" onclick="addRecipientFromInput()">Add</button>
+      </div>
+      <div id="share-recipients"></div>
+      <button id="send-invitations-btn" style="display:none" onclick="sendInvitations()">Send Invitations</button>
+      <hr style="margin:16px 0;border:none;border-top:1px solid var(--border)">
+      <div class="share-section-label">Pending Invitations</div>
+      <div id="share-pending"></div>
+      <div class="share-section-label" style="margin-top:12px">Members</div>
+      <div id="share-members"></div>
     </div>
   </div>
 </div>
@@ -702,13 +776,16 @@ async function renderSidebar() {
     var sUrl = '/api/lab/sessions?agent_type=' + encodeURIComponent(currentAgentType);
     var pUrl = '/api/projects';
     var dUrl = '/api/lab/documents';
-    var responses = await Promise.all([fetch(sUrl), fetch(pUrl), fetch(dUrl)]);
+    var iUrl = '/api/projects/invitations';
+    var responses = await Promise.all([fetch(sUrl), fetch(pUrl), fetch(dUrl), fetch(iUrl)]);
     if (responses[0].ok) sessions = await responses[0].json();
     else sessions = [];
     if (responses[1].ok) projects = await responses[1].json();
     else projects = [];
     if (responses[2].ok) documents = await responses[2].json();
     else documents = [];
+    var invitations = [];
+    if (responses[3].ok) invitations = await responses[3].json();
   } catch (e) { return; }
 
   var unsorted = sessions.filter(function(s) { return !s.project_id; });
@@ -754,6 +831,9 @@ async function renderSidebar() {
     var projectDocs = documents.filter(function(d) { return d.project_id === p.id; });
     projectEl.appendChild(makeFolderItem(p, byProject[p.id] || [], projectDocs));
   });
+
+  // Invitations
+  renderInvitations(invitations);
 }
 
 function makeSessionItem(s) {
@@ -838,7 +918,7 @@ function makeFolderItem(p, children, projectDocs) {
     '<span class="folder-name">' + escapeHtml(p.name) + '</span>' +
     '<span class="folder-badge">' + totalItems + '</span>' +
     '<span class="folder-actions">' +
-      '<button onclick="event.stopPropagation();showFolderCtx(event,' + p.id + ')" title="More">...</button>' +
+      '<button onclick="event.stopPropagation();showFolderCtx(event,' + p.id + ',\'' + escapeHtml(p.name).replace(/'/g, "\\'") + '\',\'' + (p.role || 'admin') + '\')" title="More">...</button>' +
     '</span>';
   wrapper.appendChild(folder);
 
@@ -1024,16 +1104,26 @@ function showDocCtx(e, docId) {
   menu.style.top = Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 10) + 'px';
 }
 
-function showFolderCtx(e, pid) {
+function showFolderCtx(e, pid, name, role) {
   e.stopPropagation();
   var menu = document.getElementById('ctx-menu');
+  var isAdmin = (role === 'admin');
+  var escapedName = (name || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
   var items = '';
-  items += '<button class="ctx-menu-item" onclick="hideCtxMenu();renameProject(' + pid + ')">Rename</button>';
+  items += '<button class="ctx-menu-item" onclick="hideCtxMenu();openShareModal(' + pid + ',\'' + escapedName + '\')">Share</button>';
+  items += '<button class="ctx-menu-item" onclick="hideCtxMenu();openShareModal(' + pid + ',\'' + escapedName + '\')">Members</button>';
   items += '<div class="ctx-menu-sep"></div>';
-  items += '<button class="ctx-menu-item danger" onclick="hideCtxMenu();deleteProject(' + pid + ')">Delete project</button>';
+  if (isAdmin) {
+    items += '<button class="ctx-menu-item" onclick="hideCtxMenu();renameProject(' + pid + ')">Rename</button>';
+    items += '<button class="ctx-menu-item" onclick="hideCtxMenu();transferOwnership(' + pid + ')">Transfer Ownership</button>';
+    items += '<div class="ctx-menu-sep"></div>';
+    items += '<button class="ctx-menu-item danger" onclick="hideCtxMenu();deleteProject(' + pid + ')">Delete project</button>';
+  } else {
+    items += '<button class="ctx-menu-item danger" onclick="hideCtxMenu();leaveProject(' + pid + ')">Leave project</button>';
+  }
   menu.innerHTML = items;
   menu.style.display = 'block';
-  menu.style.left = Math.min(e.clientX, window.innerWidth - 160) + 'px';
+  menu.style.left = Math.min(e.clientX, window.innerWidth - 180) + 'px';
   menu.style.top = Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 10) + 'px';
 }
 
@@ -1094,6 +1184,220 @@ async function deleteDoc(docId) {
   if (!confirm('Delete this document?')) return;
   await fetch('/api/lab/documents/' + docId, { method: 'DELETE' });
   renderSidebar();
+}
+
+/* ==============================
+   INVITATIONS & SHARING
+   ============================== */
+var pendingInvitations = [];
+
+function renderInvitations(invs) {
+  pendingInvitations = invs || [];
+  var section = document.getElementById('invitations-section');
+  var list = document.getElementById('invitation-list');
+  var badge = document.getElementById('invitation-badge');
+  if (!pendingInvitations.length) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+  badge.textContent = pendingInvitations.length;
+  var html = '';
+  pendingInvitations.forEach(function(inv) {
+    html += '<div class="invitation-item">' +
+      '<div class="inv-info">' +
+        '<div class="inv-project">' + escapeHtml(inv.project_name) + '</div>' +
+        '<div class="inv-from">from ' + escapeHtml(inv.invited_by_name) + '</div>' +
+      '</div>' +
+      '<div class="inv-actions">' +
+        '<button class="inv-accept" onclick="acceptInvitation(' + inv.id + ')">Accept</button>' +
+        '<button class="inv-reject" onclick="rejectInvitation(' + inv.id + ')">Reject</button>' +
+      '</div>' +
+    '</div>';
+  });
+  list.innerHTML = html;
+}
+
+async function acceptInvitation(invId) {
+  var r = await fetch('/api/projects/invitations/' + invId + '/accept', { method: 'POST' });
+  if (r.ok) { showToast('Invitation accepted', 'success'); renderSidebar(); }
+  else { var e = await r.json(); showToast(e.detail || 'Failed', 'error'); }
+}
+
+async function rejectInvitation(invId) {
+  var r = await fetch('/api/projects/invitations/' + invId + '/reject', { method: 'POST' });
+  if (r.ok) { showToast('Invitation declined', 'success'); renderSidebar(); }
+  else { var e = await r.json(); showToast(e.detail || 'Failed', 'error'); }
+}
+
+var shareModalPid = null;
+var shareRecipients = [];
+var lookupTimer = null;
+
+function openShareModal(pid, projectName) {
+  shareModalPid = pid;
+  shareRecipients = [];
+  document.getElementById('share-modal-title').textContent = 'Share: ' + (projectName || 'Project');
+  document.getElementById('share-email-input').value = '';
+  document.getElementById('lookup-result').innerHTML = '';
+  document.getElementById('share-recipients').innerHTML = '';
+  document.getElementById('send-invitations-btn').style.display = 'none';
+  document.getElementById('add-recipient-btn').style.display = 'none';
+  document.getElementById('share-modal').style.display = 'flex';
+  loadShareModalData(pid);
+}
+
+function closeShareModal() {
+  document.getElementById('share-modal').style.display = 'none';
+  shareModalPid = null;
+}
+
+async function loadShareModalData(pid) {
+  var [pendingRes, membersRes] = await Promise.all([
+    fetch('/api/projects/' + pid + '/invitations'),
+    fetch('/api/projects/' + pid + '/members')
+  ]);
+  var pending = pendingRes.ok ? await pendingRes.json() : [];
+  var members = membersRes.ok ? await membersRes.json() : [];
+
+  // Render pending
+  var pendingHtml = '';
+  if (!pending.length) pendingHtml = '<div style="font-size:11px;color:var(--muted);padding:4px 0">No pending invitations</div>';
+  pending.forEach(function(p) {
+    pendingHtml += '<div class="share-member-row"><span class="share-member-email">' + escapeHtml(p.email) + '</span><span class="pending-pill">Pending</span></div>';
+  });
+  document.getElementById('share-pending').innerHTML = pendingHtml;
+
+  // Check if current user is admin of this project
+  var isAdmin = false;
+  if (currentUser) {
+    var me = members.find(function(m) { return m.user_id === currentUser.id; });
+    if (me && me.role === 'admin') isAdmin = true;
+  }
+
+  // Render members
+  var membersHtml = '';
+  members.forEach(function(m) {
+    var isOwner = m.role === 'admin' && !m.added_at;
+    var roleLabel = isOwner ? 'Owner' : m.role;
+    membersHtml += '<div class="share-member-row">' +
+      '<div class="share-member-info"><span class="share-member-name">' + escapeHtml(m.display_name || m.email) + '</span>' +
+      '<span class="share-member-role">' + roleLabel + '</span></div>';
+    if (!isOwner && isAdmin) {
+      membersHtml += '<button class="share-member-remove" onclick="removeMember(' + shareModalPid + ',' + m.user_id + ')">Remove</button>';
+    }
+    membersHtml += '</div>';
+  });
+  document.getElementById('share-members').innerHTML = membersHtml;
+}
+
+function debounceLookup(val) {
+  clearTimeout(lookupTimer);
+  var email = val.trim().toLowerCase();
+  if (!email || !email.includes('@')) {
+    document.getElementById('lookup-result').innerHTML = '';
+    document.getElementById('add-recipient-btn').style.display = 'none';
+    return;
+  }
+  lookupTimer = setTimeout(function() { lookupEmail(email); }, 400);
+}
+
+async function lookupEmail(email) {
+  var r = await fetch('/api/users/lookup?email=' + encodeURIComponent(email));
+  if (!r.ok) return;
+  var data = await r.json();
+  var el = document.getElementById('lookup-result');
+  var addBtn = document.getElementById('add-recipient-btn');
+  if (data.registered) {
+    el.innerHTML = '<div class="lookup-registered"><span class="lookup-avatar">' +
+      (data.avatar_url ? '<img src="' + data.avatar_url + '">' : (data.display_name || email).charAt(0).toUpperCase()) +
+      '</span> ' + escapeHtml(data.display_name || email) + '</div>';
+  } else {
+    el.innerHTML = '<div class="lookup-unregistered">Not a registered user — will receive a registration invite</div>';
+  }
+  addBtn.style.display = '';
+  addBtn.dataset.email = email;
+  addBtn.dataset.name = data.display_name || email;
+  addBtn.dataset.registered = data.registered ? '1' : '0';
+}
+
+function addRecipientFromInput() {
+  var btn = document.getElementById('add-recipient-btn');
+  var email = btn.dataset.email;
+  if (!email || shareRecipients.some(function(r) { return r.email === email; })) return;
+  shareRecipients.push({ email: email, name: btn.dataset.name, registered: btn.dataset.registered === '1' });
+  renderRecipientChips();
+  document.getElementById('share-email-input').value = '';
+  document.getElementById('lookup-result').innerHTML = '';
+  btn.style.display = 'none';
+}
+
+function removeRecipient(email) {
+  shareRecipients = shareRecipients.filter(function(r) { return r.email !== email; });
+  renderRecipientChips();
+}
+
+function renderRecipientChips() {
+  var html = '';
+  shareRecipients.forEach(function(r) {
+    html += '<span class="recipient-chip">' + escapeHtml(r.name || r.email) +
+      ' <span onclick="removeRecipient(\'' + escapeHtml(r.email).replace(/'/g, "\\'") + '\')" style="cursor:pointer;margin-left:4px">&times;</span></span>';
+  });
+  document.getElementById('share-recipients').innerHTML = html;
+  document.getElementById('send-invitations-btn').style.display = shareRecipients.length ? '' : 'none';
+}
+
+async function sendInvitations() {
+  var btn = document.getElementById('send-invitations-btn');
+  btn.disabled = true; btn.textContent = 'Sending...';
+  var errors = [];
+  for (var i = 0; i < shareRecipients.length; i++) {
+    var r = await fetch('/api/projects/' + shareModalPid + '/share', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ email: shareRecipients[i].email })
+    });
+    if (!r.ok) { var e = await r.json(); errors.push(shareRecipients[i].email + ': ' + (e.detail || 'failed')); }
+  }
+  btn.disabled = false; btn.textContent = 'Send Invitations';
+  shareRecipients = [];
+  renderRecipientChips();
+  if (errors.length) showToast('Some invitations failed: ' + errors.join('; '), 'error', 5000);
+  else showToast('Invitations sent!', 'success');
+  loadShareModalData(shareModalPid);
+  renderSidebar();
+}
+
+async function removeMember(pid, userId) {
+  if (!confirm('Remove this member from the project?')) return;
+  var r = await fetch('/api/projects/' + pid + '/members/' + userId, { method: 'DELETE' });
+  if (r.ok) { showToast('Member removed', 'success'); loadShareModalData(pid); renderSidebar(); }
+  else { var e = await r.json(); showToast(e.detail || 'Failed', 'error'); }
+}
+
+async function leaveProject(pid) {
+  if (!confirm('Leave this project? You will lose access.')) return;
+  var r = await fetch('/api/projects/' + pid + '/leave', { method: 'POST' });
+  if (r.ok) { showToast('Left project', 'success'); renderSidebar(); }
+  else { var e = await r.json(); showToast(e.detail || 'Failed', 'error'); }
+}
+
+async function transferOwnership(pid) {
+  var r = await fetch('/api/projects/' + pid + '/members');
+  if (!r.ok) return;
+  var members = await r.json();
+  var nonOwners = members.filter(function(m) { return m.added_at !== null; });
+  if (!nonOwners.length) { showToast('No members to transfer to', 'error'); return; }
+  var options = nonOwners.map(function(m) { return m.display_name + ' (' + m.email + ')'; });
+  var choice = prompt('Transfer ownership to:\n' + options.map(function(o,i){return (i+1)+'. '+o}).join('\n') + '\n\nEnter number:');
+  if (!choice) return;
+  var idx = parseInt(choice) - 1;
+  if (idx < 0 || idx >= nonOwners.length) { showToast('Invalid selection', 'error'); return; }
+  var r2 = await fetch('/api/projects/' + pid + '/transfer-admin', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({new_admin_user_id: nonOwners[idx].user_id})
+  });
+  if (r2.ok) { showToast('Ownership transferred', 'success'); renderSidebar(); }
+  else { var e = await r2.json(); showToast(e.detail || 'Failed', 'error'); }
 }
 
 /* ==============================

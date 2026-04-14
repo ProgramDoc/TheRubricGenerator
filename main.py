@@ -383,6 +383,7 @@ def init_db() -> None:
     seed_credit_packs(conn)
     seed_plans(conn)
     _migrate_storage_mb_column(conn)
+    _migrate_project_invitations_status(conn)
 
     # Seed the agent skill vault directories (Anthropic SKILL.md format
     # + Karpathy autoresearch program.md + version history). Idempotent.
@@ -617,6 +618,20 @@ def _migrate_storage_mb_column(conn) -> None:
             conn.execute("UPDATE membership_plans SET storage_mb = 100 WHERE name = 'Free'")
             conn.execute("UPDATE membership_plans SET storage_mb = 5000 WHERE name = 'Pro'")
             conn.execute("UPDATE membership_plans SET storage_mb = 50000 WHERE name = 'Enterprise'")
+            conn.commit()
+
+
+def _migrate_project_invitations_status(conn) -> None:
+    """Add status column to project_invitations for accept/reject flow."""
+    if not column_exists(conn, "project_invitations", "status"):
+        with conn:
+            conn.execute(
+                "ALTER TABLE project_invitations ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'"
+            )
+            # Backfill: mark existing accepted invitations
+            conn.execute(
+                "UPDATE project_invitations SET status='accepted' WHERE accepted_at IS NOT NULL"
+            )
             conn.commit()
 
 
@@ -1042,7 +1057,7 @@ def register(body: RegisterPayload):
     try:
         if user_row:
             invitations = conn.execute(
-                "SELECT id, project_id, invited_by FROM project_invitations WHERE email=? AND accepted_at IS NULL",
+                "SELECT id, project_id, invited_by FROM project_invitations WHERE email=? AND status='pending'",
                 (email,),
             ).fetchall()
             for inv in invitations:
@@ -1052,7 +1067,7 @@ def register(body: RegisterPayload):
                         (inv["project_id"], user_row["id"], "member", inv["invited_by"]),
                     )
                     conn.execute(
-                        "UPDATE project_invitations SET accepted_at=CURRENT_TIMESTAMP WHERE id=?",
+                        "UPDATE project_invitations SET accepted_at=CURRENT_TIMESTAMP, status='accepted' WHERE id=?",
                         (inv["id"],),
                     )
                     conn.commit()
@@ -2971,15 +2986,34 @@ def share_project(pid: int, body: ShareProjectPayload,
     proj = conn.execute("SELECT name FROM projects WHERE id=?", (pid,)).fetchone()
     email = body.email.strip().lower()
     target = conn.execute("SELECT id, display_name FROM users WHERE email=?", (email,)).fetchone()
-    if not target:
-        # Unregistered user — store pending invitation and send registration invite
-        with conn:
-            conn.execute(
-                "INSERT INTO project_invitations (project_id, email, invited_by) VALUES (?,?,?) ON CONFLICT DO NOTHING",
-                (pid, email, user["id"]),
-            )
-            conn.commit()
+    if target and target["id"] == user["id"]:
         conn.close()
+        raise HTTPException(400, "Cannot share a project with yourself")
+    # All shares go through project_invitations (pending until accepted)
+    with conn:
+        conn.execute(
+            "INSERT INTO project_invitations (project_id, email, invited_by, status) "
+            "VALUES (?,?,?,?) ON CONFLICT DO NOTHING",
+            (pid, email, user["id"], "pending"),
+        )
+        conn.commit()
+    conn.close()
+    if target:
+        # Registered user — send notification
+        try:
+            _send_email(
+                email,
+                "The AI Researcher — Project invitation",
+                f"Hi {target['display_name']},\n\n"
+                f"{user['display_name']} has invited you to the project \"{proj['name']}\".\n\n"
+                f"Log in to accept the invitation: {APP_BASE_URL}\n\n— The AI Researcher",
+            )
+        except Exception:
+            pass
+        return {"ok": True, "status": "invitation_sent",
+                "message": f"Invitation sent to {target['display_name']}"}
+    else:
+        # Unregistered user — send registration invite
         try:
             _send_email(
                 email,
@@ -2994,28 +3028,125 @@ def share_project(pid: int, body: ShareProjectPayload,
         except Exception:
             pass
         return {"ok": True, "status": "invitation_sent",
-                "message": f"Invitation email sent to {email}. They'll be added when they register."}
-    if target["id"] == user["id"]:
-        conn.close()
-        raise HTTPException(400, "Cannot share a project with yourself")
-    with conn:
-        conn.execute(
-            "INSERT INTO project_members (project_id, user_id, role, added_by) VALUES (?,?,?,?) ON CONFLICT DO NOTHING",
-            (pid, target["id"], "member", user["id"]),
-        )
-        conn.commit()
-    conn.close()
+                "message": f"Registration invitation sent to {email}"}
+
+
+# ─── Project Invitation Management ───
+
+@app.get("/api/projects/invitations")
+def api_my_invitations(rubricgen_session: str | None = Cookie(default=None)):
+    """List pending invitations for the current user."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
     try:
-        _send_email(
-            email,
-            "The AI Researcher — Project shared with you",
-            f"Hi {target['display_name']},\n\n"
-            f"{user['display_name']} has shared the project \"{proj['name']}\" with you.\n\n"
-            f"Log in to view it: {APP_BASE_URL}\n\n— The AI Researcher",
-        )
-    except Exception:
-        pass
-    return {"ok": True}
+        rows = conn.execute(
+            """SELECT pi.id, pi.project_id, p.name AS project_name,
+                      u.display_name AS invited_by_name, u.email AS invited_by_email,
+                      pi.created_at
+               FROM project_invitations pi
+               JOIN projects p ON p.id = pi.project_id
+               JOIN users u ON u.id = pi.invited_by
+               WHERE pi.email = ? AND pi.status = 'pending'
+               ORDER BY pi.created_at DESC""",
+            (user["email"],),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+@app.post("/api/projects/invitations/{invitation_id}/accept")
+def api_accept_invitation(invitation_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Accept a project invitation."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        inv = conn.execute(
+            "SELECT id, project_id, email, invited_by FROM project_invitations WHERE id=? AND status='pending'",
+            (invitation_id,),
+        ).fetchone()
+        if not inv:
+            raise HTTPException(404, "Invitation not found or already handled")
+        if inv["email"].lower() != user["email"].lower():
+            raise HTTPException(403, "This invitation is not for you")
+        with conn:
+            conn.execute(
+                "INSERT INTO project_members (project_id, user_id, role, added_by) "
+                "VALUES (?,?,?,?) ON CONFLICT DO NOTHING",
+                (inv["project_id"], user["id"], "member", inv["invited_by"]),
+            )
+            conn.execute(
+                "UPDATE project_invitations SET status='accepted', accepted_at=CURRENT_TIMESTAMP WHERE id=?",
+                (invitation_id,),
+            )
+            conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.post("/api/projects/invitations/{invitation_id}/reject")
+def api_reject_invitation(invitation_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Reject a project invitation."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        inv = conn.execute(
+            "SELECT id, email FROM project_invitations WHERE id=? AND status='pending'",
+            (invitation_id,),
+        ).fetchone()
+        if not inv:
+            raise HTTPException(404, "Invitation not found or already handled")
+        if inv["email"].lower() != user["email"].lower():
+            raise HTTPException(403, "This invitation is not for you")
+        with conn:
+            conn.execute(
+                "UPDATE project_invitations SET status='rejected' WHERE id=?",
+                (invitation_id,),
+            )
+            conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.get("/api/projects/{pid}/invitations")
+def api_project_invitations(pid: int, rubricgen_session: str | None = Cookie(default=None)):
+    """List pending invitations for a project (owner view)."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        role = _user_project_role(conn, pid, user["id"])
+        if role != "admin":
+            raise HTTPException(403, "Only project admins can view invitations")
+        rows = conn.execute(
+            """SELECT pi.id, pi.email, pi.status, pi.created_at,
+                      u.display_name AS invited_by_name
+               FROM project_invitations pi
+               JOIN users u ON u.id = pi.invited_by
+               WHERE pi.project_id = ? AND pi.status = 'pending'
+               ORDER BY pi.created_at DESC""",
+            (pid,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+@app.get("/api/users/lookup")
+def api_user_lookup(email: str, rubricgen_session: str | None = Cookie(default=None)):
+    """Check if an email belongs to a registered user."""
+    require_user(rubricgen_session)
+    email = email.strip().lower()
+    conn = get_db()
+    row = conn.execute(
+        "SELECT id, display_name, avatar_path FROM users WHERE email=?", (email,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        return {"registered": False}
+    avatar_url = f"/api/auth/avatar/{row['id']}" if row["avatar_path"] else None
+    return {"registered": True, "display_name": row["display_name"], "avatar_url": avatar_url}
 
 
 @app.post("/api/projects/{pid}/transfer-admin")
