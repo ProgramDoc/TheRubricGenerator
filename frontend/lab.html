@@ -231,6 +231,14 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 .tab-pane.active { display: block; }
 .tab-pane iframe { width: 100%; height: 100%; border: none; }
 
+/* Fullscreen tab mode (hides center pane, expands right pane) */
+.split.fullscreen-tab .panel-center { display: none !important; }
+.split.fullscreen-tab .pane-resizer { display: none !important; }
+.split.fullscreen-tab .vert-resizer { display: none !important; }
+.split.fullscreen-tab .panel-right { width: 100% !important; flex: 1 !important; }
+.back-to-chat-btn { font-family: inherit; font-size: 11px; font-weight: 600; padding: 7px 14px; background: var(--blue); color: #fff; border: none; border-radius: 5px; cursor: pointer; margin: 4px 8px; white-space: nowrap; flex-shrink: 0; }
+.back-to-chat-btn:hover { background: var(--navy); }
+
 /* Visible scrollbar styling */
 .chat-messages::-webkit-scrollbar, .tab-content::-webkit-scrollbar, .tab-pane::-webkit-scrollbar { width: 6px; }
 .chat-messages::-webkit-scrollbar-thumb, .tab-content::-webkit-scrollbar-thumb, .tab-pane::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
@@ -402,7 +410,7 @@ table.res-table tbody tr:hover { background: #f8fafc; }
       <a class="interface-link" onclick="openTab('Analytics','iframe','/analytics')">Analytics</a>
       <a class="interface-link" onclick="openTab('Library','iframe','/library')">Library</a>
       <a class="interface-link" onclick="openTab('Models','iframe','/models')">Models</a>
-      <a class="interface-link" onclick="openTab('PDF Viewer','iframe','/pdf-viewer')">PDF Viewer</a>
+      <a class="interface-link" onclick="openFullscreenTab('PDF Viewer','/pdf-viewer')">PDF Viewer</a>
       <a class="interface-link" onclick="openTab('Developers','iframe','/developers')">Developers</a>
     </div>
   </div>
@@ -1278,7 +1286,7 @@ var INTERFACE_ITEMS = [
   {label:'Analytics', icon:'&#128200;', action:function(){openTab('Analytics','iframe','/analytics')}},
   {label:'Library', icon:'&#128218;', action:function(){openTab('Library','iframe','/library')}},
   {label:'Models', icon:'&#129302;', action:function(){openTab('Models','iframe','/models')}},
-  {label:'PDF Viewer', icon:'&#128196;', action:function(){openTab('PDF Viewer','iframe','/pdf-viewer')}},
+  {label:'PDF Viewer', icon:'&#128196;', action:function(){openFullscreenTab('PDF Viewer','/pdf-viewer')}},
   {label:'Developers', icon:'&#128187;', action:function(){openTab('Developers','iframe','/developers')}},
   {label:'Admin', icon:'&#128736;', action:function(){openTab('Admin','iframe','/admin')}, admin:true},
   {label:'Billing', icon:'&#128179;', action:function(){openTab('Billing','iframe','/billing')}},
@@ -1623,15 +1631,75 @@ function openTab(label, type, url) {
   switchTab(tabId);
 }
 
+var _fullscreenTabId = null;
+
+function openFullscreenTab(label, url) {
+  // If already open, just switch to it
+  var existing = document.querySelector('.tab-item[data-tab-label="' + label + '"]');
+  if (existing) {
+    switchTab(existing.dataset.tabId);
+    _enterFullscreenTab(existing.dataset.tabId);
+    return;
+  }
+
+  tabCounter++;
+  var tabId = 'tab-' + tabCounter;
+
+  // Add "Back to Chat" button + tab button to tab bar
+  var backBtn = document.createElement('button');
+  backBtn.className = 'back-to-chat-btn';
+  backBtn.id = 'back-to-chat-' + tabId;
+  backBtn.textContent = '\u2190 Back to Chat';
+  backBtn.onclick = function() { closeTab(tabId); };
+  document.getElementById('tab-bar').appendChild(backBtn);
+
+  var tabBtn = document.createElement('button');
+  tabBtn.className = 'tab-item';
+  tabBtn.dataset.tabId = tabId;
+  tabBtn.dataset.tabLabel = label;
+  tabBtn.dataset.fullscreen = 'true';
+  tabBtn.onclick = function() { switchTab(tabId); _enterFullscreenTab(tabId); };
+  tabBtn.innerHTML = escapeHtml(label) + ' <span class="tab-close" onclick="event.stopPropagation();closeTab(\'' + tabId + '\')">&times;</span>';
+  document.getElementById('tab-bar').appendChild(tabBtn);
+
+  var pane = document.createElement('div');
+  pane.className = 'tab-pane';
+  pane.dataset.tabId = tabId;
+  pane.innerHTML = '<iframe src="' + escapeHtml(url) + '"></iframe>';
+  document.getElementById('tab-content').appendChild(pane);
+
+  switchTab(tabId);
+  _enterFullscreenTab(tabId);
+}
+
+function _enterFullscreenTab(tabId) {
+  _fullscreenTabId = tabId;
+  document.querySelector('.split').classList.add('fullscreen-tab');
+}
+
+function _exitFullscreenTab() {
+  _fullscreenTabId = null;
+  document.querySelector('.split').classList.remove('fullscreen-tab');
+  // Remove any back-to-chat buttons
+  document.querySelectorAll('.back-to-chat-btn').forEach(function(b) { b.remove(); });
+}
+
 function closeTab(tabId) {
   if (tabId === '_empty') return;
   var tabBtn = document.querySelector('.tab-item[data-tab-id="' + tabId + '"]');
   var pane = document.querySelector('.tab-pane[data-tab-id="' + tabId + '"]');
+
+  // If closing a fullscreen tab, exit fullscreen mode
+  if (tabBtn && tabBtn.dataset.fullscreen === 'true') {
+    _exitFullscreenTab();
+    var backBtn = document.getElementById('back-to-chat-' + tabId);
+    if (backBtn) backBtn.remove();
+  }
+
   if (tabBtn) tabBtn.remove();
   if (pane) pane.remove();
 
   if (activeTabId === tabId) {
-    // Switch to first available tab or empty state
     var remaining = document.querySelector('.tab-item');
     if (remaining) {
       switchTab(remaining.dataset.tabId);
@@ -1703,6 +1771,13 @@ function switchTab(tabId) {
   document.querySelectorAll('.tab-pane').forEach(function(pane) {
     pane.classList.toggle('active', pane.dataset.tabId === tabId);
   });
+  // Enter/exit fullscreen mode based on whether the active tab is fullscreen
+  var activeBtn = document.querySelector('.tab-item[data-tab-id="' + tabId + '"]');
+  if (activeBtn && activeBtn.dataset.fullscreen === 'true') {
+    _enterFullscreenTab(tabId);
+  } else if (_fullscreenTabId) {
+    document.querySelector('.split').classList.remove('fullscreen-tab');
+  }
 }
 
 /* ==============================
