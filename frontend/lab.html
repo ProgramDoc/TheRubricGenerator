@@ -1998,14 +1998,10 @@ var _searchSessionId = null;
 
 async function _ensureSearchSession() {
   if (_searchSessionId) return _searchSessionId;
-  var r = await fetch('/api/search/chat', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ message: 'init' }),
-  });
+  var r = await fetch('/api/search/sessions', { method: 'POST' });
   if (r.ok) {
     var data = await r.json();
-    _searchSessionId = data.session_id;
+    _searchSessionId = data.id;
   }
   return _searchSessionId;
 }
@@ -2070,11 +2066,15 @@ function renderSearchResults() {
     '</tr></thead><tbody>';
 
   searchResults.forEach(function(r, i) {
+    var authors = r.authors || '';
+    if (Array.isArray(authors)) authors = authors.slice(0,3).join(', ');
+    var year = r.year || (r.pub_date || '').substring(0, 4) || '';
     html += '<tr>' +
       '<td><input type="checkbox" class="result-check" data-idx="' + i + '"></td>' +
-      '<td><span class="res-title" onclick="toggleAbstract(' + i + ')">' + escapeHtml(r.title || 'Untitled') + '</span></td>' +
-      '<td style="font-size:10px;color:var(--muted);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml((r.authors || []).slice(0,3).join(', ')) + '</td>' +
-      '<td>' + escapeHtml(r.year || '') + '</td>' +
+      '<td><span class="res-title" onclick="toggleAbstract(' + i + ')">' + escapeHtml(r.title || 'Untitled') + '</span>' +
+        (r.url ? ' <a href="' + escapeHtml(r.url) + '" target="_blank" style="font-size:9px;color:var(--sky)">&#x2197;</a>' : '') + '</td>' +
+      '<td style="font-size:10px;color:var(--muted);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(authors) + '</td>' +
+      '<td>' + escapeHtml(year) + '</td>' +
       '<td style="font-size:10px">' + escapeHtml(r.journal || '') + '</td>' +
       '</tr>';
     if (r.abstract) {

@@ -4110,6 +4110,17 @@ def api_search_execute(body: SearchExecutePayload, rubricgen_session: str | None
         conn.close()
 
 
+@app.post("/api/search/sessions", status_code=201)
+def api_search_create_session(rubricgen_session: str | None = Cookie(default=None)):
+    """Create a new search session (no LLM call — just creates the DB row)."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return search_mod.create_session(conn, user["id"])
+    finally:
+        conn.close()
+
+
 @app.get("/api/search/sessions")
 def api_search_sessions(rubricgen_session: str | None = Cookie(default=None)):
     """List user's search sessions."""
