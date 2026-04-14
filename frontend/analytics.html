@@ -81,6 +81,18 @@ tbody tr:last-child td { border-bottom: none; }
 .badge-moonshot { background: rgba(212,175,55,.15); color: #92400e; }
 
 .acc-bar { display: inline-block; height: 8px; border-radius: 4px; background: var(--sky); min-width: 4px; }
+.domain-badge { font-size: 8.5px; font-weight: 700; padding: 2px 7px; border-radius: 3px; text-transform: uppercase; letter-spacing: .04em; }
+.domain-hypothesis { background: rgba(94,154,208,.15); color: #5e9ad0; }
+.domain-evidence_motivation { background: rgba(124,58,237,.15); color: #7c3aed; }
+.domain-study_design { background: rgba(39,68,114,.15); color: #274472; }
+.domain-extraction { background: rgba(22,163,74,.15); color: #16a34a; }
+.domain-risk_of_bias { background: rgba(220,38,38,.15); color: #dc2626; }
+.domain-reporting { background: rgba(217,119,6,.15); color: #d97706; }
+.domain-statistical_analysis { background: rgba(99,102,241,.15); color: #4338ca; }
+.domain-grade_certainty { background: rgba(212,175,55,.15); color: #a16207; }
+.domain-interpretation { background: rgba(16,163,127,.15); color: #047857; }
+.domain-ethics_regulatory { background: rgba(100,116,139,.15); color: #64748b; }
+.domain-cross_paper_synthesis { background: rgba(236,72,153,.15); color: #be185d; }
 .nav-dropdown { position: relative; display: inline-block; }
 .nav-dropdown > a { cursor: default; }
 .nav-dropdown-menu { display: none; position: absolute; top: 100%; left: 0; min-width: 160px; background: var(--navy); border: 1px solid rgba(255,255,255,.15); border-radius: 6px; padding: 4px 0; margin-top: 4px; z-index: 50; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
@@ -94,6 +106,30 @@ tbody tr:last-child td { border-bottom: none; }
 .nav-settings:hover .nav-settings-menu { display: block; }
 .nav-settings-menu a { display: block; padding: 8px 16px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); text-decoration: none; }
 .nav-settings-menu a:hover { background: rgba(255,255,255,.08); color: #fff; }
+
+/* ── Toast notifications + loading helpers ── */
+.toast-container { position: fixed; top: 60px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.toast { padding: 10px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; color: #fff; box-shadow: 0 4px 12px rgba(0,0,0,.15); animation: toastIn .3s ease; max-width: 360px; pointer-events: auto; }
+.toast.success { background: var(--green); }
+.toast.error { background: var(--red); }
+.toast.info { background: var(--blue); }
+@keyframes toastIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes toastOut { from { opacity: 1; } to { opacity: 0; transform: translateX(40px); } }
+.spinner-inline { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .6s linear infinite; vertical-align: middle; margin-right: 4px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.btn-loading { opacity: .7; pointer-events: none; }
+@media (max-width: 600px) {
+  .topbar { padding: 10px 14px; flex-wrap: wrap; gap: 6px; }
+  .topbar .brand { font-size: 14px; }
+  .topbar nav { gap: 2px; }
+  .topbar nav a { font-size: 10px; padding: 4px 6px; }
+  .topbar nav a[href="/developers"], .topbar nav a[href*="sso/annotator"], .topbar nav a[href="/library"] { display: none; }
+  .topbar .user-badge { font-size: 9px; margin-left: 4px; padding: 3px 6px; }
+  .topbar .signout-btn { font-size: 9px; padding: 4px 8px; margin-left: 4px; }
+  .container { padding: 16px 14px; }
+  .card { overflow-x: auto; }
+  table { min-width: 500px; }
+}
 </style>
 </head>
 <body>
@@ -115,9 +151,8 @@ tbody tr:last-child td { border-bottom: none; }
     <a href="/analytics" class="active">Analytics</a>
     <a href="/library">Library</a>
     <a href="/search">Search</a>
-    <a href="/papers">Papers</a>
+    <a href="/pdf-viewer">PDF Viewer</a>
     <a href="/developers">Developers</a>
-    <a href="/api/sso/annotator">PDF Viewer</a>
     <a href="/admin" id="nav-admin" style="display:none">Admin</a>
     <span class="user-badge" id="user-badge">—</span>
     <div class="nav-settings">
@@ -204,13 +239,34 @@ tbody tr:last-child td { border-bottom: none; }
   <!-- Detailed Breakdown Table -->
   <div class="card">
     <div class="card-header"><h2>Detailed Breakdown</h2></div>
-    <div class="card-body" id="breakdown-table-wrap">
-      <div class="empty">Loading...</div>
+    <div class="card-body">
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <button class="btn btn-sm" id="view-theme-btn" onclick="switchBreakdownView('theme')" style="font-family:inherit;font-size:11px;font-weight:600;padding:6px 14px;border:none;border-radius:5px;cursor:pointer;color:#fff;background:var(--blue)">By Theme</button>
+        <button class="btn btn-sm" id="view-domain-btn" onclick="switchBreakdownView('domain')" style="font-family:inherit;font-size:11px;font-weight:600;padding:6px 14px;border:none;border-radius:5px;cursor:pointer;color:#fff;background:var(--muted)">By Domain</button>
+      </div>
+      <div id="breakdown-table-wrap">
+        <div class="empty">Loading...</div>
+      </div>
     </div>
   </div>
 </div>
 
 <script>
+/* ── Toast + fetch helpers ── */
+function _ensureToastContainer() {
+  let c = document.querySelector('.toast-container');
+  if (!c) { c = document.createElement('div'); c.className = 'toast-container'; document.body.appendChild(c); }
+  return c;
+}
+function showToast(msg, type = 'info', duration = 4000) {
+  const c = _ensureToastContainer();
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => { t.style.animation = 'toastOut .3s ease forwards'; setTimeout(() => t.remove(), 300); }, duration);
+}
+
 let currentUser = null;
 let diffChart = null;
 let trendChart = null;
@@ -271,6 +327,29 @@ function providerBadge(m) {
   return '';
 }
 
+function domainBadge(domain) {
+  if (!domain) return '';
+  const cls = 'domain-' + domain.toLowerCase().replace(/[\s\/]+/g, '_');
+  const label = domain.replace(/_/g, ' ');
+  return '<span class="domain-badge ' + cls + '">' + escapeHtml(label) + '</span>';
+}
+
+let currentBreakdownView = 'theme';
+
+function switchBreakdownView(view) {
+  currentBreakdownView = view;
+  const themeBtn = document.getElementById('view-theme-btn');
+  const domainBtn = document.getElementById('view-domain-btn');
+  if (view === 'theme') {
+    themeBtn.style.background = 'var(--blue)';
+    domainBtn.style.background = 'var(--muted)';
+  } else {
+    themeBtn.style.background = 'var(--muted)';
+    domainBtn.style.background = 'var(--blue)';
+  }
+  loadBreakdownTable(getFilters());
+}
+
 const MODEL_COLORS = [
   '#274472', '#7c3aed', '#16a34a', '#dc2626', '#d97706',
   '#5e9ad0', '#d4af37', '#0891b2', '#be185d', '#4f46e5',
@@ -324,17 +403,17 @@ async function loadFilters() {
       o.value = t; o.textContent = t;
       tSel.appendChild(o);
     });
-  } catch (e) { console.error('Failed to load filters:', e); }
+  } catch (e) { console.error('Failed to load filters:', e); showToast('Failed to load filters', 'error'); }
 }
 
 // ── Load notification preference ──
 async function loadNotifPref() {
   try {
     const r = await fetch('/api/notifications/preferences');
-    if (!r.ok) return;
+    if (!r.ok) { showToast('Failed to load notification preferences', 'error'); return; }
     const data = await r.json();
     document.getElementById('notify-daily').checked = !!data.daily_complete;
-  } catch {}
+  } catch { showToast('Failed to load notification preferences', 'error'); }
 }
 
 async function toggleNotification() {
@@ -345,25 +424,42 @@ async function toggleNotification() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ daily_complete: checked, weekly_digest: false }),
     });
-  } catch (e) { console.error('Failed to update notification pref:', e); }
+  } catch (e) { console.error('Failed to update notification pref:', e); showToast('Failed to update notification preference', 'error'); }
 }
 
 // ── Export ──
+function _withSpinner(btn, action) {
+  const orig = btn.innerHTML;
+  btn.classList.add('btn-loading');
+  btn.innerHTML = '<span class="spinner-inline"></span>' + orig;
+  try { action(); } finally {
+    setTimeout(() => { btn.classList.remove('btn-loading'); btn.innerHTML = orig; }, 1500);
+  }
+}
+
 function exportCSV() {
-  const qs = filterQS(getFilters());
-  window.open('/api/analytics/export/csv' + (qs ? '?' + qs : ''), '_blank');
+  const btn = document.querySelector('[onclick="exportCSV()"]');
+  _withSpinner(btn, () => {
+    const qs = filterQS(getFilters());
+    window.open('/api/analytics/export/csv' + (qs ? '?' + qs : ''), '_blank');
+    showToast('CSV export started', 'success');
+  });
 }
 
 function exportPDF() {
-  const qs = filterQS(getFilters());
-  window.open('/api/analytics/export/pdf' + (qs ? '?' + qs : ''), '_blank');
+  const btn = document.querySelector('[onclick="exportPDF()"]');
+  _withSpinner(btn, () => {
+    const qs = filterQS(getFilters());
+    window.open('/api/analytics/export/pdf' + (qs ? '?' + qs : ''), '_blank');
+    showToast('PDF export started', 'success');
+  });
 }
 
 // ── Charts ──
 async function loadDifficultyChart(filters) {
   const qs = filterQS(filters);
   const r = await fetch('/api/analytics/breakdown' + (qs ? '?' + qs : ''));
-  if (!r.ok) return;
+  if (!r.ok) { showToast('Failed to load difficulty chart data', 'error'); return; }
   const data = await r.json();
 
   if (!data.length) {
@@ -407,7 +503,7 @@ async function loadDifficultyChart(filters) {
 async function loadTrendsChart(filters) {
   const qs = filterQS({ ...filters, difficulty: '' });  // trends don't filter by difficulty
   const r = await fetch('/api/analytics/trends' + (qs ? '?' + qs : ''));
-  if (!r.ok) return;
+  if (!r.ok) { showToast('Failed to load trends data', 'error'); return; }
   const data = await r.json();
 
   if (!data.length) {
@@ -455,7 +551,7 @@ async function loadTrendsChart(filters) {
 async function loadThemeTable() {
   const r = await fetch('/api/analytics/themes');
   const wrap = document.getElementById('theme-table-wrap');
-  if (!r.ok) { wrap.innerHTML = '<div class="empty">Failed to load theme data</div>'; return; }
+  if (!r.ok) { wrap.innerHTML = '<div class="empty">Failed to load theme data</div>'; showToast('Failed to load theme data', 'error'); return; }
   const data = await r.json();
   if (!data.length) { wrap.innerHTML = '<div class="empty">No theme data yet. Run some daily challenges first.</div>'; return; }
 
@@ -479,26 +575,60 @@ async function loadBreakdownTable(filters) {
   const qs = filterQS(filters);
   const r = await fetch('/api/analytics/breakdown' + (qs ? '?' + qs : ''));
   const wrap = document.getElementById('breakdown-table-wrap');
-  if (!r.ok) { wrap.innerHTML = '<div class="empty">Failed to load breakdown data</div>'; return; }
+  if (!r.ok) { wrap.innerHTML = '<div class="empty">Failed to load breakdown data</div>'; showToast('Failed to load breakdown data', 'error'); return; }
   const data = await r.json();
   if (!data.length) { wrap.innerHTML = '<div class="empty">No data matching these filters. Try adjusting or clearing filters.</div>'; return; }
 
-  let html = `<table><thead><tr>
-    <th>Model</th><th>Theme</th><th>Difficulty</th><th>Correct</th><th>Total</th><th>Accuracy</th>
-  </tr></thead><tbody>`;
-  data.forEach(b => {
-    const pct = b.accuracy * 100;
-    html += `<tr>
-      <td>${escapeHtml(b.model_id)} ${providerBadge(b.model_id)}</td>
-      <td>${escapeHtml(b.theme)}</td>
-      <td>${escapeHtml(diffLabel(b.difficulty))}</td>
-      <td class="num">${b.correct}</td>
-      <td class="num">${b.total}</td>
-      <td class="num">${fmtPct(b.accuracy)} <span class="acc-bar" style="width:${pct * 0.8}px"></span></td>
-    </tr>`;
-  });
-  html += '</tbody></table>';
-  wrap.innerHTML = html;
+  if (currentBreakdownView === 'domain') {
+    // Group by model + domain + difficulty, aggregating correct/total
+    const grouped = {};
+    data.forEach(b => {
+      const domain = b.domain || 'Unknown';
+      const key = b.model_id + '||' + domain + '||' + b.difficulty;
+      if (!grouped[key]) {
+        grouped[key] = { model_id: b.model_id, domain: domain, difficulty: b.difficulty, correct: 0, total: 0 };
+      }
+      grouped[key].correct += b.correct;
+      grouped[key].total += b.total;
+    });
+    const rows = Object.values(grouped);
+    rows.forEach(r => { r.accuracy = r.total > 0 ? r.correct / r.total : 0; });
+    rows.sort((a, b) => a.model_id.localeCompare(b.model_id) || a.domain.localeCompare(b.domain) || a.difficulty.localeCompare(b.difficulty));
+
+    let html = `<table><thead><tr>
+      <th>Model</th><th>Domain</th><th>Difficulty</th><th>Correct</th><th>Total</th><th>Accuracy</th>
+    </tr></thead><tbody>`;
+    rows.forEach(b => {
+      const pct = b.accuracy * 100;
+      html += `<tr>
+        <td>${escapeHtml(b.model_id)} ${providerBadge(b.model_id)}</td>
+        <td>${domainBadge(b.domain)}</td>
+        <td>${escapeHtml(diffLabel(b.difficulty))}</td>
+        <td class="num">${b.correct}</td>
+        <td class="num">${b.total}</td>
+        <td class="num">${fmtPct(b.accuracy)} <span class="acc-bar" style="width:${pct * 0.8}px"></span></td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+  } else {
+    let html = `<table><thead><tr>
+      <th>Model</th><th>Theme</th><th>Difficulty</th><th>Correct</th><th>Total</th><th>Accuracy</th>
+    </tr></thead><tbody>`;
+    data.forEach(b => {
+      const pct = b.accuracy * 100;
+      html += `<tr>
+        <td>${escapeHtml(b.model_id)} ${providerBadge(b.model_id)}</td>
+        <td>${escapeHtml(b.theme)}</td>
+        <td>${escapeHtml(diffLabel(b.difficulty))}</td>
+        <td class="num">${b.correct}</td>
+        <td class="num">${b.total}</td>
+        <td class="num">${fmtPct(b.accuracy)} <span class="acc-bar" style="width:${pct * 0.8}px"></span></td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+  }
 }
 
 // ── Main ──

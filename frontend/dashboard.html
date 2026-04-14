@@ -132,6 +132,35 @@ tbody tr:last-child td { border-bottom: none; }
 .nav-settings:hover .nav-settings-menu { display: block; }
 .nav-settings-menu a { display: block; padding: 8px 16px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); text-decoration: none; }
 .nav-settings-menu a:hover { background: rgba(255,255,255,.08); color: #fff; }
+
+/* ── Toast notifications + loading helpers ── */
+.toast-container { position: fixed; top: 60px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.toast { padding: 10px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; color: #fff; box-shadow: 0 4px 12px rgba(0,0,0,.15); animation: toastIn .3s ease; max-width: 360px; pointer-events: auto; }
+.toast.success { background: var(--green); }
+.toast.error { background: var(--red); }
+.toast.info { background: var(--blue); }
+@keyframes toastIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes toastOut { from { opacity: 1; } to { opacity: 0; transform: translateX(40px); } }
+.spinner-inline { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .6s linear infinite; vertical-align: middle; margin-right: 4px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.btn-loading { opacity: .7; pointer-events: none; }
+@media (max-width: 600px) {
+  .topbar { padding: 10px 14px; flex-wrap: wrap; gap: 6px; }
+  .topbar .brand { font-size: 14px; }
+  .topbar nav { gap: 2px; }
+  .topbar nav a { font-size: 10px; padding: 4px 6px; }
+  .topbar nav a[href="/developers"], .topbar nav a[href*="sso/annotator"], .topbar nav a[href="/library"] { display: none; }
+  .topbar .user-badge { font-size: 9px; margin-left: 4px; padding: 3px 6px; }
+  .topbar .signout-btn { font-size: 9px; padding: 4px 8px; margin-left: 4px; }
+  .layout { flex-direction: column; }
+  .sidebar { width: 100%; min-width: unset; max-height: 200px; border-right: none; border-bottom: 1px solid var(--border); }
+  .main { padding: 16px 14px; }
+  .page-title { font-size: 17px; }
+  .stats { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .grid-2 { grid-template-columns: 1fr; }
+  .card { overflow-x: auto; }
+  table { min-width: 400px; }
+}
 </style>
 </head>
 <body>
@@ -153,9 +182,8 @@ tbody tr:last-child td { border-bottom: none; }
     <a href="/analytics">Analytics</a>
     <a href="/library">Library</a>
     <a href="/search">Search</a>
-    <a href="/papers">Papers</a>
+    <a href="/pdf-viewer">PDF Viewer</a>
     <a href="/developers">Developers</a>
-    <a href="/api/sso/annotator">PDF Viewer</a>
     <a href="/admin" id="nav-admin" style="display:none">Admin</a>
     <span class="user-badge" id="user-badge">—</span>
     <div class="nav-settings">
@@ -203,7 +231,7 @@ tbody tr:last-child td { border-bottom: none; }
 
     <div class="quick-actions">
       <a href="/challenges" class="quick-btn primary">＋ New Challenge</a>
-      <a href="/papers" class="quick-btn">Upload Papers</a>
+      <a href="/challenges" class="quick-btn">New Challenge</a>
       <a href="/leaderboard" class="quick-btn">Leaderboard</a>
       <a href="/library" class="quick-btn">Community Library</a>
     </div>
@@ -229,6 +257,43 @@ tbody tr:last-child td { border-bottom: none; }
 </div>
 
 <script>
+/* ── Toast + fetch helpers ── */
+function _ensureToastContainer() {
+  let c = document.querySelector('.toast-container');
+  if (!c) { c = document.createElement('div'); c.className = 'toast-container'; document.body.appendChild(c); }
+  return c;
+}
+function showToast(msg, type = 'info', duration = 4000) {
+  const c = _ensureToastContainer();
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => { t.style.animation = 'toastOut .3s ease forwards'; setTimeout(() => t.remove(), 300); }, duration);
+}
+async function fetchWithRetry(url, opts = {}, retries = 2) {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const r = await fetch(url, opts);
+      if (r.ok) return r;
+      if (i === retries) return r;
+    } catch (e) {
+      if (i === retries) throw e;
+    }
+    await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+  }
+}
+function setButtonLoading(btn, loading, originalText) {
+  if (loading) {
+    btn.dataset.origText = btn.textContent;
+    btn.innerHTML = '<span class="spinner-inline"></span> ' + (originalText || 'Loading…');
+    btn.classList.add('btn-loading');
+  } else {
+    btn.textContent = btn.dataset.origText || originalText || 'Submit';
+    btn.classList.remove('btn-loading');
+  }
+}
+
 let currentUser = null;
 let allChallenges = [];
 let selectedProject = null;
@@ -268,7 +333,8 @@ async function loadMe() {
 
 // ── Projects sidebar ──
 async function loadProjects() {
-  const res = await fetch('/api/projects');
+  let res;
+  try { res = await fetch('/api/projects'); } catch (e) { showToast('Failed to load projects', 'error'); return; }
   if (!res.ok) return;
   const projects = await res.json();
 
@@ -334,20 +400,22 @@ async function createProject() {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      alert('Failed to create project: ' + (body.detail || res.statusText));
+      showToast('Failed to create project: ' + (body.detail || res.statusText), 'error');
       return;
     }
     input.value = '';
     document.getElementById('new-project-form').classList.remove('open');
+    showToast('Project created', 'success');
     loadProjects();
   } catch (e) {
-    alert('Error: ' + e.message);
+    showToast('Network error: ' + e.message, 'error');
   }
 }
 
 // ── Challenges ──
 async function loadChallenges() {
-  const res = await fetch('/api/challenges');
+  let res;
+  try { res = await fetch('/api/challenges'); } catch (e) { showToast('Failed to load challenges', 'error'); return; }
   if (!res.ok) return;
   allChallenges = await res.json();
   document.getElementById('stat-challenges').textContent = allChallenges.length;
@@ -378,7 +446,8 @@ function renderChallenges() {
 
 // ── Leaderboard preview ──
 async function loadLeaderboard() {
-  const res = await fetch('/api/leaderboard');
+  let res;
+  try { res = await fetch('/api/leaderboard'); } catch (e) { showToast('Failed to load leaderboard', 'error'); return; }
   if (!res.ok) return;
   const board = await res.json();
   document.getElementById('stat-models').textContent = board.length;
@@ -409,8 +478,8 @@ async function shareProjectPrompt(pid) {
     body: JSON.stringify({ email: email.trim() }),
   });
   const body = await res.json();
-  if (!res.ok) { alert(body.detail || 'Failed to share'); return; }
-  alert('Project shared! They will receive an email notification.');
+  if (!res.ok) { showToast(body.detail || 'Failed to share', 'error'); return; }
+  showToast('Project shared! They will receive an email notification.', 'success');
   loadProjects();
 }
 
@@ -421,7 +490,7 @@ async function renameProjectPrompt(pid, currentName) {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: name.trim() }),
   });
-  if (!res.ok) { const b = await res.json(); alert(b.detail || 'Rename failed'); return; }
+  if (!res.ok) { const b = await res.json(); showToast(b.detail || 'Rename failed', 'error'); return; }
   loadProjects();
 }
 
@@ -433,7 +502,7 @@ async function deleteProjectPrompt(pid, name) {
     if (!confirm(info.message)) return;
     // Confirmed — call again with confirmed=true
     const res = await fetch(`/api/projects/${pid}?confirmed=true`, { method: 'DELETE' });
-    if (!res.ok) { const b = await res.json(); alert(b.detail || 'Delete failed'); return; }
+    if (!res.ok) { const b = await res.json(); showToast(b.detail || 'Delete failed', 'error'); return; }
   }
   if (selectedProject === pid) selectedProject = null;
   loadProjects();
@@ -443,7 +512,7 @@ async function deleteProjectPrompt(pid, name) {
 async function leaveProject(pid, name) {
   if (!confirm(`Leave the project "${name}"? You will lose access to its challenges.`)) return;
   const res = await fetch(`/api/projects/${pid}/leave`, { method: 'POST' });
-  if (!res.ok) { const b = await res.json(); alert(b.detail || 'Failed to leave'); return; }
+  if (!res.ok) { const b = await res.json(); showToast(b.detail || 'Failed to leave', 'error'); return; }
   if (selectedProject === pid) selectedProject = null;
   loadProjects();
   loadChallenges();
@@ -473,7 +542,7 @@ function promptCreateOrg() {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ name: name.trim() }),
   }).then(r => {
-    if (!r.ok) return r.json().then(e => { alert(e.detail || 'Failed'); });
+    if (!r.ok) return r.json().then(e => { showToast(e.detail || 'Failed to create org', 'error'); });
     return r.json().then(org => { window.location.href = '/org/' + org.id; });
   });
 }

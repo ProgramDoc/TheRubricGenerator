@@ -88,6 +88,28 @@ tbody tr:last-child td { border-bottom: none; }
 .nav-settings-menu a:hover { background: rgba(255,255,255,.08); color: #fff; }
 
 .success-msg { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; padding: 14px 18px; border-radius: 8px; margin-bottom: 20px; font-size: 13px; font-weight: 600; }
+
+/* ── Toast notifications + loading helpers ── */
+.toast-container { position: fixed; top: 60px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.toast { padding: 10px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; color: #fff; box-shadow: 0 4px 12px rgba(0,0,0,.15); animation: toastIn .3s ease; max-width: 360px; pointer-events: auto; }
+.toast.success { background: var(--green); }
+.toast.error { background: var(--red); }
+.toast.info { background: var(--blue); }
+@keyframes toastIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes toastOut { from { opacity: 1; } to { opacity: 0; transform: translateX(40px); } }
+.spinner-inline { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .6s linear infinite; vertical-align: middle; margin-right: 4px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.btn-loading { opacity: .7; pointer-events: none; }
+@media (max-width: 600px) {
+  .topbar { padding: 10px 14px; flex-wrap: wrap; gap: 6px; }
+  .topbar .brand { font-size: 14px; }
+  .topbar nav { gap: 2px; }
+  .topbar nav a { font-size: 10px; padding: 4px 6px; }
+  .topbar nav a[href="/developers"], .topbar nav a[href*="sso/annotator"], .topbar nav a[href="/library"] { display: none; }
+  .topbar .user-badge { font-size: 9px; margin-left: 4px; padding: 3px 6px; }
+  .topbar .signout-btn { font-size: 9px; padding: 4px 8px; margin-left: 4px; }
+  .container { padding: 16px 14px; }
+}
 </style>
 </head>
 <body>
@@ -109,9 +131,8 @@ tbody tr:last-child td { border-bottom: none; }
     <a href="/analytics">Analytics</a>
     <a href="/library">Library</a>
     <a href="/search">Search</a>
-    <a href="/papers">Papers</a>
+    <a href="/pdf-viewer">PDF Viewer</a>
     <a href="/developers">Developers</a>
-    <a href="/api/sso/annotator">PDF Viewer</a>
     <a href="/admin" id="nav-admin" style="display:none">Admin</a>
     <span class="user-badge" id="user-badge">—</span>
     <div class="nav-settings">
@@ -193,6 +214,21 @@ tbody tr:last-child td { border-bottom: none; }
 </div>
 
 <script>
+/* ── Toast + fetch helpers ── */
+function _ensureToastContainer() {
+  let c = document.querySelector('.toast-container');
+  if (!c) { c = document.createElement('div'); c.className = 'toast-container'; document.body.appendChild(c); }
+  return c;
+}
+function showToast(msg, type = 'info', duration = 4000) {
+  const c = _ensureToastContainer();
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => { t.style.animation = 'toastOut .3s ease forwards'; setTimeout(() => t.remove(), 300); }, duration);
+}
+
 let agreementAccepted = false;
 
 async function signOut() {
@@ -221,6 +257,7 @@ function showBanner(id, msg, type = 'error') {
 // Check for success param
 if (new URLSearchParams(location.search).get('success') === '1') {
   document.getElementById('success-banner').style.display = '';
+  showToast('Payment successful! Credits have been added to your account.', 'success', 6000);
 }
 
 async function loadMe() {
@@ -238,7 +275,7 @@ async function loadMe() {
 
 async function loadBalance() {
   const res = await fetch('/api/billing/balance');
-  if (!res.ok) return;
+  if (!res.ok) { showToast('Failed to load balance', 'error'); return; }
   const data = await res.json();
   document.getElementById('balance-value').innerHTML = `${data.balance}<span class="balance-unit">credits</span>`;
   document.getElementById('nav-credits').textContent = `${data.balance} credits`;
@@ -251,7 +288,7 @@ async function loadBalance() {
 
 async function loadPacks() {
   const res = await fetch('/api/billing/packs');
-  if (!res.ok) return;
+  if (!res.ok) { showToast('Failed to load credit packs', 'error'); return; }
   const packs = await res.json();
   document.getElementById('packs-grid').innerHTML = packs.map(p => `
     <div class="pack-card" onclick="buyPack(${p.id}, '${escapeHtml(p.name)}')">
@@ -265,7 +302,7 @@ async function loadPacks() {
 
 async function loadTransactions() {
   const res = await fetch('/api/billing/transactions');
-  if (!res.ok) return;
+  if (!res.ok) { showToast('Failed to load transactions', 'error'); return; }
   const txns = await res.json();
   const container = document.getElementById('txn-list');
   if (txns.length === 0) {
@@ -299,6 +336,7 @@ async function buyPack(packId, packName) {
       if (acceptRes.ok) {
         agreementAccepted = true;
         showBanner('purchase-banner', 'Agreement accepted! Proceeding to checkout.', 'success');
+        showToast('Agreement accepted! Proceeding to checkout.', 'success');
       } else {
         showBanner('purchase-banner', 'Failed to record agreement acceptance.');
         return;
@@ -339,6 +377,7 @@ async function applyPromo() {
       showBanner('promo-banner', body.detail || 'Failed to apply code.');
     } else {
       showBanner('promo-banner', `Promo applied! Type: ${body.promo_type}. Auto-approved until ${body.auto_approved_until.slice(0,16).replace('T',' ')} UTC.`, 'success');
+      showToast('Promo code applied successfully!', 'success');
       loadBalance();
     }
   } catch (e) {
@@ -352,7 +391,7 @@ async function loadMembership() {
       fetch('/api/membership'),
       fetch('/api/membership/plans'),
     ]);
-    if (!memRes.ok || !plansRes.ok) return;
+    if (!memRes.ok || !plansRes.ok) { showToast('Failed to load membership data', 'error'); return; }
     const membership = await memRes.json();
     const plans = await plansRes.json();
 
@@ -398,10 +437,10 @@ async function subscribePlan(planId) {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ plan_id: planId }),
     });
-    if (!r.ok) { const e = await r.json(); alert(e.detail || 'Failed'); return; }
+    if (!r.ok) { const e = await r.json(); showToast(e.detail || 'Failed', 'error'); return; }
     const data = await r.json();
     if (data.checkout_url) window.location.href = data.checkout_url;
-  } catch (e) { alert('Error: ' + e.message); }
+  } catch (e) { showToast('Error: ' + e.message, 'error'); }
 }
 
 async function loadOrgCredits() {

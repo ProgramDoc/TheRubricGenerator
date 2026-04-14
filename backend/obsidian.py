@@ -2,6 +2,7 @@
 files to a vault directory on persistent disk. User syncs the vault externally
 via Obsidian Sync / iCloud / rsync / git."""
 
+import difflib
 import json
 import re
 from datetime import datetime, timezone
@@ -220,5 +221,421 @@ def write_skill_note(vault_dir: Path, agent_type: str, active_skill: dict,
             f"{v.get('created_at','')} |"
         )
     lines.append("")
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
+# ─────────────────────────────────────────────────────────────
+# Agent SKILL.md + program.md + history.md + experiments/
+# Anthropic skill-creator format + Karpathy autoresearch pattern
+# ─────────────────────────────────────────────────────────────
+
+def _skill_dir(vault_dir: Path, agent_type: str) -> Path:
+    """Return the per-agent skill directory, creating it if needed."""
+    p = vault_dir / "skills" / agent_type
+    (p / "experiments").mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _timestamp_slug() -> str:
+    """Compact UTC timestamp for filenames: 20260410T142100Z"""
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _yaml_str(s: str) -> str:
+    """Escape a string for single-line YAML double-quoted form."""
+    return (s or "").replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
+
+
+def write_agent_skill_file(vault_dir: Path, agent_type: str,
+                           active_skill: dict,
+                           description: str | None = None,
+                           metadata: dict | None = None) -> Path:
+    """Write skills/{agent_type}/SKILL.md in Anthropic skill-creator format.
+
+    YAML frontmatter: name, description, version, agent_type, avg_performance,
+      times_used, last_updated, tags.
+    Body sections: Overview, When to Use, How It Works, Examples, Output Format,
+      Active Prompt.
+
+    Regenerated on every call — no merge.
+    """
+    sdir = _skill_dir(vault_dir, agent_type)
+    path = sdir / "SKILL.md"
+
+    name = "rubric-generator" if agent_type == "generator" else "rubric-judge"
+    title = "Rubric Generator" if agent_type == "generator" else "Rubric Judge"
+
+    # Description is the Anthropic trigger mechanism — pull from explicit arg
+    # or fall back to a sane default per agent.
+    if not description:
+        if agent_type == "generator":
+            description = (
+                "Use when generating a clinical research evaluation rubric from open-access PDFs. "
+                "Triggers on: creating benchmark questions across 11 evaluation domains, "
+                "grading-ready ideal answers, scoring criteria."
+            )
+        else:
+            description = (
+                "Use when grading a competing LLM's answers against a rubric's ideal answers and "
+                "scoring criteria. Triggers on: partial-credit scoring, numerical strictness, "
+                "domain-aware grading of clinical research responses."
+            )
+
+    version = active_skill.get("version", "?")
+    avg_perf = active_skill.get("avg_performance", 0) or 0
+    times_used = active_skill.get("times_used", 0) or 0
+    prompt_text = active_skill.get("prompt_text", "") or ""
+
+    lines: list[str] = []
+    lines.append("---")
+    lines.append(f'name: {name}')
+    lines.append(f'description: "{_yaml_str(description)}"')
+    lines.append(f'version: {version}')
+    lines.append(f'agent_type: {agent_type}')
+    lines.append(f'avg_performance: {avg_perf:.4f}' if isinstance(avg_perf, (int, float)) else f'avg_performance: 0')
+    lines.append(f'times_used: {times_used}')
+    lines.append(f'last_updated: "{_now()}"')
+    lines.append("tags: [skill, agent, " + agent_type + "]")
+    lines.append("---")
+    lines.append("")
+    lines.append(f"# {title}")
+    lines.append("")
+
+    if agent_type == "generator":
+        lines.append("## Overview")
+        lines.append("")
+        lines.append(
+            "Given a set of open-access clinical research papers on a shared theme, generate "
+            "a rigorous evaluation rubric that discriminates between frontier LLMs across "
+            "11 structured evaluation domains."
+        )
+        lines.append("")
+        lines.append("## When to Use")
+        lines.append("")
+        lines.append("- Building a benchmark rubric from one or more PDF papers")
+        lines.append("- Generating 10-question assessments with domain coverage")
+        lines.append("- Creating scoring criteria with ideal answers verifiable from paper content")
+        lines.append("")
+        lines.append("## How It Works")
+        lines.append("")
+        lines.append("1. Reads the PDF content and the challenge theme")
+        lines.append("2. Selects question domains (hypothesis, study_design, risk_of_bias, …) appropriate to the papers")
+        lines.append("3. Emits a JSON rubric with question, ideal_answer, scoring_criteria, max_points")
+        lines.append("4. Enforces verifiability and discrimination via the Active Prompt instructions")
+        lines.append("")
+        lines.append("## Examples")
+        lines.append("")
+        lines.append("See `experiments/challenge_*.md` for real input/output pairs captured from prior runs.")
+        lines.append("")
+        lines.append("## Output Format")
+        lines.append("")
+        lines.append("JSON object with keys: `rubric_type`, `title`, `theme`, `total_max_points`, `questions[]`.")
+        lines.append("Each question: `id`, `domain`, `paper_ref`, `question`, `ideal_answer`, `scoring_criteria`, `max_points`.")
+        lines.append("")
+    else:  # judge
+        lines.append("## Overview")
+        lines.append("")
+        lines.append(
+            "Given a rubric with ideal answers and scoring criteria, grade a competing LLM's "
+            "answers against the rubric rigorously and consistently, with domain-aware strictness."
+        )
+        lines.append("")
+        lines.append("## When to Use")
+        lines.append("")
+        lines.append("- Scoring LLM answers against a benchmark rubric")
+        lines.append("- Applying partial credit rules from scoring_criteria")
+        lines.append("- Flagging ambiguous or unverifiable ideal answers (rubric_validity)")
+        lines.append("")
+        lines.append("## How It Works")
+        lines.append("")
+        lines.append("1. Receives the rubric + one model's answers")
+        lines.append("2. Grades each question using the ideal_answer and scoring_criteria")
+        lines.append("3. Applies domain-specific strictness (factual for extraction; reasoning-chain for RoB/GRADE; cross-paper refs required for synthesis)")
+        lines.append("4. Emits per-question scores with reasoning and a rubric_validity flag")
+        lines.append("")
+        lines.append("## Examples")
+        lines.append("")
+        lines.append("See `experiments/challenge_*.md` for real grading pairs captured from prior runs.")
+        lines.append("")
+        lines.append("## Output Format")
+        lines.append("")
+        lines.append("JSON object with keys: `grades[]`, `total_score`, `max_score`, `percentage`, `avg_rubric_validity`, `overall_comments`.")
+        lines.append("Each grade: `question_id`, `score`, `max_points`, `reasoning`, `rubric_validity`.")
+        lines.append("")
+
+    lines.append("## Active Prompt")
+    lines.append("")
+    lines.append("```")
+    lines.append(prompt_text)
+    lines.append("```")
+    lines.append("")
+    lines.append("---")
+    lines.append(f"_Auto-generated from `agent_skills` table at {_now()}._")
+    lines.append("_See `program.md` for human-editable meta-learner guidance, "
+                 "`history.md` for version table, and `experiments/` for per-run artifacts._")
+
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
+def write_agent_program_file(vault_dir: Path, agent_type: str,
+                             default_content: str) -> Path:
+    """Write skills/{agent_type}/program.md ONLY if it doesn't exist.
+
+    The program.md file is the human-editable meta-learner control plane.
+    Automation must never overwrite human edits, so this is idempotent
+    after the first call.
+    """
+    sdir = _skill_dir(vault_dir, agent_type)
+    path = sdir / "program.md"
+    if not path.exists():
+        path.write_text(default_content, encoding="utf-8")
+    return path
+
+
+def write_agent_history_file(vault_dir: Path, agent_type: str,
+                             versions: list[dict]) -> Path:
+    """Write skills/{agent_type}/history.md with the version table.
+    Regenerated on every call."""
+    sdir = _skill_dir(vault_dir, agent_type)
+    path = sdir / "history.md"
+
+    lines: list[str] = []
+    lines.append("---")
+    lines.append(f"agent_type: {agent_type}")
+    lines.append(f'last_updated: "{_now()}"')
+    lines.append("tags: [skill, history]")
+    lines.append("---")
+    lines.append("")
+    lines.append(f"# {agent_type.capitalize()} Skill — Version History")
+    lines.append("")
+    lines.append("| Version | Active | Avg Performance | Times Used | Created |")
+    lines.append("|---------|--------|-----------------|------------|---------|")
+    for v in versions:
+        active_mark = "✓" if v.get("active") else ""
+        avg = v.get("avg_performance", 0) or 0
+        lines.append(
+            f"| v{v.get('version','?')} | {active_mark} | "
+            f"{avg:.3f} | {v.get('times_used', 0)} | "
+            f"{v.get('created_at','')} |"
+        )
+    lines.append("")
+    lines.append(f"_Auto-generated at {_now()}._")
+
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
+def write_experiment_note(vault_dir: Path, agent_type: str,
+                          experiment_data: dict) -> Path:
+    """Write a per-experiment record for the autoresearch loop.
+
+    Filename: skills/{agent_type}/experiments/{timestamp}_{status}_v{version}.md
+
+    experiment_data keys:
+        timestamp (iso), status (keep|discard|crash), skill_version,
+        metric_before, metric_after, agent_type, baseline_prompt,
+        candidate_prompt (str | None), description, eval_description,
+        keep_reason, challenge_id (int | None)
+    """
+    sdir = _skill_dir(vault_dir, agent_type)
+    status = experiment_data.get("status", "unknown")
+    version = experiment_data.get("skill_version", "?")
+    ts = _timestamp_slug()
+    filename = f"{ts}_{status}_v{version}.md"
+    path = sdir / "experiments" / filename
+
+    baseline_prompt = experiment_data.get("baseline_prompt", "") or ""
+    candidate_prompt = experiment_data.get("candidate_prompt", "") or ""
+
+    lines: list[str] = []
+    lines.append("---")
+    lines.append(f'timestamp: "{experiment_data.get("timestamp", _now())}"')
+    lines.append(f"status: {status}")
+    lines.append(f"agent_type: {agent_type}")
+    lines.append(f"skill_version: {version}")
+    lines.append(f'metric_before: {experiment_data.get("metric_before", 0) or 0:.4f}')
+    lines.append(f'metric_after: {experiment_data.get("metric_after", 0) or 0:.4f}')
+    cid = experiment_data.get("challenge_id")
+    if cid is not None:
+        lines.append(f"challenge_id: {cid}")
+    lines.append("tags: [experiment, autoresearch]")
+    lines.append("---")
+    lines.append("")
+    lines.append(f"# {agent_type.capitalize()} Experiment — {status.upper()} (v{version})")
+    lines.append("")
+
+    # Summary
+    lines.append("## Summary")
+    lines.append("")
+    lines.append(f"- **Status:** {status}")
+    lines.append(f"- **Metric before:** {experiment_data.get('metric_before', 0) or 0:.4f}")
+    lines.append(f"- **Metric after:** {experiment_data.get('metric_after', 0) or 0:.4f}")
+    lines.append(f"- **Decision reason:** {experiment_data.get('keep_reason', '—')}")
+    if experiment_data.get("description"):
+        lines.append(f"- **Description:** {experiment_data['description']}")
+    if experiment_data.get("eval_description"):
+        lines.append(f"- **Eval notes:** {experiment_data['eval_description']}")
+    lines.append("")
+
+    # Unified diff (most useful view)
+    if baseline_prompt and candidate_prompt:
+        lines.append("## Diff (baseline → candidate)")
+        lines.append("")
+        lines.append("```diff")
+        diff_lines = list(difflib.unified_diff(
+            baseline_prompt.splitlines(),
+            candidate_prompt.splitlines(),
+            fromfile="baseline",
+            tofile="candidate",
+            lineterm="",
+            n=2,
+        ))
+        # Cap at 200 lines to keep notes scannable
+        lines.extend(diff_lines[:200])
+        if len(diff_lines) > 200:
+            lines.append(f"... (truncated, {len(diff_lines) - 200} more diff lines)")
+        lines.append("```")
+        lines.append("")
+
+    # Baseline prompt
+    lines.append("## Baseline Prompt")
+    lines.append("")
+    lines.append("```")
+    lines.append(baseline_prompt)
+    lines.append("```")
+    lines.append("")
+
+    # Candidate prompt (if any)
+    if candidate_prompt:
+        lines.append("## Candidate Prompt")
+        lines.append("")
+        lines.append("```")
+        lines.append(candidate_prompt)
+        lines.append("```")
+        lines.append("")
+
+    lines.append(f"_Written at {_now()}_")
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
+def write_challenge_agent_note(vault_dir: Path, agent_type: str,
+                               challenge_id: int,
+                               challenge_data: dict) -> Path:
+    """Write a per-challenge autoresearch snapshot for one agent.
+
+    Filename: skills/{agent_type}/experiments/challenge_{cid:04d}.md
+
+    For generator, challenge_data keys:
+        challenge_id, theme, skill_version, skill_id, paper_filenames,
+        rubric (full dict), gen_score, gen_time_ms, avg_rubric_validity
+    For judge, challenge_data keys:
+        challenge_id, theme, skill_version, skill_id,
+        graded_participants (list), judge_score, judge_time_ms
+    """
+    sdir = _skill_dir(vault_dir, agent_type)
+    path = sdir / "experiments" / f"challenge_{challenge_id:04d}.md"
+
+    theme = challenge_data.get("theme", "")
+    version = challenge_data.get("skill_version", "?")
+
+    lines: list[str] = []
+    lines.append("---")
+    lines.append(f"challenge_id: {challenge_id}")
+    lines.append(f"agent_type: {agent_type}")
+    lines.append(f"skill_version: {version}")
+    lines.append(f'theme: "{_yaml_str(theme)}"')
+    if agent_type == "generator":
+        lines.append(f'metric: {challenge_data.get("gen_score", 0) or 0:.4f}')
+    else:
+        lines.append(f'metric: {challenge_data.get("judge_score", 0) or 0:.4f}')
+    lines.append("tags: [experiment, autoresearch, challenge-snapshot]")
+    lines.append("---")
+    lines.append("")
+    lines.append(f"# {agent_type.capitalize()} — Challenge #{challenge_id}")
+    lines.append("")
+    lines.append(f"**Theme:** {theme}")
+    lines.append(f"**Skill version:** v{version}")
+    lines.append("")
+    # Link back to the combined challenge note
+    lines.append(f"**Full challenge note:** [../../../challenges/{challenge_id:04d}](../../challenges/)")
+    lines.append("")
+
+    if agent_type == "generator":
+        # Input summary
+        lines.append("## Input")
+        lines.append("")
+        papers = challenge_data.get("paper_filenames", [])
+        lines.append(f"- **Papers ({len(papers)}):**")
+        for fn in papers[:10]:
+            lines.append(f"  - `{fn}`")
+        if len(papers) > 10:
+            lines.append(f"  - … and {len(papers) - 10} more")
+        lines.append("")
+
+        # Output summary
+        rubric = challenge_data.get("rubric", {}) or {}
+        questions = rubric.get("questions", [])
+        lines.append("## Output")
+        lines.append("")
+        lines.append(f"- **Rubric type:** {rubric.get('rubric_type', 'benchmark')}")
+        lines.append(f"- **Total questions:** {len(questions)}")
+        lines.append(f"- **Total max points:** {rubric.get('total_max_points', 0)}")
+        lines.append("")
+        lines.append("### Sample Questions (first 2)")
+        lines.append("")
+        for q in questions[:2]:
+            lines.append(f"**{q.get('id','?')}** ({q.get('domain','?')}, {q.get('max_points','?')} pts)")
+            lines.append(f"- **Q:** {q.get('question','')}")
+            lines.append(f"- **Ideal:** {(q.get('ideal_answer','') or '')[:300]}")
+            lines.append("")
+
+        # Metrics
+        lines.append("## Metrics")
+        lines.append("")
+        lines.append(f"- **Generator score:** {challenge_data.get('gen_score', 0) or 0:.4f}")
+        lines.append(f"- **Generation time:** {challenge_data.get('gen_time_ms', 0)} ms")
+        lines.append(f"- **Avg rubric validity:** {challenge_data.get('avg_rubric_validity', 0) or 0:.4f}")
+        lines.append("")
+
+    else:  # judge
+        participants = challenge_data.get("graded_participants", [])
+        lines.append("## Input")
+        lines.append("")
+        lines.append(f"- **Participants graded:** {len(participants)}")
+        for p in participants[:5]:
+            lines.append(f"  - `{p.get('model_id','?')}` ({p.get('provider','?')})")
+        lines.append("")
+
+        # Output summary — first 2 graded participants' grades
+        lines.append("## Output (first 2 participants)")
+        lines.append("")
+        for p in participants[:2]:
+            lines.append(f"### {p.get('model_id','?')}")
+            lines.append(f"- **Accuracy:** {p.get('accuracy', 0) or 0:.4f}")
+            lines.append(f"- **Total score:** {p.get('total_score', 0) or 0:.2f}")
+            try:
+                grade_data = json.loads(p.get("grade_json") or "{}")
+                grades = grade_data.get("grades", [])[:3]
+                lines.append("- **Sample grades (first 3):**")
+                for g in grades:
+                    lines.append(
+                        f"  - {g.get('question_id','?')}: "
+                        f"{g.get('score','?')}/{g.get('max_points','?')}"
+                    )
+            except Exception:
+                pass
+            lines.append("")
+
+        # Metrics
+        lines.append("## Metrics")
+        lines.append("")
+        lines.append(f"- **Judge score:** {challenge_data.get('judge_score', 0) or 0:.4f}")
+        lines.append(f"- **Judge time:** {challenge_data.get('judge_time_ms', 0)} ms")
+        lines.append("")
+
+    lines.append(f"_Written at {_now()}_")
     path.write_text("\n".join(lines), encoding="utf-8")
     return path

@@ -8,6 +8,7 @@ from ..helpers import call_anthropic, parse_json_response, time_ms
 def run_generator_agent(papers_b64: list[dict], theme: str, skill: dict,
                         difficulty: str | None = None,
                         daily_composition: dict | None = None,
+                        domain_composition: dict | None = None,
                         questions_per_paper: int = 5,
                         max_tokens: int = 16384) -> tuple[dict, int]:
     """
@@ -17,6 +18,8 @@ def run_generator_agent(papers_b64: list[dict], theme: str, skill: dict,
     difficulty: optional key into DIFFICULTY_LEVELS for individual tests
     daily_composition: optional dict {easy_breezy: 2, minor_league: 2, professional: 4, jedi: 2}
         for the Daily AI Researcher Challenge
+    domain_composition: optional dict mapping domain keys to question counts
+        for structured domain coverage
 
     Returns: (rubric_dict, elapsed_ms)
     """
@@ -24,7 +27,7 @@ def run_generator_agent(papers_b64: list[dict], theme: str, skill: dict,
         raise ValueError("No papers provided to generator")
 
     # Lazy import to avoid circular (challenges imports this module)
-    from ..challenges import DIFFICULTY_LEVELS
+    from ..challenges import DIFFICULTY_LEVELS, EVALUATION_DOMAINS
 
     difficulty_block = ""
     if daily_composition:
@@ -61,6 +64,32 @@ def run_generator_agent(papers_b64: list[dict], theme: str, skill: dict,
                 f"Each question MUST include a 'paper_ref' field with the filename of the paper it targets."
             )
 
+    # Domain composition block: tells generator how many questions per domain
+    domain_block = ""
+    if domain_composition:
+        dom_lines = []
+        for dk, count in domain_composition.items():
+            if count > 0 and dk in EVALUATION_DOMAINS:
+                d = EVALUATION_DOMAINS[dk]
+                dom_lines.append(f"- {count} question(s) in domain '{dk}' ({d['label']}): {d['description']}")
+        if dom_lines:
+            domain_block = (
+                "\n\nDOMAIN COMPOSITION — distribute questions across these evaluation domains:\n"
+                + "\n".join(dom_lines)
+                + "\n\nThe 'domain' field on each question JSON MUST be set to the exact domain key "
+                "(e.g. 'hypothesis', 'study_design', 'risk_of_bias'). "
+                "Do NOT use free-form domain names."
+            )
+    elif not daily_composition:
+        # For individual challenges: provide domain guidance without fixed counts
+        domain_keys = [f"'{k}'" for k in EVALUATION_DOMAINS]
+        domain_block = (
+            "\n\nEVALUATION DOMAINS — the 'domain' field on each question MUST be one of: "
+            + ", ".join(domain_keys) + ". "
+            "Distribute questions across as many relevant domains as the paper(s) support. "
+            "Do NOT use free-form domain names."
+        )
+
     # Phase 8: comparative rubric type (multi-paper synthesis)
     comparative_block = ""
     if not daily_composition and not difficulty and len(papers_b64) >= 2:
@@ -94,6 +123,7 @@ def run_generator_agent(papers_b64: list[dict], theme: str, skill: dict,
             f"Papers in this challenge:\n"
             + "\n".join(f"- {p['filename']}" for p in papers_b64)
             + difficulty_block
+            + domain_block
             + comparative_block
             + "\n\nGenerate the benchmark rubric as specified. Respond with JSON only."
         ),

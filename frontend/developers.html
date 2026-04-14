@@ -69,6 +69,15 @@ h3:first-child { margin-top: 0; }
 pre.code { background: var(--navy); color: #e2e8f0; padding: 12px 14px; border-radius: 5px; font-size: 11px; line-height: 1.6; overflow-x: auto; margin: 8px 0; font-family: 'IBM Plex Mono', monospace; }
 .note { padding: 10px 14px; background: #f0fdf4; border-left: 3px solid var(--green); border-radius: 3px; font-size: 11px; margin: 12px 0; }
 .warn { padding: 10px 14px; background: #fef3c7; border-left: 3px solid var(--amber); border-radius: 3px; font-size: 11px; margin: 12px 0; }
+@media (max-width: 600px) {
+  .topbar { padding: 10px 14px; flex-wrap: wrap; gap: 6px; }
+  .topbar .brand { font-size: 14px; }
+  .topbar nav { gap: 2px; }
+  .topbar nav a { font-size: 10px; padding: 4px 6px; }
+  .topbar nav a[href="/developers"], .topbar nav a[href*="sso/annotator"], .topbar nav a[href="/library"] { display: none; }
+  .topbar .user-badge { font-size: 9px; margin-left: 4px; padding: 3px 6px; }
+  .topbar .signout-btn { font-size: 9px; padding: 4px 8px; margin-left: 4px; }
+}
 </style>
 </head>
 <body>
@@ -84,9 +93,8 @@ pre.code { background: var(--navy); color: #e2e8f0; padding: 12px 14px; border-r
     <a href="/analytics">Analytics</a>
     <a href="/library">Library</a>
     <a href="/search">Search</a>
-    <a href="/papers">Papers</a>
+    <a href="/pdf-viewer">PDF Viewer</a>
     <a href="/developers" class="active">Developers</a>
-    <a href="/api/sso/annotator">PDF Viewer</a>
     <a href="/admin" id="nav-admin" style="display:none">Admin</a>
     <span class="user-badge" id="user-badge">—</span>
     <div class="nav-settings">

@@ -96,6 +96,15 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 .nav-settings:hover .nav-settings-menu { display: block; }
 .nav-settings-menu a { display: block; padding: 8px 16px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); text-decoration: none; }
 .nav-settings-menu a:hover { background: rgba(255,255,255,.08); color: #fff; }
+@media (max-width: 600px) {
+  .topbar { padding: 10px 14px; flex-wrap: wrap; gap: 6px; }
+  .topbar .brand { font-size: 14px; }
+  .topbar nav { gap: 2px; }
+  .topbar nav a { font-size: 10px; padding: 4px 6px; }
+  .topbar nav a[href="/developers"], .topbar nav a[href*="sso/annotator"], .topbar nav a[href="/library"] { display: none; }
+  .topbar .user-badge { font-size: 9px; margin-left: 4px; padding: 3px 6px; }
+  .topbar .signout-btn { font-size: 9px; padding: 4px 8px; margin-left: 4px; }
+}
 </style>
 </head>
 <body>
@@ -117,9 +126,8 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
     <a href="/analytics">Analytics</a>
     <a href="/library" class="active">Library</a>
     <a href="/search">Search</a>
-    <a href="/papers">Papers</a>
+    <a href="/pdf-viewer">PDF Viewer</a>
     <a href="/developers">Developers</a>
-    <a href="/api/sso/annotator">PDF Viewer</a>
     <a href="/admin" id="nav-admin" style="display:none">Admin</a>
     <span class="user-badge" id="user-badge">—</span>
     <div class="nav-settings">

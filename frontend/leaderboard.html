@@ -83,6 +83,41 @@ tbody tr:last-child td { border-bottom: none; }
 .q-mini { padding: 6px 0; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; }
 .q-mini:last-child { border-bottom: none; }
 
+/* Expandable model detail rows */
+.overall-row { cursor: pointer; }
+.overall-row:hover { background: #f0f9ff !important; }
+.model-detail { display: none; background: #f8fafc; }
+.model-detail.open { display: table-row; }
+.model-detail td { padding: 14px 18px; }
+.theme-bars { display: flex; flex-direction: column; gap: 3px; max-width: 400px; }
+.theme-bar-row { display: flex; align-items: center; gap: 6px; }
+.theme-bar-label { font-size: 9px; width: 80px; text-align: right; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
+.theme-bar-track { flex: 1; height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden; }
+.theme-bar-fill { height: 100%; border-radius: 4px; background: var(--sky); min-width: 2px; }
+.theme-bar-val { font-size: 9px; font-family: 'IBM Plex Mono', monospace; color: var(--muted); width: 36px; flex-shrink: 0; }
+
+/* Head-to-head */
+.h2h-section { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin-bottom: 20px; }
+.h2h-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+.h2h-controls select { padding: 7px 10px; border: 1.5px solid var(--border); border-radius: 5px; font-family: inherit; font-size: 12px; flex: 1; min-width: 140px; }
+.h2h-controls button { padding: 7px 16px; border: none; border-radius: 5px; background: var(--blue); color: #fff; font-family: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+.h2h-controls button:hover { background: var(--navy); }
+.h2h-result { display: none; }
+.h2h-result.open { display: block; }
+.h2h-grid { display: grid; grid-template-columns: 1fr auto 1fr; gap: 14px; align-items: start; }
+.h2h-model { text-align: center; }
+.h2h-model-name { font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 700; color: var(--navy); margin-bottom: 4px; }
+.h2h-stat { font-size: 10px; color: var(--muted); margin-bottom: 2px; }
+.h2h-stat strong { color: var(--navy); font-size: 13px; display: block; }
+.h2h-vs { font-size: 16px; font-weight: 700; color: var(--muted); align-self: center; text-align: center; }
+.h2h-record { text-align: center; margin-top: 14px; padding: 10px; background: #f8fafc; border-radius: 6px; }
+.h2h-record-nums { font-family: 'IBM Plex Mono', monospace; font-size: 18px; font-weight: 700; color: var(--navy); }
+
+/* Daily row chevrons */
+.daily-row td:first-child { position: relative; padding-left: 22px; }
+.daily-row td:first-child::before { content: '▸'; position: absolute; left: 8px; top: 50%; transform: translateY(-50%); font-size: 10px; color: var(--muted); transition: transform .15s; }
+.daily-row.expanded td:first-child::before { transform: translateY(-50%) rotate(90deg); }
+
 .empty { padding: 40px; text-align: center; color: var(--muted); font-size: 12px; }
 .nav-dropdown { position: relative; display: inline-block; }
 .nav-dropdown > a { cursor: default; }
@@ -97,6 +132,36 @@ tbody tr:last-child td { border-bottom: none; }
 .nav-settings:hover .nav-settings-menu { display: block; }
 .nav-settings-menu a { display: block; padding: 8px 16px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); text-decoration: none; }
 .nav-settings-menu a:hover { background: rgba(255,255,255,.08); color: #fff; }
+
+/* ── Toast notifications + loading helpers ── */
+.toast-container { position: fixed; top: 60px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.toast { padding: 10px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; color: #fff; box-shadow: 0 4px 12px rgba(0,0,0,.15); animation: toastIn .3s ease; max-width: 360px; pointer-events: auto; }
+.toast.success { background: var(--green); }
+.toast.error { background: var(--red); }
+.toast.info { background: var(--blue); }
+@keyframes toastIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes toastOut { from { opacity: 1; } to { opacity: 0; transform: translateX(40px); } }
+.spinner-inline { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(0,0,0,.15); border-top-color: var(--blue); border-radius: 50%; animation: spin .6s linear infinite; vertical-align: middle; margin-right: 6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (max-width: 600px) {
+  .topbar { padding: 10px 14px; flex-wrap: wrap; gap: 6px; }
+  .topbar .brand { font-size: 14px; }
+  .topbar nav { gap: 2px; }
+  .topbar nav a { font-size: 10px; padding: 4px 6px; }
+  .topbar nav a[href="/developers"], .topbar nav a[href*="sso/annotator"], .topbar nav a[href="/library"] { display: none; }
+  .topbar .user-badge { font-size: 9px; margin-left: 4px; padding: 3px 6px; }
+  .topbar .signout-btn { font-size: 9px; padding: 4px 8px; margin-left: 4px; }
+  .container { padding: 16px 14px; }
+  .podium { grid-template-columns: 1fr; gap: 10px; }
+  .podium-slot { padding: 14px; }
+  .podium-slot.first { padding: 18px; }
+  .podium-score { font-size: 18px; }
+  .h2h-grid { grid-template-columns: 1fr; gap: 8px; }
+  .h2h-vs { display: none; }
+  .h2h-controls { flex-direction: column; }
+  .card { overflow-x: auto; }
+  table { min-width: 500px; }
+}
 </style>
 </head>
 <body>
@@ -118,9 +183,8 @@ tbody tr:last-child td { border-bottom: none; }
     <a href="/analytics">Analytics</a>
     <a href="/library">Library</a>
     <a href="/search">Search</a>
-    <a href="/papers">Papers</a>
+    <a href="/pdf-viewer">PDF Viewer</a>
     <a href="/developers">Developers</a>
-    <a href="/api/sso/annotator">PDF Viewer</a>
     <a href="/admin" id="nav-admin" style="display:none">Admin</a>
     <span class="user-badge" id="user-badge">—</span>
     <div class="nav-settings">
@@ -146,10 +210,22 @@ tbody tr:last-child td { border-bottom: none; }
 
   <!-- OVERALL TAB -->
   <div class="tab-panel active" id="tab-overall">
+    <!-- Head-to-Head Comparison -->
+    <div class="h2h-section">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px">Head-to-Head Comparison</div>
+      <div class="h2h-controls">
+        <select id="h2h-model1"><option value="">Select model…</option></select>
+        <span style="font-size:11px;color:var(--muted);font-weight:700">vs</span>
+        <select id="h2h-model2"><option value="">Select model…</option></select>
+        <button onclick="compareModels()">Compare</button>
+      </div>
+      <div class="h2h-result" id="h2h-result"></div>
+    </div>
+
     <div class="podium" id="podium" style="display:none"></div>
     <div class="card">
       <div class="card-header"><h2>Full Rankings — All Challenges</h2></div>
-      <div id="overall-body"><div class="empty">Loading…</div></div>
+      <div id="overall-body"><div class="empty"><span class="spinner-inline"></span> Loading…</div></div>
     </div>
   </div>
 
@@ -157,11 +233,11 @@ tbody tr:last-child td { border-bottom: none; }
   <div class="tab-panel" id="tab-daily">
     <div class="card">
       <div class="card-header"><h2>Daily AI Researcher Challenge — Model Rankings</h2></div>
-      <div id="daily-rankings"><div class="empty">Loading…</div></div>
+      <div id="daily-rankings"><div class="empty"><span class="spinner-inline"></span> Loading…</div></div>
     </div>
     <div class="card">
       <div class="card-header"><h2>Recent Daily Challenge Results</h2></div>
-      <div id="daily-results"><div class="empty">Loading…</div></div>
+      <div id="daily-results"><div class="empty"><span class="spinner-inline"></span> Loading…</div></div>
     </div>
   </div>
 
@@ -169,12 +245,27 @@ tbody tr:last-child td { border-bottom: none; }
   <div class="tab-panel" id="tab-orgs">
     <div class="card">
       <div class="card-header"><h2>Organization Rankings</h2></div>
-      <div id="org-rankings"><div class="empty">Loading…</div></div>
+      <div id="org-rankings"><div class="empty"><span class="spinner-inline"></span> Loading…</div></div>
     </div>
   </div>
 </div>
 
 <script>
+/* ── Toast + fetch helpers ── */
+function _ensureToastContainer() {
+  let c = document.querySelector('.toast-container');
+  if (!c) { c = document.createElement('div'); c.className = 'toast-container'; document.body.appendChild(c); }
+  return c;
+}
+function showToast(msg, type = 'info', duration = 4000) {
+  const c = _ensureToastContainer();
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => { t.style.animation = 'toastOut .3s ease forwards'; setTimeout(() => t.remove(), 300); }, duration);
+}
+
 async function signOut() {
   await fetch('/api/auth/logout', { method: 'POST' });
   window.location.href = '/login';
@@ -227,8 +318,9 @@ async function loadMe() {
 }
 
 async function loadOverall() {
-  const res = await fetch('/api/leaderboard');
-  if (!res.ok) return;
+  let res;
+  try { res = await fetch('/api/leaderboard'); } catch (e) { showToast('Failed to load leaderboard', 'error'); return; }
+  if (!res.ok) { showToast('Failed to load leaderboard', 'error'); return; }
   const board = await res.json();
   const body = document.getElementById('overall-body');
 
@@ -256,28 +348,46 @@ async function loadOverall() {
     `).join('');
   }
 
-  const rows = board.map((m, i) => `
-    <tr>
+  // Populate head-to-head dropdowns
+  const sel1 = document.getElementById('h2h-model1');
+  const sel2 = document.getElementById('h2h-model2');
+  sel1.innerHTML = '<option value="">Select model…</option>';
+  sel2.innerHTML = '<option value="">Select model…</option>';
+  board.forEach(m => {
+    const opt1 = `<option value="${escapeHtml(m.model_id)}">${escapeHtml(m.model_id)}</option>`;
+    sel1.innerHTML += opt1;
+    sel2.innerHTML += opt1;
+  });
+
+  const rows = board.map((m, i) => {
+    const mid = escapeHtml(m.model_id);
+    const detailId = `detail-${mid.replace(/[^a-zA-Z0-9]/g, '_')}`;
+    return `
+    <tr class="overall-row" onclick="toggleModelDetail('${escapeHtml(m.model_id)}', '${detailId}')">
       <td class="rank-cell">#${i + 1}</td>
-      <td class="model-cell">${escapeHtml(m.model_id)}${providerBadge(m.provider)}</td>
+      <td class="model-cell">${mid}${providerBadge(m.provider)}</td>
       <td class="num">${fmtNum(m.total_points || 0)}</td>
       <td class="num">${fmtNum(m.daily_points || 0)}</td>
       <td class="num">${m.total_challenges}</td>
       <td class="num">${fmtNum(m.avg_accuracy, 3)}</td>
+      <td class="num">${movementHtml(m.daily_rank_change)}</td>
     </tr>
-  `).join('');
+    <tr class="model-detail" id="${detailId}"><td colspan="7"><div class="theme-bars" id="bars-${detailId}"><span class="spinner-inline"></span> Loading theme breakdown…</div></td></tr>
+  `;
+  }).join('');
 
   body.innerHTML = `
     <table>
-      <thead><tr><th>Rank</th><th>Model</th><th style="text-align:right">Total Points</th><th style="text-align:right">Daily Points</th><th style="text-align:right">Challenges</th><th style="text-align:right">Avg Accuracy</th></tr></thead>
+      <thead><tr><th>Rank</th><th>Model</th><th style="text-align:right">Total Points</th><th style="text-align:right">Daily Points</th><th style="text-align:right">Challenges</th><th style="text-align:right">Avg Accuracy</th><th style="text-align:right">Trend</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
   `;
 }
 
 async function loadDailyRankings() {
-  const res = await fetch('/api/leaderboard/daily');
-  if (!res.ok) return;
+  let res;
+  try { res = await fetch('/api/leaderboard/daily'); } catch (e) { showToast('Failed to load daily rankings', 'error'); return; }
+  if (!res.ok) { showToast('Failed to load daily rankings', 'error'); return; }
   const board = await res.json();
   const body = document.getElementById('daily-rankings');
 
@@ -306,8 +416,9 @@ async function loadDailyRankings() {
 }
 
 async function loadDailyResults() {
-  const res = await fetch('/api/daily-results');
-  if (!res.ok) return;
+  let res;
+  try { res = await fetch('/api/daily-results'); } catch (e) { showToast('Failed to load daily results', 'error'); return; }
+  if (!res.ok) { showToast('Failed to load daily results', 'error'); return; }
   const results = await res.json();
   const body = document.getElementById('daily-results');
 
@@ -326,7 +437,7 @@ async function loadDailyResults() {
     const rowId = `daily-${r.challenge_id}`;
 
     html += `
-      <tr class="daily-row" onclick="document.getElementById('${rowId}').classList.toggle('open')">
+      <tr class="daily-row" onclick="this.classList.toggle('expanded');document.getElementById('${rowId}').classList.toggle('open')">
         <td>${fmtDate(r.completed_at)}</td>
         <td><strong>${escapeHtml(r.theme || '—')}</strong></td>
         <td><strong style="color:var(--gold);">${escapeHtml(first.model_id || '—')}</strong></td>
@@ -383,6 +494,125 @@ async function loadOrgRankings() {
   });
   html += '</tbody></table>';
   wrap.innerHTML = html;
+}
+
+// ── Expandable theme breakdown ──
+const loadedDetails = new Set();
+async function toggleModelDetail(modelId, detailId) {
+  const row = document.getElementById(detailId);
+  if (row.classList.contains('open')) { row.classList.remove('open'); return; }
+  row.classList.add('open');
+
+  if (loadedDetails.has(detailId)) return;
+  loadedDetails.add(detailId);
+
+  try {
+    const res = await fetch(`/api/analytics/breakdown?model=${encodeURIComponent(modelId)}`);
+    if (!res.ok) { document.getElementById(`bars-${detailId}`).innerHTML = '<span style="color:var(--red);font-size:11px">Failed to load</span>'; return; }
+    const data = await res.json();
+
+    // Group by theme
+    const themes = {};
+    for (const d of data) {
+      const t = d.theme || 'Unknown';
+      if (!themes[t]) themes[t] = { correct: 0, total: 0 };
+      themes[t].correct += d.correct || 0;
+      themes[t].total += d.total || 0;
+    }
+
+    const entries = Object.entries(themes).sort((a, b) => {
+      const accA = a[1].total ? a[1].correct / a[1].total : 0;
+      const accB = b[1].total ? b[1].correct / b[1].total : 0;
+      return accB - accA;
+    });
+
+    if (entries.length === 0) {
+      document.getElementById(`bars-${detailId}`).innerHTML = '<span style="font-size:11px;color:var(--muted)">No theme data available</span>';
+      return;
+    }
+
+    const barsHtml = entries.map(([theme, v]) => {
+      const acc = v.total ? (v.correct / v.total) * 100 : 0;
+      const color = acc >= 70 ? 'var(--green)' : acc >= 40 ? 'var(--amber)' : 'var(--red)';
+      return `<div class="theme-bar-row">
+        <span class="theme-bar-label" title="${escapeHtml(theme)}">${escapeHtml(theme)}</span>
+        <div class="theme-bar-track"><div class="theme-bar-fill" style="width:${acc}%;background:${color}"></div></div>
+        <span class="theme-bar-val">${acc.toFixed(0)}%</span>
+      </div>`;
+    }).join('');
+
+    document.getElementById(`bars-${detailId}`).innerHTML = `<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Performance by Theme</div>${barsHtml}`;
+  } catch {
+    document.getElementById(`bars-${detailId}`).innerHTML = '<span style="color:var(--red);font-size:11px">Network error</span>';
+  }
+}
+
+// ── Head-to-head comparison ──
+async function compareModels() {
+  const m1 = document.getElementById('h2h-model1').value;
+  const m2 = document.getElementById('h2h-model2').value;
+  const resultDiv = document.getElementById('h2h-result');
+
+  if (!m1 || !m2) { showToast('Select two models to compare', 'info'); return; }
+  if (m1 === m2) { showToast('Select two different models', 'info'); return; }
+
+  resultDiv.className = 'h2h-result open';
+  resultDiv.innerHTML = '<div style="text-align:center;padding:14px"><span class="spinner-inline"></span> Loading comparison…</div>';
+
+  try {
+    const res = await fetch(`/api/leaderboard/head-to-head?model1=${encodeURIComponent(m1)}&model2=${encodeURIComponent(m2)}`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      resultDiv.innerHTML = `<div style="text-align:center;padding:14px;color:var(--red);font-size:12px">${escapeHtml(body.detail || 'Failed to load comparison')}</div>`;
+      return;
+    }
+    const data = await res.json();
+    const d1 = data.model1;
+    const d2 = data.model2;
+
+    let sharedHtml = '';
+    if (data.shared_challenges.length > 0) {
+      sharedHtml = '<div style="margin-top:14px"><div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:6px">Shared Challenges (recent)</div><table style="font-size:11px"><thead><tr><th>Theme</th><th style="text-align:right">' + escapeHtml(m1) + '</th><th style="text-align:right">' + escapeHtml(m2) + '</th><th>Winner</th></tr></thead><tbody>';
+      for (const c of data.shared_challenges) {
+        const s1 = c.m1_score || 0, s2 = c.m2_score || 0;
+        const winner = s1 > s2 ? escapeHtml(m1) : s2 > s1 ? escapeHtml(m2) : 'Tie';
+        const winColor = s1 > s2 ? 'var(--green)' : s2 > s1 ? 'var(--red)' : 'var(--muted)';
+        sharedHtml += `<tr><td>${escapeHtml(c.theme || '—')}</td><td class="num">${fmtNum(s1, 1)}</td><td class="num">${fmtNum(s2, 1)}</td><td style="color:${winColor};font-weight:700;font-size:10px">${winner}</td></tr>`;
+      }
+      sharedHtml += '</tbody></table></div>';
+    }
+
+    resultDiv.innerHTML = `
+      <div class="h2h-grid">
+        <div class="h2h-model">
+          <div class="h2h-model-name">${escapeHtml(m1)}</div>
+          <div class="h2h-stat">Total Points<strong>${fmtNum(d1.total_points || 0)}</strong></div>
+          <div class="h2h-stat">Avg Accuracy<strong>${fmtNum(d1.avg_accuracy, 3)}</strong></div>
+          <div class="h2h-stat">Challenges<strong>${d1.total_challenges}</strong></div>
+        </div>
+        <div class="h2h-vs">VS</div>
+        <div class="h2h-model">
+          <div class="h2h-model-name">${escapeHtml(m2)}</div>
+          <div class="h2h-stat">Total Points<strong>${fmtNum(d2.total_points || 0)}</strong></div>
+          <div class="h2h-stat">Avg Accuracy<strong>${fmtNum(d2.avg_accuracy, 3)}</strong></div>
+          <div class="h2h-stat">Challenges<strong>${d2.total_challenges}</strong></div>
+        </div>
+      </div>
+      <div class="h2h-record">
+        <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:4px">${data.total_shared} shared challenges</div>
+        <div class="h2h-record-nums">
+          <span style="color:var(--green)">${data.wins1}W</span>
+          <span style="color:var(--muted);margin:0 6px">–</span>
+          <span style="color:var(--muted)">${data.ties}T</span>
+          <span style="color:var(--muted);margin:0 6px">–</span>
+          <span style="color:var(--red)">${data.wins2}W</span>
+        </div>
+      </div>
+      ${sharedHtml}
+    `;
+  } catch (e) {
+    resultDiv.innerHTML = '<div style="text-align:center;padding:14px;color:var(--red);font-size:12px">Network error</div>';
+  }
 }
 
 (async () => {

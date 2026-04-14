@@ -94,6 +94,21 @@ tbody tr:last-child td { border-bottom: none; }
 
 .error-box { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; padding: 10px 14px; border-radius: 6px; font-size: 12px; margin-bottom: 14px; display: none; }
 .empty { padding: 30px; text-align: center; color: var(--muted); font-size: 12px; }
+
+/* Domain badges */
+.domain-badge { font-size: 8.5px; font-weight: 700; padding: 2px 7px; border-radius: 3px; text-transform: uppercase; letter-spacing: .04em; margin-left: 6px; }
+.domain-hypothesis { background: rgba(94,154,208,.15); color: var(--sky); }
+.domain-evidence_motivation { background: rgba(124,58,237,.15); color: var(--purple); }
+.domain-study_design { background: rgba(39,68,114,.15); color: var(--blue); }
+.domain-extraction { background: rgba(22,163,74,.15); color: var(--green); }
+.domain-risk_of_bias { background: rgba(220,38,38,.15); color: var(--red); }
+.domain-reporting { background: rgba(217,119,6,.15); color: var(--amber); }
+.domain-statistical_analysis { background: rgba(99,102,241,.15); color: #4338ca; }
+.domain-grade_certainty { background: rgba(212,175,55,.15); color: #a16207; }
+.domain-interpretation { background: rgba(16,163,127,.15); color: #047857; }
+.domain-ethics_regulatory { background: rgba(100,116,139,.15); color: var(--muted); }
+.domain-cross_paper_synthesis { background: rgba(236,72,153,.15); color: #be185d; }
+
 .nav-dropdown { position: relative; display: inline-block; }
 .nav-dropdown > a { cursor: default; }
 .nav-dropdown-menu { display: none; position: absolute; top: 100%; left: 0; min-width: 160px; background: var(--navy); border: 1px solid rgba(255,255,255,.15); border-radius: 6px; padding: 4px 0; margin-top: 4px; z-index: 50; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
@@ -107,6 +122,21 @@ tbody tr:last-child td { border-bottom: none; }
 .nav-settings:hover .nav-settings-menu { display: block; }
 .nav-settings-menu a { display: block; padding: 8px 16px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); text-decoration: none; }
 .nav-settings-menu a:hover { background: rgba(255,255,255,.08); color: #fff; }
+@media (max-width: 600px) {
+  .topbar { padding: 10px 14px; flex-wrap: wrap; gap: 6px; }
+  .topbar .brand { font-size: 14px; }
+  .topbar nav { gap: 2px; }
+  .topbar nav a { font-size: 10px; padding: 4px 6px; }
+  .topbar nav a[href="/developers"], .topbar nav a[href*="sso/annotator"], .topbar nav a[href="/library"] { display: none; }
+  .topbar .user-badge { font-size: 9px; margin-left: 4px; padding: 3px 6px; }
+  .topbar .signout-btn { font-size: 9px; padding: 4px 8px; margin-left: 4px; }
+  html, body { height: auto; overflow: auto; }
+  .split { height: auto; }
+  .panel-left { padding: 14px; }
+  .panel-right { min-height: 200px; }
+  .card { overflow-x: auto; }
+  table { min-width: 400px; }
+}
 
 /* AI Brain Window */
 .brain-header { padding: 14px 16px; border-bottom: 1px solid rgba(255,255,255,.1); flex-shrink: 0; }
@@ -152,9 +182,8 @@ tbody tr:last-child td { border-bottom: none; }
     <a href="/analytics">Analytics</a>
     <a href="/library">Library</a>
     <a href="/search">Search</a>
-    <a href="/papers">Papers</a>
+    <a href="/pdf-viewer">PDF Viewer</a>
     <a href="/developers">Developers</a>
-    <a href="/api/sso/annotator">PDF Viewer</a>
     <a href="/admin" id="nav-admin" style="display:none">Admin</a>
     <span class="user-badge" id="user-badge">—</span>
     <div class="nav-settings">
@@ -227,6 +256,19 @@ function escapeHtml(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/
 function fmtDate(iso) { if (!iso) return '—'; try { return new Date(iso.replace(' ','T')+'Z').toLocaleString(undefined, {dateStyle:'medium',timeStyle:'short'}); } catch { return iso; } }
 function fmtNum(n, d=3) { return (n === null || n === undefined) ? '—' : Number(n).toFixed(d); }
 function providerBadge(p) { p=(p||'').toLowerCase(); if(p==='openai')return'<span class="model-badge badge-openai">OpenAI</span>'; if(p==='anthropic')return'<span class="model-badge badge-anthropic">Claude</span>'; if(p==='google')return'<span class="model-badge badge-google">Gemini</span>'; return''; }
+function domainBadge(domain) {
+  if (!domain) return '';
+  const labels = {
+    hypothesis: 'Hypothesis', evidence_motivation: 'Evidence', study_design: 'Design',
+    extraction: 'Extraction', risk_of_bias: 'RoB', reporting: 'Reporting',
+    statistical_analysis: 'Statistics', grade_certainty: 'GRADE',
+    interpretation: 'Interpretation', ethics_regulatory: 'Ethics',
+    cross_paper_synthesis: 'Synthesis',
+  };
+  const label = labels[domain] || domain;
+  const cls = 'domain-' + domain.replace(/[^a-z_]/g, '');
+  return `<span class="domain-badge ${cls}">${label}</span>`;
+}
 
 async function loadMe() {
   const r = await fetch('/api/auth/me');
@@ -303,7 +345,7 @@ async function loadChallenge() {
         return`<div class="answer-card"><div class="answer-header"><div class="answer-model">${escapeHtml(p.model_id)}</div><div class="answer-score ${sc}">${grade?grade.score:'—'}/${q.max_points||1}</div></div><div class="answer-text">${escapeHtml(ans?ans.answer:'(no answer)')}</div>${grade&&grade.reasoning?`<div class="answer-reasoning">${escapeHtml(grade.reasoning)}</div>`:''}</div>`;
       }).join('');
       const isOpen = openQuestions.has(q.id) || (i===0 && openQuestions.size===0);
-      return`<div class="question-block"><div class="question-header" onclick="toggleQuestion('${escapeHtml(q.id)}')"><div><span class="q-title">${escapeHtml(q.id)}. ${escapeHtml(q.question.slice(0,80))}${q.question.length>80?'…':''}</span><span class="q-domain">${escapeHtml(q.domain||'')}</span>${q.paper_ref?`<span style="font-size:9px;color:var(--muted);margin-left:6px">📄 ${escapeHtml(q.paper_ref)}</span>`:''}</div><span class="q-maxpts">${q.max_points||1} pts</span></div><div class="question-body ${isOpen?'open':''}" id="qbody-${escapeHtml(q.id)}"><div class="q-section"><div class="q-section-label">Question</div><div class="q-text">${escapeHtml(q.question)}</div></div><div class="q-section"><div class="q-section-label">Ideal Answer</div><div class="q-ideal">${escapeHtml(q.ideal_answer||'')}</div></div><div class="q-section"><div class="q-section-label">Scoring Criteria</div><div class="q-criteria">${escapeHtml(q.scoring_criteria||'')}</div></div><div class="q-section-label">Model Responses</div><div class="answers-grid">${answers}</div></div></div>`;
+      return`<div class="question-block"><div class="question-header" onclick="toggleQuestion('${escapeHtml(q.id)}')"><div><span class="q-title">${escapeHtml(q.id)}. ${escapeHtml(q.question.slice(0,80))}${q.question.length>80?'…':''}</span>${domainBadge(q.domain)}${q.paper_ref?`<span style="font-size:9px;color:var(--muted);margin-left:6px">📄 ${escapeHtml(q.paper_ref)}</span>`:''}</div><span class="q-maxpts">${q.max_points||1} pts</span></div><div class="question-body ${isOpen?'open':''}" id="qbody-${escapeHtml(q.id)}"><div class="q-section"><div class="q-section-label">Question</div><div class="q-text">${escapeHtml(q.question)}</div></div><div class="q-section"><div class="q-section-label">Ideal Answer</div><div class="q-ideal">${escapeHtml(q.ideal_answer||'')}</div></div><div class="q-section"><div class="q-section-label">Scoring Criteria</div><div class="q-criteria">${escapeHtml(q.scoring_criteria||'')}</div></div><div class="q-section-label">Model Responses</div><div class="answers-grid">${answers}</div></div></div>`;
     }).join('');
   }
 

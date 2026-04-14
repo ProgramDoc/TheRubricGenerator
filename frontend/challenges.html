@@ -91,6 +91,30 @@ tbody tr:last-child td { border-bottom: none; }
 .nav-settings:hover .nav-settings-menu { display: block; }
 .nav-settings-menu a { display: block; padding: 8px 16px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); text-decoration: none; }
 .nav-settings-menu a:hover { background: rgba(255,255,255,.08); color: #fff; }
+
+/* ── Toast notifications + loading helpers ── */
+.toast-container { position: fixed; top: 60px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.toast { padding: 10px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; color: #fff; box-shadow: 0 4px 12px rgba(0,0,0,.15); animation: toastIn .3s ease; max-width: 360px; pointer-events: auto; }
+.toast.success { background: var(--green); }
+.toast.error { background: var(--red); }
+.toast.info { background: var(--blue); }
+@keyframes toastIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes toastOut { from { opacity: 1; } to { opacity: 0; transform: translateX(40px); } }
+.spinner-inline { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .6s linear infinite; vertical-align: middle; margin-right: 4px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.btn-loading { opacity: .7; pointer-events: none; }
+@media (max-width: 600px) {
+  .topbar { padding: 10px 14px; flex-wrap: wrap; gap: 6px; }
+  .topbar .brand { font-size: 14px; }
+  .topbar nav { gap: 2px; }
+  .topbar nav a { font-size: 10px; padding: 4px 6px; }
+  .topbar nav a[href="/developers"], .topbar nav a[href*="sso/annotator"], .topbar nav a[href="/library"] { display: none; }
+  .topbar .user-badge { font-size: 9px; margin-left: 4px; padding: 3px 6px; }
+  .topbar .signout-btn { font-size: 9px; padding: 4px 8px; margin-left: 4px; }
+  .container { padding: 16px 14px; }
+  .card { overflow-x: auto; }
+  table { min-width: 500px; }
+}
 </style>
 </head>
 <body>
@@ -112,9 +136,8 @@ tbody tr:last-child td { border-bottom: none; }
     <a href="/analytics">Analytics</a>
     <a href="/library">Library</a>
     <a href="/search">Search</a>
-    <a href="/papers">Papers</a>
+    <a href="/pdf-viewer">PDF Viewer</a>
     <a href="/developers">Developers</a>
-    <a href="/api/sso/annotator">PDF Viewer</a>
     <a href="/admin" id="nav-admin" style="display:none">Admin</a>
     <span class="user-badge" id="user-badge">—</span>
     <div class="nav-settings">
@@ -259,6 +282,21 @@ tbody tr:last-child td { border-bottom: none; }
 </div>
 
 <script>
+/* ── Toast + fetch helpers ── */
+function _ensureToastContainer() {
+  let c = document.querySelector('.toast-container');
+  if (!c) { c = document.createElement('div'); c.className = 'toast-container'; document.body.appendChild(c); }
+  return c;
+}
+function showToast(msg, type = 'info', duration = 4000) {
+  const c = _ensureToastContainer();
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => { t.style.animation = 'toastOut .3s ease forwards'; setTimeout(() => t.remove(), 300); }, duration);
+}
+
 async function signOut() {
   await fetch('/api/auth/logout', { method: 'POST' });
   window.location.href = '/login';
@@ -350,7 +388,7 @@ async function loadPapers() {
   const papers = await res.json();
   const container = document.getElementById('paper-list');
   if (papers.length === 0) {
-    container.innerHTML = '<div class="empty">No papers uploaded. <a href="/papers">Upload some →</a></div>';
+    container.innerHTML = '<div class="empty">No papers uploaded yet. Drag PDFs into the upload zone above.</div>';
     return;
   }
   container.innerHTML = papers.map(p => `
@@ -417,7 +455,7 @@ async function createAndRun() {
 
   const btn = document.getElementById('create-btn');
   btn.disabled = true;
-  btn.textContent = 'Creating…';
+  btn.innerHTML = '<span class="spinner-inline"></span> Creating…';
 
   try {
     const res = await fetch('/api/challenges', {
@@ -438,7 +476,7 @@ async function createAndRun() {
     }
     const cid = body.challenge_id;
 
-    btn.textContent = 'Starting run…';
+    btn.innerHTML = '<span class="spinner-inline"></span> Starting run…';
     pendingChallengeId = cid;
 
     // First attempt without approval — check if approval is needed
@@ -475,7 +513,7 @@ async function createAndRun() {
       btn.textContent = 'Create & Run Challenge';
       return;
     }
-    showBanner('Challenge created and running. Redirecting…', 'success');
+    showToast('Challenge created and running. Redirecting…', 'success');
     setTimeout(() => { window.location.href = `/challenges/${cid}`; }, 800);
   } catch (e) {
     showBanner('Network error.');
@@ -495,7 +533,7 @@ async function approveAndRun() {
   closeApprovalModal();
   const btn = document.getElementById('create-btn');
   btn.disabled = true;
-  btn.textContent = 'Running…';
+  btn.innerHTML = '<span class="spinner-inline"></span> Running…';
   try {
     const res = await fetch(`/api/challenges/${pendingChallengeId}/run`, {
       method: 'POST',
@@ -509,7 +547,7 @@ async function approveAndRun() {
       btn.textContent = 'Create & Run Challenge';
       return;
     }
-    showBanner('Challenge approved and running. Redirecting…', 'success');
+    showToast('Challenge approved and running. Redirecting…', 'success');
     setTimeout(() => { window.location.href = `/challenges/${pendingChallengeId}`; }, 800);
   } catch {
     showBanner('Network error.');

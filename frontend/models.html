@@ -87,6 +87,42 @@ tbody tr:last-child td { border-bottom: none; }
 .badge-anthropic { background: rgba(124,58,237,.15); color: var(--purple); }
 .badge-google { background: rgba(66,133,244,.15); color: #1a56db; }
 .badge-custom { background: #e0e7ff; color: #3730a3; }
+
+/* Edit form + version history */
+.edit-row { background: #f8fafc; }
+.edit-row td { padding: 16px 20px; }
+.edit-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.edit-form .field { margin-bottom: 0; }
+.edit-form .full-width { grid-column: 1 / -1; }
+.edit-actions { grid-column: 1 / -1; display: flex; gap: 8px; margin-top: 6px; }
+
+.version-history { margin-top: 10px; }
+.version-entry { padding: 8px 0; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: start; gap: 10px; }
+.version-entry:last-child { border-bottom: none; }
+.version-tag { font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 700; color: var(--blue); background: #eff6ff; padding: 2px 8px; border-radius: 4px; flex-shrink: 0; }
+.version-changelog { font-size: 11px; color: var(--text); flex: 1; line-height: 1.4; }
+.version-meta { font-size: 9.5px; color: var(--muted); flex-shrink: 0; text-align: right; }
+
+/* Toast notifications + loading helpers */
+.toast-container { position: fixed; top: 60px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.toast { padding: 10px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; color: #fff; box-shadow: 0 4px 12px rgba(0,0,0,.15); animation: toastIn .3s ease; max-width: 360px; pointer-events: auto; }
+.toast.success { background: var(--green); }
+.toast.error { background: var(--red); }
+.toast.info { background: var(--blue); }
+@keyframes toastIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes toastOut { from { opacity: 1; } to { opacity: 0; transform: translateX(40px); } }
+.spinner-inline { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .6s linear infinite; vertical-align: middle; margin-right: 4px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 600px) {
+  .topbar { padding: 10px 14px; flex-wrap: wrap; gap: 6px; }
+  .topbar .brand { font-size: 14px; }
+  .topbar nav { gap: 2px; }
+  .topbar nav a { font-size: 10px; padding: 4px 6px; }
+  .topbar nav a[href="/developers"], .topbar nav a[href*="sso/annotator"], .topbar nav a[href="/library"] { display: none; }
+  .topbar .user-badge { font-size: 9px; margin-left: 4px; padding: 3px 6px; }
+  .topbar .signout-btn { font-size: 9px; padding: 4px 8px; margin-left: 4px; }
+}
 </style>
 </head>
 <body>
@@ -108,9 +144,8 @@ tbody tr:last-child td { border-bottom: none; }
     <a href="/analytics">Analytics</a>
     <a href="/library">Library</a>
     <a href="/search">Search</a>
-    <a href="/papers">Papers</a>
+    <a href="/pdf-viewer">PDF Viewer</a>
     <a href="/developers">Developers</a>
-    <a href="/api/sso/annotator">PDF Viewer</a>
     <a href="/admin" id="nav-admin" style="display:none">Admin</a>
     <span class="user-badge" id="user-badge">—</span>
     <div class="nav-settings">
@@ -350,6 +385,21 @@ function showBanner(msg, type = 'error') {
   el.textContent = msg;
 }
 
+/* ── Toast helpers ── */
+function _ensureToastContainer() {
+  let c = document.querySelector('.toast-container');
+  if (!c) { c = document.createElement('div'); c.className = 'toast-container'; document.body.appendChild(c); }
+  return c;
+}
+function showToast(msg, type = 'info', duration = 4000) {
+  const c = _ensureToastContainer();
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => { t.style.animation = 'toastOut .3s ease forwards'; setTimeout(() => t.remove(), 300); }, duration);
+}
+
 async function loadMe() {
   const res = await fetch('/api/auth/me');
   if (!res.ok) { window.location.href = '/login'; return; }
@@ -382,6 +432,7 @@ async function loadModels() {
     // Actions
     let actions = '';
     if (isOwner) {
+      actions += `<button class="btn btn-sm" onclick="toggleEdit(${m.id})" style="background:var(--sky);margin-right:4px;">Edit</button>`;
       actions += `<button class="btn btn-sm btn-danger" onclick="deleteModel(${m.id}, '${escapeHtml(m.name)}')" style="margin-right:4px;">Delete</button>`;
       if (!m.active_for_daily) {
         actions += `<button class="btn btn-sm" onclick="optInDaily(${m.id})" style="background:var(--green);margin-right:4px;">Opt In Daily</button>`;
@@ -390,12 +441,14 @@ async function loadModels() {
       }
       actions += `<button class="btn btn-sm" onclick="regenKey(${m.id})" style="background:var(--muted);font-size:9px;">Regen Key</button>`;
     }
+    actions += `<button class="btn btn-sm" onclick="toggleVersions(${m.id})" style="background:var(--purple);margin-top:4px;font-size:9px;">History</button>`;
+    const updatedAt = m.updated_at ? `<div style="font-size:9px;color:var(--muted);margin-top:2px">Updated ${fmtDate(m.updated_at)}</div>` : '';
     return `
       <tr>
         <td>
           <div class="model-name">${escapeHtml(m.name)}</div>
           <div class="model-version">${escapeHtml(m.version)}</div>
-          ${dailyBadge}
+          ${dailyBadge}${updatedAt}
         </td>
         <td>${providerBadge(m.provider)}</td>
         <td>${escapeHtml(m.organization || '—')}</td>
@@ -403,6 +456,28 @@ async function loadModels() {
         <td>${keyHtml || '—'}</td>
         <td>${fmtDate(m.created_at)}</td>
         <td>${actions}</td>
+      </tr>
+      <tr class="edit-row" id="edit-${m.id}" style="display:none">
+        <td colspan="7">
+          <div class="edit-form">
+            <div class="field"><label>Model Name</label><input id="edit-name-${m.id}" value="${escapeHtml(m.name)}" maxlength="100"></div>
+            <div class="field"><label>Version</label><input id="edit-version-${m.id}" value="${escapeHtml(m.version)}" maxlength="50" oninput="document.getElementById('edit-changelog-wrap-${m.id}').style.display=this.value!=='${escapeHtml(m.version)}'?'block':'none'"></div>
+            <div class="field"><label>Provider</label><select id="edit-provider-${m.id}"><option value="">—</option><option value="openai" ${m.provider==='openai'?'selected':''}>OpenAI</option><option value="anthropic" ${m.provider==='anthropic'?'selected':''}>Anthropic</option><option value="google" ${m.provider==='google'?'selected':''}>Google</option><option value="custom" ${m.provider==='custom'?'selected':''}>Custom</option></select></div>
+            <div class="field"><label>Organization</label><input id="edit-org-${m.id}" value="${escapeHtml(m.organization || '')}" maxlength="100"></div>
+            <div class="field full-width"><label>Git Repository</label><input id="edit-repo-${m.id}" value="${escapeHtml(m.git_repo || '')}" type="url"></div>
+            <div class="field full-width" id="edit-changelog-wrap-${m.id}" style="display:none"><label>Changelog (what changed in this version?)</label><textarea id="edit-changelog-${m.id}" placeholder="Describe what changed…" style="min-height:50px"></textarea></div>
+            <div class="edit-actions">
+              <button class="btn btn-sm" onclick="saveEdit(${m.id})" style="background:var(--green)">Save Changes</button>
+              <button class="btn btn-sm" onclick="toggleEdit(${m.id})" style="background:var(--muted)">Cancel</button>
+            </div>
+          </div>
+        </td>
+      </tr>
+      <tr class="edit-row" id="versions-${m.id}" style="display:none">
+        <td colspan="7">
+          <div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:8px">Version History</div>
+          <div id="versions-body-${m.id}"><span class="spinner-inline" style="border-color:rgba(0,0,0,.15);border-top-color:var(--blue)"></span> Loading…</div>
+        </td>
       </tr>
     `;
   }).join('');
@@ -459,7 +534,7 @@ async function deleteModel(id, name) {
   if (res.ok) loadModels();
   else {
     const body = await res.json();
-    alert(body.detail || 'Delete failed.');
+    showToast(body.detail || 'Delete failed', 'error');
   }
 }
 
@@ -467,8 +542,8 @@ async function optInDaily(id) {
   if (!confirm('Opt this model into the Daily AI Researcher Challenge?\n\nYour model will be pending admin approval. Once approved, challenge questions will be available via the Competition API using your model API key.\n\nRequires accepted Model Publishing Agreement.')) return;
   const res = await fetch(`/api/models/${id}/opt-in-daily`, { method: 'POST' });
   const body = await res.json();
-  if (!res.ok) { alert(body.detail || 'Failed'); return; }
-  alert('Opted in! Status: Pending Admin Approval.');
+  if (!res.ok) { showToast(body.detail || 'Failed to opt in', 'error'); return; }
+  showToast('Opted in! Status: Pending Admin Approval.', 'success');
   loadModels();
 }
 
@@ -482,8 +557,8 @@ async function regenKey(id) {
   if (!confirm('Regenerate the API key? The old key will stop working immediately.')) return;
   const res = await fetch(`/api/models/${id}/regenerate-key`, { method: 'POST' });
   const body = await res.json();
-  if (!res.ok) { alert(body.detail || 'Failed'); return; }
-  alert('New API key: ' + body.model_api_key + '\n\nCopy this key — it authenticates your model for the Competition API.');
+  if (!res.ok) { showToast(body.detail || 'Failed to regenerate key', 'error'); return; }
+  showToast('New API key generated. Copy it from the table below.', 'success');
   loadModels();
 }
 
@@ -499,6 +574,74 @@ async function loadOrgDropdown() {
       sel.appendChild(opt);
     });
   } catch {}
+}
+
+// ── Edit model ──
+function toggleEdit(id) {
+  const row = document.getElementById(`edit-${id}`);
+  row.style.display = row.style.display === 'none' ? '' : 'none';
+  // Close version history if open
+  document.getElementById(`versions-${id}`).style.display = 'none';
+}
+
+async function saveEdit(id) {
+  const name = document.getElementById(`edit-name-${id}`).value.trim();
+  const version = document.getElementById(`edit-version-${id}`).value.trim();
+  const provider = document.getElementById(`edit-provider-${id}`).value;
+  const organization = document.getElementById(`edit-org-${id}`).value.trim();
+  const git_repo = document.getElementById(`edit-repo-${id}`).value.trim();
+  const changelog = document.getElementById(`edit-changelog-${id}`)?.value.trim() || '';
+
+  if (!name || !version) { showToast('Name and version are required', 'error'); return; }
+
+  try {
+    const res = await fetch(`/api/models/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, version, provider, organization, git_repo, changelog: changelog || null }),
+    });
+    const body = await res.json();
+    if (!res.ok) { showToast(body.detail || 'Update failed', 'error'); return; }
+    showToast('Model updated successfully', 'success');
+    loadModels();
+  } catch (e) {
+    showToast('Network error: ' + e.message, 'error');
+  }
+}
+
+// ── Version history ──
+const versionsLoaded = new Set();
+async function toggleVersions(id) {
+  const row = document.getElementById(`versions-${id}`);
+  if (row.style.display !== 'none') { row.style.display = 'none'; return; }
+  row.style.display = '';
+  // Close edit form if open
+  document.getElementById(`edit-${id}`).style.display = 'none';
+
+  if (versionsLoaded.has(id)) return;
+  versionsLoaded.add(id);
+
+  try {
+    const res = await fetch(`/api/models/${id}/versions`);
+    if (!res.ok) { document.getElementById(`versions-body-${id}`).innerHTML = '<span style="color:var(--red)">Failed to load</span>'; return; }
+    const versions = await res.json();
+    const body = document.getElementById(`versions-body-${id}`);
+
+    if (versions.length === 0) {
+      body.innerHTML = '<div style="font-size:11px;color:var(--muted)">No version updates yet. Edit the model and change the version to create a history entry.</div>';
+      return;
+    }
+
+    body.innerHTML = '<div class="version-history">' + versions.map(v => `
+      <div class="version-entry">
+        <span class="version-tag">${escapeHtml(v.version)}</span>
+        <span class="version-changelog">${escapeHtml(v.changelog || 'No changelog')}</span>
+        <span class="version-meta">${escapeHtml(v.author_name || v.author_email || '—')}<br>${fmtDate(v.created_at)}</span>
+      </div>
+    `).join('') + '</div>';
+  } catch {
+    document.getElementById(`versions-body-${id}`).innerHTML = '<span style="color:var(--red)">Network error</span>';
+  }
 }
 
 (async () => {
