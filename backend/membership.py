@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS membership_plans (
     pdf_limit_type  TEXT    NOT NULL DEFAULT 'total' CHECK(pdf_limit_type IN ('total','monthly','unlimited')),
     credits_monthly INTEGER NOT NULL DEFAULT 0,
     max_models      INTEGER NOT NULL DEFAULT 3,
+    storage_mb      INTEGER NOT NULL DEFAULT 100,
     stripe_price_id TEXT,
     features_json   TEXT,
     active          INTEGER DEFAULT 1
@@ -67,10 +68,12 @@ def seed_plans(conn: sqlite3.Connection) -> None:
             "pdf_limit_type": "total",
             "credits_monthly": 0,
             "max_models": 3,
+            "storage_mb": 100,
             "features_json": json.dumps([
                 "Basic literature search",
                 "20 PDF uploads (lifetime)",
                 "Up to 3 models per challenge",
+                "100 MB document storage",
                 "Community library access",
             ]),
         },
@@ -82,11 +85,13 @@ def seed_plans(conn: sqlite3.Connection) -> None:
             "pdf_limit_type": "monthly",
             "credits_monthly": 1000,
             "max_models": 99,
+            "storage_mb": 5000,
             "features_json": json.dumps([
                 "Unlimited search results",
                 "500 PDF uploads per month",
                 "All models per challenge",
                 "1,000 credits/month included",
+                "5 GB document storage",
                 "CSV & PDF report export",
                 "Priority support",
             ]),
@@ -99,10 +104,12 @@ def seed_plans(conn: sqlite3.Connection) -> None:
             "pdf_limit_type": "unlimited",
             "credits_monthly": 5000,
             "max_models": 99,
+            "storage_mb": 50000,
             "features_json": json.dumps([
                 "Everything in Pro",
                 "Unlimited PDF uploads",
                 "5,000 credits/month included",
+                "50 GB document storage",
                 "Organization billing",
                 "Competition API access",
                 "Custom model registration",
@@ -116,11 +123,11 @@ def seed_plans(conn: sqlite3.Connection) -> None:
             conn.execute(
                 """INSERT INTO membership_plans
                    (name, price_cents, interval, pdf_limit, pdf_limit_type,
-                    credits_monthly, max_models, features_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    credits_monthly, max_models, storage_mb, features_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (p["name"], p["price_cents"], p["interval"], p["pdf_limit"],
                  p["pdf_limit_type"], p["credits_monthly"], p["max_models"],
-                 p["features_json"]),
+                 p["storage_mb"], p["features_json"]),
             )
         conn.commit()
     logger.info("Seeded 3 membership plans")
@@ -135,7 +142,7 @@ def get_user_membership(conn: sqlite3.Connection, user_id: int) -> dict:
     row = conn.execute(
         """SELECT um.*, mp.name AS plan_name, mp.price_cents, mp.interval,
                   mp.pdf_limit, mp.pdf_limit_type, mp.credits_monthly,
-                  mp.max_models, mp.features_json
+                  mp.max_models, mp.storage_mb, mp.features_json
            FROM user_memberships um
            JOIN membership_plans mp ON mp.id = um.plan_id
            WHERE um.user_id = ?""",
@@ -235,6 +242,29 @@ def increment_pdf_count(conn: sqlite3.Connection, user_id: int) -> None:
             (user_id,),
         )
         conn.commit()
+
+
+def check_storage_limit(conn, user_id: int, additional_bytes: int = 0) -> dict:
+    """Check if user has storage capacity. Returns {allowed, used_mb, limit_mb, plan}."""
+    membership = get_user_membership(conn, user_id)
+    limit_mb = membership.get("storage_mb", 100)
+    plan_name = membership.get("plan_name", "Free")
+
+    # Sum total bytes of user's documents
+    row = conn.execute(
+        "SELECT COALESCE(SUM(file_size), 0) AS total FROM lab_documents WHERE user_id=?",
+        (user_id,),
+    ).fetchone()
+    used_bytes = row["total"] if isinstance(row, dict) else row[0]
+    used_mb = round(used_bytes / (1024 * 1024), 2)
+    new_total_mb = round((used_bytes + additional_bytes) / (1024 * 1024), 2)
+
+    return {
+        "allowed": new_total_mb <= limit_mb,
+        "used_mb": used_mb,
+        "limit_mb": limit_mb,
+        "plan": plan_name,
+    }
 
 
 # ─────────────────────────────────────────────

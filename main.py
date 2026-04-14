@@ -381,6 +381,7 @@ def init_db() -> None:
     seed_v1_skills(conn)
     seed_credit_packs(conn)
     seed_plans(conn)
+    _migrate_storage_mb_column(conn)
 
     # Seed the agent skill vault directories (Anthropic SKILL.md format
     # + Karpathy autoresearch program.md + version history). Idempotent.
@@ -601,6 +602,18 @@ def _migrate_search_sessions_columns(conn) -> None:
             conn.execute("ALTER TABLE search_sessions ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_ss_project ON search_sessions(project_id)")
         conn.commit()
+
+
+def _migrate_storage_mb_column(conn) -> None:
+    """Add storage_mb to membership_plans if missing."""
+    if not column_exists(conn, "membership_plans", "storage_mb"):
+        with conn:
+            conn.execute("ALTER TABLE membership_plans ADD COLUMN storage_mb INTEGER NOT NULL DEFAULT 100")
+            # Update existing plans
+            conn.execute("UPDATE membership_plans SET storage_mb = 100 WHERE name = 'Free'")
+            conn.execute("UPDATE membership_plans SET storage_mb = 5000 WHERE name = 'Pro'")
+            conn.execute("UPDATE membership_plans SET storage_mb = 50000 WHERE name = 'Enterprise'")
+            conn.commit()
 
 
 def _ensure_admin_user() -> None:
@@ -4333,8 +4346,8 @@ def api_lab_execute_code(body: CodeExecutePayload, rubricgen_session: str | None
 
 # ── Lab Document Context ──
 
-UPLOAD_DIR = Path("uploads")
-UPLOAD_DIR.mkdir(exist_ok=True)
+from backend.storage import upload_file as storage_upload, download_file as storage_download, delete_file as storage_delete, get_content_type
+from backend.membership import check_storage_limit
 
 
 @app.post("/api/lab/documents/upload")
@@ -4343,20 +4356,33 @@ async def api_lab_upload_document(
     project_id: int | None = Form(default=None),
     rubricgen_session: str | None = Cookie(default=None),
 ):
-    """Upload a document to the lab context."""
+    """Upload a document to cloud/local storage. Enforces plan storage limits."""
     user = require_user(rubricgen_session)
-    import uuid
-    ext = Path(file.filename or "file").suffix.lower()
-    safe_name = f"{uuid.uuid4().hex}{ext}"
-    dest = UPLOAD_DIR / safe_name
     content = await file.read()
-    dest.write_bytes(content)
+    filename = file.filename or "file"
+
+    # Check storage limit
     conn = get_db()
     try:
+        limit_check = check_storage_limit(conn, user["id"], len(content))
+        if not limit_check["allowed"]:
+            raise HTTPException(
+                403,
+                f"Storage limit reached ({limit_check['used_mb']:.1f} / {limit_check['limit_mb']} MB). "
+                f"Upgrade your plan for more storage.",
+            )
+
+        # Upload to storage (S3 or local)
+        ct = get_content_type(filename)
+        storage_path = storage_upload(content, filename, ct)
+        ext = Path(filename).suffix.lower().lstrip(".")
+
         doc = lab_mod.save_document(
-            conn, user["id"], file.filename or "file", ext.lstrip("."),
-            len(content), str(dest), project_id,
+            conn, user["id"], filename, ext,
+            len(content), storage_path, project_id,
         )
+        doc["storage_used_mb"] = limit_check["used_mb"]
+        doc["storage_limit_mb"] = limit_check["limit_mb"]
     finally:
         conn.close()
     return doc
@@ -4371,6 +4397,44 @@ def api_lab_list_documents(
     conn = get_db()
     try:
         return lab_mod.list_documents(conn, user["id"], project_id)
+    finally:
+        conn.close()
+
+
+@app.get("/api/lab/documents/{doc_id}/download")
+def api_lab_download_document(doc_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Download a document from storage."""
+    from fastapi.responses import Response
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT filename, file_type, file_path FROM lab_documents WHERE id=? AND user_id=?",
+            (doc_id, user["id"]),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(404, "Document not found")
+    row = dict(row)
+    data = storage_download(row["file_path"])
+    if data is None:
+        raise HTTPException(404, "File not found in storage")
+    ct = get_content_type(row["filename"])
+    return Response(
+        content=data,
+        media_type=ct,
+        headers={"Content-Disposition": f'attachment; filename="{row["filename"]}"'},
+    )
+
+
+@app.get("/api/lab/storage")
+def api_lab_storage_usage(rubricgen_session: str | None = Cookie(default=None)):
+    """Get user's current storage usage vs plan limit."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return check_storage_limit(conn, user["id"])
     finally:
         conn.close()
 
@@ -4399,10 +4463,7 @@ def api_lab_delete_document(doc_id: int, rubricgen_session: str | None = Cookie(
     finally:
         conn.close()
     if file_path:
-        try:
-            Path(file_path).unlink(missing_ok=True)
-        except Exception:
-            pass
+        storage_delete(file_path)
     return {"ok": True}
 
 
