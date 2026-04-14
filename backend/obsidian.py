@@ -639,3 +639,84 @@ def write_challenge_agent_note(vault_dir: Path, agent_type: str,
     lines.append(f"_Written at {_now()}_")
     path.write_text("\n".join(lines), encoding="utf-8")
     return path
+
+
+# ─────────────────────────────────────────────────────────────
+# Lab conversation notes
+# ─────────────────────────────────────────────────────────────
+
+def write_lab_conversation_note(vault_dir: Path, agent_type: str,
+                                 session: dict, messages: list[dict],
+                                 user_info: dict | None = None) -> Path:
+    """Write a lab conversation as a markdown note.
+
+    Path: lab/{agent_type}/{session_id}_{slug}.md
+    """
+    sid = session.get("id", 0)
+    title = session.get("title", "untitled")
+    filename = f"{sid:04d}_{_slug(title)}.md"
+    lab_dir = vault_dir / "lab" / agent_type
+    lab_dir.mkdir(parents=True, exist_ok=True)
+    path = lab_dir / filename
+
+    lines: list[str] = []
+    lines.append("---")
+    lines.append(f"id: {sid}")
+    lines.append(f"agent_type: {agent_type}")
+    lines.append(f'title: "{_yaml_str(title)}"')
+    if user_info:
+        lines.append(f'user: "{user_info.get("display_name", user_info.get("email", ""))}"')
+    lines.append(f'created_at: "{session.get("created_at", "")}"')
+    lines.append(f"tags: [lab, {agent_type}]")
+    lines.append("---")
+    lines.append("")
+    lines.append(f"# {title}")
+    lines.append("")
+
+    agent_labels = {
+        "search_strategist": "AI Search Strategist",
+        "statistician": "AI Statistician",
+        "study_appraiser": "Study Appraiser",
+        "hypothesis_generator": "Hypothesis Generator",
+        "literature_reviewer": "Literature Reviewer",
+    }
+    lines.append(f"**Agent:** {agent_labels.get(agent_type, agent_type)}")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if role == "user":
+            lines.append("### User")
+        elif role == "assistant":
+            lines.append("### Assistant")
+        else:
+            lines.append(f"### {role}")
+        lines.append("")
+        lines.append(content)
+        lines.append("")
+
+        # Include metadata summaries
+        meta = msg.get("metadata", {})
+        if meta.get("analysis_plan"):
+            lines.append("**Analysis Plan:**")
+            plan = meta["analysis_plan"]
+            for k, v in plan.items():
+                lines.append(f"- {k}: {v}")
+            lines.append("")
+        if meta.get("hypotheses"):
+            lines.append("**Hypotheses:**")
+            for h in meta["hypotheses"]:
+                lines.append(f"- **{h.get('id', '?')}**: {h.get('statement', '')}")
+            lines.append("")
+        if meta.get("citation_list"):
+            lines.append("**Citations:**")
+            for c in meta["citation_list"]:
+                lines.append(f"- {c.get('authors', '')} ({c.get('year', '')}) {c.get('title', '')}")
+            lines.append("")
+
+    lines.append(f"\n---\n_Written to vault at {_now()}_\n")
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path

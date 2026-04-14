@@ -115,6 +115,149 @@ Append observations here; the meta-learner will see them.
 """
 
 
+SEARCH_STRATEGIST_PROGRAM_MD = """# Search Strategist Skill — Meta-Learner Program
+
+Human-editable control plane for the search strategist autoresearch loop.
+Re-read on every self-improvement experiment.
+
+## Objective
+Maximize search query recall and precision: the strategist should produce
+Boolean queries that retrieve relevant papers while minimizing noise,
+and should extract accurate PICO elements from research questions.
+
+## Current hypotheses (2026-04)
+1. Including both MeSH and free-text synonyms improves recall.
+2. Explicit PICO extraction guidance reduces errors in complex questions.
+3. Follow-up suggestions that are too generic reduce user engagement.
+
+## Search directions
+- Improve MeSH term selection accuracy
+- Add guidance for handling multi-concept queries
+- Refine follow-up question specificity
+
+## Do NOT
+- Change the output JSON schema (text, pico, search_query, follow_up_questions)
+- Remove PICO extraction capability
+- Make multiple unrelated edits in one proposal
+"""
+
+
+STATISTICIAN_PROGRAM_MD = """# Statistician Skill — Meta-Learner Program
+
+Human-editable control plane for the statistician autoresearch loop.
+Re-read on every self-improvement experiment.
+
+## Objective
+Maximize statistical rigor and practical utility: the statistician should
+recommend appropriate methods, produce correct code, and identify genuine
+statistical issues in published work.
+
+## Current hypotheses (2026-04)
+1. Method selection trees (design -> test) reduce inappropriate test recommendations.
+2. Explicit assumption-checking guidance prevents overlooked violations.
+3. Code output with inline comments improves user understanding.
+
+## Search directions
+- Improve method-design matching for complex designs (crossover, cluster RCTs)
+- Add Bayesian analysis guidance alongside frequentist
+- Refine critique severity calibration (avoid false alarms)
+- Improve power analysis code templates
+
+## Do NOT
+- Change the output JSON schema
+- Remove code generation capability
+- Conflate statistical significance with clinical significance
+- Make multiple unrelated edits in one proposal
+"""
+
+
+STUDY_APPRAISER_PROGRAM_MD = """# Study Appraiser Skill — Meta-Learner Program
+
+Human-editable control plane for the study appraiser autoresearch loop.
+Re-read on every self-improvement experiment.
+
+## Objective
+Maximize accuracy of quality assessments: the appraiser should correctly
+select appraisal tools, justify domain-level judgments with evidence,
+and produce actionable quality ratings.
+
+## Current hypotheses (2026-04)
+1. Forcing tool selection before assessment prevents tool misapplication.
+2. Signaling question checklists improve domain judgment consistency.
+3. Explicit direction-of-bias assessment adds clinical value.
+
+## Search directions
+- Improve study design recognition for hybrid designs
+- Add guidance for appraising stepped-wedge and adaptive trials
+- Refine GRADE certainty language for non-specialists
+- Improve sensitivity to selective outcome reporting
+
+## Do NOT
+- Change the output JSON schema
+- Remove domain-level justifications
+- Allow overall judgments without domain-by-domain evidence
+- Make multiple unrelated edits in one proposal
+"""
+
+
+HYPOTHESIS_GENERATOR_PROGRAM_MD = """# Hypothesis Generator Skill — Meta-Learner Program
+
+Human-editable control plane for the hypothesis generator autoresearch loop.
+Re-read on every self-improvement experiment.
+
+## Objective
+Maximize hypothesis novelty, testability, and scientific rigor: the generator
+should produce hypotheses that are genuinely new, mechanistically grounded,
+and feasible to test.
+
+## Current hypotheses (2026-04)
+1. Requiring explicit knowledge gap identification improves novelty.
+2. Testability scoring with study design suggestions improves feasibility.
+3. Cross-domain bridging hypotheses are more novel than incremental ones.
+
+## Search directions
+- Improve novelty assessment accuracy
+- Add guidance for distinguishing correlation-based vs mechanism-based hypotheses
+- Refine feasibility estimation
+- Improve scholarly vs non-scholarly source classification
+
+## Do NOT
+- Change the output JSON schema
+- Generate unfalsifiable hypotheses
+- Remove novelty assessment
+- Make multiple unrelated edits in one proposal
+"""
+
+
+LITERATURE_REVIEWER_PROGRAM_MD = """# Literature Reviewer Skill — Meta-Learner Program
+
+Human-editable control plane for the literature reviewer autoresearch loop.
+Re-read on every self-improvement experiment.
+
+## Objective
+Maximize review quality and comprehensiveness: the reviewer should produce
+well-structured syntheses with accurate citations, balanced coverage,
+and clear identification of evidence gaps.
+
+## Current hypotheses (2026-04)
+1. Thematic organization is more useful than chronological for most topics.
+2. Explicit evidence gap identification improves review utility.
+3. Citation precision (author-year, PMID) reduces verification burden.
+
+## Search directions
+- Improve thematic clustering of diverse study types
+- Add guidance for handling conflicting evidence
+- Refine gap identification specificity
+- Improve integration with search strategist results
+
+## Do NOT
+- Change the output JSON schema
+- Produce purely descriptive (study-by-study) reviews
+- Remove citation requirements
+- Make multiple unrelated edits in one proposal
+"""
+
+
 def _read_program_file(vault_dir: Path, agent_type: str) -> str:
     """Read the agent's program.md meta-learner guidance.
 

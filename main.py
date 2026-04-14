@@ -33,7 +33,7 @@ from backend.helpers import (
     call_openai as _call_openai,
 )
 from backend.skills import (
-    SKILLS_TABLE_SQL, seed_v1_skills,
+    SKILLS_TABLE_SQL, seed_v1_skills, migrate_agent_skills_check,
     get_active_skill, list_skill_versions,
 )
 from backend import challenges as bench
@@ -48,6 +48,8 @@ from backend.templates import TEMPLATE_TABLES_SQL
 from backend import templates as tmpl_mod
 from backend.search import SEARCH_TABLES_SQL
 from backend import search as search_mod
+from backend.lab import LAB_TABLES_SQL
+from backend import lab as lab_mod
 from backend.membership import MEMBERSHIP_TABLES_SQL, seed_plans
 from backend import membership as member_mod
 
@@ -353,6 +355,8 @@ def init_db() -> None:
         conn.executescript(TEMPLATE_TABLES_SQL)
         # Literature search
         conn.executescript(SEARCH_TABLES_SQL)
+        # AI Researcher Lab
+        conn.executescript(LAB_TABLES_SQL)
         # Membership plans
         conn.executescript(MEMBERSHIP_TABLES_SQL)
         # Project invitations (for unregistered users)
@@ -373,6 +377,7 @@ def init_db() -> None:
     _migrate_org_columns(conn)
     _migrate_challenge_columns_v2(conn)
     _migrate_search_sessions_columns(conn)
+    migrate_agent_skills_check(conn)
     seed_v1_skills(conn)
     seed_credit_packs(conn)
     seed_plans(conn)
@@ -383,15 +388,28 @@ def init_db() -> None:
         from backend.skills import (
             get_active_skill, list_skill_versions,
             GENERATOR_SKILL_DESCRIPTION, JUDGE_SKILL_DESCRIPTION,
+            SEARCH_STRATEGIST_SKILL_DESCRIPTION, STATISTICIAN_SKILL_DESCRIPTION,
+            STUDY_APPRAISER_SKILL_DESCRIPTION, HYPOTHESIS_GENERATOR_SKILL_DESCRIPTION,
+            LITERATURE_REVIEWER_SKILL_DESCRIPTION,
         )
         from backend.obsidian import (
             write_agent_skill_file, write_agent_program_file, write_agent_history_file,
         )
-        from backend.self_improve import GENERATOR_PROGRAM_MD, JUDGE_PROGRAM_MD
+        from backend.self_improve import (
+            GENERATOR_PROGRAM_MD, JUDGE_PROGRAM_MD,
+            SEARCH_STRATEGIST_PROGRAM_MD, STATISTICIAN_PROGRAM_MD,
+            STUDY_APPRAISER_PROGRAM_MD, HYPOTHESIS_GENERATOR_PROGRAM_MD,
+            LITERATURE_REVIEWER_PROGRAM_MD,
+        )
 
         for at, program_seed, desc in (
             ("generator", GENERATOR_PROGRAM_MD, GENERATOR_SKILL_DESCRIPTION),
             ("judge", JUDGE_PROGRAM_MD, JUDGE_SKILL_DESCRIPTION),
+            ("search_strategist", SEARCH_STRATEGIST_PROGRAM_MD, SEARCH_STRATEGIST_SKILL_DESCRIPTION),
+            ("statistician", STATISTICIAN_PROGRAM_MD, STATISTICIAN_SKILL_DESCRIPTION),
+            ("study_appraiser", STUDY_APPRAISER_PROGRAM_MD, STUDY_APPRAISER_SKILL_DESCRIPTION),
+            ("hypothesis_generator", HYPOTHESIS_GENERATOR_PROGRAM_MD, HYPOTHESIS_GENERATOR_SKILL_DESCRIPTION),
+            ("literature_reviewer", LITERATURE_REVIEWER_PROGRAM_MD, LITERATURE_REVIEWER_SKILL_DESCRIPTION),
         ):
             try:
                 active = get_active_skill(conn, at)
@@ -800,6 +818,14 @@ class GradeEvaluationRequest(BaseModel):
 # ─────────────────────────────────────────────
 @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 def root(rubricgen_session: str | None = Cookie(default=None)):
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return FileResponse(str(FRONTEND / "lab.html"), media_type="text/html")
+
+
+@app.get("/dashboard", include_in_schema=False)
+def dashboard_page(rubricgen_session: str | None = Cookie(default=None)):
     user = _get_user_from_token(rubricgen_session)
     if not user:
         return RedirectResponse("/login", status_code=302)
@@ -4114,6 +4140,188 @@ def api_search_select_all(body: SearchSelectAllPayload, rubricgen_session: str |
         return {"ok": True}
     finally:
         conn.close()
+
+
+# ─────────────────────────────────────────────
+# AI Researcher Lab — Multi-agent chat
+# ─────────────────────────────────────────────
+
+class LabChatPayload(BaseModel):
+    session_id: int | None = None
+    agent_type: str = "search_strategist"
+    message: str
+
+class LabSessionUpdatePayload(BaseModel):
+    title: str | None = None
+    project_id: int | None = None
+    remove_from_project: bool = False
+
+class LabExportPayload(BaseModel):
+    session_id: int
+    export_format: str  # docx, latex, xlsx, csv, py, r
+    content_type: str = "text"
+
+
+@app.post("/api/lab/chat")
+def api_lab_chat(body: LabChatPayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Send a message to any lab agent."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        session_id = body.session_id
+        if session_id is None:
+            sess = lab_mod.create_session(conn, user["id"], body.agent_type)
+            session_id = sess["id"]
+        return lab_mod.chat(conn, session_id, user["id"], body.message, body.agent_type)
+    finally:
+        conn.close()
+
+
+@app.get("/api/lab/sessions")
+def api_lab_sessions(agent_type: str | None = None, rubricgen_session: str | None = Cookie(default=None)):
+    """List lab sessions, optionally filtered by agent_type."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return lab_mod.list_sessions(conn, user["id"], agent_type)
+    finally:
+        conn.close()
+
+
+@app.get("/api/lab/sessions/{session_id}")
+def api_lab_session(session_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Get a lab session with messages."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return lab_mod.get_session(conn, session_id, user["id"])
+    finally:
+        conn.close()
+
+
+@app.delete("/api/lab/sessions/{session_id}")
+def api_lab_session_delete(session_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Delete a lab session."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        lab_mod.delete_session(conn, session_id, user["id"])
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.patch("/api/lab/sessions/{session_id}")
+def api_lab_session_update(session_id: int, body: LabSessionUpdatePayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Rename or move a lab session to a project."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return lab_mod.update_session(conn, session_id, user["id"],
+                                     title=body.title, project_id=body.project_id,
+                                     remove_from_project=body.remove_from_project)
+    finally:
+        conn.close()
+
+
+@app.post("/api/lab/export")
+def api_lab_export(body: LabExportPayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Export a lab session to a file format."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        session = lab_mod.get_session(conn, body.session_id, user["id"])
+        messages = session["messages"]
+        content = "\n\n".join(m["content"] for m in messages if m["role"] == "assistant")
+        title = session.get("title", "export")
+
+        from backend.exports import export_docx, export_latex, export_xlsx, export_csv, export_python_script, export_r_script
+
+        if body.export_format == "docx":
+            data = export_docx(content, title)
+            return Response(content=data,
+                media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                headers={"Content-Disposition": f'attachment; filename="{title}.docx"'})
+        elif body.export_format == "latex":
+            tex = export_latex(content, title)
+            return Response(content=tex.encode(), media_type="application/x-tex",
+                headers={"Content-Disposition": f'attachment; filename="{title}.tex"'})
+        elif body.export_format == "xlsx":
+            # Extract tabular data from metadata if available
+            data = _extract_tabular_data(messages)
+            xlsx_bytes = export_xlsx(data, title)
+            return Response(content=xlsx_bytes,
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": f'attachment; filename="{title}.xlsx"'})
+        elif body.export_format == "csv":
+            data = _extract_tabular_data(messages)
+            csv_str = export_csv(data)
+            return Response(content=csv_str.encode(), media_type="text/csv",
+                headers={"Content-Disposition": f'attachment; filename="{title}.csv"'})
+        elif body.export_format == "py":
+            code = _extract_code_blocks(messages, "python")
+            py_str = export_python_script(code)
+            return Response(content=py_str.encode(), media_type="text/x-python",
+                headers={"Content-Disposition": f'attachment; filename="{title}.py"'})
+        elif body.export_format == "r":
+            code = _extract_code_blocks(messages, "r")
+            r_str = export_r_script(code)
+            return Response(content=r_str.encode(), media_type="text/plain",
+                headers={"Content-Disposition": f'attachment; filename="{title}.R"'})
+        else:
+            raise HTTPException(400, f"Unsupported export format: {body.export_format}")
+    finally:
+        conn.close()
+
+
+def _extract_tabular_data(messages: list[dict]) -> list[dict]:
+    """Extract any tabular data from message metadata for spreadsheet export."""
+    rows = []
+    for m in messages:
+        meta = m.get("metadata", {})
+        if meta.get("critique"):
+            for item in meta["critique"]:
+                rows.append(item)
+        if meta.get("hypotheses"):
+            for h in meta["hypotheses"]:
+                rows.append({"hypothesis": h.get("statement", ""), "type": h.get("type", ""),
+                             "impact": h.get("potential_impact", ""), "novel": h.get("novelty_assessment", {}).get("is_novel", "")})
+        if meta.get("citation_list"):
+            for c in meta["citation_list"]:
+                rows.append(c)
+    if not rows:
+        # Fallback: export messages as rows
+        for m in messages:
+            if m["role"] == "assistant":
+                rows.append({"role": m["role"], "content": m["content"][:500]})
+    return rows
+
+
+def _extract_code_blocks(messages: list[dict], language: str) -> list[dict]:
+    """Extract code blocks from message metadata for script export."""
+    blocks = []
+    for m in messages:
+        meta = m.get("metadata", {})
+        if meta.get("code_blocks"):
+            for cb in meta["code_blocks"]:
+                if cb.get("language", "").lower() == language.lower():
+                    blocks.append(cb)
+    return blocks
+
+
+class CodeExecutePayload(BaseModel):
+    code: str
+    language: str = "python"  # python or r
+
+
+@app.post("/api/lab/execute-code")
+def api_lab_execute_code(body: CodeExecutePayload, rubricgen_session: str | None = Cookie(default=None)):
+    """Execute Python or R code for the AI Statistician. Rate-limited."""
+    user = require_user(rubricgen_session)
+    from backend.code_runner import run_python_analysis, run_r_analysis
+    if body.language == "r":
+        return run_r_analysis(body.code, user["id"])
+    return run_python_analysis(body.code, user["id"])
 
 
 # ─────────────────────────────────────────────

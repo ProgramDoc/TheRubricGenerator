@@ -1,0 +1,1385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The AI Researcher — Lab</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root {
+  --navy: #161b2e; --blue: #274472; --sky: #5e9ad0;
+  --green: #16a34a; --red: #dc2626; --amber: #d97706; --purple: #7c3aed; --gold: #d4af37;
+  --bg: #f4f5f9; --card: #ffffff; --border: #dce4ee;
+  --text: #1e293b; --muted: #64748b;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; height: 100vh; overflow: hidden; }
+
+/* ── Topbar ── */
+.topbar { background: var(--navy); color: #fff; padding: 10px 28px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,.15); z-index: 20; flex-shrink: 0; }
+.topbar .brand { font-size: 16px; font-weight: 700; letter-spacing: -.3px; }
+.topbar .brand span { color: var(--sky); }
+.topbar nav { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.topbar nav a { font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); padding: 5px 10px; border-radius: 5px; text-decoration: none; }
+.topbar nav a:hover { background: rgba(255,255,255,.08); color: #fff; }
+.topbar nav a.active { background: rgba(255,255,255,.15); color: #fff; }
+.topbar .user-badge { margin-left: 14px; padding: 4px 10px; background: rgba(255,255,255,.1); border-radius: 4px; font-size: 11px; color: rgba(255,255,255,.85); }
+.topbar .signout-btn { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); padding: 5px 10px; border-radius: 5px; font-size: 11px; font-weight: 600; cursor: pointer; margin-left: 8px; font-family: inherit; }
+.nav-dropdown { position: relative; display: inline-block; }
+.nav-dropdown > a { cursor: default; }
+.nav-dropdown-menu { display: none; position: absolute; top: 100%; left: 0; min-width: 160px; background: var(--navy); border: 1px solid rgba(255,255,255,.15); border-radius: 6px; padding: 4px 0; margin-top: 4px; z-index: 50; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+.nav-dropdown:hover .nav-dropdown-menu { display: block; }
+.nav-dropdown-menu a { display: block; padding: 8px 16px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); text-decoration: none; border-radius: 0; }
+.nav-dropdown-menu a:hover { background: rgba(255,255,255,.08); color: #fff; }
+.nav-settings { position: relative; display: inline-block; }
+.nav-settings .settings-icon { background: none; border: none; color: rgba(255,255,255,.7); font-size: 16px; cursor: pointer; padding: 4px 8px; }
+.nav-settings .settings-icon:hover { color: #fff; }
+.nav-settings-menu { display: none; position: absolute; top: 100%; right: 0; min-width: 150px; background: var(--navy); border: 1px solid rgba(255,255,255,.15); border-radius: 6px; padding: 4px 0; margin-top: 4px; z-index: 50; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+.nav-settings:hover .nav-settings-menu { display: block; }
+.nav-settings-menu a { display: block; padding: 8px 16px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); text-decoration: none; }
+.nav-settings-menu a:hover { background: rgba(255,255,255,.08); color: #fff; }
+
+/* ── 3-pane split ── */
+.split { display: flex; height: calc(100vh - 46px); }
+
+/* Left pane */
+.lab-sidebar { width: 240px; min-width: 240px; background: #fff; border-right: 1px solid var(--border); overflow-y: auto; display: flex; flex-direction: column; flex-shrink: 0; }
+.sidebar-section { border-bottom: 1px solid var(--border); }
+.sidebar-header { padding: 10px 14px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); display: flex; align-items: center; justify-content: space-between; }
+.sidebar-header button { background: none; border: none; font-size: 16px; color: var(--muted); cursor: pointer; padding: 0 4px; line-height: 1; font-family: inherit; }
+.sidebar-header button:hover { color: var(--blue); }
+.session-item { padding: 8px 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-left: 3px solid transparent; position: relative; }
+.session-item:hover { background: #f8fafc; }
+.session-item.active { background: #f0f4ff; border-left-color: var(--sky); }
+.session-item-title { font-size: 11.5px; font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.session-item-meta { font-size: 9px; color: var(--muted); white-space: nowrap; }
+.session-item-actions { display: none; position: absolute; right: 8px; top: 50%; transform: translateY(-50%); }
+.session-item:hover .session-item-actions { display: flex; gap: 2px; }
+.session-item-actions button { background: none; border: none; font-size: 12px; cursor: pointer; color: var(--muted); padding: 2px 4px; border-radius: 3px; font-family: inherit; }
+.session-item-actions button:hover { background: rgba(0,0,0,.06); color: var(--text); }
+.session-item[draggable="true"] { cursor: grab; }
+.session-item[draggable="true"]:active { cursor: grabbing; }
+.session-item.dragging { opacity: .4; }
+
+/* Folders / Projects */
+.folder-item { padding: 8px 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; position: relative; }
+.folder-item:hover { background: #f8fafc; }
+.folder-icon { font-size: 13px; color: var(--amber); }
+.folder-name { font-size: 11.5px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.folder-badge { font-size: 9px; background: rgba(94,154,208,.12); color: var(--blue); padding: 1px 5px; border-radius: 8px; font-weight: 600; }
+.folder-actions { display: none; position: absolute; right: 8px; top: 50%; transform: translateY(-50%); }
+.folder-item:hover .folder-actions { display: flex; gap: 2px; }
+.folder-actions button { background: none; border: none; font-size: 11px; cursor: pointer; color: var(--muted); padding: 2px 4px; border-radius: 3px; font-family: inherit; }
+.folder-actions button:hover { background: rgba(0,0,0,.06); color: var(--text); }
+.folder-children { padding-left: 18px; display: none; }
+.folder-children.open { display: block; }
+.folder-item.drag-over { background: rgba(94,154,208,.12); outline: 2px dashed var(--sky); outline-offset: -2px; border-radius: 4px; }
+#unsorted-sessions.drag-over { background: rgba(94,154,208,.08); border-radius: 4px; min-height: 30px; }
+
+.new-project-inline { display: none; padding: 6px 14px; }
+.new-project-inline.show { display: block; }
+.new-project-inline input { width: 100%; font-family: inherit; font-size: 11px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; }
+
+/* Other Interfaces links */
+.interface-link { padding: 7px 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--blue); font-weight: 500; text-decoration: none; }
+.interface-link:hover { background: #f0f4ff; }
+.interface-link-icon { font-size: 14px; width: 20px; text-align: center; }
+
+/* ── Middle pane ── */
+.panel-center { flex: 1; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: #fff; min-width: 0; }
+.agent-label { padding: 10px 18px; border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 700; color: var(--navy); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.agent-label-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+
+/* Chat messages */
+.chat-messages { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+.chat-empty { color: var(--muted); text-align: center; padding: 40px 20px; font-size: 12px; line-height: 1.6; }
+.msg { max-width: 85%; }
+.msg.user { align-self: flex-end; }
+.msg.assistant { align-self: flex-start; }
+.msg-bubble { padding: 10px 14px; border-radius: 10px; font-size: 12.5px; line-height: 1.55; word-wrap: break-word; overflow-wrap: break-word; }
+.msg.user .msg-bubble { background: var(--blue); color: #fff; border-bottom-right-radius: 3px; }
+.msg.assistant .msg-bubble { background: #f0f4ff; color: var(--text); border-bottom-left-radius: 3px; }
+.msg.assistant .msg-bubble strong { color: var(--navy); }
+.msg.assistant .msg-bubble img { max-width: 100%; border-radius: 6px; margin: 8px 0; }
+.msg.assistant .msg-bubble pre { background: #e8ecf2; border-radius: 4px; padding: 8px 10px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; overflow-x: auto; margin: 6px 0; }
+.msg.assistant .msg-bubble code { font-family: 'IBM Plex Mono', monospace; font-size: 11px; background: rgba(0,0,0,.06); padding: 1px 4px; border-radius: 3px; }
+.msg.assistant .msg-bubble pre code { background: none; padding: 0; }
+.msg.assistant .msg-bubble table { border-collapse: collapse; margin: 8px 0; width: 100%; font-size: 11px; }
+.msg.assistant .msg-bubble table th, .msg.assistant .msg-bubble table td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
+.msg.assistant .msg-bubble table th { background: #e8ecf2; font-weight: 700; }
+
+.follow-ups { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.follow-btn { font-family: inherit; font-size: 11px; padding: 5px 10px; background: #fff; border: 1px solid var(--sky); color: var(--blue); border-radius: 14px; cursor: pointer; }
+.follow-btn:hover { background: #e8f0fe; }
+
+.typing { display: none; align-self: flex-start; padding: 10px 14px; }
+.typing.show { display: flex; }
+.typing span { width: 6px; height: 6px; background: var(--muted); border-radius: 50%; margin: 0 2px; animation: typingBounce .6s infinite alternate; }
+.typing span:nth-child(2) { animation-delay: .2s; }
+.typing span:nth-child(3) { animation-delay: .4s; }
+@keyframes typingBounce { from { opacity: .3; transform: translateY(0); } to { opacity: 1; transform: translateY(-4px); } }
+
+/* Speed buttons */
+.speed-buttons { padding: 8px 18px; border-top: 1px solid var(--border); display: flex; gap: 6px; flex-wrap: wrap; flex-shrink: 0; background: #fafbfd; }
+.speed-btn { font-family: inherit; font-size: 10.5px; font-weight: 600; padding: 5px 10px; border-radius: 14px; cursor: pointer; border: 1px solid var(--border); background: #fff; color: var(--text); display: flex; align-items: center; gap: 5px; white-space: nowrap; transition: all .15s; }
+.speed-btn:hover { border-color: var(--sky); color: var(--blue); background: #f0f4ff; }
+.speed-btn.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+.speed-btn-icon { font-size: 13px; }
+
+/* Chat input */
+.chat-input { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: end; background: #fff; flex-shrink: 0; }
+.chat-input textarea { flex: 1; font-family: inherit; font-size: 12.5px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; resize: none; min-height: 38px; max-height: 120px; line-height: 1.4; }
+.chat-input textarea:focus { outline: none; border-color: var(--sky); }
+.send-btn { font-family: inherit; font-size: 12px; font-weight: 700; padding: 9px 18px; background: var(--blue); color: #fff; border: none; border-radius: 8px; cursor: pointer; white-space: nowrap; }
+.send-btn:hover { background: var(--navy); }
+.send-btn:disabled { opacity: .5; cursor: default; }
+
+/* ── Right pane ── */
+.panel-right { width: 50%; display: flex; flex-direction: column; background: var(--bg); }
+
+/* Tab bar */
+.tab-bar { display: flex; background: #fff; border-bottom: 2px solid var(--border); flex-shrink: 0; overflow-x: auto; }
+.tab-bar::-webkit-scrollbar { height: 3px; }
+.tab-bar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.tab-item { padding: 9px 14px; font-family: inherit; font-size: 11.5px; font-weight: 600; color: var(--muted); background: none; border: none; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; display: flex; align-items: center; gap: 6px; white-space: nowrap; flex-shrink: 0; }
+.tab-item:hover { color: var(--navy); }
+.tab-item.active { color: var(--blue); border-bottom-color: var(--sky); }
+.tab-close { font-size: 14px; color: var(--muted); cursor: pointer; margin-left: 4px; border: none; background: none; padding: 0 2px; line-height: 1; border-radius: 3px; }
+.tab-close:hover { color: var(--red); background: rgba(220,38,38,.08); }
+
+/* Export toolbar */
+.export-toolbar { display: flex; gap: 4px; padding: 6px 14px; background: #fff; border-bottom: 1px solid var(--border); flex-shrink: 0; align-items: center; }
+.export-toolbar-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-right: 6px; }
+.export-btn { font-family: inherit; font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 4px; cursor: pointer; border: 1px solid var(--border); background: #fff; color: var(--text); }
+.export-btn:hover { border-color: var(--sky); color: var(--blue); background: #f0f4ff; }
+
+/* Tab content */
+.tab-content { flex: 1; overflow: hidden; position: relative; }
+.tab-pane { display: none; position: absolute; inset: 0; }
+.tab-pane.active { display: block; }
+.tab-pane iframe { width: 100%; height: 100%; border: none; }
+
+/* Native workspace panes (Query Builder, Results) */
+.ws-native { padding: 18px; overflow-y: auto; height: 100%; }
+
+/* PICO strip */
+.pico-strip { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+.pico-card { padding: 10px; border-radius: 6px; }
+.pico-card.p { background: rgba(39,68,114,.08); border-left: 3px solid var(--blue); }
+.pico-card.i { background: rgba(22,163,74,.08); border-left: 3px solid var(--green); }
+.pico-card.c { background: rgba(217,119,6,.08); border-left: 3px solid var(--amber); }
+.pico-card.o { background: rgba(124,58,237,.08); border-left: 3px solid var(--purple); }
+.pico-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 3px; }
+.pico-text { font-size: 11.5px; color: var(--text); line-height: 1.4; }
+.mesh-pills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.mesh-pill { font-size: 9px; font-weight: 600; padding: 2px 6px; background: rgba(94,154,208,.15); color: var(--blue); border-radius: 3px; }
+
+/* Query card */
+.query-card { background: var(--navy); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+.query-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.query-text { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--gold); line-height: 1.6; max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+.query-empty { color: rgba(255,255,255,.4); font-size: 11px; font-style: italic; }
+.query-actions { display: flex; gap: 8px; margin-top: 10px; }
+.query-actions .btn { font-family: inherit; font-size: 11px; font-weight: 600; padding: 6px 14px; border-radius: 5px; cursor: pointer; border: none; }
+.run-btn { background: var(--green); color: #fff; }
+.run-btn:hover { background: #15803d; }
+.run-btn:disabled { opacity: .5; }
+.copy-btn { background: rgba(255,255,255,.1); color: #fff; border: 1px solid rgba(255,255,255,.2) !important; }
+.copy-btn:hover { background: rgba(255,255,255,.15); }
+.db-select { font-family: inherit; font-size: 11px; padding: 6px 8px; border: 1px solid rgba(255,255,255,.2); border-radius: 4px; background: rgba(255,255,255,.08); color: #fff; }
+
+/* Results table */
+.results-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.results-toolbar label { font-size: 11px; display: flex; align-items: center; gap: 4px; }
+.results-count { font-size: 11px; color: var(--muted); font-weight: 600; }
+.results-toolbar .btn { font-family: inherit; font-size: 11px; font-weight: 600; padding: 5px 12px; border-radius: 5px; cursor: pointer; border: none; }
+.results-toolbar .btn-import { background: var(--green); color: #fff; }
+.results-toolbar .btn-export { background: transparent; color: var(--blue); border: 1px solid var(--border); }
+table.res-table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+table.res-table thead th { text-align: left; font-size: 10px; font-weight: 700; color: var(--muted); letter-spacing: .05em; text-transform: uppercase; padding: 9px 12px; background: #f8fafc; border-bottom: 1px solid var(--border); }
+table.res-table tbody td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; font-size: 11.5px; color: var(--text); vertical-align: top; }
+table.res-table tbody tr:hover { background: #f8fafc; }
+.res-title { font-weight: 600; color: var(--navy); cursor: pointer; }
+.res-title:hover { color: var(--blue); }
+.empty { padding: 30px; text-align: center; color: var(--muted); font-size: 12px; }
+
+/* Context menu */
+.ctx-menu { position: fixed; z-index: 100; background: #fff; border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,.12); min-width: 140px; padding: 4px 0; }
+.ctx-menu-item { padding: 7px 14px; font-size: 11.5px; cursor: pointer; display: block; width: 100%; border: none; background: none; text-align: left; font-family: inherit; color: var(--text); }
+.ctx-menu-item:hover { background: #f0f4ff; }
+.ctx-menu-item.danger { color: var(--red); }
+.ctx-menu-item.danger:hover { background: rgba(220,38,38,.06); }
+.ctx-menu-sep { height: 1px; background: var(--border); margin: 4px 0; }
+.ctx-menu-sub { padding: 0 6px 4px; }
+.ctx-menu-sub-label { font-size: 9px; font-weight: 700; text-transform: uppercase; color: var(--muted); padding: 6px 8px 2px; letter-spacing: .04em; }
+.ctx-menu-sub-item { padding: 5px 8px; font-size: 11px; cursor: pointer; border-radius: 4px; display: block; width: 100%; border: none; background: none; text-align: left; font-family: inherit; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctx-menu-sub-item:hover { background: #f0f4ff; }
+
+/* ── Toast ── */
+.toast-container { position: fixed; top: 60px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.toast { padding: 10px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; color: #fff; box-shadow: 0 4px 12px rgba(0,0,0,.15); animation: toastIn .3s ease; max-width: 360px; pointer-events: auto; }
+.toast.success { background: var(--green); }
+.toast.error { background: var(--red); }
+.toast.info { background: var(--blue); }
+@keyframes toastIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes toastOut { from { opacity: 1; } to { opacity: 0; transform: translateX(40px); } }
+
+/* ── Responsive ── */
+@media (max-width: 1100px) {
+  .panel-right { width: 40%; }
+}
+@media (max-width: 900px) {
+  .split { flex-direction: column; height: auto; }
+  .lab-sidebar { display: none; }
+  .panel-center, .panel-right { width: 100%; height: 50vh; }
+  .sidebar-toggle { display: block !important; }
+}
+.sidebar-toggle { display: none; position: absolute; top: 54px; left: 8px; z-index: 10; background: var(--blue); color: #fff; border: none; border-radius: 4px; padding: 5px 8px; font-size: 11px; cursor: pointer; font-family: inherit; }
+
+@media (max-width: 600px) {
+  .topbar { padding: 10px 14px; flex-wrap: wrap; gap: 6px; }
+  .topbar .brand { font-size: 14px; }
+  .topbar nav { gap: 2px; }
+  .topbar nav a { font-size: 10px; padding: 4px 6px; }
+  .topbar nav a[href="/developers"], .topbar nav a[href="/library"] { display: none; }
+  .topbar .user-badge { font-size: 9px; margin-left: 4px; padding: 3px 6px; }
+  .topbar .signout-btn { font-size: 9px; padding: 4px 8px; margin-left: 4px; }
+  .speed-buttons { gap: 4px; }
+  .speed-btn { font-size: 9px; padding: 4px 7px; }
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">The AI <span>Researcher</span><sub style="font-size:9px;color:rgba(255,255,255,.35);display:block;margin-top:2px">Aitheia LLC</sub></div>
+  <nav>
+    <a href="/" class="active">Lab</a>
+    <a href="/dashboard">Dashboard</a>
+    <div class="nav-dropdown">
+      <a href="/challenges">Benchmark Lab &#9662;</a>
+      <div class="nav-dropdown-menu">
+        <a href="/challenges">Challenges</a>
+        <a href="/leaderboard">Leaderboard</a>
+      </div>
+    </div>
+    <a href="/search">Search</a>
+    <a href="/analytics">Analytics</a>
+    <a href="/library">Library</a>
+    <a href="/models">Models</a>
+    <a href="/developers">Developers</a>
+    <a href="/admin" id="nav-admin" style="display:none">Admin</a>
+    <span class="user-badge" id="user-badge">&mdash;</span>
+    <div class="nav-settings">
+      <button class="settings-icon" title="Settings">&#9881;</button>
+      <div class="nav-settings-menu">
+        <a href="/billing">Billing</a>
+        <a href="/billing?tab=preferences">Preferences</a>
+      </div>
+    </div>
+    <button class="signout-btn" onclick="signOut()">Sign Out</button>
+  </nav>
+</div>
+
+<button class="sidebar-toggle" onclick="document.getElementById('lab-sidebar').style.display='flex'">&#9776; Menu</button>
+
+<div class="split">
+  <!-- LEFT PANE: Sessions + Projects + Other Interfaces -->
+  <div class="lab-sidebar" id="lab-sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-header">Conversations <button onclick="newSession()" title="New conversation">+</button></div>
+      <div id="unsorted-sessions"></div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-header">Projects <button onclick="toggleNewProject()" title="New project">+</button></div>
+      <div class="new-project-inline" id="new-project-form">
+        <input type="text" id="new-project-input" placeholder="Project name..." onkeydown="if(event.key==='Enter'){event.preventDefault();createNewProject();}">
+      </div>
+      <div id="project-folders"></div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-header">Other Interfaces</div>
+      <a class="interface-link" onclick="openTab('Benchmark Lab','iframe','/challenges')">
+        <span class="interface-link-icon">&#9881;</span> Benchmark Lab
+      </a>
+      <a class="interface-link" onclick="openTab('Analytics','iframe','/analytics')">
+        <span class="interface-link-icon">&#128202;</span> Analytics
+      </a>
+      <a class="interface-link" onclick="openTab('Leaderboard','iframe','/leaderboard')">
+        <span class="interface-link-icon">&#127942;</span> Leaderboard
+      </a>
+      <a class="interface-link" onclick="openTab('Library','iframe','/library')">
+        <span class="interface-link-icon">&#128218;</span> Library
+      </a>
+      <a class="interface-link" onclick="openTab('Models','iframe','/models')">
+        <span class="interface-link-icon">&#129302;</span> Models
+      </a>
+    </div>
+  </div>
+
+  <!-- MIDDLE PANE: Agent + Chat -->
+  <div class="panel-center">
+    <div class="agent-label">
+      <span class="agent-label-dot"></span>
+      <span id="agent-label-text">AI Search Strategist</span>
+    </div>
+
+    <div class="chat-messages" id="chat-messages">
+      <div class="chat-empty" id="chat-empty">
+        <strong>AI Search Strategist</strong><br><br>
+        Describe your research question and I'll help you build a comprehensive search strategy with PICO extraction, MeSH terms, and database-specific queries.<br><br>
+        Try: <em>"I'm looking for RCTs comparing ACE inhibitors to ARBs for hypertension in elderly patients"</em>
+      </div>
+    </div>
+    <div class="typing" id="typing"><span></span><span></span><span></span></div>
+
+    <div class="speed-buttons">
+      <button class="speed-btn active" onclick="switchAgent('search_strategist')" data-agent="search_strategist">
+        <span class="speed-btn-icon">&#128269;</span> AI Search Strategist
+      </button>
+      <button class="speed-btn" onclick="switchAgent('statistician')" data-agent="statistician">
+        <span class="speed-btn-icon">&#128200;</span> AI Statistician
+      </button>
+      <button class="speed-btn" onclick="switchAgent('study_appraiser')" data-agent="study_appraiser">
+        <span class="speed-btn-icon">&#128203;</span> Study Appraiser
+      </button>
+      <button class="speed-btn" onclick="switchAgent('hypothesis_generator')" data-agent="hypothesis_generator">
+        <span class="speed-btn-icon">&#128161;</span> Hypothesis Generator
+      </button>
+      <button class="speed-btn" onclick="switchAgent('literature_reviewer')" data-agent="literature_reviewer">
+        <span class="speed-btn-icon">&#128214;</span> Literature Reviewer
+      </button>
+    </div>
+
+    <div class="chat-input">
+      <textarea id="chat-input" placeholder="Describe your research question..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}" oninput="autoGrow(this)"></textarea>
+      <button class="send-btn" id="send-btn" onclick="sendMessage()">Send</button>
+    </div>
+  </div>
+
+  <!-- RIGHT PANE: Tabbed workspace -->
+  <div class="panel-right">
+    <div class="tab-bar" id="tab-bar">
+      <button class="tab-item active" data-tab-id="dashboard" onclick="switchTab('dashboard')">
+        Dashboard
+      </button>
+    </div>
+    <div class="export-toolbar" id="export-toolbar">
+      <span class="export-toolbar-label">Export</span>
+      <button class="export-btn" onclick="exportAs('docx')">Word</button>
+      <button class="export-btn" onclick="exportAs('latex')">LaTeX</button>
+      <button class="export-btn" onclick="exportAs('xlsx')">Excel</button>
+      <button class="export-btn" onclick="exportAs('csv')">CSV</button>
+      <button class="export-btn" onclick="exportAs('python')">Python</button>
+      <button class="export-btn" onclick="exportAs('r')">R</button>
+    </div>
+    <div class="tab-content" id="tab-content">
+      <div class="tab-pane active" data-tab-id="dashboard">
+        <iframe src="/dashboard"></iframe>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Context menu -->
+<div class="ctx-menu" id="ctx-menu" style="display:none"></div>
+
+<script>
+/* ══════════════════════════════════════════════
+   STATE
+   ══════════════════════════════════════════════ */
+let currentUser = null;
+let currentSessionId = null;
+let currentAgentType = 'search_strategist';
+let sessions = [];
+let projects = [];
+let openFolders = JSON.parse(localStorage.getItem('lab_open_folders') || '{}');
+let tabCounter = 0;
+let activeTabId = 'dashboard';
+
+// Search-strategist specific state
+let queryVersions = [];
+let currentQuery = '';
+let searchResults = [];
+let searchPage = 1;
+let searchTotalPages = 1;
+let searchTotalResults = 0;
+
+const AGENT_CONFIG = {
+  search_strategist: {
+    label: 'AI Search Strategist',
+    placeholder: 'Describe your research question...',
+    empty: '<strong>AI Search Strategist</strong><br><br>Describe your research question and I\'ll help you build a comprehensive search strategy with PICO extraction, MeSH terms, and database-specific queries.<br><br>Try: <em>"I\'m looking for RCTs comparing ACE inhibitors to ARBs for hypertension in elderly patients"</em>'
+  },
+  statistician: {
+    label: 'AI Statistician',
+    placeholder: 'Ask a statistics question or describe your data...',
+    empty: '<strong>AI Statistician</strong><br><br>I can help with statistical analysis, study design, power calculations, and data interpretation.<br><br>Try: <em>"What sample size do I need for a two-arm RCT with 80% power to detect a 15% difference?"</em>'
+  },
+  study_appraiser: {
+    label: 'Study Appraiser',
+    placeholder: 'Paste a study abstract or ask about study quality...',
+    empty: '<strong>Study Appraiser</strong><br><br>I evaluate the quality and rigor of research studies using frameworks like GRADE, Cochrane RoB, and CASP.<br><br>Try: <em>"Appraise this RCT: [paste abstract]"</em>'
+  },
+  hypothesis_generator: {
+    label: 'Hypothesis Generator',
+    placeholder: 'Describe your research area or observations...',
+    empty: '<strong>Hypothesis Generator</strong><br><br>I help generate and refine research hypotheses based on existing evidence, gaps in the literature, and mechanistic reasoning.<br><br>Try: <em>"What hypotheses could explain the link between gut microbiome and depression?"</em>'
+  },
+  literature_reviewer: {
+    label: 'Literature Reviewer',
+    placeholder: 'Describe the topic for your literature review...',
+    empty: '<strong>Literature Reviewer</strong><br><br>I help structure and synthesize literature reviews, identify themes, and organize findings.<br><br>Try: <em>"Help me review the literature on CRISPR applications in sickle cell disease"</em>'
+  }
+};
+
+/* ══════════════════════════════════════════════
+   UTILITIES
+   ══════════════════════════════════════════════ */
+function escapeHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function renderMd(text) {
+  let html = escapeHtml(text);
+  // Code blocks
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function(m, lang, code) {
+    return '<pre><code>' + code.trim() + '</code></pre>';
+  });
+  // Inline code
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Bold
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // Italic
+  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  // Headers
+  html = html.replace(/^### (.+)$/gm, '<strong style="font-size:13px;display:block;margin:8px 0 4px">$1</strong>');
+  html = html.replace(/^## (.+)$/gm, '<strong style="font-size:14px;display:block;margin:10px 0 4px">$1</strong>');
+  // Lists
+  html = html.replace(/\n- /g, '\n&#8226; ');
+  html = html.replace(/\n\d+\. /g, function(m) { return m; });
+  // Line breaks
+  html = html.replace(/\n/g, '<br>');
+  return html;
+}
+
+function autoGrow(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+/* ── Toast ── */
+function _ensureToastContainer() {
+  let c = document.querySelector('.toast-container');
+  if (!c) { c = document.createElement('div'); c.className = 'toast-container'; document.body.appendChild(c); }
+  return c;
+}
+function showToast(msg, type, duration) {
+  type = type || 'info';
+  duration = duration || 4000;
+  const c = _ensureToastContainer();
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(function() { t.style.animation = 'toastOut .3s ease forwards'; setTimeout(function() { t.remove(); }, 300); }, duration);
+}
+
+/* ══════════════════════════════════════════════
+   AUTH
+   ══════════════════════════════════════════════ */
+async function checkAuth() {
+  try {
+    const r = await fetch('/api/auth/me');
+    if (!r.ok) { window.location.href = '/login'; return; }
+    currentUser = await r.json();
+    document.getElementById('user-badge').textContent = currentUser.display_name || currentUser.email;
+    if (currentUser.role === 'admin') document.getElementById('nav-admin').style.display = '';
+  } catch (e) { window.location.href = '/login'; }
+}
+
+async function signOut() {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  window.location.href = '/login';
+}
+
+/* ══════════════════════════════════════════════
+   AGENT SWITCHING
+   ══════════════════════════════════════════════ */
+function switchAgent(agentType) {
+  if (agentType === currentAgentType) return;
+  currentAgentType = agentType;
+  currentSessionId = null;
+  sessionStorage.removeItem('lab_session_id');
+
+  // Update speed buttons
+  document.querySelectorAll('.speed-btn').forEach(function(btn) {
+    btn.classList.toggle('active', btn.dataset.agent === agentType);
+  });
+
+  // Update agent label
+  var cfg = AGENT_CONFIG[agentType];
+  document.getElementById('agent-label-text').textContent = cfg.label;
+  document.getElementById('chat-input').placeholder = cfg.placeholder;
+
+  // Clear chat
+  document.getElementById('chat-messages').innerHTML = '<div class="chat-empty" id="chat-empty">' + cfg.empty + '</div>';
+
+  // Re-render sidebar for this agent type
+  renderSidebar();
+
+  // If switching to search_strategist, ensure Query Builder tab is available
+  if (agentType === 'search_strategist') {
+    // Query/Results tabs will be opened on demand
+  }
+}
+
+/* ══════════════════════════════════════════════
+   SIDEBAR — Sessions + Projects
+   ══════════════════════════════════════════════ */
+async function renderSidebar() {
+  try {
+    var sUrl = '/api/lab/sessions?agent_type=' + encodeURIComponent(currentAgentType);
+    var pUrl = '/api/projects';
+    var responses = await Promise.all([fetch(sUrl), fetch(pUrl)]);
+    if (responses[0].ok) sessions = await responses[0].json();
+    else sessions = [];
+    if (responses[1].ok) projects = await responses[1].json();
+    else projects = [];
+  } catch (e) { return; }
+
+  var unsorted = sessions.filter(function(s) { return !s.project_id; });
+  var byProject = {};
+  sessions.forEach(function(s) {
+    if (s.project_id) {
+      if (!byProject[s.project_id]) byProject[s.project_id] = [];
+      byProject[s.project_id].push(s);
+    }
+  });
+
+  // Unsorted sessions
+  var unsortedEl = document.getElementById('unsorted-sessions');
+  unsortedEl.innerHTML = unsorted.length ? '' : '<div style="padding:6px 14px;font-size:10px;color:var(--muted)">No conversations yet</div>';
+  unsorted.forEach(function(s) { unsortedEl.appendChild(makeSessionItem(s)); });
+  unsortedEl.ondragover = function(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; unsortedEl.classList.add('drag-over'); };
+  unsortedEl.ondragleave = function() { unsortedEl.classList.remove('drag-over'); };
+  unsortedEl.ondrop = async function(e) {
+    e.preventDefault(); unsortedEl.classList.remove('drag-over');
+    var sessionId = parseInt(e.dataTransfer.getData('text/plain'));
+    if (!sessionId) return;
+    await fetch('/api/lab/sessions/' + sessionId, {
+      method: 'PATCH', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ remove_from_project: true }),
+    });
+    renderSidebar();
+  };
+
+  // Projects
+  var projectEl = document.getElementById('project-folders');
+  projectEl.innerHTML = '';
+  projects.forEach(function(p) {
+    projectEl.appendChild(makeFolderItem(p, byProject[p.id] || []));
+  });
+}
+
+function makeSessionItem(s) {
+  var div = document.createElement('div');
+  div.className = 'session-item' + (s.id === currentSessionId ? ' active' : '');
+  div.dataset.sessionId = s.id;
+  div.draggable = true;
+  div.onclick = function(e) { if (!e.target.closest('.session-item-actions')) switchSession(s.id); };
+  div.ondragstart = function(e) {
+    e.dataTransfer.setData('text/plain', s.id);
+    e.dataTransfer.effectAllowed = 'move';
+    div.classList.add('dragging');
+  };
+  div.ondragend = function() { div.classList.remove('dragging'); };
+  var title = s.title || 'Untitled';
+  var count = s.message_count || 0;
+  div.innerHTML =
+    '<span class="session-item-title">' + escapeHtml(title) + '</span>' +
+    '<span class="session-item-meta">' + count + '</span>' +
+    '<span class="session-item-actions">' +
+      '<button onclick="event.stopPropagation();showSessionCtx(event,' + s.id + ')" title="More">...</button>' +
+    '</span>';
+  return div;
+}
+
+function makeFolderItem(p, children) {
+  var wrapper = document.createElement('div');
+  var isOpen = openFolders[p.id];
+
+  var folder = document.createElement('div');
+  folder.className = 'folder-item';
+  folder.dataset.projectId = p.id;
+  folder.onclick = function(e) { if (!e.target.closest('.folder-actions')) toggleFolder(p.id); };
+  folder.ondragover = function(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; folder.classList.add('drag-over'); };
+  folder.ondragleave = function() { folder.classList.remove('drag-over'); };
+  folder.ondrop = async function(e) {
+    e.preventDefault(); folder.classList.remove('drag-over');
+    var sessionId = parseInt(e.dataTransfer.getData('text/plain'));
+    if (!sessionId) return;
+    await fetch('/api/lab/sessions/' + sessionId, {
+      method: 'PATCH', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ project_id: p.id }),
+    });
+    renderSidebar();
+  };
+  var folderIcon = isOpen ? '&#128194;' : '&#128193;';
+  folder.innerHTML =
+    '<span class="folder-icon">' + folderIcon + '</span>' +
+    '<span class="folder-name">' + escapeHtml(p.name) + '</span>' +
+    '<span class="folder-badge">' + children.length + '</span>' +
+    '<span class="folder-actions">' +
+      '<button onclick="event.stopPropagation();showFolderCtx(event,' + p.id + ')" title="More">...</button>' +
+    '</span>';
+  wrapper.appendChild(folder);
+
+  var childDiv = document.createElement('div');
+  childDiv.className = 'folder-children' + (isOpen ? ' open' : '');
+  childDiv.id = 'folder-children-' + p.id;
+  if (children.length) {
+    children.forEach(function(s) { childDiv.appendChild(makeSessionItem(s)); });
+  } else {
+    childDiv.innerHTML = '<div style="padding:4px 14px;font-size:10px;color:var(--muted);font-style:italic">No conversations</div>';
+  }
+  wrapper.appendChild(childDiv);
+  return wrapper;
+}
+
+function toggleFolder(pid) {
+  openFolders[pid] = !openFolders[pid];
+  localStorage.setItem('lab_open_folders', JSON.stringify(openFolders));
+  renderSidebar();
+}
+
+/* ── Project CRUD ── */
+function toggleNewProject() {
+  var form = document.getElementById('new-project-form');
+  form.classList.toggle('show');
+  if (form.classList.contains('show')) document.getElementById('new-project-input').focus();
+}
+
+async function createNewProject() {
+  var input = document.getElementById('new-project-input');
+  var name = input.value.trim();
+  if (!name) return;
+  var r = await fetch('/api/projects', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ name: name }),
+  });
+  if (!r.ok) { var e = await r.json(); showToast(e.detail || 'Failed', 'error'); return; }
+  input.value = '';
+  document.getElementById('new-project-form').classList.remove('show');
+  showToast('Project created', 'success');
+  renderSidebar();
+}
+
+/* ── Context menus ── */
+function hideCtxMenu() { document.getElementById('ctx-menu').style.display = 'none'; }
+document.addEventListener('click', hideCtxMenu);
+
+function showSessionCtx(e, sessionId) {
+  e.stopPropagation();
+  var menu = document.getElementById('ctx-menu');
+  var items = '';
+  items += '<button class="ctx-menu-item" onclick="hideCtxMenu();renameSession(' + sessionId + ')">Rename</button>';
+  if (projects.length) {
+    items += '<div class="ctx-menu-sub"><div class="ctx-menu-sub-label">Move to project</div>';
+    projects.forEach(function(p) {
+      items += '<button class="ctx-menu-sub-item" onclick="hideCtxMenu();moveSessionToProject(' + sessionId + ',' + p.id + ')">' + escapeHtml(p.name) + '</button>';
+    });
+    items += '</div>';
+  }
+  items += '<div class="ctx-menu-sep"></div>';
+  items += '<button class="ctx-menu-item danger" onclick="hideCtxMenu();deleteSession(' + sessionId + ')">Delete</button>';
+  menu.innerHTML = items;
+  menu.style.display = 'block';
+  menu.style.left = Math.min(e.clientX, window.innerWidth - 180) + 'px';
+  menu.style.top = Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 10) + 'px';
+}
+
+function showFolderCtx(e, pid) {
+  e.stopPropagation();
+  var menu = document.getElementById('ctx-menu');
+  var items = '';
+  items += '<button class="ctx-menu-item" onclick="hideCtxMenu();renameProject(' + pid + ')">Rename</button>';
+  items += '<div class="ctx-menu-sep"></div>';
+  items += '<button class="ctx-menu-item danger" onclick="hideCtxMenu();deleteProject(' + pid + ')">Delete project</button>';
+  menu.innerHTML = items;
+  menu.style.display = 'block';
+  menu.style.left = Math.min(e.clientX, window.innerWidth - 160) + 'px';
+  menu.style.top = Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 10) + 'px';
+}
+
+/* ── Session actions ── */
+async function renameSession(sessionId) {
+  var s = sessions.find(function(s) { return s.id === sessionId; });
+  var name = prompt('Rename conversation:', s ? s.title : '');
+  if (!name || !name.trim()) return;
+  await fetch('/api/lab/sessions/' + sessionId, {
+    method: 'PATCH', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ title: name.trim() }),
+  });
+  renderSidebar();
+}
+
+async function moveSessionToProject(sessionId, projectId) {
+  await fetch('/api/lab/sessions/' + sessionId, {
+    method: 'PATCH', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ project_id: projectId }),
+  });
+  renderSidebar();
+}
+
+async function deleteSession(sessionId) {
+  if (!confirm('Delete this conversation?')) return;
+  await fetch('/api/lab/sessions/' + sessionId, { method: 'DELETE' });
+  if (sessionId === currentSessionId) newSession();
+  renderSidebar();
+}
+
+async function renameProject(pid) {
+  var p = projects.find(function(p) { return p.id === pid; });
+  var name = prompt('Rename project:', p ? p.name : '');
+  if (!name || !name.trim()) return;
+  await fetch('/api/projects/' + pid, {
+    method: 'PATCH', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ name: name.trim() }),
+  });
+  renderSidebar();
+}
+
+async function deleteProject(pid) {
+  if (!confirm('Delete this project? Conversations inside will become unsorted.')) return;
+  await fetch('/api/projects/' + pid, { method: 'DELETE' });
+  showToast('Project deleted', 'success');
+  renderSidebar();
+}
+
+/* ══════════════════════════════════════════════
+   SESSIONS
+   ══════════════════════════════════════════════ */
+async function switchSession(id) {
+  if (!id) return;
+  currentSessionId = parseInt(id);
+  sessionStorage.setItem('lab_session_id', currentSessionId);
+
+  // Highlight active
+  document.querySelectorAll('.session-item').forEach(function(el) {
+    el.classList.toggle('active', parseInt(el.dataset.sessionId) === currentSessionId);
+  });
+
+  var r = await fetch('/api/lab/sessions/' + currentSessionId);
+  if (!r.ok) { showToast('Failed to load session', 'error'); return; }
+  var data = await r.json();
+
+  // Render messages
+  var container = document.getElementById('chat-messages');
+  container.innerHTML = '';
+  if (data.messages && data.messages.length) {
+    data.messages.forEach(function(m) { appendMessage(m.role, m.content, m.metadata); });
+  }
+
+  // If search_strategist, restore query state
+  if (currentAgentType === 'search_strategist') {
+    queryVersions = [];
+    if (data.messages) {
+      data.messages.forEach(function(m) {
+        if (m.metadata && m.metadata.search_query) {
+          queryVersions.push(m.metadata.search_query);
+        }
+      });
+    }
+    if (queryVersions.length) {
+      var latest = queryVersions[queryVersions.length - 1];
+      currentQuery = latest.pubmed || '';
+      openQueryBuilderTab();
+    }
+    if (data.pico && Object.keys(data.pico).length) {
+      openQueryBuilderTab();
+      renderPicoInTab(data.pico);
+    }
+    searchResults = data.results || [];
+    if (searchResults.length) {
+      openResultsTab();
+      renderSearchResults();
+    }
+  }
+
+  scrollToBottom();
+}
+
+function newSession() {
+  currentSessionId = null;
+  queryVersions = [];
+  currentQuery = '';
+  searchResults = [];
+  sessionStorage.removeItem('lab_session_id');
+
+  var cfg = AGENT_CONFIG[currentAgentType];
+  document.getElementById('chat-messages').innerHTML = '<div class="chat-empty" id="chat-empty">' + cfg.empty + '</div>';
+
+  document.querySelectorAll('.session-item').forEach(function(el) { el.classList.remove('active'); });
+}
+
+/* ══════════════════════════════════════════════
+   CHAT
+   ══════════════════════════════════════════════ */
+async function sendMessage() {
+  var input = document.getElementById('chat-input');
+  var text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  input.style.height = 'auto';
+
+  var container = document.getElementById('chat-messages');
+  if (container.querySelector('.chat-empty')) container.innerHTML = '';
+
+  appendMessage('user', text);
+  document.getElementById('typing').classList.add('show');
+  document.getElementById('send-btn').disabled = true;
+  scrollToBottom();
+
+  try {
+    var r = await fetch('/api/lab/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        session_id: currentSessionId,
+        agent_type: currentAgentType,
+        message: text
+      }),
+    });
+    document.getElementById('typing').classList.remove('show');
+    document.getElementById('send-btn').disabled = false;
+
+    if (!r.ok) {
+      var err = await r.json();
+      appendMessage('assistant', 'Error: ' + (err.detail || 'Request failed'));
+      return;
+    }
+    var data = await r.json();
+
+    currentSessionId = data.session_id;
+    sessionStorage.setItem('lab_session_id', currentSessionId);
+
+    appendMessage('assistant', data.message.content, data.message.metadata);
+
+    // Handle search_strategist specific data
+    if (currentAgentType === 'search_strategist') {
+      if (data.pico) {
+        openQueryBuilderTab();
+        renderPicoInTab(data.pico);
+      }
+      if (data.search_query) {
+        currentQuery = data.search_query.pubmed || '';
+        queryVersions.push(data.search_query);
+        openQueryBuilderTab();
+        renderQueryInTab(currentQuery);
+      }
+    }
+
+    renderSidebar();
+  } catch (e) {
+    document.getElementById('typing').classList.remove('show');
+    document.getElementById('send-btn').disabled = false;
+    appendMessage('assistant', 'Network error: ' + e.message);
+    showToast('Network error', 'error');
+  }
+  scrollToBottom();
+}
+
+function appendMessage(role, content, metadata) {
+  var container = document.getElementById('chat-messages');
+  var div = document.createElement('div');
+  div.className = 'msg ' + role;
+
+  var html = '<div class="msg-bubble">';
+
+  // Check for images (statistician agent)
+  if (role === 'assistant' && metadata && metadata.images) {
+    metadata.images.forEach(function(img) {
+      html += '<img src="data:image/png;base64,' + img.data + '" alt="' + escapeHtml(img.title || 'Chart') + '">';
+    });
+  }
+
+  html += renderMd(content || '');
+  html += '</div>';
+
+  // Follow-up buttons
+  if (role === 'assistant' && metadata && metadata.follow_ups && metadata.follow_ups.length) {
+    html += '<div class="follow-ups">';
+    metadata.follow_ups.forEach(function(q) {
+      html += '<button class="follow-btn" onclick="useSuggestion(this.textContent)">' + escapeHtml(q) + '</button>';
+    });
+    html += '</div>';
+  }
+
+  div.innerHTML = html;
+  container.appendChild(div);
+}
+
+function renderMessage(msg) {
+  appendMessage(msg.role, msg.content, msg.metadata);
+}
+
+function useSuggestion(text) {
+  document.getElementById('chat-input').value = text;
+  sendMessage();
+}
+
+function scrollToBottom() {
+  var c = document.getElementById('chat-messages');
+  c.scrollTop = c.scrollHeight;
+}
+
+/* ══════════════════════════════════════════════
+   TAB MANAGEMENT
+   ══════════════════════════════════════════════ */
+function openTab(label, type, url) {
+  // Check if tab with same label already exists
+  var existing = document.querySelector('.tab-item[data-tab-label="' + label + '"]');
+  if (existing) {
+    switchTab(existing.dataset.tabId);
+    return;
+  }
+
+  tabCounter++;
+  var tabId = 'tab-' + tabCounter;
+
+  // Create tab button
+  var tabBtn = document.createElement('button');
+  tabBtn.className = 'tab-item';
+  tabBtn.dataset.tabId = tabId;
+  tabBtn.dataset.tabLabel = label;
+  tabBtn.onclick = function() { switchTab(tabId); };
+  tabBtn.innerHTML = escapeHtml(label) + ' <span class="tab-close" onclick="event.stopPropagation();closeTab(\'' + tabId + '\')">&times;</span>';
+  document.getElementById('tab-bar').appendChild(tabBtn);
+
+  // Create tab pane
+  var pane = document.createElement('div');
+  pane.className = 'tab-pane';
+  pane.dataset.tabId = tabId;
+
+  if (type === 'iframe') {
+    pane.innerHTML = '<iframe src="' + escapeHtml(url) + '"></iframe>';
+  } else if (type === 'native') {
+    pane.innerHTML = '<div class="ws-native" id="ws-' + tabId + '">' + (url || '') + '</div>';
+  }
+
+  document.getElementById('tab-content').appendChild(pane);
+
+  switchTab(tabId);
+}
+
+function closeTab(tabId) {
+  if (tabId === 'dashboard') return; // Dashboard cannot be closed
+
+  var tabBtn = document.querySelector('.tab-item[data-tab-id="' + tabId + '"]');
+  var pane = document.querySelector('.tab-pane[data-tab-id="' + tabId + '"]');
+  if (tabBtn) tabBtn.remove();
+  if (pane) pane.remove();
+
+  // If closing active tab, switch to dashboard
+  if (activeTabId === tabId) {
+    switchTab('dashboard');
+  }
+}
+
+function switchTab(tabId) {
+  activeTabId = tabId;
+
+  // Update tab buttons
+  document.querySelectorAll('.tab-item').forEach(function(btn) {
+    btn.classList.toggle('active', btn.dataset.tabId === tabId);
+  });
+
+  // Update tab panes
+  document.querySelectorAll('.tab-pane').forEach(function(pane) {
+    pane.classList.toggle('active', pane.dataset.tabId === tabId);
+  });
+}
+
+/* ══════════════════════════════════════════════
+   SEARCH STRATEGIST — Query Builder & Results Tabs
+   ══════════════════════════════════════════════ */
+function openQueryBuilderTab() {
+  var existing = document.querySelector('.tab-item[data-tab-label="Query Builder"]');
+  if (existing) {
+    switchTab(existing.dataset.tabId);
+    return existing.dataset.tabId;
+  }
+
+  tabCounter++;
+  var tabId = 'tab-' + tabCounter;
+
+  var tabBtn = document.createElement('button');
+  tabBtn.className = 'tab-item';
+  tabBtn.dataset.tabId = tabId;
+  tabBtn.dataset.tabLabel = 'Query Builder';
+  tabBtn.onclick = function() { switchTab(tabId); };
+  tabBtn.innerHTML = 'Query Builder <span class="tab-close" onclick="event.stopPropagation();closeTab(\'' + tabId + '\')">&times;</span>';
+  document.getElementById('tab-bar').appendChild(tabBtn);
+
+  var pane = document.createElement('div');
+  pane.className = 'tab-pane';
+  pane.dataset.tabId = tabId;
+  pane.innerHTML =
+    '<div class="ws-native" id="ws-query-builder">' +
+      '<div class="pico-strip" id="pico-strip" style="display:none">' +
+        '<div class="pico-card p"><div class="pico-label">Population</div><div class="pico-text" id="pico-p">&mdash;</div></div>' +
+        '<div class="pico-card i"><div class="pico-label">Intervention</div><div class="pico-text" id="pico-i">&mdash;</div></div>' +
+        '<div class="pico-card c"><div class="pico-label">Comparator</div><div class="pico-text" id="pico-c">&mdash;</div></div>' +
+        '<div class="pico-card o"><div class="pico-label">Outcomes</div><div class="pico-text" id="pico-o">&mdash;</div></div>' +
+      '</div>' +
+      '<div id="mesh-strip" class="mesh-pills" style="margin-bottom:12px"></div>' +
+      '<div class="query-card" id="query-card">' +
+        '<div class="query-card-header">' +
+          '<span style="font-size:10px;color:rgba(255,255,255,.5)">PubMed Query</span>' +
+          '<select id="version-select" onchange="switchQueryVersion(this.value)" style="display:none;font-family:inherit;font-size:10px;padding:3px 6px;border-radius:3px;background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.2)"></select>' +
+        '</div>' +
+        '<div class="query-text" id="query-text"><span class="query-empty">No query yet. Start a conversation to generate one.</span></div>' +
+        '<div class="query-actions">' +
+          '<select class="db-select" id="search-db">' +
+            '<option value="pubmed">PubMed</option>' +
+            '<option value="europe_pmc">Europe PMC</option>' +
+          '</select>' +
+          '<button class="btn run-btn" id="run-btn" onclick="runSearch()" disabled>Search</button>' +
+          '<button class="btn copy-btn" onclick="copyQuery()">Copy</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  document.getElementById('tab-content').appendChild(pane);
+
+  switchTab(tabId);
+  return tabId;
+}
+
+function openResultsTab() {
+  var existing = document.querySelector('.tab-item[data-tab-label="Results"]');
+  if (existing) {
+    switchTab(existing.dataset.tabId);
+    return existing.dataset.tabId;
+  }
+
+  tabCounter++;
+  var tabId = 'tab-' + tabCounter;
+
+  var tabBtn = document.createElement('button');
+  tabBtn.className = 'tab-item';
+  tabBtn.dataset.tabId = tabId;
+  tabBtn.dataset.tabLabel = 'Results';
+  tabBtn.onclick = function() { switchTab(tabId); };
+  tabBtn.innerHTML = 'Results <span class="tab-close" onclick="event.stopPropagation();closeTab(\'' + tabId + '\')">&times;</span>';
+  document.getElementById('tab-bar').appendChild(tabBtn);
+
+  var pane = document.createElement('div');
+  pane.className = 'tab-pane';
+  pane.dataset.tabId = tabId;
+  pane.innerHTML =
+    '<div class="ws-native" id="ws-results">' +
+      '<div class="results-toolbar" id="results-toolbar" style="display:none">' +
+        '<label><input type="checkbox" id="select-all" onchange="toggleSelectAll(this.checked)"> Select all</label>' +
+        '<span class="results-count" id="results-count">0 results</span>' +
+        '<button class="btn btn-import" onclick="importSelected()">Import Selected</button>' +
+        '<button class="btn btn-export" onclick="exportRIS()">RIS</button>' +
+        '<button class="btn btn-export" onclick="exportBibTeX()">BibTeX</button>' +
+      '</div>' +
+      '<div id="results-body"><div class="empty">Run a search to see results here.</div></div>' +
+      '<div id="pagination-bar" style="display:none;text-align:center;padding:12px;display:flex;gap:6px;justify-content:center;flex-wrap:wrap"></div>' +
+    '</div>';
+  document.getElementById('tab-content').appendChild(pane);
+
+  switchTab(tabId);
+  return tabId;
+}
+
+function renderPicoInTab(pico) {
+  var strip = document.getElementById('pico-strip');
+  if (!strip) return;
+  strip.style.display = 'grid';
+  document.getElementById('pico-p').textContent = pico.population || '\u2014';
+  document.getElementById('pico-i').textContent = pico.intervention || '\u2014';
+  document.getElementById('pico-c').textContent = pico.comparator || '\u2014';
+  document.getElementById('pico-o').textContent = pico.outcomes || '\u2014';
+
+  var mesh = document.getElementById('mesh-strip');
+  if (mesh && pico.mesh_terms && pico.mesh_terms.length) {
+    mesh.innerHTML = pico.mesh_terms.map(function(t) { return '<span class="mesh-pill">' + escapeHtml(t) + '</span>'; }).join('');
+  }
+}
+
+function renderQueryInTab(query) {
+  var el = document.getElementById('query-text');
+  if (!el) return;
+  if (query) {
+    el.textContent = query;
+    var runBtn = document.getElementById('run-btn');
+    if (runBtn) runBtn.disabled = false;
+  } else {
+    el.innerHTML = '<span class="query-empty">No query yet.</span>';
+  }
+
+  // Update version dropdown
+  var sel = document.getElementById('version-select');
+  if (sel) {
+    if (queryVersions.length <= 1) { sel.style.display = 'none'; }
+    else {
+      sel.style.display = '';
+      sel.innerHTML = queryVersions.map(function(q, i) {
+        return '<option value="' + i + '"' + (i === queryVersions.length - 1 ? ' selected' : '') + '>v' + i + (q.version_note ? ': ' + escapeHtml(q.version_note) : '') + '</option>';
+      }).join('');
+    }
+  }
+}
+
+function switchQueryVersion(idx) {
+  var q = queryVersions[parseInt(idx)];
+  if (q) {
+    currentQuery = q.pubmed || '';
+    renderQueryInTab(currentQuery);
+  }
+}
+
+function copyQuery() {
+  if (currentQuery) {
+    navigator.clipboard.writeText(currentQuery);
+    showToast('Query copied', 'success');
+  }
+}
+
+/* ── Search execution ── */
+async function runSearch(page) {
+  searchPage = page || 1;
+  var db = document.getElementById('search-db');
+  var dbVal = db ? db.value : 'pubmed';
+  var btn = document.getElementById('run-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Searching...'; }
+
+  try {
+    var r = await fetch('/api/search/execute', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ session_id: currentSessionId, database: dbVal, query: currentQuery, page: searchPage, page_size: 50 }),
+    });
+    if (!r.ok) { var e = await r.json(); showToast(e.detail || 'Search failed', 'error'); return; }
+    var data = await r.json();
+
+    if (data.linkout_url) {
+      window.open(data.linkout_url, '_blank');
+      return;
+    }
+
+    searchResults = data.results || [];
+    searchTotalResults = data.total || searchResults.length;
+    searchTotalPages = data.total_pages || 1;
+    searchPage = data.page || 1;
+
+    openResultsTab();
+    renderSearchResults();
+    renderSearchPagination();
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Search'; }
+  }
+}
+
+function renderSearchResults() {
+  var toolbar = document.getElementById('results-toolbar');
+  var body = document.getElementById('results-body');
+  if (!body) return;
+
+  if (!searchResults.length) {
+    if (toolbar) toolbar.style.display = 'none';
+    body.innerHTML = '<div class="empty">No results found.</div>';
+    return;
+  }
+
+  if (toolbar) {
+    toolbar.style.display = 'flex';
+    var countEl = document.getElementById('results-count');
+    if (countEl) countEl.textContent = searchTotalResults.toLocaleString() + ' results';
+  }
+
+  var html = '<table class="res-table"><thead><tr>' +
+    '<th style="width:30px"><input type="checkbox" id="select-all-header" onchange="toggleSelectAll(this.checked)"></th>' +
+    '<th>Title</th><th>Authors</th><th>Year</th><th>Journal</th>' +
+    '</tr></thead><tbody>';
+
+  searchResults.forEach(function(r, i) {
+    html += '<tr>' +
+      '<td><input type="checkbox" class="result-check" data-idx="' + i + '"></td>' +
+      '<td><span class="res-title" onclick="toggleAbstract(' + i + ')">' + escapeHtml(r.title || 'Untitled') + '</span></td>' +
+      '<td style="font-size:10px;color:var(--muted);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml((r.authors || []).slice(0,3).join(', ')) + '</td>' +
+      '<td>' + escapeHtml(r.year || '') + '</td>' +
+      '<td style="font-size:10px">' + escapeHtml(r.journal || '') + '</td>' +
+      '</tr>';
+    if (r.abstract) {
+      html += '<tr class="res-abstract" id="abstract-' + i + '"><td colspan="5" style="padding:8px 12px;background:#f8fafc;font-size:11px;color:var(--muted);line-height:1.5">' + escapeHtml(r.abstract) + '</td></tr>';
+    }
+  });
+
+  html += '</tbody></table>';
+  body.innerHTML = html;
+}
+
+function toggleAbstract(idx) {
+  var row = document.getElementById('abstract-' + idx);
+  if (row) row.classList.toggle('open');
+}
+
+function toggleSelectAll(checked) {
+  document.querySelectorAll('.result-check').forEach(function(cb) { cb.checked = checked; });
+}
+
+function getSelectedResultIds() {
+  var ids = [];
+  document.querySelectorAll('.result-check:checked').forEach(function(cb) {
+    var idx = parseInt(cb.dataset.idx);
+    if (searchResults[idx] && searchResults[idx].pmid) ids.push(searchResults[idx].pmid);
+  });
+  return ids;
+}
+
+async function exportRIS() {
+  var ids = getSelectedResultIds();
+  if (!ids.length) { showToast('Select results first', 'info'); return; }
+  try {
+    var r = await fetch('/api/search/export/ris', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ session_id: currentSessionId, result_ids: ids }),
+    });
+    if (!r.ok) { showToast('Export failed', 'error'); return; }
+    var blob = await r.blob();
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = 'results.ris'; a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) { showToast('Export failed', 'error'); }
+}
+
+async function exportBibTeX() {
+  var ids = getSelectedResultIds();
+  if (!ids.length) { showToast('Select results first', 'info'); return; }
+  try {
+    var r = await fetch('/api/search/export/bibtex', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ session_id: currentSessionId, result_ids: ids }),
+    });
+    if (!r.ok) { showToast('Export failed', 'error'); return; }
+    var blob = await r.blob();
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = 'results.bib'; a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) { showToast('Export failed', 'error'); }
+}
+
+async function importSelected() {
+  var ids = getSelectedResultIds();
+  if (!ids.length) { showToast('Select results first', 'info'); return; }
+  showToast('Importing ' + ids.length + ' results...', 'info');
+  // Import logic would use appropriate API endpoint
+}
+
+function renderSearchPagination() {
+  var bar = document.getElementById('pagination-bar');
+  if (!bar) return;
+  if (searchTotalPages <= 1) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  var html = '';
+  if (searchPage > 1) html += '<button style="padding:5px 12px;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer;font-size:11px;font-family:inherit" onclick="runSearch(' + (searchPage - 1) + ')">Prev</button>';
+  var start = Math.max(1, searchPage - 3);
+  var end = Math.min(searchTotalPages, searchPage + 3);
+  for (var i = start; i <= end; i++) {
+    var active = i === searchPage ? 'background:var(--blue);color:#fff;border-color:var(--blue)' : 'background:#fff';
+    html += '<button style="padding:5px 12px;border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:11px;font-family:inherit;' + active + '" onclick="runSearch(' + i + ')">' + i + '</button>';
+  }
+  if (searchPage < searchTotalPages) html += '<button style="padding:5px 12px;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer;font-size:11px;font-family:inherit" onclick="runSearch(' + (searchPage + 1) + ')">Next</button>';
+  html += '<span style="font-size:10px;color:var(--muted);padding:5px">Page ' + searchPage + ' of ' + searchTotalPages + ' (' + searchTotalResults.toLocaleString() + ' results)</span>';
+  bar.innerHTML = html;
+}
+
+/* ══════════════════════════════════════════════
+   EXPORT
+   ══════════════════════════════════════════════ */
+async function exportAs(format) {
+  if (!currentSessionId) {
+    showToast('No active session to export', 'info');
+    return;
+  }
+
+  var contentType = 'chat'; // Default export is chat transcript
+  if (activeTabId && activeTabId !== 'dashboard') {
+    var activePane = document.querySelector('.tab-pane.active');
+    var label = '';
+    var activeBtn = document.querySelector('.tab-item.active');
+    if (activeBtn) label = activeBtn.dataset.tabLabel || '';
+    if (label === 'Results') contentType = 'results';
+    else if (label === 'Query Builder') contentType = 'query';
+  }
+
+  try {
+    var r = await fetch('/api/lab/export', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        session_id: currentSessionId,
+        export_format: format,
+        content_type: contentType
+      }),
+    });
+    if (!r.ok) {
+      var err = await r.json();
+      showToast(err.detail || 'Export failed', 'error');
+      return;
+    }
+    var blob = await r.blob();
+    var ext = format;
+    if (format === 'latex') ext = 'tex';
+    if (format === 'python') ext = 'py';
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'export_' + currentAgentType + '_' + currentSessionId + '.' + ext;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Exported as ' + format.toUpperCase(), 'success');
+  } catch (e) {
+    showToast('Export failed: ' + e.message, 'error');
+  }
+}
+
+/* ══════════════════════════════════════════════
+   INIT
+   ══════════════════════════════════════════════ */
+async function init() {
+  await checkAuth();
+  await renderSidebar();
+
+  // Restore session if any
+  var savedSession = sessionStorage.getItem('lab_session_id');
+  if (savedSession) {
+    switchSession(parseInt(savedSession));
+  }
+
+  // Restore agent type if any
+  var savedAgent = sessionStorage.getItem('lab_agent_type');
+  if (savedAgent && AGENT_CONFIG[savedAgent]) {
+    switchAgent(savedAgent);
+  }
+}
+
+// Save agent type on switch
+var _origSwitch = switchAgent;
+switchAgent = function(agentType) {
+  sessionStorage.setItem('lab_agent_type', agentType);
+  _origSwitch(agentType);
+};
+
+init();
+</script>
+</body>
+</html>
