@@ -121,6 +121,8 @@ def _verify_password(password: str, stored_hash: str, stored_salt: str) -> bool:
 def init_db() -> None:
     conn = get_db()
     with conn:
+        # agent_skills must be created first (challenges table references it)
+        conn.executescript(SKILLS_TABLE_SQL)
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS users (
                 id            SERIAL PRIMARY KEY,
@@ -298,8 +300,6 @@ def init_db() -> None:
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        # Phase 1: agent skills
-        conn.executescript(SKILLS_TABLE_SQL)
         # Phase 3: billing, promo, agreements
         conn.executescript(BILLING_TABLES_SQL)
         conn.executescript(PROMO_TABLES_SQL)
