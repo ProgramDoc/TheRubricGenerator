@@ -34,28 +34,28 @@ logger = logging.getLogger("rubricgen")
 
 SEARCH_TABLES_SQL = """
 CREATE TABLE IF NOT EXISTS search_sessions (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id          SERIAL PRIMARY KEY,
     title       TEXT    NOT NULL DEFAULT 'New Search',
     user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     project_id  INTEGER REFERENCES projects(id) ON DELETE SET NULL,
     pico_json   TEXT,
-    created_at  TEXT    DEFAULT (datetime('now')),
-    updated_at  TEXT    DEFAULT (datetime('now'))
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_ss_user ON search_sessions(user_id);
 
 CREATE TABLE IF NOT EXISTS search_messages (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    id            SERIAL PRIMARY KEY,
     session_id    INTEGER NOT NULL REFERENCES search_sessions(id) ON DELETE CASCADE,
     role          TEXT    NOT NULL CHECK(role IN ('user','assistant','system')),
     content       TEXT    NOT NULL,
     metadata_json TEXT,
-    created_at    TEXT    DEFAULT (datetime('now'))
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_sm_session ON search_messages(session_id);
 
 CREATE TABLE IF NOT EXISTS search_results (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    id              SERIAL PRIMARY KEY,
     session_id      INTEGER NOT NULL REFERENCES search_sessions(id) ON DELETE CASCADE,
     query_version   INTEGER NOT NULL DEFAULT 0,
     database_name   TEXT    NOT NULL DEFAULT 'pubmed',
@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS search_results (
     selected        INTEGER DEFAULT 0,
     imported        INTEGER DEFAULT 0,
     paper_id        INTEGER REFERENCES papers(id) ON DELETE SET NULL,
-    fetched_at      TEXT    DEFAULT (datetime('now'))
+    fetched_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_sr_session ON search_results(session_id);
 CREATE INDEX IF NOT EXISTS idx_sr_session_ver ON search_results(session_id, query_version);
@@ -83,11 +83,11 @@ CREATE INDEX IF NOT EXISTS idx_sr_session_ver ON search_results(session_id, quer
 # Session CRUD
 # ─────────────────────────────────────────────
 
-def create_session(conn: sqlite3.Connection, user_id: int,
+def create_session(conn, user_id: int,
                    title: str = "New Search") -> dict:
     with conn:
         cur = conn.execute(
-            "INSERT INTO search_sessions (title, user_id) VALUES (?, ?)",
+            "INSERT INTO search_sessions (title, user_id) VALUES (?, ?) RETURNING id",
             (title[:200], user_id),
         )
         conn.commit()
@@ -160,7 +160,7 @@ def update_session_title(conn: sqlite3.Connection, session_id: int,
         raise HTTPException(404, "Session not found")
     with conn:
         conn.execute(
-            "UPDATE search_sessions SET title = ?, updated_at = datetime('now') WHERE id = ?",
+            "UPDATE search_sessions SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (title[:200].strip(), session_id),
         )
         conn.commit()
@@ -186,7 +186,7 @@ def update_session_project(conn: sqlite3.Connection, session_id: int,
             raise HTTPException(403, "You are not a member of this project")
     with conn:
         conn.execute(
-            "UPDATE search_sessions SET project_id = ?, updated_at = datetime('now') WHERE id = ?",
+            "UPDATE search_sessions SET project_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (project_id, session_id),
         )
         conn.commit()
@@ -220,16 +220,16 @@ def _generate_session_title(user_message: str) -> str:
 # Messages
 # ─────────────────────────────────────────────
 
-def add_message(conn: sqlite3.Connection, session_id: int, role: str,
+def add_message(conn, session_id: int, role: str,
                 content: str, metadata: dict | None = None) -> dict:
     meta_json = json.dumps(metadata) if metadata else None
     with conn:
         cur = conn.execute(
-            "INSERT INTO search_messages (session_id, role, content, metadata_json) VALUES (?, ?, ?, ?)",
+            "INSERT INTO search_messages (session_id, role, content, metadata_json) VALUES (?, ?, ?, ?) RETURNING id",
             (session_id, role, content, meta_json),
         )
         conn.execute(
-            "UPDATE search_sessions SET updated_at = datetime('now') WHERE id = ?",
+            "UPDATE search_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (session_id,),
         )
         conn.commit()
@@ -745,7 +745,7 @@ def import_results(conn: sqlite3.Connection, session_id: int,
                 with conn:
                     cur = conn.execute(
                         """INSERT INTO papers (filename, disk_filename, sha256, user_id, project_id)
-                           VALUES (?, ?, ?, ?, ?)""",
+                           VALUES (?, ?, ?, ?, ?) RETURNING id""",
                         (filename, f"{sha256}.pdf" if pdf_path else None, sha256, user_id, project_id),
                     )
                     paper_id = cur.lastrowid

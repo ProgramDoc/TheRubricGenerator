@@ -1,3 +1,9 @@
+databases:
+  - name: rubricgen-db
+    plan: free
+    databaseName: rubricgen
+    user: rubricgen
+
 services:
   - type: web
     name: therubricgenerator
@@ -6,6 +12,10 @@ services:
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /
     envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: rubricgen-db
+          property: connectionString
       - key: RENDER_DATA_DIR
         value: /var/data
       - key: OBSIDIAN_VAULT_DIR

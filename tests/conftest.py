@@ -38,6 +38,8 @@ def _patch_db(monkeypatch, _temp_dir):
     import main
     monkeypatch.setattr(main, "DB_PATH", db_path)
     monkeypatch.setattr(main, "PAPERS_DIR", papers_dir)
+    # Also set env var so backend.db.get_db() uses the test database
+    monkeypatch.setenv("SQLITE_DB_PATH", str(db_path))
 
     # Re-initialize the DB for a fresh state
     if db_path.exists():

@@ -13,7 +13,6 @@ import os
 import re
 import secrets
 import smtplib
-import sqlite3
 import urllib.error
 import urllib.request
 from email.message import EmailMessage
@@ -26,6 +25,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from backend.db import get_db, IntegrityError, is_postgres, column_exists
 from backend.helpers import (
     strip_markdown_fences as _strip_markdown_fences,
     call_anthropic as _call_anthropic,
@@ -64,6 +64,9 @@ DB_PATH    = DATA_DIR / "rubricgen.db"
 FRONTEND   = BASE_DIR / "frontend"
 
 PAPERS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Let backend.db know where the SQLite fallback lives
+os.environ.setdefault("SQLITE_DB_PATH", str(DB_PATH))
 
 OBSIDIAN_VAULT_DIR = Path(os.environ.get("OBSIDIAN_VAULT_DIR", str(DATA_DIR / "obsidian_vault")))
 OBSIDIAN_VAULT_DIR.mkdir(parents=True, exist_ok=True)
@@ -113,68 +116,60 @@ def _verify_password(password: str, stored_hash: str, stored_salt: str) -> bool:
 
 
 # ─────────────────────────────────────────────
-# DB
+# DB (connection factory imported from backend.db)
 # ─────────────────────────────────────────────
-def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
 def init_db() -> None:
     conn = get_db()
     with conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS users (
-                id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                email         TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+                id            SERIAL PRIMARY KEY,
+                email         TEXT    NOT NULL UNIQUE,
                 display_name  TEXT    NOT NULL,
                 password_hash TEXT    NOT NULL,
                 password_salt TEXT    NOT NULL,
                 role          TEXT    NOT NULL DEFAULT 'reviewer',
-                created_at    TEXT    DEFAULT (datetime('now'))
+                created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
             CREATE TABLE IF NOT EXISTS sessions (
                 token      TEXT    PRIMARY KEY,
                 user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                created_at TEXT    DEFAULT (datetime('now')),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 expires_at TEXT    NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS projects (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         SERIAL PRIMARY KEY,
                 name       TEXT    NOT NULL,
                 user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                created_at TEXT    DEFAULT (datetime('now'))
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
             CREATE TABLE IF NOT EXISTS papers (
-                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                id            SERIAL PRIMARY KEY,
                 filename      TEXT    NOT NULL,
                 disk_filename TEXT,
                 sha256        TEXT    NOT NULL,
                 user_id       INTEGER REFERENCES users(id) ON DELETE CASCADE,
                 project_id    INTEGER REFERENCES projects(id) ON DELETE SET NULL,
-                created_at    TEXT    DEFAULT (datetime('now')),
+                created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(sha256, user_id)
             );
 
             CREATE TABLE IF NOT EXISTS rubrics (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                id           SERIAL PRIMARY KEY,
                 paper_id     INTEGER NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
                 user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 rubric_type  TEXT    NOT NULL DEFAULT 'classification',
                 rubric_json  TEXT    NOT NULL DEFAULT '{}',
                 instructions TEXT,
-                created_at   TEXT    DEFAULT (datetime('now')),
-                updated_at   TEXT    DEFAULT (datetime('now'))
+                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
             CREATE TABLE IF NOT EXISTS evaluations (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          SERIAL PRIMARY KEY,
                 rubric_id   INTEGER NOT NULL REFERENCES rubrics(id) ON DELETE CASCADE,
                 paper_id    INTEGER NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
                 user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -184,13 +179,13 @@ def init_db() -> None:
                 total_score REAL    DEFAULT 0,
                 max_score   REAL    DEFAULT 0,
                 status      TEXT    DEFAULT 'pending',
-                created_at  TEXT    DEFAULT (datetime('now'))
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
             CREATE TABLE IF NOT EXISTS password_resets (
                 token      TEXT    PRIMARY KEY,
                 user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                created_at TEXT    DEFAULT (datetime('now')),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 expires_at TEXT    NOT NULL,
                 used       INTEGER NOT NULL DEFAULT 0
             );
@@ -202,13 +197,13 @@ def init_db() -> None:
 
             -- ─── Benchmark platform (Phase 1) ───
             CREATE TABLE IF NOT EXISTS challenges (
-                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                id                  SERIAL PRIMARY KEY,
                 title               TEXT    NOT NULL,
                 theme               TEXT,
                 kind                TEXT    NOT NULL DEFAULT 'manual' CHECK(kind IN ('manual','daily','dry_run')),
                 status              TEXT    NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','running','complete','failed')),
                 created_by          INTEGER REFERENCES users(id) ON DELETE SET NULL,
-                created_at          TEXT    DEFAULT (datetime('now')),
+                created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 started_at          TEXT,
                 completed_at        TEXT,
                 generator_skill_id  INTEGER REFERENCES agent_skills(id) ON DELETE SET NULL,
@@ -225,16 +220,16 @@ def init_db() -> None:
             );
 
             CREATE TABLE IF NOT EXISTS challenge_rubrics (
-                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                id                 SERIAL PRIMARY KEY,
                 challenge_id       INTEGER NOT NULL UNIQUE REFERENCES challenges(id) ON DELETE CASCADE,
                 rubric_json        TEXT    NOT NULL,
                 generation_time_ms INTEGER NOT NULL DEFAULT 0,
                 generator_skill_id INTEGER REFERENCES agent_skills(id) ON DELETE SET NULL,
-                created_at         TEXT    DEFAULT (datetime('now'))
+                created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
             CREATE TABLE IF NOT EXISTS model_participants (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                id              SERIAL PRIMARY KEY,
                 challenge_id    INTEGER NOT NULL REFERENCES challenges(id) ON DELETE CASCADE,
                 model_id        TEXT    NOT NULL,
                 provider        TEXT    NOT NULL,
@@ -247,7 +242,7 @@ def init_db() -> None:
                 total_score     REAL    DEFAULT 0,
                 status          TEXT    NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','answering','answered','grading','graded','failed')),
                 error_message   TEXT,
-                created_at      TEXT    DEFAULT (datetime('now')),
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(challenge_id, model_id)
             );
 
@@ -258,7 +253,7 @@ def init_db() -> None:
                 cumulative_score    REAL    DEFAULT 0,
                 avg_accuracy        REAL    DEFAULT 0,
                 avg_speed_bonus     REAL    DEFAULT 0,
-                last_updated        TEXT    DEFAULT (datetime('now'))
+                last_updated        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
             CREATE INDEX IF NOT EXISTS idx_challenges_status ON challenges(status);
@@ -266,14 +261,14 @@ def init_db() -> None:
 
             -- ─── Phase 1.5: Model registry ───
             CREATE TABLE IF NOT EXISTS registered_models (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                name         TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+                id           SERIAL PRIMARY KEY,
+                name         TEXT    NOT NULL UNIQUE,
                 version      TEXT    NOT NULL,
                 provider     TEXT,
                 git_repo     TEXT,
                 organization TEXT,
                 created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
-                created_at   TEXT    DEFAULT (datetime('now'))
+                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
             CREATE TABLE IF NOT EXISTS registered_model_members (
@@ -291,7 +286,7 @@ def init_db() -> None:
                 user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 role       TEXT    NOT NULL DEFAULT 'member' CHECK(role IN ('admin','member')),
                 added_by   INTEGER REFERENCES users(id),
-                added_at   TEXT    DEFAULT (datetime('now')),
+                added_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (project_id, user_id)
             );
             CREATE INDEX IF NOT EXISTS idx_pm_user ON project_members(user_id);
@@ -300,7 +295,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS scheduler_state (
                 key        TEXT PRIMARY KEY,
                 value      TEXT,
-                updated_at TEXT DEFAULT (datetime('now'))
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
         # Phase 1: agent skills
@@ -313,7 +308,7 @@ def init_db() -> None:
         # Phase 5: competition submissions
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS challenge_submissions (
-                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                id                  SERIAL PRIMARY KEY,
                 challenge_id        INTEGER NOT NULL REFERENCES challenges(id) ON DELETE CASCADE,
                 registered_model_id INTEGER NOT NULL REFERENCES registered_models(id) ON DELETE CASCADE,
                 answer_json         TEXT,
@@ -323,7 +318,7 @@ def init_db() -> None:
                 accuracy            REAL    DEFAULT 0,
                 points              INTEGER DEFAULT 0,
                 status              TEXT    DEFAULT 'open' CHECK(status IN ('open','submitted','grading','graded','failed','expired')),
-                created_at          TEXT    DEFAULT (datetime('now')),
+                created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(challenge_id, registered_model_id)
             );
             CREATE INDEX IF NOT EXISTS idx_cs_challenge ON challenge_submissions(challenge_id);
@@ -332,7 +327,7 @@ def init_db() -> None:
         # Phase 6: analytics & notifications
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS analytics_snapshots (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         SERIAL PRIMARY KEY,
                 model_id   TEXT NOT NULL,
                 theme      TEXT,
                 difficulty TEXT,
@@ -340,7 +335,7 @@ def init_db() -> None:
                 correct    INTEGER DEFAULT 0,
                 total      INTEGER DEFAULT 0,
                 accuracy   REAL    DEFAULT 0,
-                updated_at TEXT    DEFAULT (datetime('now')),
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(model_id, theme, difficulty)
             );
             CREATE INDEX IF NOT EXISTS idx_as_model ON analytics_snapshots(model_id);
@@ -349,7 +344,7 @@ def init_db() -> None:
                 user_id         INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
                 daily_complete  INTEGER DEFAULT 0,
                 weekly_digest   INTEGER DEFAULT 0,
-                updated_at      TEXT DEFAULT (datetime('now'))
+                updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
         # Phase 7: organizations
@@ -363,11 +358,11 @@ def init_db() -> None:
         # Project invitations (for unregistered users)
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS project_invitations (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          SERIAL PRIMARY KEY,
                 project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-                email       TEXT    NOT NULL COLLATE NOCASE,
+                email       TEXT    NOT NULL,
                 invited_by  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                created_at  TEXT    DEFAULT (datetime('now')),
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 accepted_at TEXT,
                 UNIQUE(project_id, email)
             );
@@ -417,121 +412,113 @@ def init_db() -> None:
 def _migrate_challenges_columns(conn) -> None:
     """Phase 1.5 additive migration: add project_id, visibility, difficulty,
     registered_model_id columns to challenges if missing."""
-    cols = {r["name"] for r in conn.execute("PRAGMA table_info(challenges)").fetchall()}
     with conn:
-        if "project_id" not in cols:
+        if not column_exists(conn, "challenges", "project_id"):
             conn.execute("ALTER TABLE challenges ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL")
-        if "visibility" not in cols:
+        if not column_exists(conn, "challenges", "visibility"):
             conn.execute("ALTER TABLE challenges ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'")
-        if "difficulty" not in cols:
+        if not column_exists(conn, "challenges", "difficulty"):
             conn.execute("ALTER TABLE challenges ADD COLUMN difficulty TEXT")
-        if "registered_model_id" not in cols:
+        if not column_exists(conn, "challenges", "registered_model_id"):
             conn.execute("ALTER TABLE challenges ADD COLUMN registered_model_id INTEGER REFERENCES registered_models(id) ON DELETE SET NULL")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_challenges_project ON challenges(project_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_challenges_visibility ON challenges(visibility)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_challenges_owner_vis ON challenges(created_by, visibility)")
         conn.commit()
     # Migrate challenges kind CHECK to allow 'dry_run'
-    # SQLite doesn't support ALTER CONSTRAINT, so we disable foreign keys
-    # temporarily and recreate the table if the check doesn't include dry_run.
-    # Pragmatic approach: just try inserting and deleting a dry_run row.
+    # PostgreSQL CHECK constraints include 'dry_run' from creation, so this
+    # table-recreation is only needed for legacy SQLite databases.
     try:
         conn.execute("INSERT INTO challenges (title, theme, kind, status, created_by) VALUES ('__migrate_test','','dry_run','pending',NULL)")
         conn.execute("DELETE FROM challenges WHERE title='__migrate_test'")
         conn.commit()
     except Exception:
-        # CHECK constraint rejected 'dry_run' — need to recreate table.
-        # This is safe because CREATE TABLE IF NOT EXISTS already ran with the new CHECK.
-        logger.info("Migrating challenges table to support kind='dry_run'...")
-        try:
-            conn.executescript("""
-                PRAGMA foreign_keys=OFF;
-                CREATE TABLE IF NOT EXISTS challenges_new (
-                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-                    title               TEXT    NOT NULL,
-                    theme               TEXT,
-                    kind                TEXT    NOT NULL DEFAULT 'manual' CHECK(kind IN ('manual','daily','dry_run')),
-                    status              TEXT    NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','running','complete','failed')),
-                    created_by          INTEGER REFERENCES users(id) ON DELETE SET NULL,
-                    created_at          TEXT    DEFAULT (datetime('now')),
-                    started_at          TEXT,
-                    completed_at        TEXT,
-                    generator_skill_id  INTEGER REFERENCES agent_skills(id) ON DELETE SET NULL,
-                    judge_skill_id      INTEGER REFERENCES agent_skills(id) ON DELETE SET NULL,
-                    generator_score     REAL,
-                    judge_score         REAL,
-                    error_message       TEXT,
-                    project_id          INTEGER REFERENCES projects(id) ON DELETE SET NULL,
-                    visibility          TEXT    NOT NULL DEFAULT 'private',
-                    difficulty          TEXT,
-                    registered_model_id INTEGER REFERENCES registered_models(id) ON DELETE SET NULL
-                );
-                INSERT INTO challenges_new SELECT id,title,theme,kind,status,created_by,created_at,started_at,completed_at,generator_skill_id,judge_skill_id,generator_score,judge_score,error_message,project_id,visibility,difficulty,registered_model_id FROM challenges;
-                DROP TABLE challenges;
-                ALTER TABLE challenges_new RENAME TO challenges;
-                PRAGMA foreign_keys=ON;
-            """)
-            conn.commit()
-        except Exception as e:
-            logger.error("challenges table migration failed: %s", e)
+        if not is_postgres():
+            # SQLite: CHECK constraint rejected 'dry_run' — recreate table.
+            logger.info("Migrating challenges table to support kind='dry_run'...")
+            try:
+                conn.executescript("""
+                    CREATE TABLE IF NOT EXISTS challenges_new (
+                        id                  SERIAL PRIMARY KEY,
+                        title               TEXT    NOT NULL,
+                        theme               TEXT,
+                        kind                TEXT    NOT NULL DEFAULT 'manual' CHECK(kind IN ('manual','daily','dry_run')),
+                        status              TEXT    NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','running','complete','failed')),
+                        created_by          INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                        created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        started_at          TEXT,
+                        completed_at        TEXT,
+                        generator_skill_id  INTEGER REFERENCES agent_skills(id) ON DELETE SET NULL,
+                        judge_skill_id      INTEGER REFERENCES agent_skills(id) ON DELETE SET NULL,
+                        generator_score     REAL,
+                        judge_score         REAL,
+                        error_message       TEXT,
+                        project_id          INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+                        visibility          TEXT    NOT NULL DEFAULT 'private',
+                        difficulty          TEXT,
+                        registered_model_id INTEGER REFERENCES registered_models(id) ON DELETE SET NULL
+                    );
+                    INSERT INTO challenges_new SELECT id,title,theme,kind,status,created_by,created_at,started_at,completed_at,generator_skill_id,judge_skill_id,generator_score,judge_score,error_message,project_id,visibility,difficulty,registered_model_id FROM challenges;
+                    DROP TABLE challenges;
+                    ALTER TABLE challenges_new RENAME TO challenges;
+                """)
+                conn.commit()
+            except Exception as e:
+                logger.error("challenges table migration failed: %s", e)
+        else:
+            conn.rollback()
 
     # Phase 3: add API fields to registered_models
-    rm_cols = {r["name"] for r in conn.execute("PRAGMA table_info(registered_models)").fetchall()}
     with conn:
-        if "api_base_url" not in rm_cols:
+        if not column_exists(conn, "registered_models", "api_base_url"):
             conn.execute("ALTER TABLE registered_models ADD COLUMN api_base_url TEXT")
-        if "api_key_encrypted" not in rm_cols:
+        if not column_exists(conn, "registered_models", "api_key_encrypted"):
             conn.execute("ALTER TABLE registered_models ADD COLUMN api_key_encrypted TEXT")
-        if "price_per_test_credits" not in rm_cols:
+        if not column_exists(conn, "registered_models", "price_per_test_credits"):
             conn.execute("ALTER TABLE registered_models ADD COLUMN price_per_test_credits INTEGER DEFAULT 0")
-        if "public_for_testing" not in rm_cols:
+        if not column_exists(conn, "registered_models", "public_for_testing"):
             conn.execute("ALTER TABLE registered_models ADD COLUMN public_for_testing INTEGER DEFAULT 0")
-        if "active_for_daily" not in rm_cols:
+        if not column_exists(conn, "registered_models", "active_for_daily"):
             conn.execute("ALTER TABLE registered_models ADD COLUMN active_for_daily INTEGER DEFAULT 0")
-        if "daily_admin_approved" not in rm_cols:
+        if not column_exists(conn, "registered_models", "daily_admin_approved"):
             conn.execute("ALTER TABLE registered_models ADD COLUMN daily_admin_approved INTEGER DEFAULT 0")
-        if "agreement_signed_at" not in rm_cols:
+        if not column_exists(conn, "registered_models", "agreement_signed_at"):
             conn.execute("ALTER TABLE registered_models ADD COLUMN agreement_signed_at TEXT")
-        if "model_api_key" not in rm_cols:
+        if not column_exists(conn, "registered_models", "model_api_key"):
             conn.execute("ALTER TABLE registered_models ADD COLUMN model_api_key TEXT")
             conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_rm_api_key ON registered_models(model_api_key)")
         conn.commit()
     # Phase 3.5: role on project_members
-    pm_cols = {r["name"] for r in conn.execute("PRAGMA table_info(project_members)").fetchall()}
-    if pm_cols and "role" not in pm_cols:
+    if not column_exists(conn, "project_members", "role"):
         with conn:
             conn.execute("ALTER TABLE project_members ADD COLUMN role TEXT NOT NULL DEFAULT 'member'")
             conn.commit()
     # Phase 3.5: can_run on model members, points on participants
-    rmm_cols = {r["name"] for r in conn.execute("PRAGMA table_info(registered_model_members)").fetchall()}
     with conn:
-        if "can_run" not in rmm_cols:
+        if not column_exists(conn, "registered_model_members", "can_run"):
             conn.execute("ALTER TABLE registered_model_members ADD COLUMN can_run INTEGER NOT NULL DEFAULT 0")
         conn.commit()
-    mp_cols = {r["name"] for r in conn.execute("PRAGMA table_info(model_participants)").fetchall()}
     with conn:
-        if "points" not in mp_cols:
+        if not column_exists(conn, "model_participants", "points"):
             conn.execute("ALTER TABLE model_participants ADD COLUMN points INTEGER DEFAULT 0")
         conn.commit()
     # Phase 3.5: daily leaderboard columns
-    lb_cols = {r["name"] for r in conn.execute("PRAGMA table_info(leaderboard_cache)").fetchall()}
     with conn:
-        if "total_points" not in lb_cols:
+        if not column_exists(conn, "leaderboard_cache", "total_points"):
             conn.execute("ALTER TABLE leaderboard_cache ADD COLUMN total_points INTEGER DEFAULT 0")
-        if "daily_points" not in lb_cols:
+        if not column_exists(conn, "leaderboard_cache", "daily_points"):
             conn.execute("ALTER TABLE leaderboard_cache ADD COLUMN daily_points INTEGER DEFAULT 0")
-        if "daily_streak" not in lb_cols:
+        if not column_exists(conn, "leaderboard_cache", "daily_streak"):
             conn.execute("ALTER TABLE leaderboard_cache ADD COLUMN daily_streak INTEGER DEFAULT 0")
-        if "daily_rank_change" not in lb_cols:
+        if not column_exists(conn, "leaderboard_cache", "daily_rank_change"):
             conn.execute("ALTER TABLE leaderboard_cache ADD COLUMN daily_rank_change INTEGER DEFAULT 0")
         conn.commit()
 
 
 def _migrate_org_columns(conn) -> None:
     """Phase 7 additive migration: add org_id to registered_models if missing."""
-    rm_cols = {r["name"] for r in conn.execute("PRAGMA table_info(registered_models)").fetchall()}
     with conn:
-        if "org_id" not in rm_cols:
+        if not column_exists(conn, "registered_models", "org_id"):
             conn.execute("ALTER TABLE registered_models ADD COLUMN org_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_rm_org ON registered_models(org_id)")
         conn.commit()
@@ -539,57 +526,53 @@ def _migrate_org_columns(conn) -> None:
 
 def _migrate_challenge_columns_v2(conn) -> None:
     """Add run_id, cost_estimate, cost_approved, org_id to challenges if missing."""
-    cols = {r["name"] for r in conn.execute("PRAGMA table_info(challenges)").fetchall()}
     with conn:
-        if "run_id" not in cols:
+        if not column_exists(conn, "challenges", "run_id"):
             conn.execute("ALTER TABLE challenges ADD COLUMN run_id TEXT")
-        if "cost_estimate" not in cols:
+        if not column_exists(conn, "challenges", "cost_estimate"):
             conn.execute("ALTER TABLE challenges ADD COLUMN cost_estimate INTEGER")
-        if "cost_approved" not in cols:
+        if not column_exists(conn, "challenges", "cost_approved"):
             conn.execute("ALTER TABLE challenges ADD COLUMN cost_approved INTEGER NOT NULL DEFAULT 0")
-        if "org_id" not in cols:
+        if not column_exists(conn, "challenges", "org_id"):
             conn.execute("ALTER TABLE challenges ADD COLUMN org_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL")
         # Challenge events table
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS challenge_events (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                id           SERIAL PRIMARY KEY,
                 challenge_id INTEGER NOT NULL REFERENCES challenges(id) ON DELETE CASCADE,
                 event_type   TEXT NOT NULL,
                 message      TEXT NOT NULL,
                 detail_json  TEXT,
-                created_at   TEXT DEFAULT (datetime('now'))
+                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS idx_ce_challenge ON challenge_events(challenge_id);
         """)
         # User API keys
-        user_cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
-        if "api_key" not in user_cols:
+        if not column_exists(conn, "users", "api_key"):
             conn.execute("ALTER TABLE users ADD COLUMN api_key TEXT")
             conn.execute("ALTER TABLE users ADD COLUMN api_key_created_at TEXT")
             conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_api_key ON users(api_key)")
         # Model version history table
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS model_versions (
-                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                id                  SERIAL PRIMARY KEY,
                 registered_model_id INTEGER NOT NULL REFERENCES registered_models(id) ON DELETE CASCADE,
                 version             TEXT NOT NULL,
                 changelog           TEXT,
                 created_by          INTEGER REFERENCES users(id),
-                created_at          TEXT DEFAULT (datetime('now'))
+                created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS idx_mv_model ON model_versions(registered_model_id);
         """)
-        rm_cols = {r["name"] for r in conn.execute("PRAGMA table_info(registered_models)").fetchall()}
-        if "updated_at" not in rm_cols:
+        if not column_exists(conn, "registered_models", "updated_at"):
             conn.execute("ALTER TABLE registered_models ADD COLUMN updated_at TEXT")
         conn.commit()
 
 
 def _migrate_search_sessions_columns(conn) -> None:
     """Add project_id to search_sessions if missing."""
-    cols = {r["name"] for r in conn.execute("PRAGMA table_info(search_sessions)").fetchall()}
     with conn:
-        if "project_id" not in cols:
+        if not column_exists(conn, "search_sessions", "project_id"):
             conn.execute("ALTER TABLE search_sessions ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_ss_project ON search_sessions(project_id)")
         conn.commit()
@@ -604,7 +587,7 @@ def _ensure_admin_user() -> None:
         ph, ps = _hash_password(ADMIN_SECRET)
         with conn:
             conn.execute(
-                "INSERT OR IGNORE INTO users (email, display_name, password_hash, password_salt, role) VALUES (?,?,?,?,?)",
+                "INSERT INTO users (email, display_name, password_hash, password_salt, role) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING",
                 (ADMIN_EMAIL, ADMIN_NAME, ph, ps, "admin"),
             )
             conn.commit()
@@ -626,7 +609,7 @@ def _ensure_system_user() -> None:
         ph, ps = _hash_password(random_secret)
         with conn:
             conn.execute(
-                "INSERT OR IGNORE INTO users (email, display_name, password_hash, password_salt, role) VALUES (?,?,?,?,?)",
+                "INSERT INTO users (email, display_name, password_hash, password_salt, role) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING",
                 (SYSTEM_EMAIL, SYSTEM_NAME, ph, ps, "system"),
             )
             conn.commit()
@@ -996,7 +979,7 @@ def register(body: RegisterPayload):
                 (email, name, ph, ps),
             )
             conn.commit()
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         raise HTTPException(409, "Email already registered")
     # Phase 7: auto-join orgs by email domain
     try:
@@ -1015,11 +998,11 @@ def register(body: RegisterPayload):
             for inv in invitations:
                 with conn:
                     conn.execute(
-                        "INSERT OR IGNORE INTO project_members (project_id, user_id, role, added_by) VALUES (?,?,?,?)",
+                        "INSERT INTO project_members (project_id, user_id, role, added_by) VALUES (?,?,?,?) ON CONFLICT DO NOTHING",
                         (inv["project_id"], user_row["id"], "member", inv["invited_by"]),
                     )
                     conn.execute(
-                        "UPDATE project_invitations SET accepted_at=datetime('now') WHERE id=?",
+                        "UPDATE project_invitations SET accepted_at=CURRENT_TIMESTAMP WHERE id=?",
                         (inv["id"],),
                     )
                     conn.commit()
@@ -1654,7 +1637,7 @@ def api_cancel_challenge(cid: int, rubricgen_session: str | None = Cookie(defaul
             raise HTTPException(400, "Can only cancel pending or running challenges")
         with conn:
             conn.execute(
-                "UPDATE challenges SET status='failed', error_message='Cancelled by user', completed_at=datetime('now') WHERE id=?",
+                "UPDATE challenges SET status='failed', error_message='Cancelled by user', completed_at=CURRENT_TIMESTAMP WHERE id=?",
                 (cid,),
             )
             conn.commit()
@@ -2338,7 +2321,7 @@ def api_agreements_status(rubricgen_session: str | None = Cookie(default=None)):
 SUBMISSION_WINDOW_HOURS = int(os.environ.get("SUBMISSION_WINDOW_HOURS", "24"))
 
 
-def _auth_model_key(request: Request, conn: sqlite3.Connection) -> dict:
+def _auth_model_key(request: Request, conn) -> dict:
     """Authenticate a request via X-Model-Key header. Returns the registered model dict."""
     api_key = request.headers.get("X-Model-Key", "").strip()
     if not api_key:
@@ -2407,9 +2390,9 @@ def compete_get_questions(challenge_id: int, request: Request):
 
         # Ensure a submission slot exists
         conn.execute(
-            """INSERT OR IGNORE INTO challenge_submissions
+            """INSERT INTO challenge_submissions
                (challenge_id, registered_model_id, status)
-               VALUES (?,?,?)""",
+               VALUES (?,?,?) ON CONFLICT DO NOTHING""",
             (challenge_id, model["id"], "open"),
         )
         conn.commit()
@@ -2455,7 +2438,7 @@ def compete_submit(challenge_id: int, body: CompeteSubmitPayload, request: Reque
         with conn:
             conn.execute(
                 """UPDATE challenge_submissions
-                   SET answer_json=?, submitted_at=datetime('now'), status='submitted'
+                   SET answer_json=?, submitted_at=CURRENT_TIMESTAMP, status='submitted'
                    WHERE id=?""",
                 (answer_json, sub["id"]),
             )
@@ -2736,7 +2719,7 @@ def create_project(body: ProjectCreatePayload, rubricgen_session: str | None = C
         raise HTTPException(400, "Project name must be 200 characters or fewer")
     conn = get_db()
     with conn:
-        cur = conn.execute("INSERT INTO projects (name, user_id) VALUES (?,?)", (name, user["id"]))
+        cur = conn.execute("INSERT INTO projects (name, user_id) VALUES (?,?) RETURNING id", (name, user["id"]))
         pid = cur.lastrowid
         conn.commit()
     # Share with provided emails
@@ -2754,7 +2737,7 @@ def create_project(body: ProjectCreatePayload, rubricgen_session: str | None = C
                 continue
             with conn:
                 conn.execute(
-                    "INSERT OR IGNORE INTO project_members (project_id, user_id, role, added_by) VALUES (?,?,?,?)",
+                    "INSERT INTO project_members (project_id, user_id, role, added_by) VALUES (?,?,?,?) ON CONFLICT DO NOTHING",
                     (pid, target["id"], "member", user["id"]),
                 )
                 conn.commit()
@@ -2872,7 +2855,7 @@ def share_project(pid: int, body: ShareProjectPayload,
         # Unregistered user — store pending invitation and send registration invite
         with conn:
             conn.execute(
-                "INSERT OR IGNORE INTO project_invitations (project_id, email, invited_by) VALUES (?,?,?)",
+                "INSERT INTO project_invitations (project_id, email, invited_by) VALUES (?,?,?) ON CONFLICT DO NOTHING",
                 (pid, email, user["id"]),
             )
             conn.commit()
@@ -2897,7 +2880,7 @@ def share_project(pid: int, body: ShareProjectPayload,
         raise HTTPException(400, "Cannot share a project with yourself")
     with conn:
         conn.execute(
-            "INSERT OR IGNORE INTO project_members (project_id, user_id, role, added_by) VALUES (?,?,?,?)",
+            "INSERT INTO project_members (project_id, user_id, role, added_by) VALUES (?,?,?,?) ON CONFLICT DO NOTHING",
             (pid, target["id"], "member", user["id"]),
         )
         conn.commit()
@@ -2945,7 +2928,7 @@ def transfer_project_admin(pid: int, body: TransferAdminPayload,
                      (pid, body.new_admin_user_id))
         # Add old admin as a regular member
         conn.execute(
-            "INSERT OR IGNORE INTO project_members (project_id, user_id, role, added_by) VALUES (?,?,?,?)",
+            "INSERT INTO project_members (project_id, user_id, role, added_by) VALUES (?,?,?,?) ON CONFLICT DO NOTHING",
             (pid, user["id"], "member", body.new_admin_user_id),
         )
         conn.commit()
@@ -3050,7 +3033,7 @@ async def upload_paper(
         (PAPERS_DIR / disk_name).write_bytes(content)
         with conn:
             cur = conn.execute(
-                "INSERT INTO papers (filename, disk_filename, sha256, user_id, project_id) VALUES (?,?,?,?,?)",
+                "INSERT INTO papers (filename, disk_filename, sha256, user_id, project_id) VALUES (?,?,?,?,?) RETURNING id",
                 (file.filename, disk_name, sha256, user["id"], project_id),
             )
             conn.commit()
@@ -3237,13 +3220,13 @@ Make ideal_answer specific to this exact paper's content — include actual valu
     with conn:
         if existing:
             conn.execute(
-                "UPDATE rubrics SET rubric_json=?, instructions=?, updated_at=datetime('now') WHERE id=?",
+                "UPDATE rubrics SET rubric_json=?, instructions=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
                 (json.dumps(rubric), body.instructions, existing["id"]),
             )
             rubric_id = existing["id"]
         else:
             cur = conn.execute(
-                "INSERT INTO rubrics (paper_id, user_id, rubric_type, rubric_json, instructions) VALUES (?,?,?,?,?)",
+                "INSERT INTO rubrics (paper_id, user_id, rubric_type, rubric_json, instructions) VALUES (?,?,?,?,?) RETURNING id",
                 (body.paper_id, user["id"], body.rubric_type, json.dumps(rubric), body.instructions),
             )
             rubric_id = cur.lastrowid
@@ -3280,7 +3263,7 @@ def save_rubric(rid: int, body: SaveRubricRequest, rubricgen_session: str | None
     conn = get_db()
     with conn:
         conn.execute(
-            "UPDATE rubrics SET rubric_json=?, instructions=?, rubric_type=?, updated_at=datetime('now') WHERE id=? AND user_id=?",
+            "UPDATE rubrics SET rubric_json=?, instructions=?, rubric_type=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?",
             (json.dumps(body.rubric_json), body.instructions, body.rubric_type, rid, user["id"]),
         )
         conn.commit()
@@ -3386,7 +3369,7 @@ Respond ONLY with the JSON object, no preamble."""
     conn = get_db()
     with conn:
         cur = conn.execute(
-            "INSERT INTO evaluations (rubric_id, paper_id, user_id, eval_model, eval_json, status) VALUES (?,?,?,?,?,?)",
+            "INSERT INTO evaluations (rubric_id, paper_id, user_id, eval_model, eval_json, status) VALUES (?,?,?,?,?,?) RETURNING id",
             (body.rubric_id, body.paper_id, user["id"], model, json.dumps(eval_data), "evaluated"),
         )
         eval_id = cur.lastrowid
@@ -3895,7 +3878,7 @@ def api_generate_api_key(rubricgen_session: str | None = Cookie(default=None)):
     try:
         with conn:
             conn.execute(
-                "UPDATE users SET api_key=?, api_key_created_at=datetime('now') WHERE id=?",
+                "UPDATE users SET api_key=?, api_key_created_at=CURRENT_TIMESTAMP WHERE id=?",
                 (new_key, user["id"]),
             )
             conn.commit()
@@ -4379,7 +4362,7 @@ def api_generate_comparative(body: dict, rubricgen_session: str | None = Cookie(
         with conn:
             cur = conn.execute(
                 """INSERT INTO rubrics (paper_id, user_id, rubric_type, rubric_json, instructions)
-                   VALUES (?, ?, 'comparative', ?, ?)""",
+                   VALUES (?, ?, 'comparative', ?, ?) RETURNING id""",
                 (paper_ids[0], user["id"], rubric_json,
                  f"Comparative rubric across papers: {', '.join(str(p) for p in paper_ids)}"),
             )
@@ -4597,11 +4580,11 @@ def api_set_notification_prefs(body: NotificationPrefsBody, rubricgen_session: s
     with conn:
         conn.execute(
             """INSERT INTO notification_preferences (user_id, daily_complete, weekly_digest, updated_at)
-               VALUES (?, ?, ?, datetime('now'))
+               VALUES (?, ?, ?, CURRENT_TIMESTAMP)
                ON CONFLICT(user_id) DO UPDATE SET
                  daily_complete = excluded.daily_complete,
                  weekly_digest = excluded.weekly_digest,
-                 updated_at = datetime('now')""",
+                 updated_at = CURRENT_TIMESTAMP""",
             (user["id"], int(body.daily_complete), int(body.weekly_digest)),
         )
         conn.commit()

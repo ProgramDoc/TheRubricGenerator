@@ -26,9 +26,107 @@ from pathlib import Path
 
 from .helpers import call_anthropic, call_gemini, parse_json_response, time_ms
 from .skills import get_active_skill, list_skill_versions
-from .obsidian import write_skill_note
+from .obsidian import (
+    write_agent_skill_file,
+    write_agent_history_file,
+    write_experiment_note,
+)
 
 logger = logging.getLogger("rubricgen")
+
+
+# ─────────────────────────────────────────────
+# Seed program.md files (Karpathy autoresearch meta-learner control plane)
+# Written once at startup; human-edited thereafter; re-read on every run.
+# ─────────────────────────────────────────────
+
+GENERATOR_PROGRAM_MD = """# Generator Skill — Meta-Learner Program
+
+This file is the **human-editable control plane** for the rubric-generator
+autoresearch loop. It is re-read on every self-improvement experiment and
+injected into the meta-Claude prompt as PROGRAM INSTRUCTIONS. Edit freely.
+
+## Objective
+Maximize the quality of benchmark rubrics generated from clinical research
+PDFs, measured by: verifiability, specificity, discrimination, clarity.
+
+## Current hypotheses (2026-04)
+1. More concrete few-shot examples should improve specificity.
+2. Over-long domain guidance degrades focus on numerical extraction.
+3. Explicit partial-credit templates in scoring_criteria reduce judge
+   validity penalties downstream.
+
+## Search directions (ordered by priority)
+- Add/refine ONE concrete good-question exemplar per edit
+- Tighten verbose domain descriptions where they repeat each other
+- Introduce stricter language about numerical extraction and CI reporting
+- Experiment with tighter token budgets on scoring_criteria to force clarity
+
+## Do NOT
+- Change the output JSON schema (breaking change for downstream parsers)
+- Remove the 11-domain enum — downstream filters depend on the exact keys
+- Remove the "exactly 10 questions" count for default challenges
+- Make multiple unrelated edits in one proposal (one change at a time)
+
+## Accept criterion
+An edit is kept iff lightweight eval quality score strictly improves.
+Ties go to the simpler prompt (autoresearch simplicity rule).
+
+## History notes
+Append manual observations here after reviewing experiment artifacts in
+`experiments/`. The meta-learner will read these as additional context.
+"""
+
+
+JUDGE_PROGRAM_MD = """# Judge Skill — Meta-Learner Program
+
+Human-editable control plane for the rubric-judge autoresearch loop.
+Re-read on every self-improvement experiment.
+
+## Objective
+Maximize grading consistency and discrimination: the judge should score
+clearly-correct answers high and clearly-wrong answers low, with stable
+partial-credit decisions under re-grading.
+
+## Current hypotheses (2026-04)
+1. Explicit per-domain rubric-interpretation guidance reduces variance.
+2. Examples of partial-credit decisions improve cross-run consistency.
+3. Overly strict numerical language causes false zeros on rounding.
+
+## Search directions
+- Tighten per-domain guidance where variance is highest
+- Add one worked-example partial-credit decision per edit
+- Refine the rubric_validity flag language so flags are rare but reliable
+- Experiment with simpler overall_comments instructions
+
+## Do NOT
+- Change the output JSON schema (grades[], total_score, max_score, etc.)
+- Remove rubric_validity — downstream generator scoring depends on it
+- Collapse per-domain guidance into one block (kills domain-specific signal)
+- Make multiple unrelated edits in one proposal
+
+## Accept criterion
+An edit is kept iff the lightweight discrimination score strictly
+improves (correct_answer_score - wrong_answer_score grows).
+Ties go to the simpler prompt.
+
+## History notes
+Append observations here; the meta-learner will see them.
+"""
+
+
+def _read_program_file(vault_dir: Path, agent_type: str) -> str:
+    """Read the agent's program.md meta-learner guidance.
+
+    Falls back to an empty-ish string if missing so callers can substitute
+    a default hint block. Never raises."""
+    try:
+        p = vault_dir / "skills" / agent_type / "program.md"
+        if p.exists():
+            return p.read_text(encoding="utf-8")
+    except Exception as e:
+        logger.warning("Failed to read program.md for %s: %s", agent_type, e)
+    return ""
 
 EXPERIMENT_BUDGET = int(os.environ.get("SKILL_EXPERIMENT_BUDGET", "5"))
 IMPROVEMENT_ENABLED = os.environ.get("SKILL_IMPROVEMENT_ENABLED", "true").lower() in ("true", "1", "yes")
@@ -38,7 +136,7 @@ IMPROVEMENT_ENABLED = os.environ.get("SKILL_IMPROVEMENT_ENABLED", "true").lower(
 # ─────────────────────────────────────────────
 EXPERIMENTS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS skill_experiments (
-    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    id               SERIAL PRIMARY KEY,
     agent_type       TEXT    NOT NULL,
     skill_version    INTEGER NOT NULL,
     metric_before    REAL,
@@ -46,7 +144,7 @@ CREATE TABLE IF NOT EXISTS skill_experiments (
     status           TEXT    NOT NULL CHECK(status IN ('keep','discard','crash')),
     description      TEXT,
     prompt_preview   TEXT,
-    created_at       TEXT    DEFAULT (datetime('now'))
+    created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_skill_exp_type ON skill_experiments(agent_type);
 """
@@ -215,6 +313,10 @@ META_PROMPT = """You are iterating on an AI agent's system prompt, like modifyin
 
 AGENT TYPE: {agent_type}
 CURRENT VERSION: v{version}
+
+PROGRAM INSTRUCTIONS (human-editable guidance, re-read on every run):
+{program_instructions}
+
 EXPERIMENT HISTORY (most recent first):
 {experiment_log}
 
@@ -279,14 +381,25 @@ def _get_experiment_log(conn: sqlite3.Connection, agent_type: str,
 
 
 def _propose_modification(conn: sqlite3.Connection, agent_type: str,
-                          current_prompt: str, version: int) -> str | None:
-    """Ask meta-Claude to propose a single focused modification."""
+                          current_prompt: str, version: int,
+                          vault_dir: Path | None = None) -> str | None:
+    """Ask meta-Claude to propose a single focused modification.
+
+    Injects the human-editable program.md content (if present) into the
+    meta-prompt so operator guidance steers the loop."""
     experiment_log = _get_experiment_log(conn, agent_type)
     hints = GENERATOR_HINTS if agent_type == "generator" else JUDGE_HINTS
+
+    program_instructions = ""
+    if vault_dir is not None:
+        program_instructions = _read_program_file(vault_dir, agent_type).strip()
+    if not program_instructions:
+        program_instructions = "(none — use default hints)"
 
     prompt = META_PROMPT.format(
         agent_type=agent_type,
         version=version,
+        program_instructions=program_instructions,
         experiment_log=experiment_log,
         current_prompt=current_prompt,
         modification_hints=hints,
@@ -354,12 +467,32 @@ def run_experiment_loop(get_db_fn, agent_type: str, papers_b64: list[dict],
             )
             logger.info("  Baseline: %.4f (%s)", baseline_metric, baseline_desc[:80])
 
-            # Step 2: Propose modification
-            new_prompt = _propose_modification(conn, agent_type, current_prompt, current_version)
+            # Step 2: Propose modification (reads program.md from vault)
+            new_prompt = _propose_modification(
+                conn, agent_type, current_prompt, current_version, vault_dir=vault_dir,
+            )
             if not new_prompt:
                 _log_experiment(conn, agent_type, current_version, baseline_metric, 0, "crash",
                                 "meta-Claude returned no proposal")
                 results.append({"experiment": experiment_num + 1, "status": "crash", "reason": "no proposal"})
+                # Per-experiment note for crash
+                try:
+                    write_experiment_note(vault_dir, agent_type, {
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "status": "crash",
+                        "skill_version": current_version,
+                        "metric_before": baseline_metric,
+                        "metric_after": 0,
+                        "agent_type": agent_type,
+                        "baseline_prompt": current_prompt,
+                        "candidate_prompt": "",
+                        "description": "meta-Claude returned no proposal",
+                        "eval_description": baseline_desc,
+                        "keep_reason": "crash: no proposal",
+                        "challenge_id": None,
+                    })
+                except Exception as e:
+                    logger.warning("Failed to write crash experiment note: %s", e)
                 continue
 
             # Step 3: Evaluate modified prompt
@@ -390,6 +523,25 @@ def run_experiment_loop(get_db_fn, agent_type: str, papers_b64: list[dict],
                                 "before": baseline_metric, "after": new_metric, "version": new_version})
                 logger.info("  → KEEP (v%d, +%.4f)", new_version, improvement)
 
+                # Per-experiment autoresearch artifact
+                try:
+                    write_experiment_note(vault_dir, agent_type, {
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "status": "keep",
+                        "skill_version": new_version,
+                        "metric_before": baseline_metric,
+                        "metric_after": new_metric,
+                        "agent_type": agent_type,
+                        "baseline_prompt": current_prompt,
+                        "candidate_prompt": new_prompt,
+                        "description": desc,
+                        "eval_description": new_desc,
+                        "keep_reason": f"improvement +{improvement:.4f}",
+                        "challenge_id": None,
+                    })
+                except Exception as e:
+                    logger.warning("Failed to write keep experiment note: %s", e)
+
             else:
                 # DISCARD — revert, don't change anything
                 desc = f"DISCARD: {baseline_metric:.4f} → {new_metric:.4f}. {new_desc[:100]}"
@@ -398,13 +550,33 @@ def run_experiment_loop(get_db_fn, agent_type: str, papers_b64: list[dict],
                                 "before": baseline_metric, "after": new_metric})
                 logger.info("  → DISCARD (no improvement)")
 
-        # Write final skill state to Obsidian
+                # Per-experiment autoresearch artifact
+                try:
+                    write_experiment_note(vault_dir, agent_type, {
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "status": "discard",
+                        "skill_version": current_version,
+                        "metric_before": baseline_metric,
+                        "metric_after": new_metric,
+                        "agent_type": agent_type,
+                        "baseline_prompt": current_prompt,
+                        "candidate_prompt": new_prompt,
+                        "description": desc,
+                        "eval_description": new_desc,
+                        "keep_reason": f"no gain ({new_metric - baseline_metric:+.4f})",
+                        "challenge_id": None,
+                    })
+                except Exception as e:
+                    logger.warning("Failed to write discard experiment note: %s", e)
+
+        # Refresh SKILL.md + history.md (new Anthropic-format vault structure)
         try:
             active = get_active_skill(conn, agent_type)
             versions = list_skill_versions(conn, agent_type)
-            write_skill_note(vault_dir, agent_type, active, versions)
+            write_agent_skill_file(vault_dir, agent_type, active)
+            write_agent_history_file(vault_dir, agent_type, versions)
         except Exception as e:
-            logger.error("Obsidian write failed: %s", e)
+            logger.error("Obsidian skill file write failed: %s", e)
 
     except Exception as e:
         logger.error("Experiment loop failed for %s: %s", agent_type, e, exc_info=True)

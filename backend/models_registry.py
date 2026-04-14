@@ -8,6 +8,8 @@ import secrets
 import sqlite3
 from fastapi import HTTPException
 
+from .db import IntegrityError
+
 
 def create_registered_model(conn: sqlite3.Connection, creator_user_id: int,
                             name: str, version: str, provider: str = "",
@@ -73,17 +75,17 @@ def create_registered_model(conn: sqlite3.Connection, creator_user_id: int,
         with conn:
             cur = conn.execute(
                 """INSERT INTO registered_models (name, version, provider, git_repo, organization, created_by, model_api_key, org_id)
-                   VALUES (?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?) RETURNING id""",
                 (name, version, provider or None, git_repo or None, organization or None, creator_user_id, model_api_key, org_id),
             )
             model_id = cur.lastrowid
             for uid in team_ids:
                 conn.execute(
-                    "INSERT OR IGNORE INTO registered_model_members (registered_model_id, user_id, can_run) VALUES (?,?,?)",
+                    "INSERT INTO registered_model_members (registered_model_id, user_id, can_run) VALUES (?,?,?) ON CONFLICT DO NOTHING",
                     (model_id, uid, can_run_map.get(uid, 0)),
                 )
             conn.commit()
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         raise HTTPException(409, f"Model name '{name}' is already taken")
 
     return get_registered_model(conn, model_id)
@@ -171,7 +173,7 @@ def add_member(conn: sqlite3.Connection, model_id: int, requester_user_id: int,
         raise HTTPException(400, f"No registered user with email {email}")
     with conn:
         conn.execute(
-            "INSERT OR IGNORE INTO registered_model_members (registered_model_id, user_id) VALUES (?,?)",
+            "INSERT INTO registered_model_members (registered_model_id, user_id) VALUES (?,?) ON CONFLICT DO NOTHING",
             (model_id, user_row["id"]),
         )
         conn.commit()
@@ -267,6 +269,99 @@ def update_member_permission(conn: sqlite3.Connection, model_id: int,
         )
         conn.commit()
     return get_registered_model(conn, model_id)
+
+
+def update_model(conn: sqlite3.Connection, model_id: int, user_id: int,
+                  name: str | None = None, version: str | None = None,
+                  provider: str | None = None, git_repo: str | None = None,
+                  organization: str | None = None, changelog: str | None = None) -> dict:
+    """Update model metadata. Creator only. If version changes, log to model_versions."""
+    row = conn.execute(
+        "SELECT * FROM registered_models WHERE id=?", (model_id,)
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "Model not found")
+    if row["created_by"] != user_id:
+        raise HTTPException(403, "Only the creator can update a registered model")
+
+    updates = []
+    params = []
+
+    if name is not None:
+        name = name.strip()
+        if not name:
+            raise HTTPException(400, "Model name cannot be empty")
+        if len(name) > 100:
+            raise HTTPException(400, "Model name must be 100 characters or fewer")
+        if name != row["name"]:
+            # Check uniqueness
+            dup = conn.execute(
+                "SELECT id FROM registered_models WHERE LOWER(name)=LOWER(?) AND id!=?",
+                (name, model_id),
+            ).fetchone()
+            if dup:
+                raise HTTPException(409, f"Model name '{name}' is already taken")
+            updates.append("name=?")
+            params.append(name)
+
+    version_changed = False
+    if version is not None:
+        version = version.strip()
+        if not version:
+            raise HTTPException(400, "Version cannot be empty")
+        if len(version) > 50:
+            raise HTTPException(400, "Version must be 50 characters or fewer")
+        if version != row["version"]:
+            updates.append("version=?")
+            params.append(version)
+            version_changed = True
+
+    if provider is not None:
+        updates.append("provider=?")
+        params.append(provider or None)
+    if git_repo is not None:
+        updates.append("git_repo=?")
+        params.append(git_repo or None)
+    if organization is not None:
+        updates.append("organization=?")
+        params.append(organization or None)
+
+    if not updates:
+        return get_registered_model(conn, model_id)
+
+    updates.append("updated_at=CURRENT_TIMESTAMP")
+    params.append(model_id)
+
+    with conn:
+        conn.execute(
+            f"UPDATE registered_models SET {', '.join(updates)} WHERE id=?",
+            tuple(params),
+        )
+        # Log version change to history
+        if version_changed:
+            conn.execute(
+                "INSERT INTO model_versions (registered_model_id, version, changelog, created_by) VALUES (?,?,?,?)",
+                (model_id, version, changelog or None, user_id),
+            )
+        conn.commit()
+
+    return get_registered_model(conn, model_id)
+
+
+def get_version_history(conn: sqlite3.Connection, model_id: int) -> list[dict]:
+    """Get version history for a model, most recent first."""
+    row = conn.execute("SELECT id FROM registered_models WHERE id=?", (model_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Model not found")
+    rows = conn.execute(
+        """SELECT mv.*, u.display_name AS author_name, u.email AS author_email
+           FROM model_versions mv
+           LEFT JOIN users u ON u.id = mv.created_by
+           WHERE mv.registered_model_id=?
+           ORDER BY mv.created_at DESC""",
+        (model_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def list_org_models(conn: sqlite3.Connection, org_id: int) -> list[dict]:

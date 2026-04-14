@@ -12,14 +12,16 @@ import sqlite3
 from datetime import datetime, timezone
 from fastapi import HTTPException
 
+from .db import IntegrityError
+
 
 AGREEMENTS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS user_agreements (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                SERIAL PRIMARY KEY,
     user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     agreement_type    TEXT    NOT NULL CHECK(agreement_type IN ('model_publishing','payment')),
     agreement_version TEXT    NOT NULL DEFAULT 'v1',
-    accepted_at       TEXT    DEFAULT (datetime('now')),
+    accepted_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     ip_address        TEXT,
     UNIQUE(user_id, agreement_type, agreement_version)
 );
@@ -218,7 +220,7 @@ def accept_agreement(conn: sqlite3.Connection, user_id: int,
                 (user_id, agreement_type, version, ip_address),
             )
             conn.commit()
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         pass  # already accepted — idempotent
     return {"ok": True, "agreement_type": agreement_type, "version": version}
 

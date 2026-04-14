@@ -12,6 +12,8 @@ from typing import Optional
 
 from fastapi import HTTPException
 
+from .db import IntegrityError
+
 logger = logging.getLogger("rubricgen")
 
 STRIPE_SECRET_KEY     = os.environ.get("STRIPE_SECRET_KEY", "")
@@ -38,7 +40,7 @@ def _get_stripe():
 # ─────────────────────────────────────────────
 BILLING_TABLES_SQL = """
 CREATE TABLE IF NOT EXISTS credit_packs (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    id              SERIAL PRIMARY KEY,
     name            TEXT    NOT NULL,
     credits         INTEGER NOT NULL,
     price_cents     INTEGER NOT NULL,
@@ -49,11 +51,11 @@ CREATE TABLE IF NOT EXISTS credit_packs (
 CREATE TABLE IF NOT EXISTS user_credits (
     user_id      INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     balance      INTEGER NOT NULL DEFAULT 0,
-    last_updated TEXT    DEFAULT (datetime('now'))
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS credit_transactions (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                SERIAL PRIMARY KEY,
     user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     amount            INTEGER NOT NULL,
     type              TEXT    NOT NULL CHECK(type IN ('purchase','test_charge','promo','refund','daily_fee')),
@@ -61,7 +63,7 @@ CREATE TABLE IF NOT EXISTS credit_transactions (
     challenge_id      INTEGER,
     stripe_session_id TEXT,
     promo_code_id     INTEGER,
-    created_at        TEXT    DEFAULT (datetime('now'))
+    created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_txn_user ON credit_transactions(user_id);
@@ -96,7 +98,7 @@ def get_balance(conn: sqlite3.Connection, user_id: int) -> int:
 
 def _ensure_user_credits(conn: sqlite3.Connection, user_id: int) -> None:
     conn.execute(
-        "INSERT OR IGNORE INTO user_credits (user_id, balance) VALUES (?,0)",
+        "INSERT INTO user_credits (user_id, balance) VALUES (?,0) ON CONFLICT DO NOTHING",
         (user_id,),
     )
 
@@ -110,7 +112,7 @@ def debit_credits(conn: sqlite3.Connection, user_id: int, amount: int,
         return False
     with conn:
         conn.execute(
-            "UPDATE user_credits SET balance = balance - ?, last_updated = datetime('now') WHERE user_id=?",
+            "UPDATE user_credits SET balance = balance - ?, last_updated = CURRENT_TIMESTAMP WHERE user_id=?",
             (amount, user_id),
         )
         conn.execute(
@@ -127,7 +129,7 @@ def credit_from_purchase(conn: sqlite3.Connection, user_id: int, amount: int,
     _ensure_user_credits(conn, user_id)
     with conn:
         conn.execute(
-            "UPDATE user_credits SET balance = balance + ?, last_updated = datetime('now') WHERE user_id=?",
+            "UPDATE user_credits SET balance = balance + ?, last_updated = CURRENT_TIMESTAMP WHERE user_id=?",
             (amount, user_id),
         )
         conn.execute(
@@ -143,7 +145,7 @@ def credit_from_promo(conn: sqlite3.Connection, user_id: int, amount: int,
     _ensure_user_credits(conn, user_id)
     with conn:
         conn.execute(
-            "UPDATE user_credits SET balance = balance + ?, last_updated = datetime('now') WHERE user_id=?",
+            "UPDATE user_credits SET balance = balance + ?, last_updated = CURRENT_TIMESTAMP WHERE user_id=?",
             (amount, user_id),
         )
         conn.execute(
@@ -231,7 +233,7 @@ def refund_credits(conn: sqlite3.Connection, user_id: int, amount: int,
     _ensure_user_credits(conn, user_id)
     with conn:
         conn.execute(
-            "UPDATE user_credits SET balance = balance + ?, last_updated = datetime('now') WHERE user_id=?",
+            "UPDATE user_credits SET balance = balance + ?, last_updated = CURRENT_TIMESTAMP WHERE user_id=?",
             (amount, user_id),
         )
         conn.execute(
@@ -362,7 +364,7 @@ def get_org_balance(conn: sqlite3.Connection, org_id: int) -> dict:
 
 def _ensure_org_credits(conn: sqlite3.Connection, org_id: int) -> None:
     conn.execute(
-        "INSERT OR IGNORE INTO org_credits (org_id, balance) VALUES (?,0)",
+        "INSERT INTO org_credits (org_id, balance) VALUES (?,0) ON CONFLICT DO NOTHING",
         (org_id,),
     )
 
@@ -377,7 +379,7 @@ def debit_org_credits(conn: sqlite3.Connection, org_id: int, user_id: int,
         return False
     with conn:
         conn.execute(
-            "UPDATE org_credits SET balance = balance - ?, last_updated = datetime('now') WHERE org_id=?",
+            "UPDATE org_credits SET balance = balance - ?, last_updated = CURRENT_TIMESTAMP WHERE org_id=?",
             (amount, org_id),
         )
         conn.execute(
@@ -395,7 +397,7 @@ def credit_org_from_purchase(conn: sqlite3.Connection, org_id: int,
     _ensure_org_credits(conn, org_id)
     with conn:
         conn.execute(
-            "UPDATE org_credits SET balance = balance + ?, last_updated = datetime('now') WHERE org_id=?",
+            "UPDATE org_credits SET balance = balance + ?, last_updated = CURRENT_TIMESTAMP WHERE org_id=?",
             (amount, org_id),
         )
         conn.execute(
@@ -419,7 +421,7 @@ def transfer_credits_to_org(conn: sqlite3.Connection, user_id: int,
     with conn:
         # Debit user
         conn.execute(
-            "UPDATE user_credits SET balance = balance - ?, last_updated = datetime('now') WHERE user_id=?",
+            "UPDATE user_credits SET balance = balance - ?, last_updated = CURRENT_TIMESTAMP WHERE user_id=?",
             (amount, user_id),
         )
         conn.execute(
@@ -429,7 +431,7 @@ def transfer_credits_to_org(conn: sqlite3.Connection, user_id: int,
         )
         # Credit org
         conn.execute(
-            "UPDATE org_credits SET balance = balance + ?, last_updated = datetime('now') WHERE org_id=?",
+            "UPDATE org_credits SET balance = balance + ?, last_updated = CURRENT_TIMESTAMP WHERE org_id=?",
             (amount, org_id),
         )
         conn.execute(

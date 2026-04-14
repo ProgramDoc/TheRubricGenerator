@@ -12,6 +12,8 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from .db import IntegrityError
+
 logger = logging.getLogger("rubricgen")
 
 # ─────────────────────────────────────────────
@@ -20,7 +22,7 @@ logger = logging.getLogger("rubricgen")
 
 TEMPLATE_TABLES_SQL = """
 CREATE TABLE IF NOT EXISTS rubric_templates (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    id            SERIAL PRIMARY KEY,
     name          TEXT    NOT NULL,
     description   TEXT,
     rubric_type   TEXT    NOT NULL DEFAULT 'custom',
@@ -28,14 +30,14 @@ CREATE TABLE IF NOT EXISTS rubric_templates (
     version       INTEGER NOT NULL DEFAULT 1,
     parent_id     INTEGER REFERENCES rubric_templates(id) ON DELETE SET NULL,
     created_by    INTEGER NOT NULL REFERENCES users(id),
-    created_at    TEXT    DEFAULT (datetime('now')),
-    updated_at    TEXT    DEFAULT (datetime('now'))
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_rt_user ON rubric_templates(created_by);
 CREATE INDEX IF NOT EXISTS idx_rt_type ON rubric_templates(rubric_type);
 
 CREATE TABLE IF NOT EXISTS template_question_stats (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    id            SERIAL PRIMARY KEY,
     template_id   INTEGER NOT NULL REFERENCES rubric_templates(id) ON DELETE CASCADE,
     question_id   TEXT    NOT NULL,
     times_used    INTEGER DEFAULT 0,
@@ -43,13 +45,13 @@ CREATE TABLE IF NOT EXISTS template_question_stats (
     min_score     REAL    DEFAULT 0,
     max_score     REAL    DEFAULT 1,
     flagged       TEXT,
-    updated_at    TEXT    DEFAULT (datetime('now')),
+    updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(template_id, question_id)
 );
 CREATE INDEX IF NOT EXISTS idx_tqs_template ON template_question_stats(template_id);
 
 CREATE TABLE IF NOT EXISTS community_templates (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    id             SERIAL PRIMARY KEY,
     template_id    INTEGER NOT NULL REFERENCES rubric_templates(id) ON DELETE CASCADE,
     published_by   INTEGER NOT NULL REFERENCES users(id),
     title          TEXT    NOT NULL,
@@ -59,7 +61,7 @@ CREATE TABLE IF NOT EXISTS community_templates (
     fork_count     INTEGER DEFAULT 0,
     rating_sum     REAL    DEFAULT 0,
     rating_count   INTEGER DEFAULT 0,
-    published_at   TEXT    DEFAULT (datetime('now')),
+    published_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(template_id)
 );
 CREATE INDEX IF NOT EXISTS idx_ct_type ON community_templates(rubric_type);
@@ -69,12 +71,12 @@ CREATE TABLE IF NOT EXISTS community_ratings (
     template_id   INTEGER NOT NULL REFERENCES community_templates(id) ON DELETE CASCADE,
     user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     rating        INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
-    created_at    TEXT    DEFAULT (datetime('now')),
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (template_id, user_id)
 );
 
 CREATE TABLE IF NOT EXISTS ground_truth_annotations (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    id              SERIAL PRIMARY KEY,
     rubric_id       INTEGER REFERENCES rubrics(id) ON DELETE CASCADE,
     challenge_id    INTEGER REFERENCES challenges(id) ON DELETE CASCADE,
     question_id     TEXT    NOT NULL,
@@ -82,7 +84,7 @@ CREATE TABLE IF NOT EXISTS ground_truth_annotations (
     expert_score    REAL,
     annotator_email TEXT,
     annotation_id   TEXT,
-    imported_at     TEXT    DEFAULT (datetime('now'))
+    imported_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_gta_rubric ON ground_truth_annotations(rubric_id);
 CREATE INDEX IF NOT EXISTS idx_gta_challenge ON ground_truth_annotations(challenge_id);
@@ -116,7 +118,7 @@ def create_template(conn: sqlite3.Connection, user_id: int, name: str,
         cur = conn.execute(
             """INSERT INTO rubric_templates
                (name, description, rubric_type, template_json, version, parent_id, created_by)
-               VALUES (?, ?, ?, ?, 1, ?, ?)""",
+               VALUES (?, ?, ?, ?, 1, ?, ?) RETURNING id""",
             (name, description, rubric_type, template_json, parent_id, user_id),
         )
         conn.commit()
@@ -185,7 +187,7 @@ def update_template(conn: sqlite3.Connection, template_id: int, user_id: int,
     if row["created_by"] != user_id:
         raise HTTPException(403, "Only the creator can edit this template")
 
-    updates: list[str] = ["updated_at = datetime('now')"]
+    updates: list[str] = ["updated_at = CURRENT_TIMESTAMP"]
     params: list[Any] = []
 
     if name is not None:
@@ -320,7 +322,7 @@ def update_question_stats(conn: sqlite3.Connection, template_id: int,
                 conn.execute(
                     """UPDATE template_question_stats
                        SET times_used = times_used + 1, avg_score = ?, min_score = ?,
-                           max_score = ?, flagged = ?, updated_at = datetime('now')
+                           max_score = ?, flagged = ?, updated_at = CURRENT_TIMESTAMP
                        WHERE template_id = ? AND question_id = ?""",
                     (round(new_avg, 4), new_min, new_max, flagged, template_id, qid),
                 )
@@ -385,7 +387,7 @@ def publish_template(conn: sqlite3.Connection, template_id: int,
                 (template_id, user_id, title, description, tmpl["rubric_type"], qcount),
             )
             conn.commit()
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         raise HTTPException(409, "This template is already published")
 
     ct = conn.execute(
@@ -428,7 +430,7 @@ def list_community_templates(conn: sqlite3.Connection,
         where_clauses.append("ct.rubric_type = ?")
         params.append(rubric_type)
     if search:
-        where_clauses.append("(ct.title LIKE ? OR ct.description LIKE ?)")
+        where_clauses.append("(ct.title ILIKE ? OR ct.description ILIKE ?)")
         params.extend([f"%{search}%", f"%{search}%"])
 
     where_sql = " AND ".join(where_clauses)
@@ -510,7 +512,7 @@ def rate_template(conn: sqlite3.Connection, community_template_id: int,
         if existing:
             old_rating = existing["rating"]
             conn.execute(
-                "UPDATE community_ratings SET rating = ?, created_at = datetime('now') WHERE template_id = ? AND user_id = ?",
+                "UPDATE community_ratings SET rating = ?, created_at = CURRENT_TIMESTAMP WHERE template_id = ? AND user_id = ?",
                 (rating, community_template_id, user_id),
             )
             conn.execute(

@@ -12,6 +12,8 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from .db import IntegrityError
+
 logger = logging.getLogger("rubricgen")
 
 # ─────────────────────────────────────────────
@@ -20,14 +22,14 @@ logger = logging.getLogger("rubricgen")
 
 ORG_TABLES_SQL = """
 CREATE TABLE IF NOT EXISTS organizations (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    name         TEXT    NOT NULL UNIQUE COLLATE NOCASE,
-    slug         TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+    id           SERIAL PRIMARY KEY,
+    name         TEXT    NOT NULL UNIQUE,
+    slug         TEXT    NOT NULL UNIQUE,
     description  TEXT,
     domain       TEXT,
     invite_code  TEXT    UNIQUE,
     created_by   INTEGER NOT NULL REFERENCES users(id),
-    created_at   TEXT    DEFAULT (datetime('now'))
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_org_slug ON organizations(slug);
 CREATE INDEX IF NOT EXISTS idx_org_domain ON organizations(domain);
@@ -36,7 +38,7 @@ CREATE TABLE IF NOT EXISTS org_members (
     org_id    INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     role      TEXT    NOT NULL DEFAULT 'viewer' CHECK(role IN ('viewer','contributor','admin')),
-    joined_at TEXT    DEFAULT (datetime('now')),
+    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (org_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_om_user ON org_members(user_id);
@@ -44,11 +46,11 @@ CREATE INDEX IF NOT EXISTS idx_om_user ON org_members(user_id);
 CREATE TABLE IF NOT EXISTS org_credits (
     org_id       INTEGER PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
     balance      INTEGER NOT NULL DEFAULT 0,
-    last_updated TEXT    DEFAULT (datetime('now'))
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS org_credit_transactions (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                SERIAL PRIMARY KEY,
     org_id            INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     user_id           INTEGER,
     amount            INTEGER NOT NULL,
@@ -56,7 +58,7 @@ CREATE TABLE IF NOT EXISTS org_credit_transactions (
     description       TEXT,
     challenge_id      INTEGER,
     stripe_session_id TEXT,
-    created_at        TEXT    DEFAULT (datetime('now'))
+    created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_oct_org ON org_credit_transactions(org_id);
 
@@ -68,7 +70,7 @@ CREATE TABLE IF NOT EXISTS org_leaderboard_cache (
     daily_points     INTEGER DEFAULT 0,
     avg_accuracy     REAL    DEFAULT 0,
     best_model_id    TEXT,
-    last_updated     TEXT    DEFAULT (datetime('now'))
+    last_updated     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 """
 
@@ -134,7 +136,7 @@ def create_organization(conn: sqlite3.Connection, creator_user_id: int,
         with conn:
             cur = conn.execute(
                 """INSERT INTO organizations (name, slug, description, domain, invite_code, created_by)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?) RETURNING id""",
                 (name, slug, description, domain, invite_code, creator_user_id),
             )
             org_id = cur.lastrowid
@@ -149,7 +151,7 @@ def create_organization(conn: sqlite3.Connection, creator_user_id: int,
                 (org_id,),
             )
             conn.commit()
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         raise HTTPException(409, "An organization with that name already exists")
 
     return get_organization(conn, org_id)
@@ -233,7 +235,7 @@ def update_organization(conn: sqlite3.Connection, org_id: int,
                 params,
             )
             conn.commit()
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         raise HTTPException(409, "An organization with that name already exists")
 
     return get_organization(conn, org_id)

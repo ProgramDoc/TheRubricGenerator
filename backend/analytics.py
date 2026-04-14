@@ -206,7 +206,7 @@ def refresh_analytics_snapshot(conn: sqlite3.Connection, challenge_id: int | Non
             conn.execute(
                 """INSERT INTO analytics_snapshots
                    (model_id, theme, difficulty, challenges, correct, total, accuracy, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
                 (model, theme, diff, len(stats["challenges"]), stats["correct"], stats["total"], acc),
             )
         conn.commit()

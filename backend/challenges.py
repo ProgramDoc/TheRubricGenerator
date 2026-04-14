@@ -18,7 +18,13 @@ from pathlib import Path
 from .agents.generator import run_generator_agent
 from .agents.judge import run_judge_agent, shadow_regrade
 from .agents.participants import run_participant_model
-from .obsidian import write_challenge_note, write_skill_note
+from .obsidian import (
+    write_challenge_note,
+    write_skill_note,  # legacy — kept for back-compat, no longer called here
+    write_agent_skill_file,
+    write_agent_history_file,
+    write_challenge_agent_note,
+)
 from .skills import (
     get_active_skill, list_skill_versions, record_skill_performance,
 )
@@ -83,6 +89,134 @@ DAILY_COMPOSITION = {
     "minor_league": 2,
     "professional": 4,
     "jedi": 2,
+}
+
+# ── 11 Evaluation Domains ──
+# Each domain targets a distinct competency in clinical research comprehension.
+# The domain field on each generated question maps to one of these keys.
+EVALUATION_DOMAINS = {
+    "hypothesis": {
+        "label": "Research Question & Hypothesis",
+        "description": (
+            "PICO/PEO identification, hypothesis clarity, testability, "
+            "power/sample size adequacy, whether the research question is well-formed."
+        ),
+        "difficulty_range": ["easy_breezy", "minor_league", "professional"],
+    },
+    "evidence_motivation": {
+        "label": "Evidence Motivation & Literature Appraisal",
+        "description": (
+            "Quality of cited supporting evidence, gap identification, novelty assessment, "
+            "whether the literature review is selective or comprehensive, "
+            "whether cited evidence actually supports the stated gap."
+        ),
+        "difficulty_range": ["minor_league", "professional"],
+    },
+    "study_design": {
+        "label": "Study Design Classification",
+        "description": (
+            "Correct study type identification using the primacy hierarchy "
+            "(primary vs synthesis, intervention vs observation, randomization, temporal precedence), "
+            "confusion pair resolution, exogeneity testing for natural experiments, "
+            "design modifier identification (adaptive, pragmatic, factorial, master protocol)."
+        ),
+        "difficulty_range": ["easy_breezy", "minor_league", "professional", "jedi"],
+    },
+    "extraction": {
+        "label": "Data Extraction Completeness",
+        "description": (
+            "Identification of correct type-specific extraction fields, "
+            "universal vs type-specific field distinction, design modifier tags, "
+            "key extraction values (effect estimates with CI, p-values, NNT/NNH)."
+        ),
+        "difficulty_range": ["easy_breezy", "minor_league", "professional"],
+    },
+    "risk_of_bias": {
+        "label": "Risk of Bias Assessment",
+        "description": (
+            "Correct RoB tool selection (RoB 2, ROBINS-I, QUADAS-2, AMSTAR 2, EPOC, etc.), "
+            "domain-level judgments with justification, overall bias direction assessment, "
+            "identifying specific bias sources (selection, performance, detection, attrition, reporting)."
+        ),
+        "difficulty_range": ["professional", "jedi"],
+    },
+    "reporting": {
+        "label": "Reporting Guideline Adherence",
+        "description": (
+            "Checking compliance with the correct reporting guideline "
+            "(CONSORT, STROBE, PRISMA, CARE, STARD, CHEERS, COREQ, etc.), "
+            "identifying missing required items, distinguishing reporting quality "
+            "from methodological quality."
+        ),
+        "difficulty_range": ["minor_league", "professional"],
+    },
+    "statistical_analysis": {
+        "label": "Statistical Analysis Appraisal",
+        "description": (
+            "Appropriateness of statistical methods for the study design "
+            "(segmented regression for ITS, mixed-effects for clusters, ICC), "
+            "correct effect measures (OR vs RR vs HR), adjustment methods "
+            "(propensity score, IPTW), heterogeneity assessment for syntheses "
+            "(I-squared, tau-squared, pooling model choice)."
+        ),
+        "difficulty_range": ["professional", "jedi"],
+    },
+    "grade_certainty": {
+        "label": "GRADE Certainty of Evidence",
+        "description": (
+            "Correct starting GRADE level for the study design, application of "
+            "the 5 downgrade factors (risk of bias, inconsistency, indirectness, "
+            "imprecision, publication bias) and 3 upgrade factors (large effect, "
+            "dose-response, residual confounding), arriving at a justified final "
+            "certainty rating."
+        ),
+        "difficulty_range": ["professional", "jedi"],
+    },
+    "interpretation": {
+        "label": "Interpretation & Clinical Applicability",
+        "description": (
+            "Whether conclusions are supported by data, appropriate caveats for "
+            "study design limitations, generalizability assessment, clinical vs "
+            "statistical significance, number needed to treat/harm."
+        ),
+        "difficulty_range": ["minor_league", "professional"],
+    },
+    "ethics_regulatory": {
+        "label": "Ethical & Regulatory Compliance",
+        "description": (
+            "Ethics approval and informed consent identification, protocol "
+            "registration verification (NCT/EudraCT), conflicts of interest "
+            "assessment, funding source implications, phase-appropriate safety "
+            "reporting (DLT definitions in Phase I, SAE reporting)."
+        ),
+        "difficulty_range": ["easy_breezy", "minor_league"],
+    },
+    "cross_paper_synthesis": {
+        "label": "Cross-Paper Synthesis",
+        "description": (
+            "Comparing findings across papers, identifying discordant results, "
+            "assessing whether studies would contribute to or contradict a meta-analysis, "
+            "evaluating transitivity, population overlap assessment. "
+            "Only applicable when challenge has 2 or more papers."
+        ),
+        "difficulty_range": ["professional", "jedi"],
+    },
+}
+
+# Domain composition for daily challenges: how many questions per domain.
+# Total must equal sum of DAILY_COMPOSITION values (10 questions).
+DOMAIN_COMPOSITION = {
+    "hypothesis": 1,
+    "evidence_motivation": 1,
+    "study_design": 2,
+    "extraction": 1,
+    "risk_of_bias": 1,
+    "reporting": 1,
+    "statistical_analysis": 1,
+    "grade_certainty": 1,
+    "interpretation": 1,
+    "ethics_regulatory": 0,       # covered by extraction in daily; included in full tests
+    "cross_paper_synthesis": 0,   # auto-added as bonus when challenge has >=2 papers
 }
 
 # Daily challenge pricing in credits
@@ -293,7 +427,7 @@ def create_challenge(get_db_fn, user_id: int, title: str, theme: str,
             cur = conn.execute(
                 """INSERT INTO challenges
                    (title, theme, kind, status, created_by, project_id, visibility, difficulty, registered_model_id, run_id)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?) RETURNING id""",
                 (title, theme, kind, "pending", user_id,
                  project_id, visibility, difficulty, registered_model_id, run_id),
             )
@@ -353,7 +487,7 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
 
         with conn:
             conn.execute(
-                "UPDATE challenges SET status='running', started_at=datetime('now') WHERE id=?",
+                "UPDATE challenges SET status='running', started_at=CURRENT_TIMESTAMP WHERE id=?",
                 (challenge_id,),
             )
             conn.commit()
@@ -383,6 +517,7 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
                 gen_skill,
                 difficulty=challenge.get("difficulty"),
                 daily_composition=DAILY_COMPOSITION if is_daily else None,
+                domain_composition=DOMAIN_COMPOSITION if is_daily else None,
                 questions_per_paper=5,
             )
         else:
@@ -583,7 +718,7 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
         with conn:
             conn.execute(
                 """UPDATE challenges
-                   SET status='complete', completed_at=datetime('now'),
+                   SET status='complete', completed_at=CURRENT_TIMESTAMP,
                        generator_score=?, judge_score=?, judge_skill_id=?
                    WHERE id=?""",
                 (gen_score, judge_score_val, judge_skill["id"], challenge_id),
@@ -638,16 +773,55 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
                 experiment_history=experiment_history,
                 cost_estimate=cost_est,
             )
-            write_skill_note(
-                vault_dir, "generator",
-                get_active_skill(conn, "generator"),
-                list_skill_versions(conn, "generator"),
-            )
-            write_skill_note(
-                vault_dir, "judge",
-                get_active_skill(conn, "judge"),
-                list_skill_versions(conn, "judge"),
-            )
+            # Refresh per-agent SKILL.md + history.md (Anthropic format)
+            for at in ("generator", "judge"):
+                write_agent_skill_file(
+                    vault_dir, at,
+                    get_active_skill(conn, at),
+                )
+                write_agent_history_file(
+                    vault_dir, at,
+                    list_skill_versions(conn, at),
+                )
+
+            # Per-challenge per-agent autoresearch snapshots
+            try:
+                avg_validity = 0.0
+                if graded_participants:
+                    vals = []
+                    for gp in graded_participants:
+                        try:
+                            gd = json.loads(gp.get("grade_json") or "{}")
+                            v = gd.get("avg_rubric_validity")
+                            if v is not None:
+                                vals.append(float(v))
+                        except Exception:
+                            pass
+                    if vals:
+                        avg_validity = sum(vals) / len(vals)
+
+                write_challenge_agent_note(vault_dir, "generator", challenge_id, {
+                    "challenge_id": challenge_id,
+                    "theme": challenge.get("theme") or "",
+                    "skill_version": gen_skill.get("version"),
+                    "skill_id": gen_skill.get("id"),
+                    "paper_filenames": [p.get("filename", "?") for p in papers_meta],
+                    "rubric": rubric,
+                    "gen_score": gen_score or 0,
+                    "gen_time_ms": int(gen_ms or 0),
+                    "avg_rubric_validity": avg_validity,
+                })
+                write_challenge_agent_note(vault_dir, "judge", challenge_id, {
+                    "challenge_id": challenge_id,
+                    "theme": challenge.get("theme") or "",
+                    "skill_version": judge_skill.get("version"),
+                    "skill_id": judge_skill.get("id"),
+                    "graded_participants": graded_participants,
+                    "judge_score": judge_score_val or 0,
+                    "judge_time_ms": int((graded_participants[0].get("judge_time_ms") or 0) if graded_participants else 0),
+                })
+            except Exception as e:
+                logger.error("Per-agent challenge snapshot write failed: %s", e)
         except Exception as e:
             logger.error("Obsidian write failed: %s", e)
 
@@ -694,7 +868,7 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
         try:
             with conn:
                 conn.execute(
-                    "UPDATE challenges SET status='failed', error_message=?, completed_at=datetime('now') WHERE id=?",
+                    "UPDATE challenges SET status='failed', error_message=?, completed_at=CURRENT_TIMESTAMP WHERE id=?",
                     (str(e)[:500], challenge_id),
                 )
                 conn.commit()
@@ -810,7 +984,7 @@ def refresh_leaderboard(conn: sqlite3.Connection) -> None:
                    (model_id, provider, total_challenges, cumulative_score,
                     avg_accuracy, avg_speed_bonus, total_points, daily_points,
                     daily_streak, daily_rank_change, last_updated)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)""",
                 (
                     r["model_id"], r["provider"], r["total_challenges"],
                     r["cumulative_score"] or 0,
@@ -867,7 +1041,7 @@ def refresh_org_leaderboard(conn: sqlite3.Connection) -> None:
                 """INSERT INTO org_leaderboard_cache
                    (org_id, total_models, total_challenges, total_points,
                     daily_points, avg_accuracy, best_model_id, last_updated)
-                   VALUES (?,?,?,?,?,?,?,datetime('now'))""",
+                   VALUES (?,?,?,?,?,?,?,CURRENT_TIMESTAMP)""",
                 (
                     r["org_id"],
                     r["total_models"] or 0,

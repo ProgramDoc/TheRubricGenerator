@@ -22,7 +22,7 @@ STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
 
 MEMBERSHIP_TABLES_SQL = """
 CREATE TABLE IF NOT EXISTS membership_plans (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    id              SERIAL PRIMARY KEY,
     name            TEXT    NOT NULL UNIQUE,
     price_cents     INTEGER NOT NULL DEFAULT 0,
     interval        TEXT    NOT NULL DEFAULT 'month',
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS membership_plans (
 );
 
 CREATE TABLE IF NOT EXISTS user_memberships (
-    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                   SERIAL PRIMARY KEY,
     user_id              INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     plan_id              INTEGER NOT NULL REFERENCES membership_plans(id),
     status               TEXT    NOT NULL DEFAULT 'active' CHECK(status IN ('active','cancelled','expired','past_due')),
@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS user_memberships (
     current_period_end   TEXT,
     pdf_count            INTEGER DEFAULT 0,
     pdf_count_period     TEXT,
-    created_at           TEXT    DEFAULT (datetime('now')),
+    created_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id)
 );
 """
@@ -177,9 +177,9 @@ def _assign_free_plan(conn: sqlite3.Connection, user_id: int,
     """Auto-assign the Free plan to a new user."""
     with conn:
         conn.execute(
-            """INSERT OR IGNORE INTO user_memberships
+            """INSERT INTO user_memberships
                (user_id, plan_id, status, pdf_count)
-               VALUES (?, ?, 'active', 0)""",
+               VALUES (?, ?, 'active', 0) ON CONFLICT DO NOTHING""",
             (user_id, plan_id),
         )
         conn.commit()
@@ -218,7 +218,7 @@ def check_pdf_limit(conn: sqlite3.Connection, user_id: int) -> dict:
             # No period set — count this calendar month
             count = conn.execute(
                 """SELECT COUNT(*) AS c FROM papers WHERE user_id = ?
-                   AND created_at >= date('now', 'start of month')""",
+                   AND created_at >= date_trunc('month', CURRENT_TIMESTAMP)""",
                 (user_id,),
             ).fetchone()["c"]
         return {"allowed": count < limit, "used": count, "limit": limit, "plan": plan_name}

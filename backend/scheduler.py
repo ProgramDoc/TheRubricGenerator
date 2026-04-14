@@ -48,8 +48,8 @@ def _set_state(conn: sqlite3.Connection, key: str, value: str) -> None:
     with conn:
         conn.execute(
             """INSERT INTO scheduler_state (key, value, updated_at)
-               VALUES (?, ?, datetime('now'))
-               ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=datetime('now')""",
+               VALUES (?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP""",
             (key, value),
         )
         conn.commit()
@@ -162,7 +162,7 @@ def run_daily_challenge(get_db_fn, papers_dir: Path, vault_dir: Path,
             with conn:
                 cur = conn.execute(
                     """INSERT INTO papers (filename, disk_filename, sha256, user_id)
-                       VALUES (?,?,?,?)""",
+                       VALUES (?,?,?,?) RETURNING id""",
                     (p["filename"], p["disk_filename"], p["sha256"], system_user_id),
                 )
                 paper_ids.append(cur.lastrowid)

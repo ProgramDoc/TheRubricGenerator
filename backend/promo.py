@@ -12,28 +12,30 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 
+from .db import IntegrityError
+
 
 PROMO_TABLES_SQL = """
 CREATE TABLE IF NOT EXISTS promo_codes (
-    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
-    code                 TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+    id                   SERIAL PRIMARY KEY,
+    code                 TEXT    NOT NULL UNIQUE,
     type                 TEXT    NOT NULL CHECK(type IN ('free','breakeven')),
     discount_pct         INTEGER NOT NULL DEFAULT 100,
     created_by           INTEGER REFERENCES users(id),
     max_uses             INTEGER DEFAULT 0,
     times_used           INTEGER DEFAULT 0,
-    valid_from           TEXT    DEFAULT (datetime('now')),
+    valid_from           TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     valid_until          TEXT,
     auto_approve_hours   INTEGER NOT NULL DEFAULT 48,
     active               INTEGER NOT NULL DEFAULT 1,
-    created_at           TEXT    DEFAULT (datetime('now'))
+    created_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS user_promo_activations (
-    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                    SERIAL PRIMARY KEY,
     user_id               INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     promo_code_id         INTEGER NOT NULL REFERENCES promo_codes(id) ON DELETE CASCADE,
-    activated_at          TEXT    DEFAULT (datetime('now')),
+    activated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     auto_approved_until   TEXT    NOT NULL,
     admin_approved        INTEGER NOT NULL DEFAULT 0,
     admin_approved_at     TEXT,
@@ -58,11 +60,11 @@ def create_promo_code(conn: sqlite3.Connection, code: str, promo_type: str,
             cur = conn.execute(
                 """INSERT INTO promo_codes
                    (code, type, discount_pct, created_by, max_uses, valid_until, auto_approve_hours)
-                   VALUES (?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?) RETURNING id""",
                 (code, promo_type, discount_pct, created_by, max_uses, valid_until, auto_approve_hours),
             )
             conn.commit()
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         raise HTTPException(409, f"Promo code '{code}' already exists")
     return get_promo_code(conn, cur.lastrowid)
 
@@ -173,7 +175,7 @@ def admin_approve_user_promo(conn: sqlite3.Connection, activation_id: int) -> di
         raise HTTPException(404, "Activation not found")
     with conn:
         conn.execute(
-            "UPDATE user_promo_activations SET admin_approved=1, admin_approved_at=datetime('now') WHERE id=?",
+            "UPDATE user_promo_activations SET admin_approved=1, admin_approved_at=CURRENT_TIMESTAMP WHERE id=?",
             (activation_id,),
         )
         conn.commit()
