@@ -360,13 +360,55 @@ def init_db() -> None:
         conn.executescript(SEARCH_TABLES_SQL)
         # Membership plans
         conn.executescript(MEMBERSHIP_TABLES_SQL)
+        # Project invitations (for unregistered users)
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS project_invitations (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                email       TEXT    NOT NULL COLLATE NOCASE,
+                invited_by  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                created_at  TEXT    DEFAULT (datetime('now')),
+                accepted_at TEXT,
+                UNIQUE(project_id, email)
+            );
+            CREATE INDEX IF NOT EXISTS idx_pi_email ON project_invitations(email);
+        """)
         conn.commit()
     _migrate_challenges_columns(conn)
     _migrate_org_columns(conn)
     _migrate_challenge_columns_v2(conn)
+    _migrate_search_sessions_columns(conn)
     seed_v1_skills(conn)
     seed_credit_packs(conn)
     seed_plans(conn)
+
+    # Seed the agent skill vault directories (Anthropic SKILL.md format
+    # + Karpathy autoresearch program.md + version history). Idempotent.
+    try:
+        from backend.skills import (
+            get_active_skill, list_skill_versions,
+            GENERATOR_SKILL_DESCRIPTION, JUDGE_SKILL_DESCRIPTION,
+        )
+        from backend.obsidian import (
+            write_agent_skill_file, write_agent_program_file, write_agent_history_file,
+        )
+        from backend.self_improve import GENERATOR_PROGRAM_MD, JUDGE_PROGRAM_MD
+
+        for at, program_seed, desc in (
+            ("generator", GENERATOR_PROGRAM_MD, GENERATOR_SKILL_DESCRIPTION),
+            ("judge", JUDGE_PROGRAM_MD, JUDGE_SKILL_DESCRIPTION),
+        ):
+            try:
+                active = get_active_skill(conn, at)
+                versions = list_skill_versions(conn, at)
+                write_agent_skill_file(OBSIDIAN_VAULT_DIR, at, active, description=desc)
+                write_agent_history_file(OBSIDIAN_VAULT_DIR, at, versions)
+                write_agent_program_file(OBSIDIAN_VAULT_DIR, at, program_seed)  # idempotent
+            except Exception as e:
+                logger.error("Vault skill seed failed for %s: %s", at, e)
+    except Exception as e:
+        logger.error("Vault skill seed block failed: %s", e)
+
     conn.close()
     _ensure_admin_user()
     _ensure_system_user()
@@ -525,6 +567,31 @@ def _migrate_challenge_columns_v2(conn) -> None:
             conn.execute("ALTER TABLE users ADD COLUMN api_key TEXT")
             conn.execute("ALTER TABLE users ADD COLUMN api_key_created_at TEXT")
             conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_api_key ON users(api_key)")
+        # Model version history table
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS model_versions (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                registered_model_id INTEGER NOT NULL REFERENCES registered_models(id) ON DELETE CASCADE,
+                version             TEXT NOT NULL,
+                changelog           TEXT,
+                created_by          INTEGER REFERENCES users(id),
+                created_at          TEXT DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_mv_model ON model_versions(registered_model_id);
+        """)
+        rm_cols = {r["name"] for r in conn.execute("PRAGMA table_info(registered_models)").fetchall()}
+        if "updated_at" not in rm_cols:
+            conn.execute("ALTER TABLE registered_models ADD COLUMN updated_at TEXT")
+        conn.commit()
+
+
+def _migrate_search_sessions_columns(conn) -> None:
+    """Add project_id to search_sessions if missing."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(search_sessions)").fetchall()}
+    with conn:
+        if "project_id" not in cols:
+            conn.execute("ALTER TABLE search_sessions ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_ss_project ON search_sessions(project_id)")
         conn.commit()
 
 
@@ -756,12 +823,20 @@ def root(rubricgen_session: str | None = Cookie(default=None)):
     return FileResponse(str(FRONTEND / "dashboard.html"), media_type="text/html")
 
 
-@app.get("/papers", include_in_schema=False)
-def papers_page(rubricgen_session: str | None = Cookie(default=None)):
+@app.get("/pdf-viewer", include_in_schema=False)
+def pdf_viewer_page(rubricgen_session: str | None = Cookie(default=None)):
+    """Unified PDF Viewer: read PDFs, create quick test questions, run evaluations.
+    This is the consolidated Papers + PDF Viewer page."""
     user = _get_user_from_token(rubricgen_session)
     if not user:
         return RedirectResponse("/login", status_code=302)
     return FileResponse(str(FRONTEND / "rubric_generator.html"), media_type="text/html")
+
+
+@app.get("/papers", include_in_schema=False)
+def papers_page_redirect(rubricgen_session: str | None = Cookie(default=None)):
+    """Legacy /papers route — redirects to the consolidated PDF Viewer."""
+    return RedirectResponse("/pdf-viewer", status_code=302)
 
 
 @app.get("/challenges", include_in_schema=False)
@@ -930,6 +1005,26 @@ def register(body: RegisterPayload):
             org_mod.join_by_domain(conn, user_row["id"])
     except Exception as e:
         logger.error("Domain auto-join failed for %s: %s", email, e)
+    # Fulfill pending project invitations
+    try:
+        if user_row:
+            invitations = conn.execute(
+                "SELECT id, project_id, invited_by FROM project_invitations WHERE email=? AND accepted_at IS NULL",
+                (email,),
+            ).fetchall()
+            for inv in invitations:
+                with conn:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO project_members (project_id, user_id, role, added_by) VALUES (?,?,?,?)",
+                        (inv["project_id"], user_row["id"], "member", inv["invited_by"]),
+                    )
+                    conn.execute(
+                        "UPDATE project_invitations SET accepted_at=datetime('now') WHERE id=?",
+                        (inv["id"],),
+                    )
+                    conn.commit()
+    except Exception as e:
+        logger.error("Invitation fulfillment failed for %s: %s", email, e)
     finally:
         conn.close()
     return {"ok": True}
@@ -1011,11 +1106,10 @@ def _generate_sso_token(user: dict) -> str:
 
 @app.get("/api/sso/annotator")
 def sso_to_annotator(rubricgen_session: str | None = Cookie(default=None)):
-    """Generate an SSO token and redirect the user to the Annotator."""
-    user = require_user(rubricgen_session)
-    token = _generate_sso_token(user)
-    redirect_url = f"{ANNOTATOR_URL.rstrip('/')}/sso?token={token}"
-    return RedirectResponse(redirect_url, status_code=302)
+    """Legacy SSO endpoint — the external Annotator is deprecated.
+    The PDF Viewer is now the consolidated local page."""
+    require_user(rubricgen_session)
+    return RedirectResponse("/pdf-viewer", status_code=302)
 
 
 class ForgotPasswordPayload(BaseModel):
@@ -1626,6 +1720,53 @@ def api_daily_leaderboard(rubricgen_session: str | None = Cookie(default=None)):
     return [dict(r) for r in rows]
 
 
+@app.get("/api/leaderboard/head-to-head")
+def api_head_to_head(
+    model1: str,
+    model2: str,
+    rubricgen_session: str | None = Cookie(default=None),
+):
+    """Head-to-head comparison of two models across shared challenges."""
+    require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        m1 = conn.execute("SELECT * FROM leaderboard_cache WHERE model_id=?", (model1,)).fetchone()
+        m2 = conn.execute("SELECT * FROM leaderboard_cache WHERE model_id=?", (model2,)).fetchone()
+        if not m1 or not m2:
+            raise HTTPException(status_code=404, detail="Model not found in leaderboard")
+
+        shared = conn.execute("""
+            SELECT c.id, c.theme, c.completed_at,
+                   p1.accuracy AS m1_accuracy, p1.total_score AS m1_score,
+                   p2.accuracy AS m2_accuracy, p2.total_score AS m2_score
+            FROM model_participants p1
+            JOIN model_participants p2 ON p1.challenge_id = p2.challenge_id
+            JOIN challenges c ON c.id = p1.challenge_id
+            WHERE p1.model_id=? AND p2.model_id=?
+              AND p1.status='graded' AND p2.status='graded'
+              AND c.status='complete'
+            ORDER BY c.completed_at DESC
+            LIMIT 20
+        """, (model1, model2)).fetchall()
+
+        wins1, wins2, ties = 0, 0, 0
+        for r in shared:
+            s1 = r["m1_score"] or 0
+            s2 = r["m2_score"] or 0
+            if s1 > s2: wins1 += 1
+            elif s2 > s1: wins2 += 1
+            else: ties += 1
+
+        return {
+            "model1": dict(m1), "model2": dict(m2),
+            "shared_challenges": [dict(r) for r in shared],
+            "wins1": wins1, "wins2": wins2, "ties": ties,
+            "total_shared": len(shared),
+        }
+    finally:
+        conn.close()
+
+
 @app.get("/api/daily-results")
 def api_daily_results(rubricgen_session: str | None = Cookie(default=None)):
     """Recent Daily AI Researcher Challenge results with drill-down data."""
@@ -1720,14 +1861,64 @@ def api_activate_skill(agent_type: str, version: int,
     conn = get_db()
     try:
         activate_skill_version(conn, agent_type, version)
-        # Write to Obsidian
-        from backend.obsidian import write_skill_note
+        # Refresh the Anthropic-format vault files
+        from backend.obsidian import write_agent_skill_file, write_agent_history_file
         active = get_active_skill(conn, agent_type)
         versions = list_skill_versions(conn, agent_type)
-        write_skill_note(OBSIDIAN_VAULT_DIR, agent_type, active, versions)
+        write_agent_skill_file(OBSIDIAN_VAULT_DIR, agent_type, active)
+        write_agent_history_file(OBSIDIAN_VAULT_DIR, agent_type, versions)
         return {"ok": True, "activated_version": version}
     finally:
         conn.close()
+
+
+@app.get("/api/skills/{agent_type}/skill-md")
+def api_get_skill_md(agent_type: str,
+                     rubricgen_session: str | None = Cookie(default=None)):
+    """Return the Anthropic-format SKILL.md content for an agent. Admin-only."""
+    require_admin(rubricgen_session)
+    if agent_type not in ("generator", "judge"):
+        raise HTTPException(400, "agent_type must be 'generator' or 'judge'")
+    p = OBSIDIAN_VAULT_DIR / "skills" / agent_type / "SKILL.md"
+    if not p.exists():
+        raise HTTPException(404, "SKILL.md not found — has the vault been seeded?")
+    return {"content": p.read_text(encoding="utf-8"), "path": str(p)}
+
+
+@app.get("/api/skills/{agent_type}/program-md")
+def api_get_program_md(agent_type: str,
+                       rubricgen_session: str | None = Cookie(default=None)):
+    """Return the human-editable program.md meta-learner control file. Admin-only."""
+    require_admin(rubricgen_session)
+    if agent_type not in ("generator", "judge"):
+        raise HTTPException(400, "agent_type must be 'generator' or 'judge'")
+    p = OBSIDIAN_VAULT_DIR / "skills" / agent_type / "program.md"
+    if not p.exists():
+        raise HTTPException(404, "program.md not found")
+    return {"content": p.read_text(encoding="utf-8"), "path": str(p)}
+
+
+class UpdateProgramMdPayload(BaseModel):
+    content: str
+
+
+@app.put("/api/skills/{agent_type}/program-md")
+def api_update_program_md(agent_type: str,
+                          body: UpdateProgramMdPayload,
+                          rubricgen_session: str | None = Cookie(default=None)):
+    """Update the human-editable program.md meta-learner control file.
+
+    This file is re-read on every self-improvement experiment — edits
+    take effect immediately on the next run. Admin-only."""
+    require_admin(rubricgen_session)
+    if agent_type not in ("generator", "judge"):
+        raise HTTPException(400, "agent_type must be 'generator' or 'judge'")
+    if len(body.content) > 100_000:
+        raise HTTPException(400, "program.md too large (100 KB limit)")
+    p = OBSIDIAN_VAULT_DIR / "skills" / agent_type / "program.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(body.content, encoding="utf-8")
+    return {"ok": True, "path": str(p), "bytes": len(body.content)}
 
 
 # ─────────────────────────────────────────────
@@ -1748,6 +1939,15 @@ class RegisterModelPayload(BaseModel):
 
 class AddMemberPayload(BaseModel):
     email: str
+
+
+class UpdateModelPayload(BaseModel):
+    name: Optional[str] = None
+    version: Optional[str] = None
+    provider: Optional[str] = None
+    git_repo: Optional[str] = None
+    organization: Optional[str] = None
+    changelog: Optional[str] = None
 
 
 @app.post("/api/models", status_code=201)
@@ -1811,6 +2011,35 @@ def api_delete_model(model_id: int, rubricgen_session: str | None = Cookie(defau
     finally:
         conn.close()
     return {"ok": True}
+
+
+@app.patch("/api/models/{model_id}")
+def api_update_model(model_id: int, body: UpdateModelPayload,
+                     rubricgen_session: str | None = Cookie(default=None)):
+    """Update model metadata. Creator only. If version changes, logs to version history."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        model = mreg.update_model(
+            conn, model_id, user["id"],
+            name=body.name, version=body.version,
+            provider=body.provider, git_repo=body.git_repo,
+            organization=body.organization, changelog=body.changelog,
+        )
+    finally:
+        conn.close()
+    return model
+
+
+@app.get("/api/models/{model_id}/versions")
+def api_model_versions(model_id: int, rubricgen_session: str | None = Cookie(default=None)):
+    """Get version history for a model."""
+    require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return mreg.get_version_history(conn, model_id)
+    finally:
+        conn.close()
 
 
 @app.post("/api/models/{model_id}/members")
@@ -2640,8 +2869,29 @@ def share_project(pid: int, body: ShareProjectPayload,
     email = body.email.strip().lower()
     target = conn.execute("SELECT id, display_name FROM users WHERE email=?", (email,)).fetchone()
     if not target:
+        # Unregistered user — store pending invitation and send registration invite
+        with conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO project_invitations (project_id, email, invited_by) VALUES (?,?,?)",
+                (pid, email, user["id"]),
+            )
+            conn.commit()
         conn.close()
-        raise HTTPException(400, f"No registered user with email {email}")
+        try:
+            _send_email(
+                email,
+                "The AI Researcher — You've been invited to a project",
+                f"Hi,\n\n"
+                f"{user['display_name']} has invited you to the project \"{proj['name']}\" "
+                f"on The AI Researcher.\n\n"
+                f"Create your free account to get access:\n"
+                f"{APP_BASE_URL}/login\n\n"
+                f"— The AI Researcher",
+            )
+        except Exception:
+            pass
+        return {"ok": True, "status": "invitation_sent",
+                "message": f"Invitation email sent to {email}. They'll be added when they register."}
     if target["id"] == user["id"]:
         conn.close()
         raise HTTPException(400, "Cannot share a project with yourself")
@@ -3720,6 +3970,11 @@ class SearchSelectAllPayload(BaseModel):
     query_version: int
     selected: bool
 
+class SearchSessionUpdatePayload(BaseModel):
+    title: str | None = None
+    project_id: int | None = None
+    remove_from_project: bool = False
+
 
 @app.post("/api/search/chat")
 def api_search_chat(body: SearchChatPayload, rubricgen_session: str | None = Cookie(default=None)):
@@ -3781,6 +4036,24 @@ def api_delete_search_session(session_id: int, rubricgen_session: str | None = C
     conn = get_db()
     try:
         search_mod.delete_session(conn, session_id, user["id"])
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.patch("/api/search/sessions/{session_id}")
+def api_update_search_session(session_id: int, body: SearchSessionUpdatePayload,
+                              rubricgen_session: str | None = Cookie(default=None)):
+    """Rename a search session or move it to/from a project."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        if body.title is not None:
+            search_mod.update_session_title(conn, session_id, user["id"], body.title)
+        if body.remove_from_project:
+            search_mod.update_session_project(conn, session_id, user["id"], None)
+        elif body.project_id is not None:
+            search_mod.update_session_project(conn, session_id, user["id"], body.project_id)
         return {"ok": True}
     finally:
         conn.close()

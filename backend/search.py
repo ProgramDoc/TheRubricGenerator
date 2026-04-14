@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS search_sessions (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     title       TEXT    NOT NULL DEFAULT 'New Search',
     user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    project_id  INTEGER REFERENCES projects(id) ON DELETE SET NULL,
     pico_json   TEXT,
     created_at  TEXT    DEFAULT (datetime('now')),
     updated_at  TEXT    DEFAULT (datetime('now'))
@@ -95,7 +96,7 @@ def create_session(conn: sqlite3.Connection, user_id: int,
 
 def list_sessions(conn: sqlite3.Connection, user_id: int) -> list[dict]:
     rows = conn.execute(
-        """SELECT ss.id, ss.title, ss.updated_at,
+        """SELECT ss.id, ss.title, ss.project_id, ss.updated_at,
                   (SELECT COUNT(*) FROM search_messages WHERE session_id = ss.id) AS message_count,
                   (SELECT COUNT(*) FROM search_results WHERE session_id = ss.id) AS result_count
            FROM search_sessions ss
@@ -147,6 +148,72 @@ def delete_session(conn: sqlite3.Connection, session_id: int,
     with conn:
         conn.execute("DELETE FROM search_sessions WHERE id = ?", (session_id,))
         conn.commit()
+
+
+def update_session_title(conn: sqlite3.Connection, session_id: int,
+                         user_id: int, title: str) -> None:
+    row = conn.execute(
+        "SELECT id FROM search_sessions WHERE id = ? AND user_id = ?",
+        (session_id, user_id),
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "Session not found")
+    with conn:
+        conn.execute(
+            "UPDATE search_sessions SET title = ?, updated_at = datetime('now') WHERE id = ?",
+            (title[:200].strip(), session_id),
+        )
+        conn.commit()
+
+
+def update_session_project(conn: sqlite3.Connection, session_id: int,
+                           user_id: int, project_id: int | None) -> None:
+    row = conn.execute(
+        "SELECT id FROM search_sessions WHERE id = ? AND user_id = ?",
+        (session_id, user_id),
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "Session not found")
+    if project_id is not None:
+        # Verify user owns or is a member of the target project
+        proj = conn.execute(
+            """SELECT 1 FROM projects WHERE id = ? AND user_id = ?
+               UNION
+               SELECT 1 FROM project_members WHERE project_id = ? AND user_id = ?""",
+            (project_id, user_id, project_id, user_id),
+        ).fetchone()
+        if not proj:
+            raise HTTPException(403, "You are not a member of this project")
+    with conn:
+        conn.execute(
+            "UPDATE search_sessions SET project_id = ?, updated_at = datetime('now') WHERE id = ?",
+            (project_id, session_id),
+        )
+        conn.commit()
+
+
+def _generate_session_title(user_message: str) -> str:
+    """Generate a short session title from the first user message."""
+    text = user_message.strip()
+    for prefix in [
+        "I'm looking for", "I want to find", "I need to search for",
+        "Find me", "Search for", "Can you help me find",
+        "Help me search for", "I'm interested in", "Looking for",
+        "I need", "I want", "Find",
+    ]:
+        if text.lower().startswith(prefix.lower()):
+            text = text[len(prefix):].strip()
+            break
+    # Take first sentence or first 60 chars
+    for sep in ['.', '?', '\n']:
+        idx = text.find(sep)
+        if 0 < idx < 80:
+            text = text[:idx]
+            break
+    title = text[:60].strip()
+    if len(text) > 60:
+        title += "..."
+    return title or "New Search"
 
 
 # ─────────────────────────────────────────────
@@ -256,7 +323,7 @@ def chat(conn: sqlite3.Connection, session_id: int, user_id: int,
         (session_id,),
     ).fetchone()["c"]
     if msg_count == 1:
-        title = user_message[:80].strip()
+        title = _generate_session_title(user_message)
         with conn:
             conn.execute(
                 "UPDATE search_sessions SET title = ? WHERE id = ?",

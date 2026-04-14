@@ -29,16 +29,79 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 
 /* Split layout */
 .split { display: flex; height: calc(100vh - 46px); }
-.panel-left { width: 50%; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: #fff; }
+.search-sidebar { width: 260px; min-width: 260px; background: #fff; border-right: 1px solid var(--border); overflow-y: auto; display: flex; flex-direction: column; flex-shrink: 0; }
+.panel-left { flex: 1; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: #fff; min-width: 0; }
 .panel-right { width: 50%; display: flex; flex-direction: column; background: var(--bg); }
-@media (max-width: 900px) { .split { flex-direction: column; height: auto; } .panel-left, .panel-right { width: 100%; height: 50vh; } }
+@media (max-width: 900px) {
+  .split { flex-direction: column; height: auto; }
+  .search-sidebar { display: none; }
+  .panel-left, .panel-right { width: 100%; height: 50vh; }
+  .sidebar-toggle { display: block !important; }
+}
 
-/* Chat panel */
-.chat-header { padding: 10px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; background: #fafbfc; flex-shrink: 0; }
-.chat-header select { font-family: inherit; font-size: 11px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; flex: 1; max-width: 250px; }
-.chat-header .btn-sm { font-family: inherit; font-size: 11px; font-weight: 600; padding: 5px 12px; border-radius: 4px; cursor: pointer; border: none; }
-.chat-header .btn-new { background: var(--blue); color: #fff; }
-.chat-header .btn-del { background: transparent; color: var(--red); border: 1px solid rgba(220,38,38,.3); }
+/* Sidebar */
+.sidebar-section { border-bottom: 1px solid var(--border); }
+.sidebar-header { padding: 10px 14px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); display: flex; align-items: center; justify-content: space-between; }
+.sidebar-header button { background: none; border: none; font-size: 16px; color: var(--muted); cursor: pointer; padding: 0 4px; line-height: 1; }
+.sidebar-header button:hover { color: var(--blue); }
+.search-item { padding: 8px 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-left: 3px solid transparent; position: relative; }
+.search-item:hover { background: #f8fafc; }
+.search-item.active { background: #f0f4ff; border-left-color: var(--sky); }
+.search-item-title { font-size: 11.5px; font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.search-item-meta { font-size: 9px; color: var(--muted); white-space: nowrap; }
+.search-item-actions { display: none; position: absolute; right: 8px; top: 50%; transform: translateY(-50%); }
+.search-item:hover .search-item-actions { display: flex; gap: 2px; }
+.search-item-actions button { background: none; border: none; font-size: 12px; cursor: pointer; color: var(--muted); padding: 2px 4px; border-radius: 3px; }
+.search-item-actions button:hover { background: rgba(0,0,0,.06); color: var(--text); }
+.folder-item { padding: 8px 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; position: relative; }
+.folder-item:hover { background: #f8fafc; }
+.folder-icon { font-size: 13px; color: var(--amber); }
+.folder-name { font-size: 11.5px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.folder-badge { font-size: 9px; background: rgba(94,154,208,.12); color: var(--blue); padding: 1px 5px; border-radius: 8px; font-weight: 600; }
+.folder-actions { display: none; position: absolute; right: 8px; top: 50%; transform: translateY(-50%); }
+.folder-item:hover .folder-actions { display: flex; gap: 2px; }
+.folder-actions button { background: none; border: none; font-size: 11px; cursor: pointer; color: var(--muted); padding: 2px 4px; border-radius: 3px; }
+.folder-actions button:hover { background: rgba(0,0,0,.06); color: var(--text); }
+.folder-children { padding-left: 18px; display: none; }
+.folder-children.open { display: block; }
+.folder-owner { font-size: 9px; color: var(--muted); font-style: italic; }
+.new-project-inline { display: none; padding: 6px 14px; }
+.new-project-inline.show { display: block; }
+.new-project-inline input { width: 100%; font-family: inherit; font-size: 11px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; }
+.sidebar-toggle { display: none; position: absolute; top: 54px; left: 8px; z-index: 10; background: var(--blue); color: #fff; border: none; border-radius: 4px; padding: 5px 8px; font-size: 11px; cursor: pointer; }
+
+/* Context menu */
+.ctx-menu { position: fixed; z-index: 100; background: #fff; border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,.12); min-width: 140px; padding: 4px 0; }
+.ctx-menu-item { padding: 7px 14px; font-size: 11.5px; cursor: pointer; display: block; width: 100%; border: none; background: none; text-align: left; font-family: inherit; color: var(--text); }
+.ctx-menu-item:hover { background: #f0f4ff; }
+.ctx-menu-item.danger { color: var(--red); }
+.ctx-menu-item.danger:hover { background: rgba(220,38,38,.06); }
+.ctx-menu-sep { height: 1px; background: var(--border); margin: 4px 0; }
+
+/* Share modal */
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 200; align-items: center; justify-content: center; }
+.modal-overlay.show { display: flex; }
+.modal { background: #fff; border-radius: 10px; width: 420px; max-height: 80vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,.2); }
+.modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.modal-header h3 { font-size: 14px; font-weight: 700; color: var(--navy); }
+.modal-close { background: none; border: none; font-size: 18px; cursor: pointer; color: var(--muted); }
+.modal-body { padding: 16px 20px; }
+.modal-body label { font-size: 11px; font-weight: 600; color: var(--muted); display: block; margin-bottom: 4px; }
+.modal-body input[type=email] { width: 100%; font-family: inherit; font-size: 12px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 5px; margin-bottom: 10px; }
+.modal-body .btn { font-family: inherit; font-size: 11px; font-weight: 600; padding: 7px 16px; border-radius: 5px; cursor: pointer; border: none; }
+.modal-body .btn-primary { background: var(--blue); color: #fff; }
+.modal-body .btn-danger { background: transparent; color: var(--red); border: 1px solid rgba(220,38,38,.3); }
+.modal-body .btn-secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
+.member-list { margin-top: 14px; }
+.member-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f1f5f9; font-size: 11.5px; }
+.member-row:last-child { border-bottom: none; }
+.member-name { font-weight: 600; color: var(--text); }
+.member-email { font-size: 10px; color: var(--muted); }
+.member-role { font-size: 9px; font-weight: 700; text-transform: uppercase; padding: 2px 6px; border-radius: 3px; }
+.member-role.admin { background: rgba(212,175,55,.12); color: var(--gold); }
+.member-role.member { background: rgba(94,154,208,.12); color: var(--blue); }
+
+/* Chat panel (no more header dropdown) */
 
 .chat-messages { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
 .chat-empty { color: var(--muted); text-align: center; padding: 40px 20px; font-size: 12px; line-height: 1.6; }
@@ -150,6 +213,25 @@ table.res-table tbody tr:last-child td { border-bottom: none; }
 .nav-settings:hover .nav-settings-menu { display: block; }
 .nav-settings-menu a { display: block; padding: 8px 16px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); text-decoration: none; }
 .nav-settings-menu a:hover { background: rgba(255,255,255,.08); color: #fff; }
+
+/* ── Toast notifications ── */
+.toast-container { position: fixed; top: 60px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.toast { padding: 10px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; color: #fff; box-shadow: 0 4px 12px rgba(0,0,0,.15); animation: toastIn .3s ease; max-width: 360px; pointer-events: auto; }
+.toast.success { background: var(--green); }
+.toast.error { background: var(--red); }
+.toast.info { background: var(--blue); }
+@keyframes toastIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes toastOut { from { opacity: 1; } to { opacity: 0; transform: translateX(40px); } }
+@media (max-width: 600px) {
+  .topbar { padding: 10px 14px; flex-wrap: wrap; gap: 6px; }
+  .topbar .brand { font-size: 14px; }
+  .topbar nav { gap: 2px; }
+  .topbar nav a { font-size: 10px; padding: 4px 6px; }
+  .topbar nav a[href="/developers"], .topbar nav a[href*="sso/annotator"], .topbar nav a[href="/library"] { display: none; }
+  .topbar .user-badge { font-size: 9px; margin-left: 4px; padding: 3px 6px; }
+  .topbar .signout-btn { font-size: 9px; padding: 4px 8px; margin-left: 4px; }
+  .panel-left, .panel-right { height: auto; min-height: 40vh; }
+}
 </style>
 </head>
 <body>
@@ -171,9 +253,8 @@ table.res-table tbody tr:last-child td { border-bottom: none; }
     <a href="/analytics">Analytics</a>
     <a href="/library">Library</a>
     <a href="/search" class="active">Search</a>
-    <a href="/papers">Papers</a>
+    <a href="/pdf-viewer">PDF Viewer</a>
     <a href="/developers">Developers</a>
-    <a href="/api/sso/annotator">PDF Viewer</a>
     <a href="/admin" id="nav-admin" style="display:none">Admin</a>
     <span class="user-badge" id="user-badge">—</span>
     <div class="nav-settings">
@@ -188,15 +269,27 @@ table.res-table tbody tr:last-child td { border-bottom: none; }
 </div>
 
 <div class="split">
-  <!-- LEFT: Chat -->
-  <div class="panel-left">
-    <div class="chat-header">
-      <select id="session-select" onchange="switchSession(this.value)">
-        <option value="">Select a search session...</option>
-      </select>
-      <button class="btn-sm btn-new" onclick="newSession()">+ New</button>
-      <button class="btn-sm btn-del" onclick="deleteCurrentSession()">Delete</button>
+  <!-- SIDEBAR: Searches + Projects -->
+  <div class="search-sidebar" id="search-sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-header">Searches <button onclick="newSession()" title="New search">+</button></div>
+      <div id="unsorted-searches"></div>
     </div>
+    <div class="sidebar-section">
+      <div class="sidebar-header">My Projects <button onclick="toggleNewProject()" title="New project">+</button></div>
+      <div class="new-project-inline" id="new-project-form">
+        <input type="text" id="new-project-input" placeholder="Project name..." onkeydown="if(event.key==='Enter'){event.preventDefault();createNewProject();}">
+      </div>
+      <div id="own-project-folders"></div>
+    </div>
+    <div class="sidebar-section" id="shared-section" style="display:none">
+      <div class="sidebar-header">Shared With Me</div>
+      <div id="shared-project-folders"></div>
+    </div>
+  </div>
+
+  <!-- CHAT -->
+  <div class="panel-left">
     <div class="chat-messages" id="chat-messages">
       <div class="chat-empty">
         <strong>AI Search Strategist</strong><br><br>
@@ -272,16 +365,58 @@ table.res-table tbody tr:last-child td { border-bottom: none; }
   </div>
 </div>
 
+<!-- Context menu (positioned dynamically) -->
+<div class="ctx-menu" id="ctx-menu" style="display:none"></div>
+
+<!-- Share modal -->
+<div class="modal-overlay" id="share-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="share-modal-title">Share Project</h3>
+      <button class="modal-close" onclick="closeShareModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <label>Invite by email</label>
+      <div style="display:flex;gap:6px;margin-bottom:14px">
+        <input type="email" id="share-email-input" placeholder="colleague@example.com" style="flex:1;margin-bottom:0" onkeydown="if(event.key==='Enter'){event.preventDefault();shareProjectEmail();}">
+        <button class="btn btn-primary" onclick="shareProjectEmail()">Share</button>
+      </div>
+      <div id="share-status" style="font-size:11px;margin-bottom:10px"></div>
+      <label>Members</label>
+      <div class="member-list" id="member-list"></div>
+      <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap" id="share-modal-actions"></div>
+    </div>
+  </div>
+</div>
+
 <script>
+/* ── Toast helpers ── */
+function _ensureToastContainer() {
+  let c = document.querySelector('.toast-container');
+  if (!c) { c = document.createElement('div'); c.className = 'toast-container'; document.body.appendChild(c); }
+  return c;
+}
+function showToast(msg, type = 'info', duration = 4000) {
+  const c = _ensureToastContainer();
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => { t.style.animation = 'toastOut .3s ease forwards'; setTimeout(() => t.remove(), 300); }, duration);
+}
+
 let currentUser = null;
 let currentSessionId = null;
 let sessions = [];
+let projects = [];
 let queryVersions = [];
 let currentQuery = '';
 let results = [];
 let currentPage = 1;
 let totalPages = 1;
 let totalResults = 0;
+let shareModalProjectId = null;
+let openFolders = JSON.parse(localStorage.getItem('search_open_folders') || '{}');
 
 // ── Auth ──
 async function checkAuth() {
@@ -298,27 +433,362 @@ async function signOut() { await fetch('/api/auth/logout', { method: 'POST' }); 
 function escapeHtml(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 function renderMd(text) { return escapeHtml(text).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\n- /g, '\n• ').replace(/\n/g, '<br>'); }
 
-// ── Sessions ──
-async function loadSessions() {
-  const r = await fetch('/api/search/sessions');
-  if (!r.ok) return;
-  sessions = await r.json();
-  const sel = document.getElementById('session-select');
-  sel.innerHTML = '<option value="">Select a search session...</option>';
-  sessions.forEach(s => {
+// ── Sidebar ──
+async function renderSidebar() {
+  try {
+    const [sRes, pRes] = await Promise.all([
+      fetch('/api/search/sessions'),
+      fetch('/api/projects'),
+    ]);
+    if (sRes.ok) sessions = await sRes.json();
+    if (pRes.ok) projects = await pRes.json();
+  } catch { return; }
+
+  const unsorted = sessions.filter(s => !s.project_id);
+  const byProject = {};
+  sessions.forEach(s => { if (s.project_id) { (byProject[s.project_id] = byProject[s.project_id] || []).push(s); } });
+
+  // Unsorted searches
+  const unsortedEl = document.getElementById('unsorted-searches');
+  unsortedEl.innerHTML = unsorted.length ? '' : '<div style="padding:6px 14px;font-size:10px;color:var(--muted)">No searches yet</div>';
+  unsorted.forEach(s => unsortedEl.appendChild(makeSearchItem(s)));
+
+  // Own projects
+  const ownProjects = projects.filter(p => p.role === 'admin' && !p.owner_name);
+  const ownEl = document.getElementById('own-project-folders');
+  ownEl.innerHTML = '';
+  ownProjects.forEach(p => ownEl.appendChild(makeFolderItem(p, byProject[p.id] || [], true)));
+
+  // Shared projects
+  const sharedProjects = projects.filter(p => p.owner_name);
+  const sharedSection = document.getElementById('shared-section');
+  const sharedEl = document.getElementById('shared-project-folders');
+  if (sharedProjects.length) {
+    sharedSection.style.display = '';
+    sharedEl.innerHTML = '';
+    sharedProjects.forEach(p => sharedEl.appendChild(makeFolderItem(p, byProject[p.id] || [], false)));
+  } else {
+    sharedSection.style.display = 'none';
+  }
+
+  // Also update the import project dropdown
+  const importSel = document.getElementById('import-project');
+  importSel.innerHTML = '<option value="">Import to: Unassigned</option>';
+  projects.forEach(p => {
     const o = document.createElement('option');
-    o.value = s.id; o.textContent = `${s.title} (${s.message_count} msgs)`;
-    if (s.id === currentSessionId) o.selected = true;
-    sel.appendChild(o);
+    o.value = p.id; o.textContent = p.name;
+    importSel.appendChild(o);
   });
+}
+
+function makeSearchItem(s) {
+  const div = document.createElement('div');
+  div.className = 'search-item' + (s.id === currentSessionId ? ' active' : '');
+  div.dataset.sessionId = s.id;
+  div.onclick = (e) => { if (!e.target.closest('.search-item-actions')) switchSession(s.id); };
+  div.innerHTML = `
+    <span class="search-item-title">${escapeHtml(s.title)}</span>
+    <span class="search-item-meta">${s.message_count || 0}</span>
+    <span class="search-item-actions">
+      <button onclick="event.stopPropagation();showSearchCtx(event,${s.id})" title="More">...</button>
+    </span>`;
+  return div;
+}
+
+function makeFolderItem(p, children, isOwner) {
+  const wrapper = document.createElement('div');
+  const isOpen = openFolders[p.id];
+  const memberCount = (p.member_count || 0);
+
+  const folder = document.createElement('div');
+  folder.className = 'folder-item';
+  folder.onclick = (e) => { if (!e.target.closest('.folder-actions')) toggleFolder(p.id); };
+  folder.innerHTML = `
+    <span class="folder-icon">${isOpen ? '&#128194;' : '&#128193;'}</span>
+    <span class="folder-name">${escapeHtml(p.name)}</span>
+    ${memberCount > 0 ? `<span class="folder-badge">${memberCount}</span>` : ''}
+    <span class="folder-actions">
+      <button onclick="event.stopPropagation();showFolderCtx(event,${p.id},${isOwner})" title="More">...</button>
+    </span>`;
+  if (!isOwner && p.owner_name) {
+    const ownerTag = document.createElement('div');
+    ownerTag.className = 'folder-owner';
+    ownerTag.style.padding = '0 14px 4px 36px';
+    ownerTag.textContent = 'by ' + p.owner_name;
+    wrapper.appendChild(folder);
+    wrapper.appendChild(ownerTag);
+  } else {
+    wrapper.appendChild(folder);
+  }
+
+  const childDiv = document.createElement('div');
+  childDiv.className = 'folder-children' + (isOpen ? ' open' : '');
+  childDiv.id = 'folder-children-' + p.id;
+  if (children.length) {
+    children.forEach(s => childDiv.appendChild(makeSearchItem(s)));
+  } else {
+    childDiv.innerHTML = '<div style="padding:4px 14px;font-size:10px;color:var(--muted);font-style:italic">No searches</div>';
+  }
+  wrapper.appendChild(childDiv);
+  return wrapper;
+}
+
+function toggleFolder(pid) {
+  openFolders[pid] = !openFolders[pid];
+  localStorage.setItem('search_open_folders', JSON.stringify(openFolders));
+  const el = document.getElementById('folder-children-' + pid);
+  if (el) el.classList.toggle('open');
+  // Update folder icon
+  renderSidebar();
+}
+
+// ── Context menus ──
+function hideCtxMenu() { document.getElementById('ctx-menu').style.display = 'none'; }
+document.addEventListener('click', hideCtxMenu);
+
+function showCtxAt(x, y, items) {
+  const menu = document.getElementById('ctx-menu');
+  menu.innerHTML = items.map(i => {
+    if (i === 'sep') return '<div class="ctx-menu-sep"></div>';
+    return `<button class="ctx-menu-item${i.danger ? ' danger' : ''}" onclick="hideCtxMenu();${i.action}">${escapeHtml(i.label)}</button>`;
+  }).join('');
+  menu.style.display = 'block';
+  menu.style.left = Math.min(x, window.innerWidth - 160) + 'px';
+  menu.style.top = Math.min(y, window.innerHeight - menu.offsetHeight - 10) + 'px';
+}
+
+function showSearchCtx(e, sessionId) {
+  e.stopPropagation();
+  const items = [
+    { label: 'Rename', action: `renameSession(${sessionId})` },
+    { label: 'Move to project', action: `moveSessionToProject(${sessionId})` },
+  ];
+  const s = sessions.find(s => s.id === sessionId);
+  if (s && s.project_id) {
+    items.push({ label: 'Remove from project', action: `removeSessionFromProject(${sessionId})` });
+  }
+  items.push('sep');
+  items.push({ label: 'Delete', action: `deleteSession(${sessionId})`, danger: true });
+  showCtxAt(e.clientX, e.clientY, items);
+}
+
+function showFolderCtx(e, pid, isOwner) {
+  e.stopPropagation();
+  const items = [
+    { label: 'Share', action: `openShareModal(${pid})` },
+    { label: 'Rename', action: `renameProject(${pid})` },
+  ];
+  if (isOwner) {
+    items.push('sep');
+    items.push({ label: 'Delete project', action: `deleteProject(${pid})`, danger: true });
+  } else {
+    items.push('sep');
+    items.push({ label: 'Leave project', action: `leaveProject(${pid})`, danger: true });
+  }
+  showCtxAt(e.clientX, e.clientY, items);
+}
+
+// ── Session actions ──
+async function renameSession(sessionId) {
+  const s = sessions.find(s => s.id === sessionId);
+  const name = prompt('Rename search:', s?.title || '');
+  if (!name || !name.trim()) return;
+  await fetch(`/api/search/sessions/${sessionId}`, {
+    method: 'PATCH', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ title: name.trim() }),
+  });
+  renderSidebar();
+}
+
+async function moveSessionToProject(sessionId) {
+  if (!projects.length) { showToast('Create a project first', 'info'); return; }
+  const opts = projects.map(p => `${p.id}: ${p.name}`).join('\n');
+  const choice = prompt('Enter project ID to move to:\n\n' + opts);
+  if (!choice) return;
+  const pid = parseInt(choice);
+  if (!pid) return;
+  await fetch(`/api/search/sessions/${sessionId}`, {
+    method: 'PATCH', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ project_id: pid }),
+  });
+  renderSidebar();
+}
+
+async function removeSessionFromProject(sessionId) {
+  await fetch(`/api/search/sessions/${sessionId}`, {
+    method: 'PATCH', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ remove_from_project: true }),
+  });
+  renderSidebar();
+}
+
+async function deleteSession(sessionId) {
+  if (!confirm('Delete this search session?')) return;
+  await fetch(`/api/search/sessions/${sessionId}`, { method: 'DELETE' });
+  if (sessionId === currentSessionId) newSession();
+  renderSidebar();
+}
+
+// ── Project actions ──
+function toggleNewProject() {
+  const form = document.getElementById('new-project-form');
+  form.classList.toggle('show');
+  if (form.classList.contains('show')) document.getElementById('new-project-input').focus();
+}
+
+async function createNewProject() {
+  const input = document.getElementById('new-project-input');
+  const name = input.value.trim();
+  if (!name) return;
+  const r = await fetch('/api/projects', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ name }),
+  });
+  if (!r.ok) { const e = await r.json(); showToast(e.detail || 'Failed', 'error'); return; }
+  input.value = '';
+  document.getElementById('new-project-form').classList.remove('show');
+  showToast('Project created', 'success');
+  renderSidebar();
+}
+
+async function renameProject(pid) {
+  const p = projects.find(p => p.id === pid);
+  const name = prompt('Rename project:', p?.name || '');
+  if (!name || !name.trim()) return;
+  await fetch(`/api/projects/${pid}`, {
+    method: 'PATCH', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ name: name.trim() }),
+  });
+  renderSidebar();
+}
+
+async function deleteProject(pid) {
+  if (!confirm('Delete this project? Searches inside will become unsorted.')) return;
+  await fetch(`/api/projects/${pid}`, { method: 'DELETE' });
+  showToast('Project deleted', 'success');
+  renderSidebar();
+}
+
+async function leaveProject(pid) {
+  if (!confirm('Leave this shared project?')) return;
+  const r = await fetch(`/api/projects/${pid}/leave`, { method: 'POST' });
+  if (!r.ok) { const e = await r.json(); showToast(e.detail || 'Failed', 'error'); return; }
+  showToast('Left project', 'success');
+  renderSidebar();
+}
+
+// ── Share modal ──
+async function openShareModal(pid) {
+  shareModalProjectId = pid;
+  const p = projects.find(p => p.id === pid);
+  document.getElementById('share-modal-title').textContent = 'Share: ' + (p?.name || 'Project');
+  document.getElementById('share-email-input').value = '';
+  document.getElementById('share-status').innerHTML = '';
+
+  // Load members
+  try {
+    const r = await fetch(`/api/projects/${pid}/members`);
+    if (r.ok) {
+      const members = await r.json();
+      const list = document.getElementById('member-list');
+      list.innerHTML = members.map(m => `
+        <div class="member-row">
+          <div>
+            <span class="member-name">${escapeHtml(m.display_name)}</span>
+            <span class="member-email">${escapeHtml(m.email)}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span class="member-role ${m.role}">${m.role}</span>
+            ${m.role !== 'admin' && p && !p.owner_name ? `<button class="btn btn-danger" style="font-size:9px;padding:3px 8px" onclick="removeMember(${pid},${m.user_id})">Remove</button>` : ''}
+          </div>
+        </div>
+      `).join('');
+
+      // Actions: transfer ownership (only for owner)
+      const actions = document.getElementById('share-modal-actions');
+      if (p && !p.owner_name) {
+        const nonAdmins = members.filter(m => m.role !== 'admin');
+        if (nonAdmins.length) {
+          actions.innerHTML = `<button class="btn btn-secondary" onclick="transferOwnership(${pid})">Transfer Ownership</button>`;
+        } else {
+          actions.innerHTML = '';
+        }
+      } else {
+        actions.innerHTML = `<button class="btn btn-danger" onclick="leaveProject(${pid});closeShareModal()">Leave Project</button>`;
+      }
+    }
+  } catch {}
+
+  document.getElementById('share-modal').classList.add('show');
+}
+
+function closeShareModal() {
+  document.getElementById('share-modal').classList.remove('show');
+  shareModalProjectId = null;
+}
+
+async function shareProjectEmail() {
+  const email = document.getElementById('share-email-input').value.trim();
+  if (!email || !shareModalProjectId) return;
+  const status = document.getElementById('share-status');
+  status.innerHTML = '<span style="color:var(--muted)">Sharing...</span>';
+  const r = await fetch(`/api/projects/${shareModalProjectId}/share`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ email }),
+  });
+  const data = await r.json();
+  if (!r.ok) {
+    status.innerHTML = `<span style="color:var(--red)">${escapeHtml(data.detail || 'Failed')}</span>`;
+    return;
+  }
+  if (data.status === 'invitation_sent') {
+    status.innerHTML = `<span style="color:var(--amber)">${escapeHtml(data.message)}</span>`;
+  } else {
+    status.innerHTML = `<span style="color:var(--green)">Shared successfully!</span>`;
+  }
+  document.getElementById('share-email-input').value = '';
+  openShareModal(shareModalProjectId); // refresh member list
+}
+
+async function removeMember(pid, userId) {
+  if (!confirm('Remove this member?')) return;
+  await fetch(`/api/projects/${pid}/members/${userId}`, { method: 'DELETE' });
+  openShareModal(pid);
+}
+
+async function transferOwnership(pid) {
+  const r = await fetch(`/api/projects/${pid}/members`);
+  if (!r.ok) return;
+  const members = await r.json();
+  const nonAdmins = members.filter(m => m.role !== 'admin');
+  if (!nonAdmins.length) { showToast('No other members to transfer to', 'info'); return; }
+  const opts = nonAdmins.map(m => `${m.user_id}: ${m.display_name} (${m.email})`).join('\n');
+  const choice = prompt('Enter user ID to transfer ownership to:\n\n' + opts);
+  if (!choice) return;
+  const userId = parseInt(choice);
+  if (!userId) return;
+  const tr = await fetch(`/api/projects/${pid}/transfer-admin`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ new_admin_user_id: userId }),
+  });
+  if (!tr.ok) { const e = await tr.json(); showToast(e.detail || 'Failed', 'error'); return; }
+  showToast('Ownership transferred', 'success');
+  closeShareModal();
+  renderSidebar();
 }
 
 async function switchSession(id) {
   if (!id) return;
   currentSessionId = parseInt(id);
   sessionStorage.setItem('search_session_id', currentSessionId);
+
+  // Highlight active in sidebar
+  document.querySelectorAll('.search-item').forEach(el => {
+    el.classList.toggle('active', parseInt(el.dataset.sessionId) === currentSessionId);
+  });
+
   const r = await fetch(`/api/search/sessions/${currentSessionId}`);
-  if (!r.ok) return;
+  if (!r.ok) { showToast('Failed to load data', 'error'); return; }
   const data = await r.json();
 
   // Render messages
@@ -364,16 +834,14 @@ function newSession() {
   document.getElementById('results-body').innerHTML = '<div class="empty">Run a search to see results here.</div>';
   document.getElementById('results-toolbar').style.display = 'none';
   document.getElementById('results-tab-btn').textContent = 'Results';
-  document.getElementById('session-select').value = '';
   sessionStorage.removeItem('search_session_id');
+  // Clear sidebar active state
+  document.querySelectorAll('.search-item').forEach(el => el.classList.remove('active'));
 }
 
 async function deleteCurrentSession() {
   if (!currentSessionId) return;
-  if (!confirm('Delete this search session?')) return;
-  await fetch(`/api/search/sessions/${currentSessionId}`, { method: 'DELETE' });
-  newSession();
-  loadSessions();
+  await deleteSession(currentSessionId);
 }
 
 // ── Chat ──
@@ -416,11 +884,12 @@ async function sendMessage() {
       updateDbLinks(currentQuery);
     }
 
-    loadSessions();
+    renderSidebar();
   } catch (e) {
     document.getElementById('typing').classList.remove('show');
     document.getElementById('send-btn').disabled = false;
     appendMessage('assistant', 'Network error: ' + e.message);
+    showToast('Network error', 'error');
   }
   scrollToBottom();
 }
@@ -642,7 +1111,7 @@ async function exportRIS() {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ session_id: currentSessionId, result_ids: ids }),
   });
-  if (!r.ok) return;
+  if (!r.ok) { showToast('Failed to load data', 'error'); return; }
   const blob = await r.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = url; a.download = 'search_results.ris'; a.click();
@@ -655,7 +1124,7 @@ async function exportBibTeX() {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ session_id: currentSessionId, result_ids: ids }),
   });
-  if (!r.ok) return;
+  if (!r.ok) { showToast('Failed to load data', 'error'); return; }
   const blob = await r.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = url; a.download = 'search_results.bib'; a.click();
@@ -676,28 +1145,12 @@ document.getElementById('chat-input').addEventListener('input', function() {
 });
 
 // ── Init ──
-async function loadProjects() {
-  try {
-    const r = await fetch('/api/projects');
-    if (!r.ok) return;
-    const projects = await r.json();
-    const sel = document.getElementById('import-project');
-    projects.forEach(p => {
-      const o = document.createElement('option');
-      o.value = p.id; o.textContent = p.name;
-      sel.appendChild(o);
-    });
-  } catch {}
-}
-
 async function init() {
   await checkAuth();
-  await loadSessions();
-  loadProjects();
+  await renderSidebar();
   const savedId = sessionStorage.getItem('search_session_id');
   if (savedId) {
     currentSessionId = parseInt(savedId);
-    document.getElementById('session-select').value = currentSessionId;
     switchSession(currentSessionId);
   }
 }
