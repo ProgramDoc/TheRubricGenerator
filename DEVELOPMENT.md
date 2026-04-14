@@ -1,12 +1,12 @@
 # The AI Researcher - Development Log
 
 **Repository:** https://github.com/ProgramDoc/TheRubricGenerator
-**Platform:** FastAPI + SQLite + Static HTML frontend
-**Deployed on:** Render (persistent disk, Python 3.12.3)
+**Platform:** FastAPI + PostgreSQL (SQLite fallback for dev/tests) + Static HTML frontend
+**Deployed on:** Render (PostgreSQL database, Python 3.12.3)
 
 ---
 
-## Current State (April 7, 2026)
+## Current State (April 13, 2026)
 
 ### Codebase Summary
 
@@ -48,7 +48,10 @@
 - **Rubric templates:** Reusable, versioned templates with living question stats (auto-flag too-easy/broken questions)
 - **Community library:** Publish, browse, search, fork, and rate (1-5 stars) rubric templates
 - **Ground truth annotations:** Import expert answers from The AI Researcher Annotator, compare AI judge accuracy to human experts
-- **Literature search:** AI-powered multi-database search with chatbot strategist, PICO extraction, PubMed/Europe PMC full search, link-outs for Scholar/JSTOR/WoS/ScienceDirect/Wiley/OVID, import results as papers, RIS/BibTeX export
+- **Literature search:** AI-powered multi-database search with chatbot strategist, PICO extraction, PubMed/Europe PMC full search, link-outs for Scholar/JSTOR/WoS/ScienceDirect/Wiley/OVID, import results as papers, RIS/BibTeX export, sortable results columns (title/authors/journal/year/cites), text filter across results, sidebar with search organization and project folders
+- **Search sidebar:** Left sidebar with saved searches (auto-named from first prompt), project folders, drag-and-drop organization, context menu with rename/move/delete, collapsible folders with search counts
+- **Project sharing & invitations:** Share projects by email, invite unregistered users (registration invite email sent, auto-added on sign-up), transfer ownership, leave/remove members, share modal with member management
+- **PostgreSQL migration:** Primary database switched from SQLite to PostgreSQL for Render deployment persistence. Compatibility wrapper (`backend/db.py`) auto-converts SQL syntax between PostgreSQL and SQLite, enabling SQLite fallback for local dev and tests
 - **Membership plans:** Free (20 PDFs), Pro ($29/mo, 500 PDFs, 1000 credits), Enterprise ($99/mo, unlimited, 5000 credits) via Stripe subscriptions
 - **Platform API:** User API keys (`rg_user_xxx`) authenticate all endpoints via `X-API-Key` header. Developers page with key management + full endpoint docs
 - **Challenge improvements:** Inline PDF upload, 5 questions per PDF (batched for large sets), cost estimation + credit enforcement, unique run IDs, AI Brain Window with real-time progress events, cancel/delete, per-question speed metrics, paper removal
@@ -237,7 +240,7 @@ pytest tests/ -v
 - API key regeneration (old key invalidated)
 - User API key auth (`X-API-Key` header on platform endpoints)
 
-Tests use FastAPI's TestClient with in-memory SQLite — no external API calls.
+Tests use FastAPI's TestClient with SQLite fallback (no DATABASE_URL) — no external API calls, no PostgreSQL required.
 
 ---
 
@@ -254,9 +257,9 @@ The two-agent design separates concerns to avoid circularity:
 
 Clinical researchers use the platform irregularly. Prepaid credits let occasional users buy what they need and heavy users buy in bulk at a discount.
 
-### Why SQLite?
+### Why PostgreSQL? (Migrated from SQLite)
 
-Single Render instance with persistent disk. SQLite with WAL mode handles the write load (one daily challenge + sporadic individual tests). Migration to PostgreSQL straightforward — all parameterized SQL.
+Originally used SQLite with persistent disk on Render. Migrated to PostgreSQL to ensure data persists across Render deploys (free tier doesn't support persistent disks reliably). A compatibility wrapper (`backend/db.py`) allows SQLite fallback for local development and tests — all DDL is written in PostgreSQL syntax and auto-converted to SQLite at runtime when no `DATABASE_URL` is set.
 
 ### Autoresearch-Style Self-Improvement
 
@@ -284,7 +287,8 @@ Write-only from the backend:
 | `backend/self_improve.py` | ~500 | Autoresearch-style experiment loop |
 | `backend/templates.py` | ~350 | Rubric templates, community library, living stats, ground truth |
 | `backend/analytics.py` | ~350 | Analytics queries, CSV/PDF export, email notifications, rate limiter |
-| `backend/search.py` | ~450 | Literature search: AI chat, PubMed/Europe PMC, import, export |
+| `backend/db.py` | ~220 | Database compatibility layer (PostgreSQL + SQLite fallback) |
+| `backend/search.py` | ~850 | Literature search: AI chat, PubMed/Europe PMC, import, export, session management |
 | `backend/organizations.py` | ~300 | Organization CRUD, membership, roles, invite/domain-join |
 | `backend/pubmed.py` | ~330 | PubMed/PMC/iCite client, 14 seed themes |
 | `backend/scheduler.py` | ~270 | Daily scheduler (7am PST Mon-Fri) |
@@ -313,6 +317,7 @@ Write-only from the backend:
 | `GEMINI_API_KEY` | Yes | — | Gemini API access |
 | `ADMIN_SECRET` | Yes | — | Admin login secret code |
 | `ADMIN_EMAIL` | No | `tck936@mail.harvard.edu` | Admin user email |
+| `DATABASE_URL` | For Render | — | PostgreSQL connection string (omit for SQLite fallback) |
 | `RENDER_DATA_DIR` | No | app dir | Persistent data path |
 | `OBSIDIAN_VAULT_DIR` | No | `{DATA_DIR}/obsidian_vault` | Obsidian vault path |
 | `STRIPE_SECRET_KEY` | For billing | — | Stripe API key |
@@ -337,4 +342,4 @@ Write-only from the backend:
 
 ---
 
-**Last updated:** April 7, 2026
+**Last updated:** April 13, 2026

@@ -29,6 +29,7 @@ TheRubricGenerator/
 ├── .python-version                  # Pin Python 3.12.3
 │
 ├── backend/
+│   ├── db.py                        # Database layer (PostgreSQL + SQLite fallback)
 │   ├── helpers.py                   # LLM callers (Anthropic, Gemini, OpenAI-compat)
 │   ├── challenges.py                # Challenge orchestration, scoring, points system
 │   ├── self_improve.py              # Autoresearch-style skill experiment loop
@@ -40,6 +41,11 @@ TheRubricGenerator/
 │   ├── promo.py                     # Promo code management
 │   ├── agreements.py                # Legal agreements (model publishing + payment)
 │   ├── models_registry.py           # Model registration, team, API keys
+│   ├── search.py                    # Literature search (AI chat, PubMed, sidebar, projects)
+│   ├── organizations.py             # Multi-tenant orgs with roles
+│   ├── analytics.py                 # Performance breakdown, CSV/PDF export
+│   ├── templates.py                 # Rubric templates, community library
+│   ├── membership.py                # Free/Pro/Enterprise plans
 │   └── agents/
 │       ├── generator.py             # Rubric Generator Agent (daily composition)
 │       ├── judge.py                 # Judge Agent + shadow regrade
@@ -222,6 +228,7 @@ ADMIN_EMAIL=tck936@mail.harvard.edu
 
 ```bash
 pip install -r requirements.txt
+# No DATABASE_URL → uses SQLite automatically (rubricgen.db)
 uvicorn main:app --reload --port 8001
 # Visit http://localhost:8001
 ```
@@ -270,12 +277,16 @@ Full reference at `/developers` page.
 1. Connect `ProgramDoc/TheRubricGenerator` repository
 2. Build: `pip install -r requirements.txt`
 3. Start: `uvicorn main:app --host 0.0.0.0 --port $PORT`
-4. Persistent disk: `/var/data` (1 GB)
+4. PostgreSQL: Free database auto-provisioned via `render.yaml` — set `DATABASE_URL` env var from database connection string
 5. Set environment variables (secrets via Render dashboard)
 
 ---
 
-## Database (SQLite)
+## Database (PostgreSQL)
+
+**Production:** PostgreSQL on Render (data persists across deploys)
+**Local dev:** SQLite fallback when `DATABASE_URL` is not set
+**Compatibility:** `backend/db.py` wrapper auto-converts SQL syntax between PostgreSQL and SQLite
 
 ### Core tables
 `users`, `sessions`, `projects`, `papers`, `rubrics`, `evaluations`, `password_resets`
@@ -293,7 +304,7 @@ Full reference at `/developers` page.
 `organizations`, `org_members`, `org_credits`, `org_credit_transactions`, `org_leaderboard_cache`
 
 ### Search tables
-`search_sessions`, `search_messages`, `search_results`
+`search_sessions`, `search_messages`, `search_results`, `project_invitations`
 
 ### Template tables
 `rubric_templates`, `template_question_stats`, `community_templates`, `community_ratings`, `ground_truth_annotations`
