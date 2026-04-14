@@ -269,6 +269,17 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 .copy-btn { background: rgba(255,255,255,.1); color: #fff; border: 1px solid rgba(255,255,255,.2) !important; }
 .copy-btn:hover { background: rgba(255,255,255,.15); }
 .db-select { font-family: inherit; font-size: 11px; padding: 6px 8px; border: 1px solid rgba(255,255,255,.2); border-radius: 4px; background: rgba(255,255,255,.08); color: #fff; }
+.db-speed-buttons { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+.db-speed-btn { font-family: inherit; font-size: 10px; font-weight: 600; padding: 4px 10px; border-radius: 12px; cursor: pointer; border: 1px solid rgba(255,255,255,.2); background: rgba(255,255,255,.06); color: rgba(255,255,255,.65); white-space: nowrap; }
+.db-speed-btn:hover { border-color: rgba(255,255,255,.4); color: #fff; background: rgba(255,255,255,.12); }
+.db-speed-btn.active { background: var(--sky); color: #fff; border-color: var(--sky); }
+.db-speed-btn.linkout::after { content: ' \2197'; font-size: 8px; }
+
+/* Vertical resizer (chat ↕ input) */
+.vert-resizer { height: 5px; cursor: row-resize; background: transparent; flex-shrink: 0; position: relative; }
+.vert-resizer:hover, .vert-resizer.dragging { background: var(--sky); }
+.vert-resizer::after { content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 32px; height: 3px; border-radius: 2px; background: var(--border); }
+.vert-resizer:hover::after, .vert-resizer.dragging::after { background: #fff; }
 
 /* Results table */
 .results-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
@@ -414,6 +425,7 @@ table.res-table tbody tr:hover { background: #f8fafc; }
     </div>
     <div class="typing" id="typing"><span></span><span></span><span></span></div>
 
+    <div class="vert-resizer" id="vert-resizer"></div>
     <div class="chat-attachments" id="chat-attachments"></div>
     <div class="chat-input">
       <button class="upload-btn" onclick="document.getElementById('chat-upload-input').click()" title="Attach file">&#128206;</button>
@@ -1240,6 +1252,38 @@ function expandSidebar() {
 })();
 
 /* ==============================
+   VERTICAL RESIZER (chat ↕ input/speed buttons)
+   ============================== */
+(function() {
+  var resizer = document.getElementById('vert-resizer');
+  if (!resizer) return;
+  var chatMsgs = document.getElementById('chat-messages');
+  if (!chatMsgs) return;
+  var startY, startH;
+
+  resizer.addEventListener('mousedown', function(e) {
+    e.preventDefault();
+    resizer.classList.add('dragging');
+    startY = e.clientY;
+    startH = chatMsgs.offsetHeight;
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+
+  function onMove(e) {
+    var dy = e.clientY - startY;
+    var newH = Math.max(100, startH + dy);
+    chatMsgs.style.flex = 'none';
+    chatMsgs.style.height = newH + 'px';
+  }
+  function onUp() {
+    resizer.classList.remove('dragging');
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+  }
+})();
+
+/* ==============================
    SEARCH
    ============================== */
 var INTERFACE_ITEMS = [
@@ -1821,25 +1865,23 @@ function buildQueryBuilderHTML() {
     '<div id="mesh-strip" class="mesh-pills" style="margin-bottom:12px"></div>' +
     '<div class="query-card" id="query-card">' +
       '<div class="query-card-header">' +
-        '<span style="font-size:10px;color:rgba(255,255,255,.5)">PubMed Query</span>' +
+        '<span id="query-db-title" style="font-size:10px;color:rgba(255,255,255,.5)">PubMed Query</span>' +
         '<select id="version-select" onchange="switchQueryVersion(this.value)" style="display:none;font-family:inherit;font-size:10px;padding:3px 6px;border-radius:3px;background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.2)"></select>' +
       '</div>' +
       '<div class="query-text" id="query-text"><span class="query-empty">No query yet. Start a conversation to generate one.</span></div>' +
       '<div class="query-actions">' +
-        '<select class="db-select" id="search-db">' +
-          '<option value="pubmed">PubMed</option>' +
-          '<option value="europe_pmc">Europe PMC</option>' +
-          '<optgroup label="Link-out Databases">' +
-            '<option value="scholar">Google Scholar</option>' +
-            '<option value="sciencedirect">ScienceDirect</option>' +
-            '<option value="jstor">JSTOR</option>' +
-            '<option value="wos">Web of Science</option>' +
-            '<option value="wiley">Wiley Online</option>' +
-            '<option value="ovid">Ovid MEDLINE</option>' +
-          '</optgroup>' +
-        '</select>' +
         '<button class="btn run-btn" id="run-btn" onclick="runSearch()" disabled>Search</button>' +
         '<button class="btn copy-btn" onclick="copyQuery()">Copy</button>' +
+      '</div>' +
+      '<div class="db-speed-buttons">' +
+        '<button class="db-speed-btn active" onclick="switchSearchDb(\'pubmed\',this)" data-db="pubmed">PubMed</button>' +
+        '<button class="db-speed-btn" onclick="switchSearchDb(\'europe_pmc\',this)" data-db="europe_pmc">Europe PMC</button>' +
+        '<button class="db-speed-btn linkout" onclick="switchSearchDb(\'scholar\',this)" data-db="scholar">Google Scholar</button>' +
+        '<button class="db-speed-btn linkout" onclick="switchSearchDb(\'sciencedirect\',this)" data-db="sciencedirect">ScienceDirect</button>' +
+        '<button class="db-speed-btn linkout" onclick="switchSearchDb(\'jstor\',this)" data-db="jstor">JSTOR</button>' +
+        '<button class="db-speed-btn linkout" onclick="switchSearchDb(\'wos\',this)" data-db="wos">Web of Science</button>' +
+        '<button class="db-speed-btn linkout" onclick="switchSearchDb(\'wiley\',this)" data-db="wiley">Wiley Online</button>' +
+        '<button class="db-speed-btn linkout" onclick="switchSearchDb(\'ovid\',this)" data-db="ovid">Ovid MEDLINE</button>' +
       '</div>' +
     '</div>' +
   '</div>';
@@ -1938,11 +1980,23 @@ function copyQuery() {
   }
 }
 
+var currentSearchDb = 'pubmed';
+var DB_LABELS = {pubmed:'PubMed',europe_pmc:'Europe PMC',scholar:'Google Scholar',sciencedirect:'ScienceDirect',jstor:'JSTOR',wos:'Web of Science',wiley:'Wiley Online',ovid:'Ovid MEDLINE'};
+
+function switchSearchDb(db, btnEl) {
+  currentSearchDb = db;
+  // Update active state on speed buttons
+  document.querySelectorAll('.db-speed-btn').forEach(function(b) { b.classList.remove('active'); });
+  if (btnEl) btnEl.classList.add('active');
+  // Update query card title
+  var title = document.getElementById('query-db-title');
+  if (title) title.textContent = (DB_LABELS[db] || db) + ' Query';
+}
+
 /* -- Search execution -- */
 async function runSearch(page) {
   searchPage = page || 1;
-  var db = document.getElementById('search-db');
-  var dbVal = db ? db.value : 'pubmed';
+  var dbVal = currentSearchDb;
   var btn = document.getElementById('run-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Searching...'; }
 
