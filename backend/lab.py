@@ -11,6 +11,7 @@ Each agent type uses versioned system prompts from agent_skills table
 and saves conversations as markdown in the Obsidian vault.
 """
 
+import base64
 import json
 import logging
 import sqlite3
@@ -281,7 +282,8 @@ def _parse_ai_response(raw: str) -> dict:
 # ─────────────────────────────────────────────
 
 def chat(conn, session_id: int, user_id: int,
-         user_message: str, agent_type: str = "search_strategist") -> dict:
+         user_message: str, agent_type: str = "search_strategist",
+         document_ids: list[int] | None = None) -> dict:
     """Orchestrate a chat turn for any lab agent type."""
 
     # Validate session ownership + agent type
@@ -309,19 +311,79 @@ def chat(conn, session_id: int, user_id: int,
             )
             conn.commit()
 
+    # Fetch uploaded documents for this turn
+    doc_contents = _fetch_document_contents(conn, document_ids, user_id) if document_ids else []
+
     # For search_strategist, delegate to the search module
     if agent_type == "search_strategist":
-        return _chat_search_strategist(conn, session_id, user_id, user_message)
+        return _chat_search_strategist(conn, session_id, user_id, user_message, doc_contents)
 
     # For other agents, use the lab agent system
-    return _chat_lab_agent(conn, session_id, user_id, user_message, agent_type)
+    return _chat_lab_agent(conn, session_id, user_id, user_message, agent_type, doc_contents)
+
+
+def _fetch_document_contents(conn, document_ids: list[int], user_id: int) -> list[dict]:
+    """Fetch document files from storage and return as base64 content blocks."""
+    from .storage import download_file as storage_download
+    results = []
+    for doc_id in document_ids[:5]:  # limit to 5 documents per turn
+        row = conn.execute(
+            "SELECT filename, file_type, file_path FROM lab_documents WHERE id=? AND user_id=?",
+            (doc_id, user_id),
+        ).fetchone()
+        if not row:
+            continue
+        try:
+            data = storage_download(row["file_path"])
+            if not data:
+                continue
+            media_type = row["file_type"] or "application/pdf"
+            results.append({
+                "filename": row["filename"],
+                "media_type": media_type,
+                "data_b64": base64.b64encode(data).decode(),
+            })
+        except Exception as e:
+            logger.warning("Failed to fetch document %d: %s", doc_id, e)
+    return results
+
+
+def _attach_documents_to_messages(messages: list[dict], doc_contents: list[dict]) -> list[dict]:
+    """Rewrite the last user message to include document content blocks."""
+    if not doc_contents or not messages:
+        return messages
+    last = messages[-1]
+    if last.get("role") != "user":
+        return messages
+    # Build multipart content: documents first, then text
+    content = []
+    for doc in doc_contents:
+        content.append({
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": doc["media_type"],
+                "data": doc["data_b64"],
+            },
+        })
+    text = last.get("content", "")
+    if isinstance(text, str):
+        content.append({"type": "text", "text": text})
+    else:
+        content.extend(text)  # already a list of blocks
+    messages = messages[:]
+    messages[-1] = {"role": "user", "content": content}
+    return messages
 
 
 def _chat_search_strategist(conn, session_id: int, user_id: int,
-                             user_message: str) -> dict:
+                             user_message: str,
+                             doc_contents: list[dict] | None = None) -> dict:
     """Handle search strategist using skill-based prompt."""
     skill = get_active_skill(conn, "search_strategist")
     messages = _build_chat_messages(conn, session_id)
+    if doc_contents:
+        messages = _attach_documents_to_messages(messages, doc_contents)
     raw = call_anthropic(messages, skill["prompt_text"], max_tokens=4096)
     parsed = _parse_ai_response(raw)
 
@@ -356,10 +418,13 @@ def _chat_search_strategist(conn, session_id: int, user_id: int,
 
 
 def _chat_lab_agent(conn, session_id: int, user_id: int,
-                    user_message: str, agent_type: str) -> dict:
+                    user_message: str, agent_type: str,
+                    doc_contents: list[dict] | None = None) -> dict:
     """Handle statistician, appraiser, hypothesis, and literature agents."""
     skill = get_active_skill(conn, agent_type)
     messages = _build_chat_messages(conn, session_id)
+    if doc_contents:
+        messages = _attach_documents_to_messages(messages, doc_contents)
     raw = call_anthropic(messages, skill["prompt_text"], max_tokens=8192)
     parsed = _parse_ai_response(raw)
 

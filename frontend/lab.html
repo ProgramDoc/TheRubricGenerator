@@ -21,12 +21,13 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 .topbar { background: var(--navy); color: #fff; padding: 10px 28px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,.15); z-index: 20; flex-shrink: 0; }
 .topbar .brand { font-size: 16px; font-weight: 700; letter-spacing: -.3px; white-space: nowrap; }
 .topbar .brand span { color: var(--sky); }
-.topbar .topbar-center { flex: 1; max-width: 420px; margin: 0 24px; position: relative; }
-.topbar-search { width: 100%; font-family: inherit; font-size: 12px; padding: 6px 12px 6px 30px; border: 1px solid rgba(255,255,255,.2); border-radius: 6px; background: rgba(255,255,255,.08); color: #fff; outline: none; }
-.topbar-search::placeholder { color: rgba(255,255,255,.4); }
-.topbar-search:focus { border-color: var(--sky); background: rgba(255,255,255,.12); }
-.topbar-search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: 12px; color: rgba(255,255,255,.4); pointer-events: none; }
-.search-dropdown { display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: #fff; border: 1px solid var(--border); border-radius: 6px; max-height: 320px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,.15); z-index: 60; }
+/* Center-pane search bar (above speed buttons) */
+.center-search-wrap { position: relative; padding: 6px 14px 2px; flex-shrink: 0; }
+.center-search { width: 100%; font-family: inherit; font-size: 12px; padding: 7px 12px 7px 30px; border: 1px solid var(--border); border-radius: 6px; background: #f8fafc; color: var(--text); outline: none; }
+.center-search::placeholder { color: var(--muted); }
+.center-search:focus { border-color: var(--sky); background: #fff; box-shadow: 0 0 0 2px rgba(94,154,208,.15); }
+.center-search-icon { position: absolute; left: 24px; top: 50%; transform: translateY(-50%); font-size: 12px; color: var(--muted); pointer-events: none; }
+.search-dropdown { display: none; position: absolute; top: calc(100% + 2px); left: 14px; right: 14px; background: #fff; border: 1px solid var(--border); border-radius: 6px; max-height: 320px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,.15); z-index: 60; }
 .search-dropdown.open { display: block; }
 .search-dropdown-group { padding: 6px 0; border-bottom: 1px solid var(--border); }
 .search-dropdown-group:last-child { border-bottom: none; }
@@ -34,6 +35,20 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 .search-dropdown-item { padding: 7px 12px; cursor: pointer; font-size: 12px; color: var(--text); display: flex; align-items: center; gap: 8px; }
 .search-dropdown-item:hover { background: #f0f4ff; }
 .search-dropdown-item .sdi-icon { font-size: 13px; width: 18px; text-align: center; flex-shrink: 0; }
+
+/* Pane resizer */
+.pane-resizer { width: 5px; cursor: col-resize; background: transparent; flex-shrink: 0; position: relative; z-index: 5; }
+.pane-resizer:hover, .pane-resizer.dragging { background: var(--sky); }
+.pane-resizer::after { content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 3px; height: 32px; border-radius: 2px; background: var(--border); }
+.pane-resizer:hover::after, .pane-resizer.dragging::after { background: #fff; }
+
+/* Sidebar collapse */
+.sidebar-collapse-btn { background: none; border: none; font-size: 14px; color: var(--muted); cursor: pointer; padding: 2px 6px; line-height: 1; font-family: inherit; position: absolute; right: 4px; top: 8px; }
+.sidebar-collapse-btn:hover { color: var(--blue); }
+.lab-sidebar { position: relative; transition: width .2s, min-width .2s, opacity .15s; }
+.lab-sidebar.collapsed { width: 0 !important; min-width: 0 !important; overflow: hidden; opacity: 0; padding: 0; border: none; }
+.sidebar-expand-btn { display: none; position: absolute; top: 54px; left: 4px; z-index: 10; background: var(--blue); color: #fff; border: none; border-radius: 0 4px 4px 0; padding: 6px 5px; font-size: 12px; cursor: pointer; font-family: inherit; }
+.lab-sidebar.collapsed ~ .sidebar-expand-btn { display: block; }
 .topbar .topbar-right { display: flex; align-items: center; gap: 10px; }
 .user-identity { display: flex; align-items: center; gap: 8px; cursor: default; }
 .user-avatar { width: 28px; height: 28px; border-radius: 50%; background: var(--blue); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #fff; overflow: hidden; flex-shrink: 0; }
@@ -202,10 +217,15 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 .export-btn:hover { border-color: var(--sky); color: var(--blue); background: #f0f4ff; }
 
 /* Tab content */
-.tab-content { flex: 1; overflow: hidden; position: relative; }
-.tab-pane { display: none; position: absolute; inset: 0; }
+.tab-content { flex: 1; overflow: auto; position: relative; }
+.tab-pane { display: none; position: absolute; inset: 0; overflow: auto; }
 .tab-pane.active { display: block; }
 .tab-pane iframe { width: 100%; height: 100%; border: none; }
+
+/* Visible scrollbar styling */
+.chat-messages::-webkit-scrollbar, .tab-content::-webkit-scrollbar, .tab-pane::-webkit-scrollbar { width: 6px; }
+.chat-messages::-webkit-scrollbar-thumb, .tab-content::-webkit-scrollbar-thumb, .tab-pane::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.chat-messages::-webkit-scrollbar-thumb:hover, .tab-content::-webkit-scrollbar-thumb:hover, .tab-pane::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
 /* Right pane empty / welcome */
 .right-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--muted); text-align: center; padding: 40px; }
@@ -301,11 +321,6 @@ table.res-table tbody tr:hover { background: #f8fafc; }
 
 <div class="topbar">
   <div class="brand">The AI <span>Researcher</span><sub style="font-size:9px;color:rgba(255,255,255,.35);display:block;margin-top:2px">Aitheia LLC</sub></div>
-  <div class="topbar-center">
-    <span class="topbar-search-icon">&#128269;</span>
-    <input class="topbar-search" id="topbar-search" type="text" placeholder="Search interfaces, projects, conversations..." autocomplete="off" oninput="onTopbarSearch(this.value)" onfocus="onTopbarSearch(this.value)" onblur="setTimeout(function(){closeSearchDropdown()},200)">
-    <div class="search-dropdown" id="search-dropdown"></div>
-  </div>
   <div class="topbar-right">
     <div class="user-identity">
       <div class="user-avatar" id="user-avatar"></div>
@@ -331,6 +346,7 @@ table.res-table tbody tr:hover { background: #f8fafc; }
 <div class="split">
   <!-- LEFT PANE: Conversations + Context + Projects + Interfaces -->
   <div class="lab-sidebar" id="lab-sidebar">
+    <button class="sidebar-collapse-btn" onclick="collapseSidebar()" title="Collapse sidebar">&laquo;</button>
     <div class="sidebar-section">
       <div class="sidebar-header">Conversations <button onclick="newSession()" title="New conversation">+</button></div>
       <div id="unsorted-sessions"></div>
@@ -349,6 +365,7 @@ table.res-table tbody tr:hover { background: #f8fafc; }
     </div>
     <div class="sidebar-section">
       <div class="sidebar-header">Interfaces</div>
+      <a class="interface-link interface-admin" id="sidebar-admin-link" style="display:none" onclick="openTab('Admin','iframe','/admin')">Admin</a>
       <a class="interface-link" onclick="openTab('Dashboard','iframe','/dashboard')">Dashboard</a>
       <div class="interface-group">
         <a class="interface-link" onclick="toggleInterfaceGroup(this)">Benchmark Lab <span class="interface-caret">&#9654;</span></a>
@@ -362,12 +379,13 @@ table.res-table tbody tr:hover { background: #f8fafc; }
       <a class="interface-link" onclick="openTab('Models','iframe','/models')">Models</a>
       <a class="interface-link" onclick="openTab('PDF Viewer','iframe','/pdf-viewer')">PDF Viewer</a>
       <a class="interface-link" onclick="openTab('Developers','iframe','/developers')">Developers</a>
-      <a class="interface-link interface-admin" id="sidebar-admin-link" style="display:none" onclick="openTab('Admin','iframe','/admin')">Admin</a>
     </div>
   </div>
 
+  <button class="sidebar-expand-btn" id="sidebar-expand-btn" onclick="expandSidebar()" title="Show sidebar">&raquo;</button>
+
   <!-- MIDDLE PANE: Agent + Chat -->
-  <div class="panel-center">
+  <div class="panel-center" id="panel-center">
     <div class="agent-label">
       <span class="agent-label-dot"></span>
       <span id="agent-label-text">Research Chat</span>
@@ -381,6 +399,12 @@ table.res-table tbody tr:hover { background: #f8fafc; }
       </div>
     </div>
     <div class="typing" id="typing"><span></span><span></span><span></span></div>
+
+    <div class="center-search-wrap">
+      <span class="center-search-icon">&#128269;</span>
+      <input class="center-search" id="topbar-search" type="text" placeholder="Search interfaces, projects, conversations..." autocomplete="off" oninput="onTopbarSearch(this.value)" onfocus="onTopbarSearch(this.value)" onblur="setTimeout(function(){closeSearchDropdown()},200)">
+      <div class="search-dropdown" id="search-dropdown"></div>
+    </div>
 
     <div class="speed-buttons">
       <button class="speed-btn active" onclick="switchAgent('research_chat')" data-agent="research_chat">
@@ -417,6 +441,8 @@ table.res-table tbody tr:hover { background: #f8fafc; }
       <button class="send-btn" id="send-btn" onclick="sendMessage()">Send</button>
     </div>
   </div>
+
+  <div class="pane-resizer" id="pane-resizer"></div>
 
   <!-- RIGHT PANE: Tabbed workspace -->
   <div class="panel-right">
@@ -1143,7 +1169,70 @@ function toggleInterfaceGroup(el) {
 }
 
 /* ==============================
-   TOPBAR SEARCH
+   SIDEBAR COLLAPSE / EXPAND
+   ============================== */
+function collapseSidebar() {
+  var sb = document.getElementById('lab-sidebar');
+  sb.classList.add('collapsed');
+  sessionStorage.setItem('sidebar_collapsed', '1');
+}
+function expandSidebar() {
+  var sb = document.getElementById('lab-sidebar');
+  sb.classList.remove('collapsed');
+  sessionStorage.setItem('sidebar_collapsed', '0');
+}
+
+/* ==============================
+   PANE RESIZER (center ↔ right)
+   ============================== */
+(function() {
+  var resizer = document.getElementById('pane-resizer');
+  var center = document.getElementById('panel-center');
+  var right = document.querySelector('.panel-right');
+  if (!resizer || !center || !right) return;
+  var startX, startCenterW, startRightW, splitW;
+
+  resizer.addEventListener('mousedown', function(e) {
+    e.preventDefault();
+    resizer.classList.add('dragging');
+    var split = center.parentElement;
+    splitW = split.clientWidth - document.getElementById('lab-sidebar').offsetWidth - resizer.offsetWidth;
+    startX = e.clientX;
+    startCenterW = center.offsetWidth;
+    startRightW = right.offsetWidth;
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+
+  function onMove(e) {
+    var dx = e.clientX - startX;
+    var newCenter = Math.max(250, Math.min(startCenterW + dx, splitW - 200));
+    var newRight = splitW - newCenter;
+    center.style.flex = 'none';
+    center.style.width = newCenter + 'px';
+    right.style.width = newRight + 'px';
+  }
+  function onUp() {
+    resizer.classList.remove('dragging');
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    // Persist
+    sessionStorage.setItem('pane_center_w', center.style.width);
+    sessionStorage.setItem('pane_right_w', right.style.width);
+  }
+
+  // Restore saved proportions
+  var savedC = sessionStorage.getItem('pane_center_w');
+  var savedR = sessionStorage.getItem('pane_right_w');
+  if (savedC && savedR) {
+    center.style.flex = 'none';
+    center.style.width = savedC;
+    right.style.width = savedR;
+  }
+})();
+
+/* ==============================
+   SEARCH
    ============================== */
 var INTERFACE_ITEMS = [
   {label:'Dashboard', icon:'&#128202;', action:function(){openTab('Dashboard','iframe','/dashboard')}},
@@ -1293,7 +1382,8 @@ async function sendMessage() {
       body: JSON.stringify({
         session_id: currentSessionId,
         agent_type: currentAgentType,
-        message: text || ('User attached files: ' + sentAttachments.map(function(a){return a.name}).join(', '))
+        message: text || ('User attached files: ' + sentAttachments.map(function(a){return a.name}).join(', ')),
+        document_ids: uploadedIds.length ? uploadedIds : undefined
       }),
     });
     document.getElementById('typing').classList.remove('show');
@@ -1864,6 +1954,11 @@ async function init() {
   await checkAuth();
   await renderSidebar();
   _refreshSearchCache(); // populate search index (non-blocking)
+
+  // Restore sidebar collapsed state
+  if (sessionStorage.getItem('sidebar_collapsed') === '1') {
+    document.getElementById('lab-sidebar').classList.add('collapsed');
+  }
 
   // Restore agent type if any
   var savedAgent = sessionStorage.getItem('lab_agent_type');

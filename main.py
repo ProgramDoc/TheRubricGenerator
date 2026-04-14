@@ -4244,6 +4244,7 @@ class LabChatPayload(BaseModel):
     session_id: int | None = None
     agent_type: str = "search_strategist"
     message: str
+    document_ids: list[int] = []
 
 class LabSessionUpdatePayload(BaseModel):
     title: str | None = None
@@ -4266,7 +4267,8 @@ def api_lab_chat(body: LabChatPayload, rubricgen_session: str | None = Cookie(de
         if session_id is None:
             sess = lab_mod.create_session(conn, user["id"], body.agent_type)
             session_id = sess["id"]
-        result = lab_mod.chat(conn, session_id, user["id"], body.message, body.agent_type)
+        result = lab_mod.chat(conn, session_id, user["id"], body.message, body.agent_type,
+                              document_ids=body.document_ids)
         # Write conversation to Obsidian vault (best-effort)
         try:
             from backend.obsidian import write_lab_conversation_note

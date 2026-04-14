@@ -56,6 +56,7 @@ def call_anthropic(messages: list, system: str, max_tokens: int = 4096,
         headers={
             "x-api-key": ANTHROPIC_API_KEY,
             "anthropic-version": "2023-06-01",
+            "anthropic-beta": "pdfs-2024-09-25",
             "content-type": "application/json",
         },
         method="POST",
