@@ -177,6 +177,10 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 .speed-btn:hover { border-color: var(--sky); color: var(--blue); background: #f0f4ff; }
 .speed-btn.active { background: var(--blue); color: #fff; border-color: var(--blue); }
 .speed-btn-icon { font-size: 13px; }
+.agent-switch-divider { display: flex; align-items: center; gap: 10px; margin: 14px 0 10px; font-size: 10px; color: var(--muted); }
+.agent-switch-divider::before, .agent-switch-divider::after { content: ''; flex: 1; border-top: 1px dashed var(--border); }
+.agent-switch-divider .asd-pill { display: inline-flex; align-items: center; gap: 5px; background: #f0f4ff; border: 1px solid #d0dbf0; color: var(--blue); font-weight: 600; padding: 3px 10px; border-radius: 12px; white-space: nowrap; font-size: 10px; }
+.session-agent-icon { font-size: 11px; margin-right: 2px; opacity: .7; }
 
 /* Chat input */
 .chat-input { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: end; background: #fff; flex-shrink: 0; }
@@ -740,10 +744,8 @@ async function signOut() {
    ============================== */
 function switchAgent(agentType) {
   if (agentType === currentAgentType) return;
+  var prevAgent = currentAgentType;
   currentAgentType = agentType;
-  currentSessionId = null;
-  _searchSessionId = null;
-  sessionStorage.removeItem('lab_session_id');
   sessionStorage.setItem('lab_agent_type', agentType);
 
   // Update speed buttons
@@ -751,18 +753,25 @@ function switchAgent(agentType) {
     btn.classList.toggle('active', btn.dataset.agent === agentType);
   });
 
-  // Update agent label
+  // Update agent label + placeholder
   var cfg = AGENT_CONFIG[agentType];
   document.getElementById('agent-label-text').textContent = cfg.label;
   document.getElementById('chat-input').placeholder = cfg.placeholder;
 
-  // Clear chat
-  document.getElementById('chat-messages').innerHTML = '<div class="chat-empty" id="chat-empty">' + cfg.empty + '</div>';
+  // Insert a visual agent-switch divider into the current chat (only if there's an active conversation)
+  var container = document.getElementById('chat-messages');
+  if (currentSessionId && !container.querySelector('.chat-empty')) {
+    var divider = document.createElement('div');
+    divider.className = 'agent-switch-divider';
+    divider.innerHTML = '<span class="asd-pill">' + cfg.label + '</span>';
+    container.appendChild(divider);
+    scrollToBottom();
+  } else if (!currentSessionId) {
+    // No active session — show the new agent's empty state
+    container.innerHTML = '<div class="chat-empty" id="chat-empty">' + cfg.empty + '</div>';
+  }
 
-  // Re-render sidebar for this agent type
-  renderSidebar();
-
-  // Close all agent-specific tabs, then open tabs for this agent
+  // Swap right-pane tabs to the new agent's tabs
   closeAllAgentTabs();
   openAgentTabs(agentType);
   updateExportToolbar();
@@ -773,7 +782,7 @@ function switchAgent(agentType) {
    ============================== */
 async function renderSidebar() {
   try {
-    var sUrl = '/api/lab/sessions?agent_type=' + encodeURIComponent(currentAgentType);
+    var sUrl = '/api/lab/sessions';
     var pUrl = '/api/projects';
     var dUrl = '/api/lab/documents';
     var iUrl = '/api/projects/invitations';
@@ -850,7 +859,10 @@ function makeSessionItem(s) {
   div.ondragend = function() { div.classList.remove('dragging'); };
   var title = s.title || 'Untitled';
   var count = s.message_count || 0;
+  var agentCfg = AGENT_CONFIG[s.agent_type] || AGENT_CONFIG.research_chat;
+  var icon = agentCfg.icon || '';
   div.innerHTML =
+    '<span class="session-agent-icon">' + icon + '</span>' +
     '<span class="session-item-title">' + escapeHtml(title) + '</span>' +
     '<span class="session-item-meta">' + count + '</span>' +
     '<span class="session-item-actions">' +
@@ -1426,6 +1438,21 @@ async function switchSession(id) {
   if (!r.ok) { showToast('Failed to load session', 'error'); return; }
   var data = await r.json();
 
+  // Restore the agent type the session was created with (updates speed buttons + tabs)
+  var sessAgent = data.agent_type || 'research_chat';
+  if (sessAgent !== currentAgentType) {
+    currentAgentType = sessAgent;
+    sessionStorage.setItem('lab_agent_type', sessAgent);
+    document.querySelectorAll('.speed-btn').forEach(function(btn) {
+      btn.classList.toggle('active', btn.dataset.agent === sessAgent);
+    });
+    var cfg = AGENT_CONFIG[sessAgent];
+    document.getElementById('agent-label-text').textContent = cfg.label;
+    document.getElementById('chat-input').placeholder = cfg.placeholder;
+    closeAllAgentTabs();
+    openAgentTabs(sessAgent);
+  }
+
   var container = document.getElementById('chat-messages');
   container.innerHTML = '';
   if (data.messages && data.messages.length) {
@@ -1725,8 +1752,7 @@ function openProjectFromSearch(projectId) {
 
 function loadSessionFromSearch(sessionId, agentType) {
   closeSearchDropdown();
-  if (agentType !== currentAgentType) switchAgent(agentType);
-  loadSession(sessionId);
+  switchSession(sessionId);
 }
 
 /* ==============================
@@ -2633,15 +2659,8 @@ async function exportAs(format) {
    ============================== */
 async function init() {
   await checkAuth();
-  await renderSidebar();
-  _refreshSearchCache(); // populate search index (non-blocking)
 
-  // Restore sidebar collapsed state
-  if (sessionStorage.getItem('sidebar_collapsed') === '1') {
-    document.getElementById('lab-sidebar').classList.add('collapsed');
-  }
-
-  // Restore agent type if any
+  // Restore agent type BEFORE sidebar render so UI is consistent
   var savedAgent = sessionStorage.getItem('lab_agent_type');
   if (savedAgent && AGENT_CONFIG[savedAgent]) {
     currentAgentType = savedAgent;
@@ -2651,15 +2670,25 @@ async function init() {
     var cfg = AGENT_CONFIG[savedAgent];
     document.getElementById('agent-label-text').textContent = cfg.label;
     document.getElementById('chat-input').placeholder = cfg.placeholder;
-    document.getElementById('chat-messages').innerHTML = '<div class="chat-empty" id="chat-empty">' + cfg.empty + '</div>';
-    // Open agent tabs if any
-    openAgentTabs(savedAgent);
   }
 
-  // Restore session if any
+  await renderSidebar();
+  _refreshSearchCache(); // populate search index (non-blocking)
+
+  // Restore sidebar collapsed state
+  if (sessionStorage.getItem('sidebar_collapsed') === '1') {
+    document.getElementById('lab-sidebar').classList.add('collapsed');
+  }
+
+  // Restore session if saved — switchSession will also set the correct agent type/tabs
   var savedSession = sessionStorage.getItem('lab_session_id');
   if (savedSession) {
     switchSession(parseInt(savedSession));
+  } else {
+    // No session to restore — show empty state for current agent + open its tabs
+    var emptyCfg = AGENT_CONFIG[currentAgentType];
+    document.getElementById('chat-messages').innerHTML = '<div class="chat-empty" id="chat-empty">' + emptyCfg.empty + '</div>';
+    openAgentTabs(currentAgentType);
   }
 
   updateExportToolbar();

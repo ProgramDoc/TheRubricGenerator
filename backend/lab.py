@@ -294,6 +294,15 @@ def chat(conn, session_id: int, user_id: int,
     if not sess:
         raise HTTPException(404, "Session not found")
 
+    # Update session agent_type if user switched mid-conversation
+    if dict(sess).get("agent_type") != agent_type:
+        with conn:
+            conn.execute(
+                "UPDATE lab_sessions SET agent_type = ? WHERE id = ?",
+                (agent_type, session_id),
+            )
+            conn.commit()
+
     # Save user message
     add_message(conn, session_id, "user", user_message)
 
