@@ -1435,6 +1435,20 @@ async function switchSession(id) {
   // If search_strategist, restore query state
   if (currentAgentType === 'search_strategist') {
     queryVersions = [];
+    currentQuery = '';
+    _searchSessionId = null;
+    // Reset Query Builder DOM to clean state before restoring
+    var _picoStrip = document.getElementById('pico-strip');
+    if (_picoStrip) _picoStrip.style.display = 'none';
+    var _meshStrip = document.getElementById('mesh-strip');
+    if (_meshStrip) _meshStrip.innerHTML = '';
+    var _queryText = document.getElementById('query-text');
+    if (_queryText) _queryText.innerHTML = '<span class="query-empty">No query yet. Start a conversation to generate one.</span>';
+    var _versionSel = document.getElementById('version-select');
+    if (_versionSel) { _versionSel.style.display = 'none'; _versionSel.innerHTML = ''; }
+    var _runBtn = document.getElementById('run-btn');
+    if (_runBtn) _runBtn.disabled = true;
+
     if (data.messages) {
       data.messages.forEach(function(m) {
         if (m.metadata && m.metadata.search_query) {
@@ -1446,6 +1460,7 @@ async function switchSession(id) {
       var latest = queryVersions[queryVersions.length - 1];
       currentQuery = latest.pubmed || '';
       openQueryBuilderTab();
+      renderQueryInTab(currentQuery);
     }
     if (data.pico && Object.keys(data.pico).length) {
       openQueryBuilderTab();
@@ -1467,12 +1482,40 @@ async function newSession() {
   queryVersions = [];
   currentQuery = '';
   searchResults = [];
+  _searchSessionId = null;
   sessionStorage.removeItem('lab_session_id');
 
   var cfg = AGENT_CONFIG[currentAgentType];
   document.getElementById('chat-messages').innerHTML = '<div class="chat-empty" id="chat-empty">' + cfg.empty + '</div>';
   document.querySelectorAll('.session-item').forEach(function(el) { el.classList.remove('active'); });
   updateExportToolbar();
+
+  // Clear Query Builder pane state (PICO, MeSH, query text)
+  var picoStrip = document.getElementById('pico-strip');
+  if (picoStrip) { picoStrip.style.display = 'none'; }
+  var picoP = document.getElementById('pico-p');
+  if (picoP) picoP.textContent = '\u2014';
+  var picoI = document.getElementById('pico-i');
+  if (picoI) picoI.textContent = '\u2014';
+  var picoC = document.getElementById('pico-c');
+  if (picoC) picoC.textContent = '\u2014';
+  var picoO = document.getElementById('pico-o');
+  if (picoO) picoO.textContent = '\u2014';
+  var meshStrip = document.getElementById('mesh-strip');
+  if (meshStrip) meshStrip.innerHTML = '';
+  var queryText = document.getElementById('query-text');
+  if (queryText) queryText.innerHTML = '<span class="query-empty">No query yet. Start a conversation to generate one.</span>';
+  var versionSel = document.getElementById('version-select');
+  if (versionSel) { versionSel.style.display = 'none'; versionSel.innerHTML = ''; }
+  var runBtn = document.getElementById('run-btn');
+  if (runBtn) runBtn.disabled = true;
+  var queryTitle = document.getElementById('query-db-title');
+  if (queryTitle) queryTitle.textContent = 'PubMed Query';
+  currentSearchDb = 'pubmed';
+  document.querySelectorAll('.db-speed-btn').forEach(function(b) {
+    b.classList.remove('active');
+    if (b.textContent.trim() === 'PubMed') b.classList.add('active');
+  });
 
   // Create a real session via API so it appears in the sidebar
   try {
