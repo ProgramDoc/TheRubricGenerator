@@ -33,9 +33,30 @@ def _row_key(row, key: str):
 
 
 def write_paper_file(content: bytes, filename: str) -> str:
-    """Persist paper bytes. Returns the storage_path value to store in the DB
-    (``s3://bucket/key`` when S3 is configured, else a local ``uploads/...`` path)."""
-    return upload_file(content, filename, "application/pdf")
+    """Persist paper bytes. Returns the storage_path value to store in the DB.
+
+    Prefers S3 (``s3://bucket/key``) when configured. If the S3 write fails
+    for ANY reason — missing IAM permissions, wrong region, network — the
+    exception is logged and we fall back to a local ``uploads/...`` path so
+    the user can still upload. Ephemeral on Render, but at least non-fatal.
+    """
+    try:
+        return upload_file(content, filename, "application/pdf")
+    except Exception as e:
+        logger.exception(
+            "Primary storage write failed for %s — falling back to local uploads/",
+            filename,
+        )
+        # Import lazily so a truly busted storage module can't stop fallback.
+        from pathlib import Path
+        import uuid
+        local_dir = Path("uploads")
+        local_dir.mkdir(exist_ok=True)
+        ext = Path(filename).suffix.lower() or ".pdf"
+        local_path = local_dir / f"{uuid.uuid4().hex}{ext}"
+        local_path.write_bytes(content)
+        logger.info("Local fallback write succeeded: %s (reason=%s)", local_path, e)
+        return str(local_path)
 
 
 def read_paper_bytes(row, papers_dir: Path) -> bytes:

@@ -3310,19 +3310,33 @@ async def upload_paper(
         ).fetchone()
         if existing:
             return {"id": existing["id"], "duplicate": True}
-        # Persist via storage.py (S3 when configured, local uploads/ otherwise)
-        storage_path = paper_files_mod.write_paper_file(content, file.filename)
+        # Persist via storage.py (S3 when configured, local uploads/ otherwise).
+        # write_paper_file handles S3 failures internally by falling back to local,
+        # so by the time we get here we have *some* path on disk or in S3.
+        try:
+            storage_path = paper_files_mod.write_paper_file(content, file.filename)
+        except Exception as e:
+            logger.exception("Paper upload: write_paper_file crashed for %s", file.filename)
+            raise HTTPException(502, f"Upload failed while writing to storage: {e}")
         disk_name = f"{sha256}.pdf"  # kept for backwards-compat display/debug
-        with conn:
-            cur = conn.execute(
-                "INSERT INTO papers (filename, disk_filename, storage_path, sha256, user_id, project_id) "
-                "VALUES (?,?,?,?,?,?) RETURNING id",
-                (file.filename, disk_name, storage_path, sha256, user["id"], project_id),
-            )
-            conn.commit()
-        pid = cur.lastrowid
-        member_mod.increment_pdf_count(conn, user["id"])
-        return {"id": pid, "filename": file.filename, "duplicate": False}
+        try:
+            with conn:
+                cur = conn.execute(
+                    "INSERT INTO papers (filename, disk_filename, storage_path, sha256, user_id, project_id) "
+                    "VALUES (?,?,?,?,?,?) RETURNING id",
+                    (file.filename, disk_name, storage_path, sha256, user["id"], project_id),
+                )
+                conn.commit()
+            pid = cur.lastrowid
+        except Exception as e:
+            logger.exception("Paper upload: DB insert failed for %s", file.filename)
+            raise HTTPException(500, f"Upload stored but DB insert failed: {e}")
+        try:
+            member_mod.increment_pdf_count(conn, user["id"])
+        except Exception:
+            logger.exception("Paper upload: PDF count increment failed — continuing")
+        return {"id": pid, "filename": file.filename, "duplicate": False,
+                "storage": "s3" if storage_path.startswith("s3://") else "local"}
     finally:
         conn.close()
 
@@ -4787,6 +4801,70 @@ def api_annotator_schema():
     """Field catalog (universal groups, type-specific, design modifiers)
     used by the batch modal to render selectable checkboxes."""
     return annotator_mod.get_schema()
+
+
+@app.get("/api/admin/storage/diagnose")
+def api_admin_storage_diagnose(rubricgen_session: str | None = Cookie(default=None)):
+    """Admin-only: probe S3 connectivity to surface real upload errors.
+
+    Reports whether the env vars are set, whether boto3 can instantiate a
+    client, whether ``HeadBucket`` succeeds, and whether a tiny test
+    ``PutObject`` + ``DeleteObject`` round-trip works. No secrets returned.
+    """
+    require_admin(rubricgen_session)
+    import os as _os
+    result: dict = {
+        "aws_s3_bucket_set": bool(_os.environ.get("AWS_S3_BUCKET")),
+        "aws_s3_region_set": bool(_os.environ.get("AWS_S3_REGION")),
+        "aws_access_key_set": bool(_os.environ.get("AWS_ACCESS_KEY_ID")),
+        "aws_secret_key_set": bool(_os.environ.get("AWS_SECRET_ACCESS_KEY")),
+        "bucket": _os.environ.get("AWS_S3_BUCKET", ""),
+        "region": _os.environ.get("AWS_S3_REGION", "us-east-1"),
+        "steps": [],
+    }
+    bucket = result["bucket"]
+    if not bucket:
+        result["steps"].append({"step": "env", "ok": False,
+                                "detail": "AWS_S3_BUCKET is not set — uploads fall back to local uploads/ dir"})
+        return result
+
+    try:
+        import boto3  # noqa: F401
+        result["steps"].append({"step": "import boto3", "ok": True})
+    except Exception as e:
+        result["steps"].append({"step": "import boto3", "ok": False, "detail": str(e)})
+        return result
+
+    try:
+        from backend.storage import _get_s3
+        s3 = _get_s3()
+        result["steps"].append({"step": "instantiate s3 client", "ok": True})
+    except Exception as e:
+        result["steps"].append({"step": "instantiate s3 client", "ok": False, "detail": str(e)})
+        return result
+
+    try:
+        s3.head_bucket(Bucket=bucket)
+        result["steps"].append({"step": "head_bucket", "ok": True})
+    except Exception as e:
+        result["steps"].append({"step": "head_bucket", "ok": False, "detail": str(e)})
+        return result
+
+    # Round-trip a tiny test object so we actually exercise PutObject + DeleteObject
+    probe_key = f"{_os.environ.get('AWS_S3_PREFIX', 'lab-documents/')}__probe_diag"
+    try:
+        s3.put_object(Bucket=bucket, Key=probe_key, Body=b"ok")
+        result["steps"].append({"step": "put_object", "ok": True})
+    except Exception as e:
+        result["steps"].append({"step": "put_object", "ok": False, "detail": str(e)})
+        return result
+    try:
+        s3.delete_object(Bucket=bucket, Key=probe_key)
+        result["steps"].append({"step": "delete_object", "ok": True})
+    except Exception as e:
+        result["steps"].append({"step": "delete_object", "ok": False, "detail": str(e)})
+    result["ok"] = True
+    return result
 
 
 @app.get("/api/annotator/papers/{pid}/annotation")
