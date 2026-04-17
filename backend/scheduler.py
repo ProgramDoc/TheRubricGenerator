@@ -161,9 +161,10 @@ def run_daily_challenge(get_db_fn, papers_dir: Path, vault_dir: Path,
                 continue
             with conn:
                 cur = conn.execute(
-                    """INSERT INTO papers (filename, disk_filename, sha256, user_id)
-                       VALUES (?,?,?,?) RETURNING id""",
-                    (p["filename"], p["disk_filename"], p["sha256"], system_user_id),
+                    """INSERT INTO papers (filename, disk_filename, storage_path, sha256, user_id)
+                       VALUES (?,?,?,?,?) RETURNING id""",
+                    (p["filename"], p["disk_filename"], p.get("storage_path"),
+                     p["sha256"], system_user_id),
                 )
                 paper_ids.append(cur.lastrowid)
                 conn.commit()

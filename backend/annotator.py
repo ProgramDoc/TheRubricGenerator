@@ -681,17 +681,14 @@ def build_export_rows(
 # ─────────────────────────────────────────────
 def load_paper_pdf(conn, papers_dir: Path, paper_id: int, user_id: int,
                    is_admin: bool = False) -> tuple[bytes, str]:
-    """Read a PDF off disk, enforcing ownership (admins bypass)."""
+    """Read a PDF from storage (S3 or legacy local), enforcing ownership."""
+    from . import paper_files
     row = conn.execute(
-        "SELECT disk_filename, filename, user_id FROM papers WHERE id=?", (paper_id,)
+        "SELECT filename, disk_filename, storage_path, user_id FROM papers WHERE id=?",
+        (paper_id,),
     ).fetchone()
     if not row:
         raise HTTPException(404, "Paper not found")
     if row["user_id"] != user_id and not is_admin:
         raise HTTPException(403, "Access denied")
-
-    disk_name = row["disk_filename"] or f"{row['filename']}.pdf"
-    path = papers_dir / disk_name
-    if not path.exists():
-        raise HTTPException(404, "PDF file not found on disk")
-    return path.read_bytes(), row["filename"]
+    return paper_files.read_paper_bytes(row, papers_dir), row["filename"]

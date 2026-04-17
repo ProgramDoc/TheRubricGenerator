@@ -843,7 +843,7 @@ def maybe_improve_after_challenge(get_db_fn, agent_type: str,
                 return
             theme = latest["theme"] or ""
             paper_rows = conn.execute(
-                """SELECT p.filename, p.disk_filename
+                """SELECT p.filename, p.disk_filename, p.storage_path
                    FROM papers p JOIN challenge_papers cp ON cp.paper_id = p.id
                    WHERE cp.challenge_id=? LIMIT 3""",
                 (latest["id"],),
@@ -851,14 +851,17 @@ def maybe_improve_after_challenge(get_db_fn, agent_type: str,
             # We need the PAPERS_DIR — import from config
             import os
             from pathlib import Path as _P
+            from . import paper_files
             data_dir = _P(os.environ.get("RENDER_DATA_DIR", _P(__file__).parent.parent))
             papers_dir = data_dir / "papers"
             papers_b64 = []
             for r in paper_rows:
-                path = papers_dir / (r["disk_filename"] or "")
-                if path.exists():
-                    b64 = base64.b64encode(path.read_bytes()).decode()
+                try:
+                    data = paper_files.read_paper_bytes(r, papers_dir)
+                    b64 = base64.b64encode(data).decode()
                     papers_b64.append({"filename": r["filename"], "b64": b64})
+                except Exception:
+                    continue
         finally:
             conn.close()
 

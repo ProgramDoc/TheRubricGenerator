@@ -54,6 +54,7 @@ from backend.membership import MEMBERSHIP_TABLES_SQL, seed_plans
 from backend import membership as member_mod
 from backend.annotator import ANNOTATOR_TABLES_SQL
 from backend import annotator as annotator_mod
+from backend import paper_files as paper_files_mod
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rubricgen")
@@ -557,7 +558,8 @@ def _migrate_org_columns(conn) -> None:
 
 
 def _migrate_challenge_columns_v2(conn) -> None:
-    """Add run_id, cost_estimate, cost_approved, org_id to challenges if missing."""
+    """Add run_id, cost_estimate, cost_approved, org_id to challenges if missing.
+    Also adds papers.storage_path for the S3 migration."""
     with conn:
         if not column_exists(conn, "challenges", "run_id"):
             conn.execute("ALTER TABLE challenges ADD COLUMN run_id TEXT")
@@ -567,6 +569,9 @@ def _migrate_challenge_columns_v2(conn) -> None:
             conn.execute("ALTER TABLE challenges ADD COLUMN cost_approved INTEGER NOT NULL DEFAULT 0")
         if not column_exists(conn, "challenges", "org_id"):
             conn.execute("ALTER TABLE challenges ADD COLUMN org_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL")
+        # Papers: durable storage path (s3:// URI or local uploads/ path). NULL = legacy local disk layout.
+        if not column_exists(conn, "papers", "storage_path"):
+            conn.execute("ALTER TABLE papers ADD COLUMN storage_path TEXT")
         # Challenge events table
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS challenge_events (
@@ -1939,16 +1944,18 @@ def api_trigger_improvement(agent_type: str,
             raise HTTPException(400, "No completed challenges to use as test data")
         theme = latest["theme"] or ""
         paper_rows = conn.execute(
-            """SELECT p.filename, p.disk_filename
+            """SELECT p.filename, p.disk_filename, p.storage_path
                FROM papers p JOIN challenge_papers cp ON cp.paper_id = p.id
                WHERE cp.challenge_id=? LIMIT 2""",
             (latest["id"],),
         ).fetchall()
         papers_b64 = []
         for r in paper_rows:
-            path = PAPERS_DIR / (r["disk_filename"] or "")
-            if path.exists():
-                papers_b64.append({"filename": r["filename"], "b64": _b64.b64encode(path.read_bytes()).decode()})
+            try:
+                data = paper_files_mod.read_paper_bytes(r, PAPERS_DIR)
+                papers_b64.append({"filename": r["filename"], "b64": _b64.b64encode(data).decode()})
+            except HTTPException:
+                continue  # best-effort: skip missing papers
     finally:
         conn.close()
 
@@ -3302,12 +3309,14 @@ async def upload_paper(
         ).fetchone()
         if existing:
             return {"id": existing["id"], "duplicate": True}
-        disk_name = f"{sha256}.pdf"
-        (PAPERS_DIR / disk_name).write_bytes(content)
+        # Persist via storage.py (S3 when configured, local uploads/ otherwise)
+        storage_path = paper_files_mod.write_paper_file(content, file.filename)
+        disk_name = f"{sha256}.pdf"  # kept for backwards-compat display/debug
         with conn:
             cur = conn.execute(
-                "INSERT INTO papers (filename, disk_filename, sha256, user_id, project_id) VALUES (?,?,?,?,?) RETURNING id",
-                (file.filename, disk_name, sha256, user["id"], project_id),
+                "INSERT INTO papers (filename, disk_filename, storage_path, sha256, user_id, project_id) "
+                "VALUES (?,?,?,?,?,?) RETURNING id",
+                (file.filename, disk_name, storage_path, sha256, user["id"], project_id),
             )
             conn.commit()
         pid = cur.lastrowid
@@ -3335,11 +3344,12 @@ def assign_paper(pid: int, body: PaperAssign, rubricgen_session: str | None = Co
 def delete_paper(pid: int, rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
     conn = get_db()
-    row  = conn.execute("SELECT disk_filename FROM papers WHERE id=? AND user_id=?", (pid, user["id"])).fetchone()
-    if row and row["disk_filename"]:
-        disk = PAPERS_DIR / row["disk_filename"]
-        if disk.exists():
-            disk.unlink()
+    row = conn.execute(
+        "SELECT filename, disk_filename, storage_path FROM papers WHERE id=? AND user_id=?",
+        (pid, user["id"]),
+    ).fetchone()
+    if row:
+        paper_files_mod.delete_paper_file(row, PAPERS_DIR)
     with conn:
         conn.execute("DELETE FROM papers WHERE id=? AND user_id=?", (pid, user["id"]))
         conn.commit()
@@ -3351,17 +3361,16 @@ def delete_paper(pid: int, rubricgen_session: str | None = Cookie(default=None))
 def get_pdf(pid: int, rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
     conn = get_db()
-    row  = conn.execute(
-        "SELECT disk_filename, filename FROM papers WHERE id=? AND user_id=?", (pid, user["id"])
+    row = conn.execute(
+        "SELECT filename, disk_filename, storage_path FROM papers WHERE id=? AND user_id=?",
+        (pid, user["id"]),
     ).fetchone()
     conn.close()
     if not row:
         raise HTTPException(404, "Paper not found")
-    disk_name = row["disk_filename"] or f"{row['filename']}.pdf"
-    path = PAPERS_DIR / disk_name
-    if not path.exists():
-        raise HTTPException(404, "PDF file not found on disk")
-    return FileResponse(str(path), media_type="application/pdf", filename=row["filename"])
+    data = paper_files_mod.read_paper_bytes(row, PAPERS_DIR)
+    return Response(content=data, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{row["filename"]}"'})
 
 
 # ─────────────────────────────────────────────
@@ -3406,16 +3415,17 @@ Tailor questions to the specific RoB tool that applies (RoB 2, ROBINS-I, QUADAS-
 
 
 def _pdf_to_base64(paper_id: int) -> str:
-    """Read a PDF from disk and return base64."""
+    """Read a PDF from storage (S3 or legacy local) and return base64."""
     conn = get_db()
-    row  = conn.execute("SELECT disk_filename FROM papers WHERE id=?", (paper_id,)).fetchone()
+    row = conn.execute(
+        "SELECT filename, disk_filename, storage_path FROM papers WHERE id=?",
+        (paper_id,),
+    ).fetchone()
     conn.close()
-    if not row or not row["disk_filename"]:
+    if not row:
         raise HTTPException(404, "Paper not found")
-    path = PAPERS_DIR / row["disk_filename"]
-    if not path.exists():
-        raise HTTPException(404, "PDF file not found on disk")
-    return base64.b64encode(path.read_bytes()).decode()
+    data = paper_files_mod.read_paper_bytes(row, PAPERS_DIR)
+    return base64.b64encode(data).decode()
 
 
 # ─────────────────────────────────────────────
@@ -5181,15 +5191,13 @@ def api_generate_comparative(body: dict, rubricgen_session: str | None = Cookie(
         papers_b64 = []
         for pid in paper_ids:
             paper = conn.execute(
-                "SELECT filename, disk_filename FROM papers WHERE id=? AND user_id=?",
+                "SELECT filename, disk_filename, storage_path FROM papers WHERE id=? AND user_id=?",
                 (pid, user["id"]),
             ).fetchone()
             if not paper:
                 raise HTTPException(404, f"Paper {pid} not found")
-            path = PAPERS_DIR / (paper["disk_filename"] or f"{paper['filename']}.pdf")
-            if not path.exists():
-                raise HTTPException(404, f"PDF file missing for paper {pid}")
-            b64 = base64.b64encode(path.read_bytes()).decode()
+            data = paper_files_mod.read_paper_bytes(paper, PAPERS_DIR)
+            b64 = base64.b64encode(data).decode()
             papers_b64.append({"id": pid, "filename": paper["filename"], "b64": b64})
 
         skill = get_active_skill(conn, "generator")

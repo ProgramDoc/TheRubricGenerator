@@ -219,8 +219,13 @@ def _safe_filename(title: str, pmcid: str) -> str:
     return f"{pmcid}_{safe}.pdf"
 
 
-def download_pmc_pdf(pmcid: str, dest_dir: Path) -> Path | None:
-    """Download the PMC PDF if available. Returns path or None."""
+def download_pmc_pdf(pmcid: str, dest_dir: Path) -> dict | None:
+    """Download the PMC PDF if available and persist via storage.py.
+
+    Returns ``{"path", "storage_path", "sha256", "filename"}`` or ``None``.
+    ``path`` is the legacy local file (also written so local tooling still works);
+    ``storage_path`` is the durable S3/local path to record in ``papers.storage_path``.
+    """
     dest_dir.mkdir(parents=True, exist_ok=True)
     url = PMC_PDF_URL.format(pmcid=pmcid)
     try:
@@ -241,10 +246,21 @@ def download_pmc_pdf(pmcid: str, dest_dir: Path) -> Path | None:
         return None
 
     sha256 = hashlib.sha256(data).hexdigest()
-    path = dest_dir / f"{sha256}.pdf"
-    path.write_bytes(data)
+    filename = f"{sha256}.pdf"
+    path = dest_dir / filename
+    try:
+        path.write_bytes(data)  # legacy local copy
+    except Exception as e:
+        logger.warning("Local write failed for %s: %s", path, e)
+    # Durable storage (S3 if AWS_S3_BUCKET is set, else local uploads/)
+    try:
+        from . import paper_files
+        storage_path = paper_files.write_paper_file(data, filename)
+    except Exception as e:
+        logger.error("Storage upload failed for PMC %s: %s", pmcid, e)
+        storage_path = None
     time.sleep(1.0)  # polite throttle between PDF downloads
-    return path
+    return {"path": path, "storage_path": storage_path, "sha256": sha256, "filename": filename}
 
 
 # ─────────────────────────────────────────────
@@ -295,10 +311,9 @@ def fetch_papers_for_theme(theme: dict, count: int, dest_dir: Path,
         if not m.get("pmcid"):
             continue  # Skip papers without PMC PDFs
         attempted += 1
-        pdf_path = download_pmc_pdf(m["pmcid"], dest_dir)
-        if pdf_path is None:
+        result = download_pmc_pdf(m["pmcid"], dest_dir)
+        if result is None:
             continue
-        sha256 = pdf_path.stem  # filename is <sha256>.pdf
         filename = _safe_filename(m["title"], m["pmcid"])
         papers.append({
             "pmid": m["pmid"],
@@ -306,9 +321,10 @@ def fetch_papers_for_theme(theme: dict, count: int, dest_dir: Path,
             "title": m["title"],
             "journal": m["journal"],
             "citation_count": m["citation_count"],
-            "disk_path": str(pdf_path),
-            "disk_filename": pdf_path.name,
-            "sha256": sha256,
+            "disk_path": str(result["path"]),
+            "disk_filename": result["filename"],
+            "storage_path": result.get("storage_path"),
+            "sha256": result["sha256"],
             "filename": filename,
         })
         logger.info("  downloaded %s (%s, %d citations)", m["pmcid"], m["title"][:60], m["citation_count"])

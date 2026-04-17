@@ -451,8 +451,9 @@ def create_challenge(get_db_fn, user_id: int, title: str, theme: str,
 def _load_papers_b64(conn: sqlite3.Connection, challenge_id: int,
                      papers_dir: Path) -> tuple[list[dict], list[dict]]:
     """Returns (papers_b64_list, papers_meta_list)."""
+    from . import paper_files
     rows = conn.execute(
-        """SELECT p.id, p.filename, p.disk_filename
+        """SELECT p.id, p.filename, p.disk_filename, p.storage_path
            FROM papers p JOIN challenge_papers cp ON cp.paper_id = p.id
            WHERE cp.challenge_id=? ORDER BY p.id""",
         (challenge_id,),
@@ -460,11 +461,12 @@ def _load_papers_b64(conn: sqlite3.Connection, challenge_id: int,
     papers_b64: list[dict] = []
     papers_meta: list[dict] = []
     for r in rows:
-        path = papers_dir / (r["disk_filename"] or f"{r['filename']}.pdf")
-        if not path.exists():
-            logger.error("PDF missing on disk: %s", path)
+        try:
+            data = paper_files.read_paper_bytes(r, papers_dir)
+        except Exception as e:
+            logger.error("PDF missing for paper id=%s: %s", r["id"], e)
             continue
-        b64 = base64.b64encode(path.read_bytes()).decode()
+        b64 = base64.b64encode(data).decode()
         papers_b64.append({"id": r["id"], "filename": r["filename"], "b64": b64})
         papers_meta.append({"id": r["id"], "filename": r["filename"]})
     return papers_b64, papers_meta

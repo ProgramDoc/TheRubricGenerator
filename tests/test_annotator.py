@@ -222,6 +222,35 @@ def test_prefill_prompt_respects_type_and_modifier_fields():
     assert "- industry_sponsored" not in prompt
 
 
+def test_upload_records_storage_path(client, test_user):
+    """New uploads must populate papers.storage_path (local uploads/ in tests)
+    so reads succeed even if PAPERS_DIR is wiped."""
+    pid = _make_paper(client, test_user["cookie"], "stored.pdf")
+    from main import get_db
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT storage_path FROM papers WHERE id=?", (pid,)
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None
+    assert row["storage_path"], "storage_path should be populated by upload"
+
+
+def test_pdf_read_survives_wiped_papers_dir(client, test_user, tmp_path, monkeypatch):
+    """Simulating a Render disk wipe: uploaded paper remains readable because
+    its content is served from storage_path, not PAPERS_DIR."""
+    pid = _make_paper(client, test_user["cookie"], "survives.pdf")
+    # Redirect PAPERS_DIR to an empty tmp dir (no legacy fallback available)
+    import main
+    monkeypatch.setattr(main, "PAPERS_DIR", tmp_path)
+    r = client.get(f"/api/papers/{pid}/pdf",
+                   cookies={"rubricgen_session": test_user["cookie"]})
+    assert r.status_code == 200, r.text
+    assert r.content.startswith(b"%PDF")
+
+
 def test_schema_endpoint_exposes_catalog(client, test_user):
     r = client.get("/api/annotator/schema",
                    cookies={"rubricgen_session": test_user["cookie"]})

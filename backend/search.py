@@ -713,24 +713,28 @@ def import_results(conn: sqlite3.Connection, session_id: int,
             skipped += 1
             continue
 
-        pdf_path = None
+        pdf_result = None
         sha256 = None
 
         # Try to download PDF if PMCID available
         if r["pmcid"]:
             try:
-                pdf_path = download_pmc_pdf(r["pmcid"], papers_dir)
+                pdf_result = download_pmc_pdf(r["pmcid"], papers_dir)
             except Exception as e:
                 logger.warning("PDF download failed for %s: %s", r["pmcid"], e)
 
-        if pdf_path:
-            sha256 = pdf_path.stem  # filename is {sha256}.pdf
+        if pdf_result:
+            sha256 = pdf_result["sha256"]
             filename = f"{r['pmcid']}_{r['title'][:60].replace(' ', '_')}.pdf"
+            disk_filename = pdf_result["filename"]
+            storage_path = pdf_result.get("storage_path")
         else:
             # No PDF available — create a placeholder record
             placeholder = f"pubmed:{r['pmid'] or r['doi'] or r['title'][:50]}"
             sha256 = hashlib.sha256(placeholder.encode()).hexdigest()
             filename = f"{r['title'][:80].replace(' ', '_')}.pdf"
+            disk_filename = None
+            storage_path = None
 
         # Check for duplicate
         existing = conn.execute(
@@ -744,9 +748,9 @@ def import_results(conn: sqlite3.Connection, session_id: int,
             try:
                 with conn:
                     cur = conn.execute(
-                        """INSERT INTO papers (filename, disk_filename, sha256, user_id, project_id)
-                           VALUES (?, ?, ?, ?, ?) RETURNING id""",
-                        (filename, f"{sha256}.pdf" if pdf_path else None, sha256, user_id, project_id),
+                        """INSERT INTO papers (filename, disk_filename, storage_path, sha256, user_id, project_id)
+                           VALUES (?, ?, ?, ?, ?, ?) RETURNING id""",
+                        (filename, disk_filename, storage_path, sha256, user_id, project_id),
                     )
                     paper_id = cur.lastrowid
                     conn.commit()
