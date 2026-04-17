@@ -52,6 +52,8 @@ from backend.lab import LAB_TABLES_SQL
 from backend import lab as lab_mod
 from backend.membership import MEMBERSHIP_TABLES_SQL, seed_plans
 from backend import membership as member_mod
+from backend.annotator import ANNOTATOR_TABLES_SQL
+from backend import annotator as annotator_mod
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rubricgen")
@@ -360,6 +362,8 @@ def init_db() -> None:
         conn.executescript(LAB_TABLES_SQL)
         # Membership plans
         conn.executescript(MEMBERSHIP_TABLES_SQL)
+        # OGAI Annotator: per-paper annotation + span tables
+        conn.executescript(ANNOTATOR_TABLES_SQL)
         # Project invitations (for unregistered users)
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS project_invitations (
@@ -885,6 +889,15 @@ def pdf_viewer_page(rubricgen_session: str | None = Cookie(default=None)):
 def papers_page_redirect(rubricgen_session: str | None = Cookie(default=None)):
     """Legacy /papers route — redirects to the consolidated PDF Viewer."""
     return RedirectResponse("/pdf-viewer", status_code=302)
+
+
+@app.get("/annotator", include_in_schema=False)
+def annotator_page(rubricgen_session: str | None = Cookie(default=None)):
+    """OGAI Annotator — classify study design and extract structured fields from PDFs."""
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return FileResponse(str(FRONTEND / "annotator.html"), media_type="text/html")
 
 
 @app.get("/challenges", include_in_schema=False)
@@ -4719,6 +4732,203 @@ def api_lab_delete_document(doc_id: int, rubricgen_session: str | None = Cookie(
     if file_path:
         storage_delete(file_path)
     return {"ok": True}
+
+
+# ─────────────────────────────────────────────
+# OGAI Annotator API
+#   - Reuses existing /api/projects, /api/papers (upload/delete/assign),
+#     and /api/papers/{id}/pdf. Adds annotation save/load, AI classify/prefill
+#     (credit-gated), and CSV export.
+# ─────────────────────────────────────────────
+
+class AnnotationSpan(BaseModel):
+    field_name: str
+    page: int | None = None
+    text: str | None = None
+    x0: float | None = None
+    y0: float | None = None
+    x1: float | None = None
+    y1: float | None = None
+
+
+class AnnotationSavePayload(BaseModel):
+    data: dict = {}
+    field_annotations: dict = {}
+    spans: list[AnnotationSpan] = []
+    status: str | None = None
+    version: int | None = None
+
+
+@app.get("/api/annotator/papers")
+def api_annotator_list_papers(rubricgen_session: str | None = Cookie(default=None),
+                              x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Paper list for the annotator sidebar, including per-paper annotation status."""
+    user = require_user(rubricgen_session, x_api_key)
+    conn = get_db()
+    try:
+        return annotator_mod.list_papers_with_status(conn, user["id"])
+    finally:
+        conn.close()
+
+
+@app.get("/api/annotator/papers/{pid}/annotation")
+def api_annotator_get_annotation(pid: int,
+                                 rubricgen_session: str | None = Cookie(default=None),
+                                 x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT user_id FROM papers WHERE id=?", (pid,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Paper not found")
+        if row["user_id"] != user["id"] and user.get("role") != "admin":
+            raise HTTPException(403, "Access denied")
+        return annotator_mod.load_annotation(conn, pid, user["id"])
+    finally:
+        conn.close()
+
+
+@app.post("/api/annotator/papers/{pid}/annotation")
+def api_annotator_save_annotation(pid: int, payload: AnnotationSavePayload,
+                                  rubricgen_session: str | None = Cookie(default=None),
+                                  x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT user_id FROM papers WHERE id=?", (pid,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Paper not found")
+        if row["user_id"] != user["id"] and user.get("role") != "admin":
+            raise HTTPException(403, "Access denied")
+        return annotator_mod.save_annotation(
+            conn, pid, user["id"],
+            {
+                "data": payload.data,
+                "field_annotations": payload.field_annotations,
+                "spans": [s.model_dump() for s in payload.spans],
+                "status": payload.status,
+                "version": payload.version,
+            },
+        )
+    finally:
+        conn.close()
+
+
+def _annotator_ai_gate(conn, user: dict, cost: int, description: str) -> None:
+    """Shared credit gate for classify/prefill. Admins bypass (matches challenges.py)."""
+    if user.get("role") == "admin":
+        return
+    balance = bill.get_balance(conn, user["id"])
+    if balance < cost:
+        raise HTTPException(402, {
+            "detail": "Insufficient credits",
+            "required": cost,
+            "balance": balance,
+        })
+    if not bill.debit_credits(conn, user["id"], cost, description):
+        raise HTTPException(402, "Failed to debit credits — insufficient balance")
+
+
+@app.post("/api/annotator/papers/{pid}/classify")
+def api_annotator_classify(pid: int,
+                           rubricgen_session: str | None = Cookie(default=None),
+                           x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """AI-classify the paper's study design. Credit-gated."""
+    user = require_user(rubricgen_session, x_api_key)
+    conn = get_db()
+    try:
+        is_admin = user.get("role") == "admin"
+        pdf_bytes, filename = annotator_mod.load_paper_pdf(
+            conn, PAPERS_DIR, pid, user["id"], is_admin=is_admin
+        )
+        _annotator_ai_gate(conn, user,
+                           annotator_mod.CREDIT_COST_CLASSIFY,
+                           f"Annotator classify: {filename}")
+    finally:
+        conn.close()
+
+    try:
+        return annotator_mod.classify_study_design(pdf_bytes)
+    except HTTPException:
+        _refund_annotator(user, annotator_mod.CREDIT_COST_CLASSIFY, "classify", filename)
+        raise
+    except Exception as e:
+        _refund_annotator(user, annotator_mod.CREDIT_COST_CLASSIFY, "classify", filename)
+        logger.error("Annotator classify failed: %s", e)
+        raise HTTPException(502, f"Classification failed: {e}")
+
+
+@app.post("/api/annotator/papers/{pid}/prefill")
+def api_annotator_prefill(pid: int, body: dict,
+                          rubricgen_session: str | None = Cookie(default=None),
+                          x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """AI-extract structured fields for the given study_type. Credit-gated."""
+    study_type = (body or {}).get("study_type", "")
+    if not study_type:
+        raise HTTPException(400, "study_type is required")
+
+    user = require_user(rubricgen_session, x_api_key)
+    conn = get_db()
+    try:
+        is_admin = user.get("role") == "admin"
+        pdf_bytes, filename = annotator_mod.load_paper_pdf(
+            conn, PAPERS_DIR, pid, user["id"], is_admin=is_admin
+        )
+        _annotator_ai_gate(conn, user,
+                           annotator_mod.CREDIT_COST_PREFILL,
+                           f"Annotator prefill: {filename}")
+    finally:
+        conn.close()
+
+    try:
+        return annotator_mod.prefill_fields(pdf_bytes, study_type)
+    except HTTPException:
+        _refund_annotator(user, annotator_mod.CREDIT_COST_PREFILL, "prefill", filename)
+        raise
+    except Exception as e:
+        _refund_annotator(user, annotator_mod.CREDIT_COST_PREFILL, "prefill", filename)
+        logger.error("Annotator prefill failed: %s", e)
+        raise HTTPException(502, f"Prefill failed: {e}")
+
+
+def _refund_annotator(user: dict, amount: int, op: str, filename: str) -> None:
+    """Refund a failed annotator AI call. Silent on double-fault."""
+    if user.get("role") == "admin":
+        return
+    try:
+        rc = get_db()
+        try:
+            bill.refund_credits(rc, user["id"], amount,
+                                f"Refund: Annotator {op} on {filename} failed")
+        finally:
+            rc.close()
+    except Exception as refund_err:
+        logger.error("Annotator refund failed: %s", refund_err)
+
+
+@app.get("/api/annotator/export.csv")
+def api_annotator_export_csv(paper_id: int | None = None,
+                             project_id: int | None = None,
+                             rubricgen_session: str | None = Cookie(default=None),
+                             x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    conn = get_db()
+    try:
+        rows, filename = annotator_mod.build_export_rows(
+            conn, user["id"], paper_id=paper_id, project_id=project_id
+        )
+    finally:
+        conn.close()
+    safe_fn = filename.replace('"', '')
+    return StreamingResponse(
+        iter(rows),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{safe_fn}"'},
+    )
 
 
 # ─────────────────────────────────────────────

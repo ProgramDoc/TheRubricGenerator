@@ -1,0 +1,2668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The AI Researcher — Annotator</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root {
+  --navy: #161b2e; --blue: #274472; --sky: #5e9ad0;
+  --green: #16a34a; --amber: #d97706; --red: #dc2626;
+  --purple: #7c3aed; --bg: #f4f5f9; --card: #ffffff;
+  --border: #dce4ee; --text: #1e293b; --muted: #64748b;
+  --panel-w: 440px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; }
+
+/* ── TOP BAR ── */
+#topbar {
+  height: 46px; background: var(--navy); display: flex; align-items: center;
+  padding: 0 16px; gap: 14px; flex-shrink: 0; z-index: 100;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
+#topbar .brand { font-weight: 700; font-size: 15px; color: #fff; letter-spacing: -.2px; }
+#topbar .brand span { color: var(--sky); }
+#topbar input[type=text] {
+  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.15);
+  border-radius: 5px; color: #fff; padding: 5px 10px; font-size: 12px;
+  font-family: inherit; outline: none; width: 160px;
+}
+#topbar input[type=text]::placeholder { color: rgba(255,255,255,.4); }
+#topbar input[type=text]:focus { border-color: var(--sky); }
+.tb-btn {
+  padding: 5px 12px; border: 1px solid rgba(255,255,255,.2); border-radius: 5px;
+  background: transparent; color: #c8d8e8; font-size: 11px; font-weight: 600;
+  cursor: pointer; font-family: inherit; white-space: nowrap;
+}
+.tb-btn:hover { background: rgba(255,255,255,.08); }
+.tb-btn.primary { background: var(--sky); color: #fff; border-color: var(--sky); }
+.tb-btn.primary:hover { background: #4a8ac0; }
+.tb-btn.success { background: var(--green); color: #fff; border-color: var(--green); }
+.tb-sep { width: 1px; height: 20px; background: rgba(255,255,255,.12); }
+#save-status { font-size: 11px; color: rgba(255,255,255,.4); margin-left: 4px; font-family: 'IBM Plex Mono', monospace; }
+
+/* ── MAIN LAYOUT ── */
+#layout {
+  display: flex; height: calc(100vh - 46px); overflow: hidden;
+}
+
+/* ── LEFT: PAPER LIST ── */
+#sidebar {
+  width: 230px; flex-shrink: 0; background: var(--navy);
+  border-right: 1px solid rgba(255,255,255,.06);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+#sidebar-header {
+  padding: 12px 14px 8px; font-size: 10px; font-weight: 700;
+  color: rgba(255,255,255,.4); letter-spacing: .1em; text-transform: uppercase;
+  flex-shrink: 0; display: flex; align-items: center;
+}
+#new-proj-btn {
+  margin-left: auto; background: rgba(255,255,255,.08);
+  border: 1px solid rgba(255,255,255,.14); color: rgba(255,255,255,.6);
+  border-radius: 4px; cursor: pointer; padding: 0px 8px; font-size: 16px;
+  line-height: 1.4; font-family: inherit;
+}
+#new-proj-btn:hover { background: rgba(255,255,255,.15); color: #fff; }
+
+#project-list { flex: 1; overflow-y: auto; }
+
+/* Project folder */
+.project-folder { border-bottom: 1px solid rgba(255,255,255,.04); }
+.project-header {
+  display: flex; align-items: center; padding: 7px 8px 7px 10px;
+  cursor: pointer; gap: 5px; user-select: none;
+}
+.project-header:hover { background: rgba(255,255,255,.05); }
+.project-arrow { font-size: 8px; color: rgba(255,255,255,.28); width: 10px; flex-shrink: 0; }
+.project-name-text {
+  flex: 1; font-size: 11.5px; font-weight: 600; color: rgba(255,255,255,.72);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.project-name-text.unassigned { color: rgba(255,255,255,.35); font-weight: 500; font-style: italic; }
+.project-count { font-size: 9px; color: rgba(255,255,255,.22); font-family: 'IBM Plex Mono', monospace; margin-right: 2px; }
+.project-actions { display: none; gap: 1px; align-items: center; }
+.project-header:hover .project-actions { display: flex; }
+.proj-act-btn {
+  background: none; border: none; color: rgba(255,255,255,.32);
+  cursor: pointer; font-size: 11px; padding: 2px 5px; border-radius: 3px; line-height: 1;
+}
+.proj-act-btn:hover { color: #fff; background: rgba(255,255,255,.12); }
+.proj-act-btn.del:hover { color: #fca5a5; background: rgba(220,38,38,.25); }
+.project-papers { padding-bottom: 3px; }
+.project-name-input {
+  flex: 1; background: rgba(255,255,255,.1); border: 1px solid var(--sky);
+  border-radius: 3px; color: #fff; padding: 2px 6px; font-size: 11px;
+  font-family: inherit; outline: none; min-width: 0;
+}
+
+/* Paper items within folders */
+.paper-item {
+  padding: 7px 8px 7px 20px; border-radius: 5px; cursor: pointer; margin: 1px 6px;
+  transition: background .12s; position: relative;
+}
+.paper-item:hover { background: rgba(255,255,255,.06); }
+.paper-item.active { background: rgba(94,154,208,.2); }
+.paper-item .pi-name {
+  font-size: 11px; color: #e2e8f0; font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  padding-right: 18px;
+}
+.paper-item .pi-meta {
+  font-size: 9.5px; color: rgba(255,255,255,.28); margin-top: 2px;
+  font-family: 'IBM Plex Mono', monospace;
+}
+.pi-chip {
+  display: inline-block; font-size: 9px; padding: 1px 6px; border-radius: 8px;
+  font-weight: 600; margin-top: 3px;
+}
+.pi-chip.done  { background: rgba(22,163,74,.2);  color: #4ade80; }
+.pi-chip.none  { background: rgba(255,255,255,.06); color: rgba(255,255,255,.3); }
+
+/* Paper action buttons — visible on hover */
+.paper-item-actions {
+  display: none; position: absolute; top: 6px; right: 6px; gap: 2px; align-items: center;
+}
+.paper-item:hover .paper-item-actions { display: flex; }
+.paper-act-btn {
+  background: rgba(255,255,255,.07); border: none; color: rgba(255,255,255,.38);
+  cursor: pointer; font-size: 10px; padding: 2px 5px; border-radius: 3px; line-height: 1.3;
+}
+.paper-act-btn:hover { background: rgba(220,38,38,.3); color: #fca5a5; }
+
+/* Move-to-project select — visible on hover */
+.move-select {
+  display: none; font-size: 9px; padding: 1px 2px; border-radius: 3px; margin-top: 4px;
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
+  color: rgba(255,255,255,.4); font-family: inherit; cursor: pointer; width: 100%;
+}
+.paper-item:hover .move-select { display: block; }
+.move-select option { background: #1e2d42; color: #e2e8f0; }
+
+#upload-zone {
+  margin: 8px; padding: 12px; border: 1.5px dashed rgba(255,255,255,.15);
+  border-radius: 6px; text-align: center; cursor: pointer; transition: border-color .15s;
+  flex-shrink: 0;
+}
+#upload-zone:hover { border-color: var(--sky); }
+#upload-zone p { font-size: 11px; color: rgba(255,255,255,.4); line-height: 1.5; }
+#upload-zone p strong { color: rgba(255,255,255,.7); }
+#file-input { display: none; }
+
+/* ── CENTRE: PDF VIEWER ── */
+#pdf-panel {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden;
+  background: #2a2a2a; min-width: 0;
+}
+#pdf-toolbar {
+  height: 38px; background: #1a1a1a; display: flex; align-items: center;
+  padding: 0 12px; gap: 10px; flex-shrink: 0;
+  border-bottom: 1px solid #333;
+}
+#pdf-toolbar button {
+  background: #333; border: none; color: #ccc; padding: 4px 10px;
+  border-radius: 4px; cursor: pointer; font-size: 12px;
+}
+#pdf-toolbar button:hover { background: #444; }
+#page-info { font-size: 11px; color: #999; font-family: 'IBM Plex Mono', monospace; }
+#pdf-toolbar input[type=number] {
+  width: 44px; background: #333; border: 1px solid #555; color: #fff;
+  padding: 3px 6px; border-radius: 4px; font-size: 12px; text-align: center;
+}
+#zoom-display { font-size: 11px; color: #777; font-family: 'IBM Plex Mono', monospace; min-width: 42px; }
+.tb-spacer { flex: 1; }
+
+/* ── PDF CANVAS AREA ── */
+#pdf-scroll { flex: 1; overflow-y: auto; overflow-x: auto; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.page-wrapper {
+  position: relative; flex-shrink: 0; box-shadow: 0 4px 20px rgba(0,0,0,.5);
+}
+.page-wrapper canvas { display: block; }
+
+/* Text layer */
+.textLayer {
+  position: absolute; inset: 0; overflow: hidden;
+  opacity: 1; line-height: 1; pointer-events: all;
+}
+.textLayer span {
+  color: transparent; position: absolute; white-space: pre;
+  cursor: text; transform-origin: 0% 0%;
+}
+.textLayer .highlight { background: rgba(255, 214, 0, 0.3); border-radius: 2px; }
+.textLayer ::selection { background: rgba(94,154,208,0.35); }
+
+/* Span highlight overlay */
+.span-overlay {
+  position: absolute; pointer-events: none; z-index: 5;
+}
+.span-box {
+  position: absolute; border-radius: 2px; pointer-events: all;
+  cursor: pointer; transition: opacity .1s;
+}
+.span-box:hover { opacity: .7; }
+
+/* Flash animation for span scroll-to */
+@keyframes spanFlash {
+  0%,100% { opacity: 1; }
+  35%      { opacity: 0.08; }
+  70%      { opacity: 0.9; }
+}
+.span-flash { animation: spanFlash 0.5s ease 3 !important; border-width: 2.5px !important; }
+
+/* Active field pulse */
+#active-field-banner {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+  background: var(--purple); color: #fff; padding: 8px 18px; border-radius: 20px;
+  font-size: 12px; font-weight: 600; z-index: 1000; display: none;
+  box-shadow: 0 4px 20px rgba(124,58,237,.5);
+  pointer-events: none;
+}
+
+/* Floating link button */
+#link-btn {
+  position: fixed; z-index: 1000; display: none;
+  background: var(--purple); color: #fff; border: none;
+  padding: 6px 14px; border-radius: 16px; font-size: 12px; font-weight: 600;
+  cursor: pointer; box-shadow: 0 3px 12px rgba(124,58,237,.5); font-family: inherit;
+  white-space: nowrap;
+}
+#link-btn:hover { background: #6d28d9; }
+
+/* ── RIGHT: FORM PANEL ── */
+#form-panel {
+  width: var(--panel-w); flex-shrink: 0; display: flex; flex-direction: column;
+  background: var(--card); border-left: 1px solid var(--border); overflow: hidden;
+}
+#form-scroll { flex: 1; overflow-y: auto; padding: 16px; }
+
+.form-section { margin-bottom: 20px; }
+.form-section-header {
+  font-size: 10px; font-weight: 700; color: var(--blue); letter-spacing: .1em;
+  text-transform: uppercase; padding: 6px 10px; background: #eef3fa;
+  border-radius: 4px; margin-bottom: 10px; border-left: 3px solid var(--sky);
+}
+
+.field-row { margin-bottom: 10px; position: relative; }
+.field-label {
+  font-size: 10.5px; font-weight: 600; color: var(--blue);
+  margin-bottom: 4px; display: flex; align-items: center; gap: 4px;
+  flex-wrap: wrap; cursor: default; user-select: none; row-gap: 3px;
+}
+.field-label:hover .field-anchor-btn { opacity: 1; }
+.field-anchor-btn {
+  opacity: 0; background: var(--purple); color: #fff; border: none;
+  border-radius: 8px; padding: 1px 7px; font-size: 9px; font-weight: 700;
+  cursor: pointer; font-family: inherit; transition: opacity .15s;
+}
+.field-anchor-btn.active { opacity: 1; background: var(--purple); }
+.field-anchor-btn.linked { opacity: 1; background: var(--green); }
+
+.field-row input[type=text],
+.field-row textarea,
+.field-row select {
+  width: 100%; padding: 6px 9px; border: 1px solid var(--border);
+  border-radius: 5px; font-family: inherit; font-size: 12px;
+  background: var(--bg); color: var(--text); outline: none;
+  transition: border-color .15s;
+}
+.field-row input[type=text]:focus,
+.field-row textarea:focus,
+.field-row select:focus { border-color: var(--sky); background: #fff; }
+.field-row textarea { resize: vertical; min-height: 56px; }
+.field-row.active-field > input,
+.field-row.active-field > textarea,
+.field-row.active-field > select {
+  border-color: var(--purple); box-shadow: 0 0 0 2px rgba(124,58,237,.12);
+}
+
+/* AI pre-fill amber / corrections — declared before field-confirmed so confirmed (green) wins */
+.field-prefilled > input,
+.field-prefilled > textarea,
+.field-prefilled > select {
+  border-left: 3px solid #d97706 !important;
+}
+.field-corrected > input,
+.field-corrected > textarea,
+.field-corrected > select {
+  border-left: 3px solid #d97706 !important;
+}
+
+/* Span tag below linked field */
+.span-tag {
+  margin-top: 4px; padding: 4px 8px; background: #f0ebff;
+  border: 1px solid #c4b5fd; border-radius: 4px;
+  font-size: 10px; color: #5b21b6; line-height: 1.4;
+  display: flex; align-items: flex-start; gap: 6px;
+}
+.span-tag .st-text { flex: 1; font-style: italic; }
+.span-tag .st-loc { color: #7c3aed; font-family: 'IBM Plex Mono', monospace; font-size: 9px; white-space: nowrap; }
+.span-tag .st-del { background: none; border: none; color: #9ca3af; cursor: pointer; font-size: 12px; padding: 0 2px; flex-shrink: 0; }
+.span-tag .st-del:hover { color: var(--red); }
+
+/* Auto-fill panel */
+.autofill-panel {
+  background: #fffbeb; border: 1.5px solid #d97706;
+  border-radius: 6px; padding: 12px; margin-bottom: 20px;
+}
+.autofill-panel-title {
+  font-size: 10px; font-weight: 700; color: #92400e;
+  text-transform: uppercase; letter-spacing: .08em; margin-bottom: 8px;
+}
+.autofill-btn {
+  width: 100%; padding: 8px; border: none; border-radius: 5px;
+  background: #d97706; color: #fff; font-family: inherit;
+  font-size: 12px; font-weight: 700; cursor: pointer; transition: background .12s;
+}
+.autofill-btn:hover:not(:disabled) { background: #b45309; }
+.autofill-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.autofill-hint { font-size: 10px; color: #92400e; margin-top: 5px; }
+.autofill-loading { font-size: 10px; color: #92400e; margin-top: 5px; display: none; font-style: italic; }
+
+/* ── PER-FIELD ANNOTATION BUTTONS ── */
+.ann-btns { display: flex; gap: 2px; margin-left: auto; flex-shrink: 0; }
+.ann-btn {
+  font-size: 9px; padding: 1px 6px; border-radius: 3px; border: 1px solid;
+  cursor: pointer; font-weight: 700; font-family: inherit; background: transparent;
+  line-height: 1.6; transition: all .12s; white-space: nowrap;
+}
+.ann-btn.confirm  { border-color: #16a34a; color: #16a34a; }
+.ann-btn.confirm:hover  { background: #dcfce7; }
+.ann-btn.confirm.active  { background: #16a34a; color: #fff; }
+.ann-btn.correct  { border-color: #d97706; color: #d97706; }
+.ann-btn.correct:hover  { background: #fef3c7; }
+.ann-btn.correct.active  { background: #d97706; color: #fff; }
+.ann-btn.flag-btn { border-color: #7c3aed; color: #7c3aed; }
+.ann-btn.flag-btn:hover { background: #f5f3ff; }
+.ann-btn.flag-btn.active { background: #7c3aed; color: #fff; }
+
+.ann-status-dot {
+  width: 6px; height: 6px; border-radius: 50%; display: inline-block;
+  flex-shrink: 0; background: #e2e8f0; transition: background .15s; margin-right: 1px;
+}
+.ann-status-dot.confirmed { background: #16a34a; }
+.ann-status-dot.corrected { background: #d97706; }
+.ann-status-dot.flagged   { background: #7c3aed; }
+
+/* Field status borders */
+.field-confirmed > input,
+.field-confirmed > textarea,
+.field-confirmed > select { border-left: 3px solid #16a34a !important; }
+/* field-corrected and field-prefilled already defined below */
+
+/* Correction sub-area */
+.correction-area {
+  display: none; margin-top: 6px; background: #fffbeb;
+  border: 1px solid #f59e0b; border-radius: 5px; padding: 8px;
+}
+.correction-area.open { display: block; }
+.ca-header { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+.ca-header > span {
+  font-size: 9.5px; font-weight: 700; color: #92400e;
+  text-transform: uppercase; letter-spacing: .05em;
+}
+.use-ai-btn {
+  font-size: 9px; padding: 2px 7px; border: 1px solid #d97706;
+  border-radius: 3px; background: transparent; color: #d97706;
+  cursor: pointer; font-family: inherit; margin-left: auto; white-space: nowrap;
+}
+.use-ai-btn:hover { background: #fef3c7; }
+.correction-area textarea {
+  width: 100%; padding: 5px 8px; border: 1px solid #fed7aa; border-radius: 4px;
+  font-family: inherit; font-size: 12px; resize: vertical; min-height: 42px;
+  background: #fff; color: var(--text); outline: none;
+}
+.correction-area textarea:focus { border-color: #d97706; }
+
+/* Flag sub-area */
+.flag-area {
+  display: none; margin-top: 6px; background: #f5f3ff;
+  border: 1px solid #c4b5fd; border-radius: 5px; padding: 8px;
+}
+.flag-area.open { display: block; }
+.flag-area-label {
+  font-size: 9.5px; font-weight: 700; color: #5b21b6;
+  text-transform: uppercase; letter-spacing: .05em; margin-bottom: 5px;
+}
+.flag-area textarea {
+  width: 100%; padding: 5px 8px; border: 1px solid #c4b5fd; border-radius: 4px;
+  font-family: inherit; font-size: 12px; resize: vertical; min-height: 36px;
+  background: #fff; color: var(--text); outline: none;
+}
+.flag-area textarea:focus { border-color: #7c3aed; }
+
+/* Export modal */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.5);
+  display: none; align-items: center; justify-content: center; z-index: 2000;
+}
+.modal-box {
+  background: #fff; border-radius: 10px; padding: 24px;
+  min-width: 340px; max-width: 500px; width: 90%;
+  box-shadow: 0 20px 60px rgba(0,0,0,.35);
+}
+.modal-title {
+  font-size: 13px; font-weight: 700; color: var(--navy);
+  margin-bottom: 14px; letter-spacing: -.2px;
+  padding-bottom: 10px; border-bottom: 1px solid var(--border);
+}
+.export-opt {
+  padding: 11px 13px; border: 1px solid var(--border); border-radius: 6px;
+  cursor: pointer; margin-bottom: 7px; transition: all .12s;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.export-opt:hover { border-color: var(--sky); background: #f0f7ff; }
+.export-opt strong { font-size: 12px; color: var(--navy); font-weight: 600; }
+.export-opt span { font-size: 10px; color: var(--muted); font-family: 'IBM Plex Mono', monospace; }
+.modal-cancel {
+  margin-top: 10px; width: 100%; padding: 8px; border: 1px solid var(--border);
+  border-radius: 5px; background: transparent; color: var(--muted);
+  cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 600;
+}
+.modal-cancel:hover { background: var(--bg); }
+
+/* Paper-level status badges in bottom bar */
+#form-bottom { background: #f8fafc; border-top: 2px solid var(--border); }
+#form-bottom .status-label {
+  font-size: 9px; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .08em; margin-bottom: 6px; display: block;
+}
+#ann-summary {
+  font-size: 10px; color: var(--muted); font-family: 'IBM Plex Mono', monospace;
+  padding: 4px 0; flex-basis: 100%; order: -1;
+}
+
+.type-section { display: none; }
+.type-section.visible { display: block; }
+
+/* Radio group */
+.radio-group { display: flex; gap: 8px; flex-wrap: wrap; }
+.radio-group label {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11.5px; cursor: pointer; padding: 4px 8px;
+  border: 1px solid var(--border); border-radius: 4px; background: var(--bg);
+  transition: all .12s;
+}
+.radio-group label:hover { border-color: var(--sky); }
+.radio-group input[type=radio] { margin: 0; accent-color: var(--sky); }
+.radio-group input[type=radio]:checked + span { color: var(--navy); font-weight: 600; }
+
+/* Rule badges */
+.rule-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.rule-item select {
+  width: 100%; padding: 5px 8px; border: 1px solid var(--border);
+  border-radius: 4px; font-family: inherit; font-size: 11px; background: var(--bg);
+}
+.rule-item label { font-size: 10px; font-weight: 700; color: var(--muted); display: block; margin-bottom: 3px; }
+
+/* Bottom bar */
+#form-bottom {
+  padding: 12px 16px; border-top: 1px solid var(--border);
+  display: flex; gap: 8px; flex-shrink: 0;
+}
+#form-bottom button {
+  flex: 1; padding: 9px; border: none; border-radius: 6px;
+  font-family: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+}
+#btn-confirm { background: #dcfce7; color: #166534; }
+#btn-confirm:hover { background: #bbf7d0; }
+#btn-correct { background: #fef3c7; color: #92400e; }
+#btn-correct:hover { background: #fde68a; }
+#btn-flag    { background: #fce7f3; color: #9d174d; }
+#btn-flag:hover { background: #fbcfe8; }
+
+/* Placeholder */
+#no-paper {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  flex-direction: column; gap: 12px; color: #444;
+}
+#no-paper p { font-size: 13px; }
+
+/* Tooltip */
+.tooltip { position: relative; }
+.tooltip:hover::after {
+  content: attr(data-tip);
+  position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+  background: #1e293b; color: #fff; font-size: 10px; padding: 4px 8px;
+  border-radius: 4px; white-space: nowrap; pointer-events: none; z-index: 999;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+</style>
+</head>
+<body>
+
+<!-- ── TOP BAR ──────────────────────────────────────────────────────────── -->
+<div id="topbar">
+  <a href="/" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.6);text-decoration:none;margin-right:6px;padding:4px 8px;border:1px solid rgba(255,255,255,.2);border-radius:5px">&larr; Lab</a>
+  <div class="brand">The AI <span>Researcher</span></div>
+  <nav style="display:flex;gap:2px;align-items:center;">
+    <a href="/dashboard" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:4px 8px;border-radius:4px">Dashboard</a>
+    <a href="/challenges" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:4px 8px;border-radius:4px">Challenges</a>
+    <a href="/pdf-viewer" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:4px 8px;border-radius:4px">PDF Viewer</a>
+    <a href="/annotator" style="font-size:11px;font-weight:600;color:#fff;background:rgba(255,255,255,.08);text-decoration:none;padding:4px 8px;border-radius:4px">Annotator</a>
+    <a href="/analytics" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:4px 8px;border-radius:4px">Analytics</a>
+    <a href="/library" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:4px 8px;border-radius:4px">Library</a>
+  </nav>
+  <div class="tb-sep"></div>
+  <span id="user-display" style="font-size:11px;color:rgba(255,255,255,.55);font-family:'IBM Plex Mono',monospace;"></span>
+  <div class="tb-sep"></div>
+  <button class="tb-btn" onclick="showExportDialog()">⬇ Export CSV</button>
+  <button class="tb-btn primary" onclick="saveAnnotation()" id="save-btn">Save</button>
+  <span id="save-status">no paper selected</span>
+  <div class="tb-sep"></div>
+  <button class="tb-btn" onclick="logout()" style="color:#f87171;border-color:rgba(248,113,113,.3);">Sign out</button>
+</div>
+
+<div id="layout">
+
+<!-- ── SIDEBAR: PROJECT FOLDERS ────────────────────────────────────────── -->
+<div id="sidebar">
+  <div id="sidebar-header">
+    Projects
+    <button id="new-proj-btn" onclick="createNewProject()" title="New project">+</button>
+  </div>
+  <div id="project-list"></div>
+  <div id="upload-zone" onclick="document.getElementById('file-input').click()"
+       ondragover="event.preventDefault()" ondrop="handleDrop(event)">
+    <p><strong>Upload PDF</strong><br>click or drag &amp; drop</p>
+  </div>
+  <input type="file" id="file-input" accept=".pdf" multiple>
+</div>
+
+<!-- ── PDF VIEWER ──────────────────────────────────────────────────────── -->
+<div id="pdf-panel">
+  <div id="pdf-toolbar">
+    <button onclick="changePage(-1)">◀</button>
+    <input type="number" id="page-input" value="1" min="1" onchange="gotoPage(this.value)">
+    <span id="page-info">/ 1</span>
+    <button onclick="changePage(1)">▶</button>
+    <div class="tb-spacer"></div>
+    <button onclick="changeZoom(-0.2)">−</button>
+    <span id="zoom-display">100%</span>
+    <button onclick="changeZoom(0.2)">+</button>
+  </div>
+  <div id="pdf-scroll">
+    <div id="no-paper">
+      <p>Upload a PDF from the sidebar to begin annotating</p>
+    </div>
+  </div>
+</div>
+
+<!-- Floating elements -->
+<div id="active-field-banner">📎 Click a field to link selected text</div>
+<button id="link-btn" onclick="linkSelection()">📎 Link to: <span id="link-btn-field"></span></button>
+
+<!-- ── FORM PANEL ───────────────────────────────────────────────────────── -->
+<div id="form-panel">
+  <div id="form-scroll">
+
+    <!-- Stage 1: Classification -->
+    <div class="form-section">
+      <div class="form-section-header">Stage 1 · Classification</div>
+
+      <div class="field-row" id="fr-major_category">
+        <div class="field-label">
+          Major Category
+          <button class="field-anchor-btn" onclick="setActiveField('major_category',this)" data-field="major_category">anchor</button>
+        </div>
+        <select id="f-major_category" onchange="onMajorCatChange()">
+          <option value="">— select —</option>
+          <option>Primary Studies</option>
+          <option>Observational Studies</option>
+          <option>Evidence Synthesis</option>
+          <option>Guidance / Consensus</option>
+          <option>Economic &amp; Decision Models</option>
+        </select>
+      </div>
+
+      <div class="field-row" id="fr-subcategory">
+        <div class="field-label">Subcategory
+          <button class="field-anchor-btn" onclick="setActiveField('subcategory',this)" data-field="subcategory">anchor</button>
+        </div>
+        <select id="f-subcategory" onchange="onSubcatChange()"><option value="">— select major first —</option></select>
+      </div>
+
+      <div class="field-row" id="fr-study_type">
+        <div class="field-label">Study Type
+          <button class="field-anchor-btn" onclick="setActiveField('study_type',this)" data-field="study_type">anchor</button>
+        </div>
+        <select id="f-study_type" onchange="onStudyTypeChange()"><option value="">— select subcategory first —</option></select>
+      </div>
+
+      <!-- AI classify inline button -->
+      <div id="classify-row" style="margin-bottom:10px;">
+        <button id="classify-btn" class="autofill-btn" onclick="classifyWithAI()"
+          style="background:#7c3aed;font-size:11px;padding:7px;" disabled>
+          ✦ Classify with AI
+        </button>
+        <div id="classify-status" style="font-size:10px;color:#5b21b6;margin-top:4px;display:none;"></div>
+      </div>
+
+      <div class="field-row">
+        <div class="field-label">Primacy Gate Adjudication</div>
+        <div class="rule-grid">
+          <div class="rule-item"><label>Rule 1 — Diagnostic</label>
+            <select id="f-rule1_pass"><option>Fail</option><option>Pass</option><option>N/A</option></select></div>
+          <div class="rule-item"><label>Rule 2 — Prediction</label>
+            <select id="f-rule2_pass"><option>Fail</option><option>Pass</option><option>N/A</option></select></div>
+          <div class="rule-item"><label>Rule 2b — Prognostic</label>
+            <select id="f-rule2b_pass"><option>Fail</option><option>Pass</option><option>N/A</option></select></div>
+          <div class="rule-item"><label>Rule 3 — Quasi-exp</label>
+            <select id="f-rule3_pass"><option>Fail</option><option>Pass</option><option>N/A</option></select></div>
+        </div>
+      </div>
+
+      <div class="field-row" id="fr-natural_experiment_flag">
+        <div class="field-label">Natural Experiment Flag</div>
+        <select id="f-natural_experiment_flag">
+          <option value="No">No</option>
+          <option value="Yes — lottery/admin random draw">Yes — lottery/admin random draw</option>
+          <option value="Yes — policy-driven exogenous variation">Yes — policy-driven exogenous variation</option>
+        </select>
+      </div>
+
+      <div class="field-row" id="fr-author_stated_design">
+        <div class="field-label">Author-Stated Design Label
+          <button class="field-anchor-btn" onclick="setActiveField('author_stated_design',this)" data-field="author_stated_design">anchor</button>
+        </div>
+        <input type="text" id="f-author_stated_design" placeholder="verbatim label from paper">
+      </div>
+
+      <div class="field-row" id="fr-author_label_discordance">
+        <div class="field-label">Author-Label Concordance</div>
+        <select id="f-author_label_discordance">
+          <option>Concordant — author label matches methodology</option>
+          <option>Discordant — author label wrong (methodology overrides)</option>
+          <option>Discordant — ambiguous / borderline</option>
+          <option>N/A — author provides no explicit label</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- AI Auto-fill panel -->
+    <div class="autofill-panel">
+      <div class="autofill-panel-title">AI Extraction</div>
+      <button id="autofill-btn" class="autofill-btn" onclick="prefillFromPDF()" disabled>
+        Auto-fill from PDF
+      </button>
+      <div id="autofill-hint" class="autofill-hint">Select a study type above to enable</div>
+      <div id="autofill-loading" class="autofill-loading">Extracting fields… (~15–40 s)</div>
+    </div>
+
+    <!-- Layer 1: Universal -->
+    <div class="form-section">
+      <div class="form-section-header">Layer 1 · Universal Fields</div>
+      <div id="universal-fields"></div>
+    </div>
+
+    <!-- Layer 2: Type-specific (conditional) -->
+    <div class="form-section" id="type-specific-section" style="display:none">
+      <div class="form-section-header" id="type-specific-header">Layer 2 · Type-Specific Fields</div>
+      <div id="type-specific-fields"></div>
+    </div>
+
+    <!-- Layer 3: Design modifier tags -->
+    <div class="form-section">
+      <div class="form-section-header">Layer 3 · Design Modifier Tags</div>
+      <div id="modifier-fields"></div>
+    </div>
+
+    <!-- Annotation notes -->
+    <div class="form-section">
+      <div class="form-section-header">Annotation Notes</div>
+      <div class="field-row">
+        <div class="field-label">Correction / Flag Notes</div>
+        <textarea id="f-correction_notes" placeholder="Explain why the pipeline classification is wrong, or what makes this case ambiguous..."></textarea>
+      </div>
+    </div>
+
+  </div><!-- /form-scroll -->
+
+  <div id="form-bottom" style="flex-wrap:wrap;gap:6px;">
+    <span id="ann-summary">No fields annotated yet</span>
+    <span class="status-label" style="flex-basis:100%;margin-bottom:2px;">Paper Status</span>
+    <button id="btn-confirm" onclick="setAction('Complete')" title="Mark this paper as fully reviewed and complete" style="font-size:11px;">✓ Complete</button>
+    <button id="btn-correct" onclick="setAction('Needs Review')" title="Mark this paper as needing further review" style="font-size:11px;">✎ Needs Review</button>
+    <button id="btn-flag"    onclick="setAction('Flagged')" title="Flag this paper for discussion" style="font-size:11px;">⚑ Flag Paper</button>
+  </div>
+</div><!-- /form-panel -->
+
+</div><!-- /layout -->
+
+<!-- ── EXPORT MODAL ────────────────────────────────────────────────────────── -->
+<div id="export-modal" class="modal-overlay" onclick="if(event.target===this)closeExportModal()">
+  <div class="modal-box">
+    <div class="modal-title">⬇ Export CSV — choose scope</div>
+    <div id="export-options"></div>
+    <button class="modal-cancel" onclick="closeExportModal()">Cancel</button>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// TAXONOMY & FIELD SCHEMA  (v2.1)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SUBCATS = {
+  "Primary Studies":            ["Randomized Controlled","Non-Randomized Controlled",
+                                 "Non-Randomized Uncontrolled","Quasi-Experimental",
+                                 "Qualitative & Mixed Methods"],
+  "Observational Studies":      ["Descriptive","Analytical","Diagnostic / Prognostic"],
+  "Evidence Synthesis":         ["Reviews"],
+  "Guidance / Consensus":       ["Guidelines & Consensus"],
+  "Economic & Decision Models": ["Economic Evaluation"],
+};
+
+const STUDY_TYPES = {
+  "Randomized Controlled":        ["Randomized Controlled Trial","Cluster Randomized Trial","Stepped-Wedge Cluster RCT","Crossover Trial"],
+  "Non-Randomized Controlled":    ["Non-Randomized Trial"],
+  "Non-Randomized Uncontrolled":  ["Single-Arm Trial","Dose-Escalation Study"],
+  "Quasi-Experimental":           ["Interrupted Time Series","Uncontrolled Before-After","Difference-in-Differences","Regression Discontinuity"],
+  "Descriptive":                  ["Case Report / Series","Cross-Sectional (Descriptive)","Ecological Study"],
+  "Analytical":                   ["Case-Control","Cohort Study","Cross-Sectional (Analytical)","Self-Controlled Case Series","Case-Crossover","Mendelian Randomization"],
+  "Diagnostic / Prognostic":      ["Diagnostic Accuracy","Prognostic Factor Study","Prediction Model Study"],
+  "Qualitative & Mixed Methods":  ["Qualitative Research","Mixed Methods"],
+  "Reviews":                      ["SR without Meta-Analysis","SR with Meta-Analysis","Umbrella Review","Network Meta-Analysis","Scoping Review","Narrative Review"],
+  "Guidelines & Consensus":       ["Guideline / Consensus"],
+  "Economic Evaluation":          ["Economic Evaluation"],
+};
+
+const ROB_MAP = {
+  "Randomized Controlled Trial":    "RoB 2",
+  "Cluster Randomized Trial":       "RoB 2 (cluster)",
+  "Stepped-Wedge Cluster RCT":      "RoB 2 (SW-CRT)",
+  "Crossover Trial":                "RoB 2 (crossover)",
+  "Non-Randomized Trial":           "ROBINS-I V2",
+  "Single-Arm Trial":               "ROBINS-I V2 (adapted)",
+  "Dose-Escalation Study":          "ROBINS-I V2 (adapted)",
+  "Interrupted Time Series":        "EPOC",
+  "Uncontrolled Before-After":      "EPOC",
+  "Difference-in-Differences":      "ROBINS-I V2",
+  "Regression Discontinuity":       "ROBINS-I V2",
+  "Case Report / Series":           "CARE Checklist",
+  "Cross-Sectional (Descriptive)":  "AXIS",
+  "Ecological Study":               "No standard tool",
+  "Case-Control":                   "ROBINS-E",
+  "Cohort Study":                   "ROBINS-E",
+  "Cross-Sectional (Analytical)":   "AXIS",
+  "Self-Controlled Case Series":    "SCCS Checklist",
+  "Case-Crossover":                 "ROBINS-E (adapted)",
+  "Mendelian Randomization":        "STROBE-MR",
+  "Diagnostic Accuracy":            "QUADAS-2",
+  "Prognostic Factor Study":        "QUIPS",
+  "Prediction Model Study":         "PROBAST",
+  "Qualitative Research":           "CASP / COREQ",
+  "Mixed Methods":                  "MMAT",
+  "SR without Meta-Analysis":       "AMSTAR 2",
+  "SR with Meta-Analysis":          "AMSTAR 2 + ROB-ME",
+  "Umbrella Review":                "AMSTAR 2",
+  "Network Meta-Analysis":          "CINeMA",
+  "Scoping Review":                 "No standard tool (PRISMA-ScR)",
+  "Narrative Review":               "No standard tool",
+  "Guideline / Consensus":          "AGREE II",
+  "Economic Evaluation":            "CHEERS",
+};
+
+// Layer 1 universal fields — all studies
+const UNIVERSAL_FIELDS = [
+  { id:"citation_authors",      label:"Authors",                type:"text" },
+  { id:"citation_year",         label:"Year",                   type:"text" },
+  { id:"citation_title",        label:"Title",                  type:"text" },
+  { id:"citation_journal",      label:"Journal",                type:"text" },
+  { id:"citation_doi",          label:"DOI",                    type:"text" },
+  { id:"study_objective",       label:"Study Objective",        type:"textarea" },
+  { id:"population_participants",          label:"Participants (P)",              type:"textarea" },
+  { id:"population_intervention_exposure", label:"Intervention / Exposure (I/E)", type:"textarea" },
+  { id:"population_comparator",            label:"Comparator (C)",               type:"text" },
+  { id:"population_outcomes",              label:"Outcomes (O)",                 type:"textarea" },
+  { id:"sample_size_total",     label:"Total N",                type:"text" },
+  { id:"sample_size_per_group", label:"N per group",            type:"text" },
+  { id:"power_calculation_reported", label:"Power calculation", type:"text" },
+  { id:"setting",               label:"Setting",                type:"text" },
+  { id:"country_region",        label:"Country / Region",       type:"text" },
+  { id:"study_period_enrollment_start", label:"Enrolment start", type:"text" },
+  { id:"study_period_enrollment_end",   label:"Enrolment end",   type:"text" },
+  { id:"follow_up_duration",    label:"Follow-up duration",     type:"text" },
+  { id:"primary_outcome_definition",  label:"Primary outcome — definition",  type:"textarea" },
+  { id:"primary_outcome_measurement", label:"Primary outcome — measurement", type:"text" },
+  { id:"primary_outcome_timing",      label:"Primary outcome — timing",      type:"text" },
+  { id:"secondary_outcomes",    label:"Secondary outcomes",     type:"textarea" },
+  { id:"key_findings_effect_estimate", label:"Effect estimate",           type:"text" },
+  { id:"key_findings_metric",          label:"Metric (HR/OR/MD/etc)",     type:"text" },
+  { id:"key_findings_ci_lower",        label:"95% CI lower",              type:"text" },
+  { id:"key_findings_ci_upper",        label:"95% CI upper",              type:"text" },
+  { id:"key_findings_pvalue",          label:"p-value",                   type:"text" },
+  { id:"key_findings_direction",       label:"Direction / interpretation", type:"textarea" },
+  { id:"funding_source",        label:"Funding source",         type:"text" },
+  { id:"conflicts_of_interest", label:"Conflicts of interest",  type:"textarea" },
+  { id:"limitations_stated",    label:"Author-stated limitations", type:"textarea" },
+  { id:"protocol_registration", label:"Protocol registration",  type:"text" },
+];
+
+// Layer 2 type-specific fields
+const TYPE_FIELDS = {
+  "Randomized Controlled Trial": [
+    {id:"randomization_method",          label:"Randomization method",           type:"text"},
+    {id:"allocation_concealment",        label:"Allocation concealment",         type:"text"},
+    {id:"allocation_ratio",              label:"Allocation ratio",               type:"text"},
+    {id:"stratification_factors",        label:"Stratification factors",         type:"text"},
+    {id:"baseline_balance",              label:"Baseline balance",               type:"text"},
+    {id:"blinding_participants",         label:"Blinding — participants",        type:"text"},
+    {id:"blinding_personnel",            label:"Blinding — personnel",           type:"text"},
+    {id:"blinding_outcome_assessors",    label:"Blinding — outcome assessors",   type:"text"},
+    {id:"protocol_deviations",           label:"Protocol deviations",            type:"textarea"},
+    {id:"analysis_framework",            label:"Analysis framework (ITT/PP/AT)", type:"text"},
+    {id:"attrition_rate",                label:"Attrition rate",                 type:"text"},
+    {id:"missing_data_handling",         label:"Missing data handling",          type:"text"},
+    {id:"outcome_measurement_method",    label:"Outcome measurement method",     type:"text"},
+    {id:"protocol_available",            label:"Protocol available",             type:"text"},
+    {id:"outcomes_match_protocol",       label:"Outcomes match protocol",        type:"text"},
+    {id:"consort_flow_diagram",          label:"CONSORT flow diagram",           type:"text"},
+  ],
+  "Cluster Randomized Trial": [
+    {id:"cluster_unit",                  label:"Cluster unit",                   type:"text"},
+    {id:"n_clusters",                    label:"N clusters per arm",             type:"text"},
+    {id:"icc_reported",                  label:"ICC reported",                   type:"text"},
+    {id:"recruitment_after_randomization", label:"Recruitment after randomization", type:"text"},
+    {id:"clustering_in_analysis",        label:"Clustering in analysis",         type:"text"},
+    {id:"contamination_risk",            label:"Contamination risk",             type:"textarea"},
+  ],
+  "Crossover Trial": [
+    {id:"washout_period",    label:"Washout period",         type:"text"},
+    {id:"carryover_assessment", label:"Carryover assessment", type:"text"},
+    {id:"period_effects",    label:"Period effects",          type:"text"},
+    {id:"sequence_order",    label:"Sequence order",          type:"text"},
+    {id:"paired_analysis",   label:"Paired analysis used",   type:"text"},
+  ],
+  "Non-Randomized Trial": [
+    {id:"concurrent_control_confirmed", label:"Concurrent control confirmed",  type:"text"},
+    {id:"allocation_mechanism",         label:"Allocation mechanism",          type:"textarea"},
+    {id:"baseline_comparability",       label:"Baseline comparability",        type:"textarea"},
+    {id:"confounding_control",          label:"Confounding control method",    type:"text"},
+    {id:"blinding",                     label:"Blinding",                      type:"text"},
+  ],
+  "Single-Arm Trial": [
+    {id:"primary_endpoint_prespecified",     label:"Primary endpoint pre-specified",    type:"text"},
+    {id:"inclusion_exclusion_criteria",      label:"Inclusion/exclusion criteria",      type:"textarea"},
+    {id:"comparator_historical_reference",   label:"Historical reference or benchmark", type:"text"},
+    {id:"consecutive_enrolment",             label:"Consecutive enrolment",             type:"text"},
+  ],
+  "Dose-Escalation Study": [
+    {id:"escalation_scheme",  label:"Escalation scheme (3+3/CRM/BOIN)", type:"text"},
+    {id:"dlt_definition",     label:"DLT definition",                   type:"textarea"},
+    {id:"dose_levels",        label:"Dose levels evaluated",            type:"text"},
+    {id:"mtd_declared",       label:"MTD declared",                     type:"text"},
+    {id:"rp2d",               label:"RP2D selected",                    type:"text"},
+    {id:"expansion_cohort",   label:"Expansion cohort included",        type:"text"},
+    {id:"pk_pd_reported",     label:"PK/PD data reported",              type:"text"},
+  ],
+  "Interrupted Time Series": [
+    {id:"n_data_points_pre",       label:"N data points pre-intervention",           type:"text"},
+    {id:"n_data_points_post",      label:"N data points post-intervention",          type:"text"},
+    {id:"intervention_date",       label:"Intervention date",                        type:"text"},
+    {id:"control_series",          label:"Control series present",                   type:"text"},
+    {id:"statistical_method",      label:"Statistical method (seg. regression/ARIMA)", type:"text"},
+    {id:"level_change",            label:"Level change estimate (CI)",               type:"text"},
+    {id:"slope_change",            label:"Slope change estimate (CI)",               type:"text"},
+    {id:"autocorrelation_addressed", label:"Autocorrelation addressed",              type:"text"},
+    {id:"seasonality_adjustment",  label:"Seasonality adjustment",                   type:"text"},
+    {id:"concurrent_events",       label:"Concurrent events / confounders",          type:"textarea"},
+  ],
+  "Difference-in-Differences": [
+    {id:"exogenous_event",        label:"Exogenous event exploited",       type:"textarea"},
+    {id:"parallel_trends_evidence", label:"Parallel trends evidence",      type:"textarea"},
+    {id:"n_pre_period_points",    label:"N pre-period time points",        type:"text"},
+    {id:"interaction_term",       label:"Post × Treatment estimate (CI)",  type:"text"},
+    {id:"common_shocks",          label:"Common shocks controlled",        type:"text"},
+    {id:"staggered_adoption",     label:"Staggered adoption",              type:"text"},
+  ],
+  "Regression Discontinuity": [
+    {id:"running_variable",       label:"Running variable",                type:"text"},
+    {id:"cutoff_value",           label:"Cutoff value",                    type:"text"},
+    {id:"sharp_vs_fuzzy",         label:"Sharp vs fuzzy design",           type:"text"},
+    {id:"bandwidth_selection",    label:"Bandwidth selection method",      type:"text"},
+    {id:"manipulation_testing",   label:"Manipulation testing (McCrary)",  type:"text"},
+    {id:"continuity_plots",       label:"Continuity plots present",        type:"text"},
+  ],
+  "Cohort Study": [
+    {id:"exposure_definition",    label:"Exposure definition",             type:"textarea"},
+    {id:"exposure_measurement",   label:"Exposure measurement",           type:"text"},
+    {id:"comparator_group",       label:"Comparator group definition",    type:"textarea"},
+    {id:"outcome_ascertainment",  label:"Outcome ascertainment",          type:"text"},
+    {id:"confounders_measured",   label:"Confounders measured & adjusted", type:"textarea"},
+    {id:"adjustment_method",      label:"Adjustment method",              type:"text"},
+    {id:"loss_to_follow_up",      label:"Loss to follow-up",              type:"text"},
+    {id:"immortal_time_bias",     label:"Immortal time bias assessment",  type:"textarea"},
+  ],
+  "Case-Control": [
+    {id:"case_definition",        label:"Case definition",                type:"textarea"},
+    {id:"case_source",            label:"Case source",                    type:"text"},
+    {id:"control_selection",      label:"Control selection",              type:"textarea"},
+    {id:"matching",               label:"Matching variables & ratio",     type:"text"},
+    {id:"exposure_ascertainment", label:"Exposure ascertainment",         type:"text"},
+    {id:"recall_bias_risk",       label:"Recall bias risk",               type:"text"},
+  ],
+  "Case-Crossover": [
+    {id:"case_definition_ccx",    label:"Case definition",                        type:"textarea"},
+    {id:"exposure_definition_ccx", label:"Exposure definition",                   type:"textarea"},
+    {id:"hazard_period",          label:"Hazard period definition & length",       type:"text"},
+    {id:"control_period",         label:"Control period definition & length",      type:"text"},
+    {id:"induction_period",       label:"Induction / washout period",             type:"text"},
+    {id:"temporal_direction",     label:"Bidirectional vs unidirectional",         type:"text"},
+    {id:"exposure_variability",   label:"Exposure variability rationale",          type:"text"},
+    {id:"conditional_logistic",   label:"Conditional logistic regression used",    type:"text"},
+    {id:"self_selection_bias",    label:"Self-selection / event-driven bias assessment", type:"text"},
+  ],
+  "Diagnostic Accuracy": [
+    {id:"index_test",                    label:"Index test",                         type:"textarea"},
+    {id:"reference_standard",            label:"Reference standard",                type:"textarea"},
+    {id:"blinding_index_to_reference",   label:"Blinding — index to reference",     type:"text"},
+    {id:"blinding_reference_to_index",   label:"Blinding — reference to index",     type:"text"},
+    {id:"two_by_two_table",              label:"2×2 table (TP/FP/FN/TN)",          type:"text"},
+    {id:"spectrum_of_patients",          label:"Spectrum of patients",              type:"textarea"},
+    {id:"verification_bias",             label:"Verification bias",                 type:"text"},
+    {id:"threshold_effects",             label:"Threshold / ROC analysis",          type:"text"},
+    {id:"flow_and_timing",               label:"Flow and timing",                   type:"text"},
+  ],
+  "Prognostic Factor Study": [
+    {id:"prognostic_factor",      label:"Prognostic factor & measurement",  type:"textarea"},
+    {id:"outcome_definition",     label:"Outcome definition & measurement", type:"textarea"},
+    {id:"study_participation",    label:"Study participation (QUIPS D1)",   type:"text"},
+    {id:"study_attrition",        label:"Study attrition (QUIPS D2)",       type:"text"},
+    {id:"pf_measurement",         label:"PF measurement (QUIPS D3)",        type:"text"},
+    {id:"confounding_control",    label:"Confounders controlled (QUIPS D5)", type:"textarea"},
+    {id:"statistical_analysis",   label:"Statistical analysis (QUIPS D6)",  type:"textarea"},
+  ],
+  "Prediction Model Study": [
+    {id:"predictors_candidate",       label:"Candidate predictors",                    type:"textarea"},
+    {id:"predictor_selection_method", label:"Predictor selection method",              type:"text"},
+    {id:"model_type",                 label:"Model type (Cox/logistic/etc)",           type:"text"},
+    {id:"discrimination",             label:"Discrimination (C-statistic / AUC)",      type:"text"},
+    {id:"calibration",                label:"Calibration (H-L test / plot)",           type:"text"},
+    {id:"model_presentation",         label:"Model presentation (nomogram/calculator)", type:"text"},
+    {id:"model_stage",                label:"Model stage (development/validation/update)", type:"text"},
+  ],
+  "SR without Meta-Analysis": [
+    {id:"search_strategy",    label:"Search strategy (databases, dates)", type:"textarea"},
+    {id:"inclusion_criteria", label:"Inclusion criteria",                 type:"textarea"},
+    {id:"study_selection",    label:"Study selection process",            type:"text"},
+    {id:"data_extraction",    label:"Data extraction method",             type:"text"},
+    {id:"included_studies_n", label:"N included studies",                 type:"text"},
+    {id:"rob_tool_used",      label:"RoB tool used on included studies",  type:"text"},
+    {id:"synthesis_method",   label:"Synthesis method",                   type:"textarea"},
+    {id:"grade_assessment",   label:"GRADE assessment",                   type:"text"},
+    {id:"prisma_flow",        label:"PRISMA flow diagram",                type:"text"},
+  ],
+  "SR with Meta-Analysis": [
+    {id:"search_strategy",    label:"Search strategy",                   type:"textarea"},
+    {id:"inclusion_criteria", label:"Inclusion criteria",                type:"textarea"},
+    {id:"included_studies_n", label:"N included studies",                type:"text"},
+    {id:"effect_measure",     label:"Effect measure (HR/OR/MD)",         type:"text"},
+    {id:"pooled_estimate",    label:"Pooled estimate (CI)",               type:"text"},
+    {id:"pooling_model",      label:"Pooling model (fixed/random)",       type:"text"},
+    {id:"heterogeneity",      label:"Heterogeneity (I², τ², Q)",          type:"text"},
+    {id:"publication_bias",   label:"Publication bias assessment",        type:"text"},
+    {id:"sensitivity_analyses", label:"Sensitivity analyses",            type:"textarea"},
+    {id:"subgroup_analyses",  label:"Subgroup analyses",                  type:"textarea"},
+    {id:"grade_assessment",   label:"GRADE certainty",                    type:"text"},
+    {id:"prisma_flow",        label:"PRISMA flow diagram",                type:"text"},
+  ],
+};
+
+// Aliases and extras
+TYPE_FIELDS["Stepped-Wedge Cluster RCT"] = TYPE_FIELDS["Cluster Randomized Trial"];
+TYPE_FIELDS["Uncontrolled Before-After"] = [
+  {id:"pre_measurement",          label:"Pre-intervention measurement",  type:"text"},
+  {id:"post_measurement",         label:"Post-intervention measurement", type:"text"},
+  {id:"secular_trend_risk",       label:"Secular trend risk",            type:"text"},
+  {id:"regression_to_mean_risk",  label:"Regression to mean risk",       type:"text"},
+  {id:"concurrent_events",        label:"Concurrent events",             type:"textarea"},
+];
+TYPE_FIELDS["Cross-Sectional (Analytical)"] = [
+  {id:"sampling_method",               label:"Sampling method",         type:"text"},
+  {id:"response_rate",                 label:"Response rate",           type:"text"},
+  {id:"exposure_outcome_simultaneity", label:"Simultaneity acknowledged", type:"text"},
+  {id:"adjustment_method",             label:"Adjustment method",       type:"text"},
+];
+TYPE_FIELDS["Mendelian Randomization"] = [
+  {id:"instrument_variants",    label:"Instrument variants (SNPs, GWAS source)", type:"textarea"},
+  {id:"f_statistic",            label:"F-statistic (instrument strength)",       type:"text"},
+  {id:"mr_design",              label:"MR design (1-sample/2-sample/MV)",        type:"text"},
+  {id:"sample_overlap",         label:"Sample overlap",                          type:"text"},
+  {id:"pleiotropy_tests",       label:"Pleiotropy tests (Egger/PRESSO/WM)",      type:"textarea"},
+  {id:"exclusion_restriction",  label:"Exclusion restriction argument",          type:"textarea"},
+];
+TYPE_FIELDS["Economic Evaluation"] = [
+  {id:"evaluation_type",        label:"Evaluation type (CEA/CUA/CBA/BIA)", type:"text"},
+  {id:"perspective",            label:"Perspective (societal/payer/etc)",  type:"text"},
+  {id:"time_horizon",           label:"Time horizon",                      type:"text"},
+  {id:"discount_rate",          label:"Discount rate",                     type:"text"},
+  {id:"model_type",             label:"Model type (Markov/decision tree/etc)", type:"text"},
+  {id:"cost_inputs",            label:"Cost inputs",                       type:"textarea"},
+  {id:"effectiveness_source",   label:"Effectiveness data source",         type:"text"},
+  {id:"icer",                   label:"ICER (WTP threshold)",              type:"text"},
+  {id:"sensitivity_analysis",   label:"Sensitivity analysis (PSA/tornado)", type:"text"},
+];
+TYPE_FIELDS["Guideline / Consensus"] = [
+  {id:"guideline_organization", label:"Issuing organisation",                     type:"text"},
+  {id:"panel_composition",      label:"Panel composition & COI management",       type:"textarea"},
+  {id:"evidence_base",          label:"Evidence base (SR underpinning)",          type:"textarea"},
+  {id:"grade_used",             label:"GRADE or equivalent used",                 type:"text"},
+  {id:"recommendations",        label:"Key recommendations (strength + certainty)", type:"textarea"},
+  {id:"updating_plan",          label:"Update plan / living status",              type:"text"},
+];
+TYPE_FIELDS["Qualitative Research"] = [
+  {id:"methodology",        label:"Qualitative methodology",    type:"text"},
+  {id:"data_collection",    label:"Data collection method",     type:"text"},
+  {id:"sampling_strategy",  label:"Sampling strategy",          type:"text"},
+  {id:"data_saturation",    label:"Thematic saturation",        type:"text"},
+  {id:"reflexivity",        label:"Researcher reflexivity",     type:"textarea"},
+  {id:"themes",             label:"Major themes identified",    type:"textarea"},
+];
+
+// Layer 3 modifier fields (always shown)
+const MODIFIER_FIELDS = [
+  {id:"clinical_trial_phase",     label:"Clinical trial phase",       type:"select", opts:["","Phase I","Phase I/II","Phase II","Phase II/III","Phase III","Phase IV","Not applicable"]},
+  {id:"regulatory_context",       label:"Regulatory context",         type:"text"},
+  {id:"registration_number",      label:"Registry ID",                type:"text"},
+  {id:"industry_sponsored",       label:"Industry-sponsored",         type:"select", opts:["","Yes","No","Partial"]},
+  {id:"data_source_type",         label:"Data source type",           type:"text"},
+  {id:"database_name",            label:"Database name",              type:"text"},
+  {id:"adaptive_design",          label:"Adaptive design",            type:"select", opts:["","Yes","No"]},
+  {id:"pragmatic_vs_explanatory", label:"Pragmatic vs explanatory",   type:"select", opts:["","Pragmatic","Mostly pragmatic","Balanced","Mostly explanatory","Explanatory"]},
+  {id:"trial_framework",          label:"Trial framework",            type:"select", opts:["","Superiority","Non-inferiority","Equivalence"]},
+  {id:"target_trial_emulation",   label:"Target trial emulation",     type:"select", opts:["","Yes","No"]},
+  {id:"pilot_or_feasibility",     label:"Pilot / feasibility study",  type:"select", opts:["","Yes","No"]},
+];
+
+const FIELD_COLOURS = [
+  "#4fc3f7","#81c784","#ffb74d","#f48fb1","#ce93d8",
+  "#80cbc4","#a5d6a7","#fff176","#ffcc80","#ef9a9a",
+];
+let fieldColorMap = {};
+let colorIdx = 0;
+function getFieldColour(fieldId) {
+  if (!fieldColorMap[fieldId]) {
+    fieldColorMap[fieldId] = FIELD_COLOURS[colorIdx++ % FIELD_COLOURS.length];
+  }
+  return fieldColorMap[fieldId];
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════════════════
+let currentPaperId = null;
+let currentFilename = null;
+let pdfDoc = null;
+let currentPage = 1;
+let totalPages = 1;
+let zoomLevel = 1.2;
+let activeField = null;
+let activeFieldBtn = null;
+let pendingSelection = null;
+let spans = [];
+let reviewerAction = "Confirm";
+let pipelinePredictions = {};   // baseline from AI auto-fill
+let fieldAnnotations = {};      // per-field annotation state
+let backendVersion = null;      // last-seen annotation version (optimistic concurrency)
+let allPapers = [];             // [{id, filename, annotated_by, project_id}]
+let allProjects = [];           // [{id, name}]
+let collapsedProjects = new Set();
+
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BUILD DYNAMIC FORM SECTIONS
+// ═══════════════════════════════════════════════════════════════════════════
+function buildField(f) {
+  const div = document.createElement('div');
+  div.className = 'field-row';
+  div.id = 'fr-' + f.id;
+
+  // ── Label row ──
+  const lbl = document.createElement('div');
+  lbl.className = 'field-label';
+
+  const labelText = document.createElement('span');
+  labelText.textContent = f.label;
+  lbl.appendChild(labelText);
+
+  const statusDot = document.createElement('span');
+  statusDot.className = 'ann-status-dot none';
+  statusDot.id = 'asd-' + f.id;
+  lbl.appendChild(statusDot);
+
+  const anchorBtn = document.createElement('button');
+  anchorBtn.className = 'field-anchor-btn';
+  anchorBtn.dataset.field = f.id;
+  anchorBtn.textContent = 'anchor';
+  anchorBtn.onclick = () => setActiveField(f.id, anchorBtn);
+  lbl.appendChild(anchorBtn);
+
+  const annBtns = document.createElement('div');
+  annBtns.className = 'ann-btns';
+
+  const confirmBtn = document.createElement('button');
+  confirmBtn.className = 'ann-btn confirm';
+  confirmBtn.title = 'Confirm: the AI value is correct as-is';
+  confirmBtn.textContent = '✓ Confirm';
+  confirmBtn.onclick = (e) => { e.stopPropagation(); setFieldAnnotation(f.id, 'confirmed'); scheduleAutoSave(); };
+
+  const correctBtn = document.createElement('button');
+  correctBtn.className = 'ann-btn correct';
+  correctBtn.title = 'Correct: the AI value is wrong — enter the correct value below';
+  correctBtn.textContent = '✎ Correct';
+  correctBtn.onclick = (e) => { e.stopPropagation(); openCorrectionArea(f.id); scheduleAutoSave(); };
+
+  const flagBtn = document.createElement('button');
+  flagBtn.className = 'ann-btn flag-btn';
+  flagBtn.title = 'Flag: leave a note about this field (can combine with Confirm or Correct)';
+  flagBtn.textContent = '⚑';
+  flagBtn.onclick = (e) => { e.stopPropagation(); toggleFlagArea(f.id); scheduleAutoSave(); };
+
+  annBtns.appendChild(confirmBtn);
+  annBtns.appendChild(correctBtn);
+  annBtns.appendChild(flagBtn);
+  lbl.appendChild(annBtns);
+  div.appendChild(lbl);
+
+  // ── Main input ──
+  let el;
+  if (f.type === 'textarea') {
+    el = document.createElement('textarea');
+  } else if (f.type === 'select') {
+    el = document.createElement('select');
+    (f.opts || []).forEach(o => {
+      const opt = document.createElement('option');
+      opt.value = o; opt.textContent = o;
+      el.appendChild(opt);
+    });
+  } else {
+    el = document.createElement('input');
+    el.type = 'text';
+  }
+  el.id = 'f-' + f.id;
+  el.setAttribute('data-field', f.id);
+  div.appendChild(el);
+
+  // ── Correction sub-area ──
+  const ca = document.createElement('div');
+  ca.className = 'correction-area';
+  ca.id = 'ca-' + f.id;
+  ca.innerHTML = `
+    <div class="ca-header">
+      <span>Correction — type the correct value</span>
+      <button class="use-ai-btn" onclick="useAiValue('${f.id}')">← Use AI value</button>
+    </div>
+    <textarea id="fc-${f.id}" placeholder="Enter the corrected value…" oninput="onCorrectionInput('${f.id}')"></textarea>`;
+  div.appendChild(ca);
+
+  // ── Flag sub-area ──
+  const fa = document.createElement('div');
+  fa.className = 'flag-area';
+  fa.id = 'fa-' + f.id;
+  fa.innerHTML = `
+    <div class="flag-area-label">⚑ Flag note</div>
+    <textarea id="ff-${f.id}" placeholder="What are you flagging about this field?" oninput="onFlagInput('${f.id}')"></textarea>`;
+  div.appendChild(fa);
+
+  // ── Span tag container ──
+  const stc = document.createElement('div');
+  stc.id = 'spans-' + f.id;
+  div.appendChild(stc);
+
+  return div;
+}
+
+function buildSection(fields, container) {
+  container.innerHTML = '';
+  fields.forEach(f => container.appendChild(buildField(f)));
+}
+
+buildSection(UNIVERSAL_FIELDS, document.getElementById('universal-fields'));
+buildSection(MODIFIER_FIELDS,  document.getElementById('modifier-fields'));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TAXONOMY DROPDOWNS
+// ═══════════════════════════════════════════════════════════════════════════
+function onMajorCatChange() {
+  const v = document.getElementById('f-major_category').value;
+  const sub = document.getElementById('f-subcategory');
+  sub.innerHTML = '<option value="">— select —</option>';
+  (SUBCATS[v] || []).forEach(s => {
+    const o = document.createElement('option'); o.value = s; o.textContent = s;
+    sub.appendChild(o);
+  });
+  document.getElementById('f-study_type').innerHTML = '<option value="">— select subcategory first —</option>';
+  updateTypeSpecific('');
+}
+
+function onSubcatChange() {
+  const v = document.getElementById('f-subcategory').value;
+  const st = document.getElementById('f-study_type');
+  st.innerHTML = '<option value="">— select —</option>';
+  (STUDY_TYPES[v] || []).forEach(s => {
+    const o = document.createElement('option'); o.value = s; o.textContent = s;
+    st.appendChild(o);
+  });
+  updateTypeSpecific('');
+}
+
+function onStudyTypeChange() {
+  const studyType = document.getElementById('f-study_type').value;
+  updateTypeSpecific(studyType);
+  // Enable/disable auto-fill button
+  const btn = document.getElementById('autofill-btn');
+  const hint = document.getElementById('autofill-hint');
+  if (btn) {
+    const ready = !!(studyType && currentPaperId);
+    btn.disabled = !ready;
+    hint.textContent = !studyType ? 'Select a study type above to enable'
+      : !currentPaperId ? 'Select a paper first'
+      : 'Ready to extract';
+  }
+}
+
+function _updateClassifyBtn() {
+  const btn = document.getElementById('classify-btn');
+  if (btn) btn.disabled = !currentPaperId;
+}
+
+function updateTypeSpecific(studyType) {
+  const sec = document.getElementById('type-specific-section');
+  const container = document.getElementById('type-specific-fields');
+  const header = document.getElementById('type-specific-header');
+  const fields = TYPE_FIELDS[studyType];
+  if (fields && fields.length) {
+    header.textContent = `Layer 2 · ${studyType} Fields  (${ROB_MAP[studyType] || ''})`;
+    buildSection(fields, container);
+    sec.style.display = 'block';
+  } else {
+    sec.style.display = 'none';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ACTIVE FIELD & SPAN LINKING
+// ═══════════════════════════════════════════════════════════════════════════
+function setActiveField(fieldId, btn) {
+  // If field already has a linked span: navigate to it (toggle link mode off/on)
+  const linkedSpan = spans.find(s => s.field_name === fieldId);
+
+  // If same field is already active, deactivate
+  if (activeField === fieldId) {
+    clearActiveField();
+    // Still scroll to span if linked
+    if (linkedSpan) {
+      const pageEl = document.querySelector(`.page-wrapper[data-page="${linkedSpan.page}"]`);
+      if (pageEl) {
+        pageEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setTimeout(() => flashSpanBox(linkedSpan), 450);
+      }
+    }
+    return;
+  }
+
+  if (activeFieldBtn) {
+    activeFieldBtn.textContent = isFieldLinked(activeField) ? 'linked ✓' : 'anchor';
+    activeFieldBtn.classList.remove('active');
+    const prev = document.getElementById('fr-' + activeField);
+    if (prev) prev.classList.remove('active-field');
+  }
+  activeField = fieldId;
+  activeFieldBtn = btn;
+
+  if (linkedSpan) {
+    // Already linked: navigate to span and enter re-link mode
+    btn.textContent = '● active';
+    btn.classList.add('active');
+    const row = document.getElementById('fr-' + fieldId);
+    if (row) row.classList.add('active-field');
+    document.getElementById('active-field-banner').style.display = 'block';
+    document.getElementById('active-field-banner').textContent = `📎 Re-select text to relink → "${fieldId}"`;
+    const pageEl = document.querySelector(`.page-wrapper[data-page="${linkedSpan.page}"]`);
+    if (pageEl) {
+      pageEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setTimeout(() => flashSpanBox(linkedSpan), 450);
+    }
+  } else {
+    btn.textContent = '● active';
+    btn.classList.add('active');
+    const row = document.getElementById('fr-' + fieldId);
+    if (row) row.classList.add('active-field');
+    document.getElementById('active-field-banner').style.display = 'block';
+    document.getElementById('active-field-banner').textContent = `📎 Select text in PDF to link → "${fieldId}"`;
+  }
+
+  if (pendingSelection) showLinkBtn();
+}
+
+function clearActiveField() {
+  if (activeFieldBtn) {
+    activeFieldBtn.textContent = isFieldLinked(activeField) ? 'linked ✓' : 'anchor';
+    activeFieldBtn.classList.remove('active');
+    const row = document.getElementById('fr-' + activeField);
+    if (row) row.classList.remove('active-field');
+  }
+  activeField = null;
+  activeFieldBtn = null;
+  document.getElementById('active-field-banner').style.display = 'none';
+  hideLinkBtn();
+}
+
+function isFieldLinked(fieldId) {
+  return spans.some(s => s.field_name === fieldId);
+}
+
+function flashSpanBox(span) {
+  const overlay = document.getElementById(`overlay-p${span.page}`);
+  if (!overlay) return;
+  const box = overlay.querySelector(`.span-box[data-field="${span.field_name}"]`);
+  if (box) {
+    box.classList.remove('span-flash'); // reset if already animating
+    void box.offsetWidth;              // reflow to restart animation
+    box.classList.add('span-flash');
+    setTimeout(() => box.classList.remove('span-flash'), 1600);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TEXT SELECTION IN PDF
+// ═══════════════════════════════════════════════════════════════════════════
+document.addEventListener('mouseup', handleMouseUp);
+
+function handleMouseUp(e) {
+  if (e.target.id === 'link-btn' || e.target.closest('#link-btn')) return;
+
+  const sel = window.getSelection();
+  const text = sel ? sel.toString().trim() : '';
+  if (!text || text.length < 2) {
+    pendingSelection = null;
+    hideLinkBtn();
+    return;
+  }
+
+  const range = sel.rangeCount ? sel.getRangeAt(0) : null;
+  if (!range) return;
+  const container = range.commonAncestorContainer;
+  const textLayer = container.nodeType === 1
+    ? container.closest('.textLayer')
+    : container.parentElement?.closest('.textLayer');
+  if (!textLayer) { pendingSelection = null; hideLinkBtn(); return; }
+
+  const pageWrapper = textLayer.closest('.page-wrapper');
+  const pageNum = pageWrapper ? parseInt(pageWrapper.dataset.page) : currentPage;
+
+  const rects = range.getClientRects();
+  const canvasEl = pageWrapper?.querySelector('canvas');
+  const canvasRect = canvasEl ? canvasEl.getBoundingClientRect() : null;
+
+  let x0=null,y0=null,x1=null,y1=null;
+  if (canvasRect && rects.length) {
+    const scale = (canvasEl.width / canvasRect.width);
+    x0 = (rects[0].left - canvasRect.left) * scale;
+    y0 = (rects[0].top  - canvasRect.top)  * scale;
+    x1 = (rects[rects.length-1].right  - canvasRect.left) * scale;
+    y1 = (rects[rects.length-1].bottom - canvasRect.top)  * scale;
+  }
+
+  pendingSelection = { text, page: pageNum, x0, y0, x1, y1 };
+
+  if (activeField) {
+    showLinkBtn(e.clientX, e.clientY);
+  }
+}
+
+function showLinkBtn(x, y) {
+  const btn = document.getElementById('link-btn');
+  document.getElementById('link-btn-field').textContent = activeField || '?';
+  if (x && y) {
+    btn.style.left = Math.min(x + 8, window.innerWidth - 220) + 'px';
+    btn.style.top  = Math.max(y - 40, 50) + 'px';
+  }
+  btn.style.display = 'block';
+}
+
+function hideLinkBtn() {
+  document.getElementById('link-btn').style.display = 'none';
+}
+
+function linkSelection() {
+  if (!pendingSelection || !activeField) return;
+  const span = { ...pendingSelection, field_name: activeField };
+  spans = spans.filter(s => s.field_name !== activeField);
+  spans.push(span);
+  window.getSelection()?.removeAllRanges();
+  pendingSelection = null;
+  hideLinkBtn();
+  renderSpanTags();
+  renderHighlights();
+  if (activeFieldBtn) {
+    activeFieldBtn.textContent = 'linked ✓';
+    activeFieldBtn.classList.remove('active');
+    activeFieldBtn.classList.add('linked');
+  }
+  clearActiveField();
+  scheduleAutoSave();
+}
+
+function removeSpan(fieldName) {
+  spans = spans.filter(s => s.field_name !== fieldName);
+  renderSpanTags();
+  renderHighlights();
+  const btn = document.querySelector(`.field-anchor-btn[data-field="${fieldName}"]`);
+  if (btn) { btn.textContent = 'anchor'; btn.classList.remove('linked','active'); }
+  scheduleAutoSave();
+}
+
+function renderSpanTags() {
+  document.querySelectorAll('[id^="spans-"]').forEach(c => c.innerHTML = '');
+  spans.forEach(s => {
+    const container = document.getElementById('spans-' + s.field_name);
+    if (!container) return;
+    const colour = getFieldColour(s.field_name);
+    const tag = document.createElement('div');
+    tag.className = 'span-tag';
+    tag.style.borderColor = colour + '80';
+    tag.style.background = colour + '18';
+    tag.title = 'Click to jump to this location in the PDF';
+    tag.style.cursor = 'pointer';
+    tag.innerHTML = `
+      <span class="st-text">"${s.text.substring(0,80)}${s.text.length>80?'…':''}"</span>
+      <span class="st-loc" title="Page ${s.page} — click to navigate">p.${s.page} 🔍</span>
+      <button class="st-del" onclick="event.stopPropagation();removeSpan('${s.field_name}')" title="Remove link">✕</button>`;
+    // Click span tag → scroll PDF to that location and flash the highlight box
+    tag.addEventListener('click', () => scrollToSpanInPdf(s));
+    container.appendChild(tag);
+
+    const el = document.getElementById('f-' + s.field_name);
+    if (el && !el.value) el.value = s.text;
+
+    const btn = document.querySelector(`.field-anchor-btn[data-field="${s.field_name}"]`);
+    if (btn) { btn.textContent = 'linked ✓'; btn.classList.add('linked'); btn.classList.remove('active'); }
+  });
+}
+
+function scrollToSpanInPdf(span) {
+  if (!span) return;
+  const pageEl = document.querySelector(`.page-wrapper[data-page="${span.page}"]`);
+  if (pageEl) {
+    pageEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setTimeout(() => flashSpanBox(span), 450);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PERSISTENCE — sessionStorage (immediate) + backend (durable)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Two-layer strategy:
+//   Layer 1 — sessionStorage: synchronous, instant, never fails on network.
+//             Written on EVERY form change and every annotation action.
+//             Key: `ogai_paper_${paperId}`
+//   Layer 2 — Backend DB: durable across sessions.
+//             Written debounced (1.5 s) and force-written on PDF switch.
+//
+// On load: sessionStorage is checked first. If it has data it is used
+// immediately (no round-trip). Backend fetch still runs and updates the
+// session cache if the DB has newer/more complete data (e.g. from another
+// device or a previous session).
+
+let _autoSaveTimer = null;
+let _backendSaving  = false;
+
+// ── sessionStorage helpers ──────────────────────────────────────────────────
+
+function ssKey(paperId) {
+  return `ogai_paper_${paperId}`;
+}
+
+// Write current DOM state to sessionStorage — synchronous, never fails.
+function persistToSession(paperId) {
+  if (!paperId) return;
+  try {
+    const snapshot = {
+      ts:               Date.now(),
+      formData:         getFormData(),
+      spans:            JSON.parse(JSON.stringify(spans)),
+      fieldAnnotations: JSON.parse(JSON.stringify(fieldAnnotations)),
+    };
+    sessionStorage.setItem(ssKey(paperId), JSON.stringify(snapshot));
+  } catch(e) {
+    console.warn('sessionStorage write failed:', e);
+  }
+}
+
+// Read from sessionStorage — returns null if nothing stored.
+function loadFromSession(paperId) {
+  try {
+    const raw = sessionStorage.getItem(ssKey(paperId));
+    return raw ? JSON.parse(raw) : null;
+  } catch(e) {
+    return null;
+  }
+}
+
+// ── Backend save (durable) ──────────────────────────────────────────────────
+
+// Captures a complete state snapshot from the DOM.
+function captureState(paperId) {
+  return {
+    paperId,
+    formData:         getFormData(),
+    spans:            JSON.parse(JSON.stringify(spans)),
+    fieldAnnotations: JSON.parse(JSON.stringify(fieldAnnotations)),
+  };
+}
+
+async function saveToBackend(snapshot, force = false) {
+  if (!snapshot || !snapshot.paperId) return;
+  if (_backendSaving && !force) return;
+  _backendSaving = true;
+
+  const statusEl = document.getElementById('save-status');
+  const prevText = statusEl ? statusEl.textContent : '';
+  if (statusEl) statusEl.textContent = 'saving…';
+
+  try {
+    const payload = {
+      data:              snapshot.formData,
+      spans:             snapshot.spans,
+      field_annotations: snapshot.fieldAnnotations,
+      version:           backendVersion,
+    };
+    const res = await fetch(`/api/annotator/papers/${snapshot.paperId}/annotation`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload),
+    });
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    if (res.status === 409) {
+      if (statusEl) statusEl.textContent = '⚠ conflict — reload to see latest';
+      console.warn('Backend save conflict: this paper was updated elsewhere');
+    } else if (res.ok) {
+      const result = await res.json();
+      if (result.version) backendVersion = result.version;
+      if (statusEl) statusEl.textContent = `saved ${result.timestamp?.slice(11,19) || '✓'}`;
+    } else {
+      if (statusEl) statusEl.textContent = '⚠ save failed — work is in session cache';
+      console.warn('Backend save error:', res.status);
+    }
+  } catch(e) {
+    if (statusEl) statusEl.textContent = '⚠ offline — work is in session cache';
+    console.warn('Backend save network error:', e);
+  } finally {
+    _backendSaving = false;
+  }
+}
+
+// ── Combined: write session immediately, queue backend ──────────────────────
+
+function scheduleAutoSave() {
+  if (!currentPaperId) return;
+
+  // Layer 1: instant sessionStorage write — synchronous, zero latency
+  persistToSession(currentPaperId);
+
+  // Update status bar
+  const statusEl = document.getElementById('save-status');
+  if (statusEl && !statusEl.textContent.includes('saving') && !statusEl.textContent.includes('saved')) {
+    statusEl.textContent = 'cached…';
+  }
+
+  // Layer 2: debounced backend write — 1.5 s after last change
+  clearTimeout(_autoSaveTimer);
+  const snapshot = captureState(currentPaperId);
+  _autoSaveTimer = setTimeout(() => saveToBackend(snapshot), 1500);
+}
+
+// Wire to form panel via event delegation
+document.getElementById('form-scroll').addEventListener('input',  scheduleAutoSave);
+document.getElementById('form-scroll').addEventListener('change', scheduleAutoSave);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PDF RENDERING
+// ═══════════════════════════════════════════════════════════════════════════
+async function loadPdf(paperId, filename) {
+  // ── Step 1: Persist current paper BEFORE any state change ─────────────────
+  if (currentPaperId && currentPaperId !== paperId) {
+    clearTimeout(_autoSaveTimer);
+    // Layer 1: instant session write (synchronous — captures DOM while intact)
+    persistToSession(currentPaperId);
+    // Layer 2: force backend write (awaited — guarantees DB is updated)
+    const snapshot = captureState(currentPaperId);
+    await saveToBackend(snapshot, true);
+  }
+
+  // ── Step 2: Switch context ────────────────────────────────────────────────
+  currentPaperId      = paperId;
+  currentFilename     = filename;
+  spans               = [];
+  pipelinePredictions = {};
+  backendVersion      = null;
+  renderSpanTags();
+
+  // ── Step 3: Reset form ────────────────────────────────────────────────────
+  resetForm();
+  _updateClassifyBtn();
+  renderSidebar();
+  document.getElementById('save-status').textContent = `loading…`;
+
+  // ── Step 4: Load PDF ──────────────────────────────────────────────────────
+  const url = `/api/papers/${paperId}/pdf`;
+  try {
+    pdfDoc = await pdfjsLib.getDocument(url).promise;
+    totalPages = pdfDoc.numPages;
+    currentPage = 1;
+    document.getElementById('page-info').textContent = `/ ${totalPages}`;
+    await renderAllPages();
+    await loadExistingAnnotation();
+  } catch(err) {
+    alert('Failed to load PDF: ' + err.message);
+  }
+}
+
+async function renderAllPages() {
+  const scroll = document.getElementById('pdf-scroll');
+  scroll.innerHTML = '';
+  for (let p = 1; p <= totalPages; p++) {
+    await renderPage(p, scroll);
+  }
+}
+
+async function renderPage(pageNum, container) {
+  const page = await pdfDoc.getPage(pageNum);
+  const viewport = page.getViewport({ scale: zoomLevel });
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'page-wrapper';
+  wrapper.dataset.page = pageNum;
+  wrapper.style.width = viewport.width + 'px';
+  wrapper.style.height = viewport.height + 'px';
+
+  const canvas = document.createElement('canvas');
+  canvas.width  = viewport.width;
+  canvas.height = viewport.height;
+  wrapper.appendChild(canvas);
+
+  await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+
+  const textDiv = document.createElement('div');
+  textDiv.className = 'textLayer';
+  textDiv.style.width  = viewport.width  + 'px';
+  textDiv.style.height = viewport.height + 'px';
+  wrapper.appendChild(textDiv);
+
+  const textContent = await page.getTextContent();
+  await pdfjsLib.renderTextLayer({
+    textContent,
+    container: textDiv,
+    viewport,
+    textDivs: [],
+  }).promise;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'span-overlay';
+  overlay.id = `overlay-p${pageNum}`;
+  overlay.style.width  = viewport.width  + 'px';
+  overlay.style.height = viewport.height + 'px';
+  wrapper.appendChild(overlay);
+
+  container.appendChild(wrapper);
+}
+
+function renderHighlights() {
+  if (!pdfDoc) return;
+  document.querySelectorAll('.span-overlay').forEach(o => o.innerHTML = '');
+
+  spans.forEach(s => {
+    if (!s.x0 || !s.y0) return;
+    const overlay = document.getElementById(`overlay-p${s.page}`);
+    if (!overlay) return;
+    const colour = getFieldColour(s.field_name);
+    const box = document.createElement('div');
+    box.className = 'span-box';
+    box.dataset.field = s.field_name;   // ← enables flashSpanBox lookup
+    box.title = `${s.field_name}: "${s.text.substring(0,60)}"`;
+    box.style.cssText = `
+      left:${s.x0}px; top:${s.y0}px;
+      width:${s.x1-s.x0}px; height:${Math.max(s.y1-s.y0,8)}px;
+      background:${colour}40; border:1.5px solid ${colour};
+    `;
+    box.onclick = () => {
+      const el = document.getElementById('fr-' + s.field_name);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
+    overlay.appendChild(box);
+  });
+}
+
+function changePage(delta) {
+  const target = currentPage + delta;
+  if (target < 1 || target > totalPages) return;
+  currentPage = target;
+  document.getElementById('page-input').value = currentPage;
+  const pageEl = document.querySelector(`.page-wrapper[data-page="${currentPage}"]`);
+  if (pageEl) pageEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function gotoPage(val) {
+  const p = Math.max(1, Math.min(parseInt(val)||1, totalPages));
+  currentPage = p;
+  const pageEl = document.querySelector(`.page-wrapper[data-page="${p}"]`);
+  if (pageEl) pageEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function changeZoom(delta) {
+  zoomLevel = Math.max(0.4, Math.min(2.5, zoomLevel + delta));
+  document.getElementById('zoom-display').textContent = Math.round(zoomLevel*100) + '%';
+  if (pdfDoc) await renderAllPages();
+  renderHighlights();
+}
+
+document.getElementById('pdf-scroll').addEventListener('scroll', () => {
+  const wrappers = document.querySelectorAll('.page-wrapper');
+  const scroll = document.getElementById('pdf-scroll');
+  const scrollTop = scroll.scrollTop + 40;
+  for (const w of wrappers) {
+    if (w.offsetTop <= scrollTop && w.offsetTop + w.offsetHeight > scrollTop) {
+      currentPage = parseInt(w.dataset.page);
+      document.getElementById('page-input').value = currentPage;
+      break;
+    }
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FORM DATA & CORRECTIONS TRACKING
+// ═══════════════════════════════════════════════════════════════════════════
+function getFormData() {
+  const data = {};
+  document.querySelectorAll('[id^="f-"]').forEach(el => {
+    const key = el.id.slice(2);
+    data[key] = el.value || '';
+  });
+  data.reviewer_action = reviewerAction;
+
+  // Compute structured diff against AI baseline
+  const corrections = {};
+  if (Object.keys(pipelinePredictions).length > 0) {
+    Object.entries(pipelinePredictions).forEach(([k, v]) => {
+      const current = data[k] || '';
+      if (current !== (v || '') && current !== '') {
+        corrections[k] = { from: v || '', to: current };
+      }
+    });
+  }
+  data.corrections_json = JSON.stringify(corrections);
+  data.pipeline_predictions_json = JSON.stringify(pipelinePredictions);
+
+  // Per-field annotation state (the primary annotation record)
+  data.field_annotations_json = JSON.stringify(fieldAnnotations);
+
+  return data;
+}
+
+function setFormData(data) {
+  if (!data) return;
+
+  // Restore AI baseline if present
+  if (data.pipeline_predictions_json) {
+    try { pipelinePredictions = JSON.parse(data.pipeline_predictions_json); } catch(e) {}
+  }
+
+  // Restore per-field annotation state
+  fieldAnnotations = {};
+  if (data.field_annotations_json) {
+    try { fieldAnnotations = JSON.parse(data.field_annotations_json); } catch(e) {}
+  }
+
+  // Cascade dropdowns first
+  if (data.major_category) {
+    const el = document.getElementById('f-major_category');
+    el.value = data.major_category;
+    onMajorCatChange();
+  }
+  if (data.subcategory) {
+    const el = document.getElementById('f-subcategory');
+    el.value = data.subcategory;
+    onSubcatChange();
+  }
+  if (data.study_type) {
+    const el = document.getElementById('f-study_type');
+    el.value = data.study_type;
+    onStudyTypeChange();
+  }
+  // Fill all other fields
+  setTimeout(() => {
+    Object.entries(data).forEach(([k,v]) => {
+      const el = document.getElementById('f-' + k);
+      if (el && v !== undefined) el.value = v;
+    });
+    if (data.reviewer_action) setAction(data.reviewer_action, false);
+
+    // Restore per-field annotation UI state
+    Object.entries(fieldAnnotations).forEach(([fieldId, ann]) => {
+      updateFieldAnnotationUI(fieldId);
+      if (ann.status === 'corrected') {
+        const ca = document.getElementById('ca-' + fieldId);
+        const fc = document.getElementById('fc-' + fieldId);
+        if (ca) ca.classList.add('open');
+        if (fc) fc.value = ann.corrected_value || '';
+      }
+      if (ann.flagged) {
+        const fa = document.getElementById('fa-' + fieldId);
+        const ff = document.getElementById('ff-' + fieldId);
+        if (fa) fa.classList.add('open');
+        if (ff) ff.value = ann.flag_note || '';
+      }
+    });
+    updateAnnotationSummary();
+
+    // Restore corrections highlighting on reload
+    if (Object.keys(pipelinePredictions).length > 0) {
+      refreshPrefilledUI();
+    }
+  }, 50);
+}
+
+function refreshPrefilledUI() {
+  if (!Object.keys(pipelinePredictions).length) return;
+  Object.entries(pipelinePredictions).forEach(([k, v]) => {
+    const el = document.getElementById('f-' + k);
+    const row = document.getElementById('fr-' + k);
+    if (!el || !row) return;
+    // Don't override fields the reviewer has already explicitly annotated
+    if (row.classList.contains('field-confirmed') || row.classList.contains('field-corrected')) return;
+    if (el.value === (v || '')) {
+      row.classList.add('field-prefilled');
+    }
+  });
+}
+
+function setAction(action, visual=true) {
+  reviewerAction = action;
+  if (!visual) return;
+  ['Complete','Needs Review','Flagged'].forEach(a => {
+    const key = a === 'Complete' ? 'confirm' : a === 'Needs Review' ? 'correct' : 'flag';
+    const btn = document.getElementById('btn-' + key);
+    if (btn) btn.style.fontWeight = (a===action) ? '900' : '700';
+    if (btn) btn.style.outline = (a===action) ? '2px solid #1e293b' : 'none';
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FORM RESET
+// ═══════════════════════════════════════════════════════════════════════════
+function resetForm() {
+  // Clear all input/textarea/select values
+  document.querySelectorAll('[id^="f-"]').forEach(el => {
+    if (el.tagName === 'SELECT') el.selectedIndex = 0;
+    else el.value = '';
+  });
+
+  // Clear correction inputs and flag inputs
+  document.querySelectorAll('[id^="fc-"]').forEach(el => el.value = '');
+  document.querySelectorAll('[id^="ff-"]').forEach(el => el.value = '');
+
+  // Close all correction + flag areas
+  document.querySelectorAll('.correction-area').forEach(el => el.classList.remove('open'));
+  document.querySelectorAll('.flag-area').forEach(el => el.classList.remove('open'));
+
+  // Reset per-field annotation UI (buttons + dots)
+  document.querySelectorAll('.ann-btn').forEach(btn => btn.classList.remove('active'));
+  document.querySelectorAll('.ann-status-dot').forEach(dot => {
+    dot.className = 'ann-status-dot none';
+  });
+
+  // Remove field-level border classes
+  document.querySelectorAll('.field-confirmed,.field-prefilled,.field-corrected').forEach(el => {
+    el.classList.remove('field-confirmed','field-prefilled','field-corrected');
+  });
+
+  // Reset cascade dropdowns
+  const subEl = document.getElementById('f-subcategory');
+  if (subEl) subEl.innerHTML = '<option value="">— select major first —</option>';
+  const stEl = document.getElementById('f-study_type');
+  if (stEl) stEl.innerHTML = '<option value="">— select subcategory first —</option>';
+
+  // Hide type-specific section
+  const sec = document.getElementById('type-specific-section');
+  if (sec) sec.style.display = 'none';
+
+  // Reset state
+  fieldAnnotations = {};
+  pipelinePredictions = {};
+  reviewerAction = 'Confirm';
+
+  // Reset autofill button
+  const afBtn = document.getElementById('autofill-btn');
+  if (afBtn) {
+    afBtn.disabled = true;
+    afBtn.textContent = 'Auto-fill from PDF';
+  }
+  const afHint = document.getElementById('autofill-hint');
+  if (afHint) afHint.textContent = 'Select a study type above to enable';
+  const afLoad = document.getElementById('autofill-loading');
+  if (afLoad) afLoad.style.display = 'none';
+
+  // Reset classify button
+  const clStatus = document.getElementById('classify-status');
+  if (clStatus) { clStatus.textContent = ''; clStatus.style.display = 'none'; }
+
+  // Reset action buttons
+  ['confirm','correct','flag'].forEach(k => {
+    const btn = document.getElementById('btn-' + k);
+    if (btn) { btn.style.fontWeight = '700'; btn.style.outline = 'none'; }
+  });
+
+  updateAnnotationSummary();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PER-FIELD ANNOTATION SYSTEM
+// ═══════════════════════════════════════════════════════════════════════════
+
+function setFieldAnnotation(fieldId, status) {
+  // Toggle confirm off: if already confirmed with no flag, clear annotation state
+  if (status === 'confirmed') {
+    const cur = fieldAnnotations[fieldId];
+    if (cur && cur.status === 'confirmed' && !cur.flagged) {
+      delete fieldAnnotations[fieldId];
+      updateFieldAnnotationUI(fieldId);   // restores amber border if prefilled
+      updateAnnotationSummary();
+      return;
+    }
+  }
+  if (!fieldAnnotations[fieldId]) fieldAnnotations[fieldId] = {};
+  const ann = fieldAnnotations[fieldId];
+  ann.status = status;
+  const aiVal = pipelinePredictions[fieldId] || '';
+  const curVal = (document.getElementById('f-' + fieldId) || {}).value || '';
+  ann.ai_value = aiVal;
+  ann.original_value = curVal;
+  if (status === 'confirmed') {
+    ann.corrected_value = '';
+    // Close correction area
+    const ca = document.getElementById('ca-' + fieldId);
+    if (ca) ca.classList.remove('open');
+  }
+  updateFieldAnnotationUI(fieldId);
+  updateAnnotationSummary();
+}
+
+function openCorrectionArea(fieldId) {
+  if (!fieldAnnotations[fieldId]) fieldAnnotations[fieldId] = {};
+  const ann = fieldAnnotations[fieldId];
+  const prevStatus = ann.status;
+  ann.status = 'corrected';
+  const aiVal = pipelinePredictions[fieldId] || '';
+  const curVal = (document.getElementById('f-' + fieldId) || {}).value || '';
+  ann.ai_value = aiVal;
+  ann.original_value = curVal;
+
+  const ca = document.getElementById('ca-' + fieldId);
+  if (ca) {
+    const isOpen = ca.classList.contains('open');
+    // Toggle if already open and was already corrected
+    if (isOpen && prevStatus === 'corrected') {
+      ca.classList.remove('open');
+      // revert status if no correction text
+      const fc = document.getElementById('fc-' + fieldId);
+      if (!fc || !fc.value.trim()) {
+        delete fieldAnnotations[fieldId].status;
+        if (!Object.keys(fieldAnnotations[fieldId]).length) delete fieldAnnotations[fieldId];
+      }
+      updateFieldAnnotationUI(fieldId);
+      updateAnnotationSummary();
+      return;
+    }
+    ca.classList.add('open');
+    setTimeout(() => {
+      const fc = document.getElementById('fc-' + fieldId);
+      if (fc) fc.focus();
+    }, 50);
+  }
+  updateFieldAnnotationUI(fieldId);
+  updateAnnotationSummary();
+}
+
+function useAiValue(fieldId) {
+  const fc = document.getElementById('fc-' + fieldId);
+  if (!fc) return;
+  const aiVal = pipelinePredictions[fieldId] || (document.getElementById('f-' + fieldId) || {}).value || '';
+  fc.value = aiVal;
+  fc.focus();
+  onCorrectionInput(fieldId);
+}
+
+function onCorrectionInput(fieldId) {
+  if (!fieldAnnotations[fieldId]) fieldAnnotations[fieldId] = {};
+  const fc = document.getElementById('fc-' + fieldId);
+  fieldAnnotations[fieldId].corrected_value = fc ? fc.value : '';
+  updateAnnotationSummary();
+}
+
+function toggleFlagArea(fieldId) {
+  if (!fieldAnnotations[fieldId]) fieldAnnotations[fieldId] = {};
+  const ann = fieldAnnotations[fieldId];
+  ann.flagged = !ann.flagged;
+  const fa = document.getElementById('fa-' + fieldId);
+  if (fa) {
+    if (ann.flagged) {
+      fa.classList.add('open');
+      setTimeout(() => { const ff = document.getElementById('ff-' + fieldId); if (ff) ff.focus(); }, 50);
+    } else {
+      fa.classList.remove('open');
+      ann.flag_note = '';
+      const ff = document.getElementById('ff-' + fieldId);
+      if (ff) ff.value = '';
+    }
+  }
+  updateFieldAnnotationUI(fieldId);
+  updateAnnotationSummary();
+}
+
+function onFlagInput(fieldId) {
+  if (!fieldAnnotations[fieldId]) fieldAnnotations[fieldId] = {};
+  const ff = document.getElementById('ff-' + fieldId);
+  fieldAnnotations[fieldId].flag_note = ff ? ff.value : '';
+}
+
+function updateFieldAnnotationUI(fieldId) {
+  const ann = fieldAnnotations[fieldId] || {};
+  const dot = document.getElementById('asd-' + fieldId);
+  const row = document.getElementById('fr-' + fieldId);
+
+  // Status dot
+  if (dot) {
+    dot.className = 'ann-status-dot';
+    if (ann.status === 'confirmed') dot.classList.add('confirmed');
+    else if (ann.status === 'corrected') dot.classList.add('corrected');
+    else if (ann.flagged) dot.classList.add('flagged');
+    else dot.classList.add('none');
+    // If both corrected and flagged use corrected colour (higher priority)
+  }
+
+  // Border class on field-row — confirmed green overrides amber prefilled
+  if (row) {
+    row.classList.remove('field-confirmed','field-corrected','field-prefilled');
+    if (ann.status === 'confirmed') row.classList.add('field-confirmed');
+    else if (ann.status === 'corrected') row.classList.add('field-corrected');
+    // If neither, restore amber prefilled border if AI populated it and value unchanged
+    else if (Object.keys(pipelinePredictions).length) {
+      const el = document.getElementById('f-' + fieldId);
+      const baseline = pipelinePredictions[fieldId] || '';
+      if (el && el.value === baseline && baseline !== '') row.classList.add('field-prefilled');
+    }
+  }
+
+  // Active button highlight
+  const annBtns = row ? row.querySelectorAll('.ann-btn') : [];
+  annBtns.forEach(btn => {
+    btn.classList.remove('active');
+    if (ann.status === 'confirmed' && btn.classList.contains('confirm')) btn.classList.add('active');
+    if (ann.status === 'corrected' && btn.classList.contains('correct')) btn.classList.add('active');
+    if (ann.flagged && btn.classList.contains('flag-btn')) btn.classList.add('active');
+  });
+}
+
+function updateAnnotationSummary() {
+  const total = Object.keys(fieldAnnotations).length;
+  const confirmed = Object.values(fieldAnnotations).filter(a => a.status === 'confirmed').length;
+  const corrected = Object.values(fieldAnnotations).filter(a => a.status === 'corrected').length;
+  const flagged   = Object.values(fieldAnnotations).filter(a => a.flagged).length;
+  const el = document.getElementById('ann-summary');
+  if (!el) return;
+  if (total === 0) {
+    el.textContent = 'No fields annotated yet — use ✓ Confirm or ✎ Correct on individual fields above';
+    return;
+  }
+  const parts = [];
+  if (confirmed) parts.push(`${confirmed} confirmed`);
+  if (corrected) parts.push(`${corrected} corrected`);
+  if (flagged)   parts.push(`${flagged} flagged`);
+  el.textContent = `Field annotations: ${parts.join(' · ')}`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EXPORT DIALOG
+// ═══════════════════════════════════════════════════════════════════════════
+function showExportDialog() {
+  const modal = document.getElementById('export-modal');
+  const opts = document.getElementById('export-options');
+  opts.innerHTML = '';
+
+  function makeOpt(icon, title, subtitle, action) {
+    const d = document.createElement('div');
+    d.className = 'export-opt';
+    d.innerHTML = `<strong>${icon} ${title}</strong><span>${subtitle}</span>`;
+    d.onclick = action;
+    opts.appendChild(d);
+  }
+
+  makeOpt('📁', 'All PDFs (entire library)',
+    'Every annotated paper across all projects',
+    () => { closeExportModal(); window.open('/api/annotator/export.csv', '_blank'); });
+
+  if (currentPaperId) {
+    makeOpt('📄', `Current PDF only`,
+      `${currentFilename || 'active paper'} — one row`,
+      () => { closeExportModal(); window.open(`/api/annotator/export.csv?paper_id=${currentPaperId}`, '_blank'); });
+  }
+
+  allProjects.forEach(proj => {
+    const count = allPapers.filter(p => p.project_id === proj.id).length;
+    makeOpt('🗂', `Project: ${proj.name}`,
+      `${count} paper${count !== 1 ? 's' : ''}`,
+      () => { closeExportModal(); window.open(`/api/annotator/export.csv?project_id=${proj.id}`, '_blank'); });
+  });
+
+  modal.style.display = 'flex';
+}
+
+function closeExportModal() {
+  document.getElementById('export-modal').style.display = 'none';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AI AUTO-FILL
+// ═══════════════════════════════════════════════════════════════════════════
+async function prefillFromPDF() {
+  if (!currentPaperId) return;
+  const studyType = document.getElementById('f-study_type').value;
+  if (!studyType) return;
+
+  const btn = document.getElementById('autofill-btn');
+  const hint = document.getElementById('autofill-hint');
+  const loading = document.getElementById('autofill-loading');
+
+  btn.disabled = true;
+  btn.textContent = 'Extracting…';
+  loading.style.display = 'block';
+  hint.style.display = 'none';
+
+  try {
+    const res = await fetch(`/api/annotator/papers/${currentPaperId}/prefill`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({study_type: studyType}),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      const msg = (err.detail && typeof err.detail === 'object')
+        ? `${err.detail.detail || ''}${err.detail.required != null ? ` — need ${err.detail.required}, balance ${err.detail.balance}` : ''}`
+        : (err.detail || `HTTP ${res.status}`);
+      alert('Auto-fill failed: ' + msg);
+      return;
+    }
+    const predictions = await res.json();
+    pipelinePredictions = predictions;
+
+    // Clear existing amber/red borders
+    document.querySelectorAll('.field-prefilled, .field-corrected, .field-confirmed').forEach(el => {
+      el.classList.remove('field-prefilled', 'field-corrected', 'field-confirmed');
+    });
+
+    // Fill fields and mark amber
+    let filled = 0;
+    Object.entries(predictions).forEach(([k, v]) => {
+      const el = document.getElementById('f-' + k);
+      const row = document.getElementById('fr-' + k);
+      if (el && v) {
+        el.value = v;
+        filled++;
+        if (row) {
+          row.classList.add('field-prefilled');
+          el.addEventListener('input', () => {
+            row.classList.remove('field-prefilled');
+            if (reviewerAction === 'Correct' || reviewerAction === 'Flag') {
+              if (el.value !== (pipelinePredictions[k] || '')) {
+                row.classList.add('field-corrected');
+              }
+            }
+          }, {once: true});
+        }
+      }
+    });
+
+    btn.textContent = 'Re-fill from PDF';
+    hint.textContent = `${filled} fields extracted`;
+    hint.style.display = 'block';
+    // Persist AI extraction immediately — don't rely on debounce
+    persistToSession(currentPaperId);
+    const snapshot = captureState(currentPaperId);
+    saveToBackend(snapshot, true);   // fire and forget — no await needed here
+  } catch(e) {
+    alert('Auto-fill error: ' + e.message);
+    btn.textContent = 'Auto-fill from PDF';
+    hint.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    loading.style.display = 'none';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AI STUDY CLASSIFICATION
+// ═══════════════════════════════════════════════════════════════════════════
+async function classifyWithAI() {
+  if (!currentPaperId) return;
+
+  const btn    = document.getElementById('classify-btn');
+  const status = document.getElementById('classify-status');
+
+  btn.disabled = true;
+  btn.textContent = '✦ Classifying…';
+  status.textContent = 'Reading paper design… (~10–30 s)';
+  status.style.display = 'block';
+
+  try {
+    const res = await fetch(`/api/annotator/papers/${currentPaperId}/classify`, { method: 'POST' });
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      const msg = (err.detail && typeof err.detail === 'object')
+        ? `${err.detail.detail || ''}${err.detail.required != null ? ` — need ${err.detail.required}, balance ${err.detail.balance}` : ''}`
+        : (err.detail || `HTTP ${res.status}`);
+      status.textContent = 'Classification failed: ' + msg;
+      return;
+    }
+
+    const { major_category, subcategory, study_type } = await res.json();
+
+    // Cascade-populate the three dropdowns
+    const majEl = document.getElementById('f-major_category');
+    if (majEl && major_category) {
+      majEl.value = major_category;
+      onMajorCatChange();
+    }
+
+    const subEl = document.getElementById('f-subcategory');
+    if (subEl && subcategory) {
+      subEl.value = subcategory;
+      onSubcatChange();
+    }
+
+    const stEl = document.getElementById('f-study_type');
+    if (stEl && study_type) {
+      stEl.value = study_type;
+      onStudyTypeChange();
+    }
+
+    status.textContent = `Classified as: ${study_type || '?'}`;
+    scheduleAutoSave();
+
+  } catch(e) {
+    status.textContent = 'Error: ' + e.message;
+  } finally {
+    btn.disabled = !currentPaperId;
+    btn.textContent = '✦ Classify with AI';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PROJECT MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════════════
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function renderSidebar() {
+  const list = document.getElementById('project-list');
+  list.innerHTML = '';
+
+  allProjects.forEach(proj => {
+    const projPapers = allPapers.filter(p => p.project_id === proj.id);
+    list.appendChild(buildProjectFolder(proj, projPapers));
+  });
+
+  // Unassigned section
+  const unassigned = allPapers.filter(p => !p.project_id);
+  if (unassigned.length > 0 || allProjects.length === 0) {
+    list.appendChild(buildUnassigned(unassigned));
+  }
+}
+
+function buildProjectFolder(proj, papers) {
+  const collapsed = collapsedProjects.has(proj.id);
+  const folder = document.createElement('div');
+  folder.className = 'project-folder';
+
+  const header = document.createElement('div');
+  header.className = 'project-header';
+  header.innerHTML = `
+    <span class="project-arrow">${collapsed ? '▶' : '▼'}</span>
+    <span class="project-name-text" title="${escHtml(proj.name)}">${escHtml(proj.name)}</span>
+    <span class="project-count">${papers.length}</span>
+    <div class="project-actions">
+      <button class="proj-act-btn" title="Rename project"
+        onclick="renameProjectUI(event, ${proj.id})">✎</button>
+      <button class="proj-act-btn del" title="Delete project"
+        onclick="deleteProjectConfirm(event, ${proj.id})">✕</button>
+    </div>`;
+  header.addEventListener('click', () => toggleProject(proj.id));
+  folder.appendChild(header);
+
+  const papersDiv = document.createElement('div');
+  papersDiv.className = 'project-papers';
+  papersDiv.style.display = collapsed ? 'none' : 'block';
+  papers.forEach(p => papersDiv.appendChild(buildPaperItem(p)));
+  folder.appendChild(papersDiv);
+
+  return folder;
+}
+
+function buildUnassigned(papers) {
+  const collapsed = collapsedProjects.has('__unassigned__');
+  const folder = document.createElement('div');
+  folder.className = 'project-folder';
+
+  const header = document.createElement('div');
+  header.className = 'project-header';
+  header.innerHTML = `
+    <span class="project-arrow">${collapsed ? '▶' : '▼'}</span>
+    <span class="project-name-text unassigned">Unassigned</span>
+    <span class="project-count">${papers.length}</span>`;
+  header.addEventListener('click', () => toggleProject('__unassigned__'));
+  folder.appendChild(header);
+
+  const papersDiv = document.createElement('div');
+  papersDiv.className = 'project-papers';
+  papersDiv.style.display = collapsed ? 'none' : 'block';
+  papers.forEach(p => papersDiv.appendChild(buildPaperItem(p)));
+  folder.appendChild(papersDiv);
+
+  return folder;
+}
+
+function buildPaperItem(p) {
+  const div = document.createElement('div');
+  div.className = 'paper-item' + (p.id === currentPaperId ? ' active' : '');
+  div.addEventListener('click', () => { if (p.id) loadPdf(p.id, p.filename); });
+
+  const done = p.annotated_by && p.annotated_by.length > 0;
+
+  // Name row with delete button
+  const nameRow = document.createElement('div');
+  nameRow.style.cssText = 'display:flex;align-items:center;position:relative';
+  nameRow.innerHTML = `<div class="pi-name" title="${escHtml(p.filename)}">${escHtml(p.filename)}</div>`;
+  const actions = document.createElement('div');
+  actions.className = 'paper-item-actions';
+  actions.innerHTML = `<button class="paper-act-btn" title="Delete paper">✕</button>`;
+  actions.querySelector('button').addEventListener('click', ev => {
+    ev.stopPropagation();
+    deletePaperConfirm(p.id, p.filename);
+  });
+  nameRow.appendChild(actions);
+  div.appendChild(nameRow);
+
+  // Meta row
+  const meta = document.createElement('div');
+  meta.className = 'pi-meta';
+  meta.textContent = (p.annotated_by || []).join(', ') || 'no annotations';
+  div.appendChild(meta);
+
+  // Chip + move select
+  const bottomRow = document.createElement('div');
+  bottomRow.style.cssText = 'display:flex;align-items:center;gap:5px;flex-wrap:wrap';
+
+  const chip = document.createElement('span');
+  chip.className = 'pi-chip ' + (done ? 'done' : 'none');
+  chip.textContent = done ? 'annotated' : 'pending';
+  bottomRow.appendChild(chip);
+
+  if (allProjects.length > 0) {
+    const sel = document.createElement('select');
+    sel.className = 'move-select';
+    sel.title = 'Move to project';
+    sel.innerHTML = `<option value="">move to…</option>
+      <option value="0">— Unassigned —</option>
+      ${allProjects.map(proj =>
+        `<option value="${proj.id}" ${p.project_id === proj.id ? 'selected' : ''}>${escHtml(proj.name)}</option>`
+      ).join('')}`;
+    sel.addEventListener('change', ev => {
+      ev.stopPropagation();
+      const val = ev.target.value;
+      if (val !== '') assignPaperToProject(p.id, val === '0' ? null : parseInt(val));
+    });
+    sel.addEventListener('click', ev => ev.stopPropagation());
+    bottomRow.appendChild(sel);
+  }
+
+  div.appendChild(bottomRow);
+  return div;
+}
+
+function toggleProject(id) {
+  if (collapsedProjects.has(id)) {
+    collapsedProjects.delete(id);
+  } else {
+    collapsedProjects.add(id);
+  }
+  renderSidebar();
+}
+
+async function createNewProject() {
+  const name = prompt('Project name:');
+  if (!name || !name.trim()) return;
+  try {
+    const res = await fetch('/api/projects', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({name: name.trim()}),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await loadPapersAndProjects();
+  } catch(e) {
+    alert('Could not create project: ' + e.message);
+  }
+}
+
+async function renameProjectUI(event, id) {
+  event.stopPropagation();
+  const proj = allProjects.find(p => p.id === id);
+  if (!proj) return;
+  const name = prompt('Rename project:', proj.name);
+  if (!name || !name.trim() || name.trim() === proj.name) return;
+  try {
+    const res = await fetch(`/api/projects/${id}`, {
+      method: 'PUT',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({name: name.trim()}),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await loadPapersAndProjects();
+  } catch(e) {
+    alert('Could not rename project: ' + e.message);
+  }
+}
+
+async function deleteProjectConfirm(event, id) {
+  event.stopPropagation();
+  const proj = allProjects.find(p => p.id === id);
+  if (!proj) return;
+  const papersInProject = allPapers.filter(p => p.project_id === id).length;
+  const msg = papersInProject > 0
+    ? `Delete project "${proj.name}"?\n${papersInProject} paper(s) will become unassigned (not deleted).`
+    : `Delete project "${proj.name}"?`;
+  if (!confirm(msg)) return;
+  try {
+    const res = await fetch(`/api/projects/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await loadPapersAndProjects();
+  } catch(e) {
+    alert('Could not delete project: ' + e.message);
+  }
+}
+
+async function deletePaperConfirm(paperId, filename) {
+  if (!confirm(`Delete "${filename}"?\nThis will also delete all annotations for this paper.`)) return;
+  try {
+    const res = await fetch(`/api/papers/${paperId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (currentPaperId === paperId) {
+      currentPaperId = null;
+      currentFilename = null;
+      pdfDoc = null;
+      spans = [];
+      pipelinePredictions = {};
+      document.getElementById('pdf-scroll').innerHTML =
+        '<div id="no-paper"><p>Upload a PDF from the sidebar to begin annotating</p></div>';
+      document.getElementById('save-status').textContent = 'no paper selected';
+    }
+    await loadPapersAndProjects();
+  } catch(e) {
+    alert('Could not delete paper: ' + e.message);
+  }
+}
+
+async function assignPaperToProject(paperId, projectId) {
+  try {
+    await fetch(`/api/papers/${paperId}/assign`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({project_id: projectId}),
+    });
+    await loadPapersAndProjects();
+  } catch(e) {
+    console.warn('Assign failed:', e);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// API — PAPERS
+// ═══════════════════════════════════════════════════════════════════════════
+async function loadPapersAndProjects() {
+  try {
+    const papersRes = await fetch('/api/annotator/papers');
+    allPapers = await papersRes.json();
+  } catch(e) { allPapers = []; }
+
+  try {
+    const projRes = await fetch('/api/projects');
+    allProjects = projRes.ok ? await projRes.json() : [];
+  } catch(e) { allProjects = []; }
+
+  renderSidebar();
+}
+
+async function uploadFiles(files) {
+  if (!files || files.length === 0) return;
+
+  // Snapshot the FileList immediately — before any await — so the
+  // browser doesn't clear it when focus returns to the page.
+  const fileArray = Array.from(files);
+
+  const zone = document.getElementById('upload-zone');
+  const origHTML = zone.innerHTML;
+  zone.innerHTML = '<p>Uploading…</p>';
+
+  let errors = [];
+  let lastUploaded = null;
+
+  for (const file of fileArray) {
+    const form = new FormData();
+    form.append('file', file);
+    try {
+      const res = await fetch('/api/papers/upload', { method: 'POST', body: form });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        errors.push(`${file.name}: ${detail.detail || 'server error ' + res.status}`);
+      } else {
+        const paper = await res.json();
+        if (paper && paper.id) lastUploaded = paper;
+      }
+    } catch (err) {
+      errors.push(`${file.name}: ${err.message}`);
+    }
+  }
+
+  zone.innerHTML = origHTML;
+
+  // Reset the input so the same file can be re-selected
+  document.getElementById('file-input').value = '';
+
+  if (errors.length) {
+    alert('Upload error:\n' + errors.join('\n'));
+  }
+
+  await loadPapersAndProjects();
+
+  // Auto-select the last successfully uploaded paper
+  if (lastUploaded && lastUploaded.id) {
+    loadPdf(lastUploaded.id, lastUploaded.filename);
+  }
+}
+
+function handleDrop(e) {
+  e.preventDefault();
+  uploadFiles(e.dataTransfer.files);
+}
+
+async function loadExistingAnnotation() {
+  if (!currentPaperId) return;
+
+  // ── Layer 1: sessionStorage (instant, no round-trip) ──────────────────────
+  const cached = loadFromSession(currentPaperId);
+
+  // ── Layer 2: backend DB ───────────────────────────────────────────────────
+  let backendData = null;
+  let backendSpans = [];
+  try {
+    const res = await fetch(`/api/annotator/papers/${currentPaperId}/annotation`);
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    if (res.ok) {
+      const body = await res.json();
+      if (body.annotation && body.annotation.data) {
+        backendData  = body.annotation.data;
+        backendVersion = body.annotation.version || 1;
+      }
+      backendSpans = body.spans || [];
+    }
+  } catch(e) {
+    console.warn('Backend annotation fetch failed:', e);
+  }
+
+  // ── Choose source: prefer sessionStorage if it exists ─────────────────────
+  // sessionStorage is written on every keystroke / AI fill / action, so it
+  // is always at least as recent as the last backend save.
+  if (cached) {
+    // Restore from session cache
+    setFormData(cached.formData);
+    spans = cached.spans || [];
+    fieldAnnotations = cached.fieldAnnotations || {};
+    renderSpanTags();
+    setTimeout(renderHighlights, 400);
+    document.getElementById('save-status').textContent = 'restored from cache';
+  } else if (backendData) {
+    // No session cache — fall back to DB
+    setFormData(backendData);
+    spans = backendSpans;
+    renderSpanTags();
+    setTimeout(renderHighlights, 400);
+    document.getElementById('save-status').textContent = 'loaded from DB';
+    // Populate session cache so next switch is instant
+    setTimeout(() => persistToSession(currentPaperId), 100);
+  } else {
+    document.getElementById('save-status').textContent = currentFilename;
+  }
+}
+
+async function saveAnnotation() {
+  if (!currentPaperId) { alert('Select a paper first.'); return; }
+  clearTimeout(_autoSaveTimer);
+  persistToSession(currentPaperId);                   // layer 1: instant
+  const snapshot = captureState(currentPaperId);
+  await saveToBackend(snapshot, true);                // layer 2: force
+  loadPapersAndProjects();
+}
+
+// ── Persist to session on page unload (tab close / refresh) ───────────────
+window.addEventListener('beforeunload', () => {
+  if (currentPaperId) {
+    persistToSession(currentPaperId);
+  }
+});
+
+// ── Auth ──────────────────────────────────────────────────────────────────
+async function logout() {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  window.location.href = '/login';
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+
+// Wire file-input here so this.files is snapshotted synchronously before any async gap
+document.getElementById('file-input').addEventListener('change', function () {
+  uploadFiles(this.files);
+});
+
+// Verify session and display current user
+(async () => {
+  try {
+    const res = await fetch('/api/auth/me');
+    if (!res.ok) { window.location.href = '/login'; return; }
+    const user = await res.json();
+    const disp = document.getElementById('user-display');
+    if (disp) disp.textContent = user.display_name + ' (' + user.email + ')';
+  } catch(e) {
+    window.location.href = '/login';
+    return;
+  }
+  loadPapersAndProjects();
+})();
+</script>
+</body>
+</html>
