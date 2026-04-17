@@ -4063,6 +4063,193 @@ def api_org_transfer(org_id: int, body: OrgTransferPayload, rubricgen_session: s
         conn.close()
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Enterprise seat-based billing (POST/GET /api/enterprise[/...])
+# ═══════════════════════════════════════════════════════════════════════════
+# These routes drive the Phase-2 enterprise flow: creating an organization
+# with a Stripe subscription, adjusting seat pools, assigning members to
+# seats, and managing the org-level credit balance. Most endpoints run
+# independently of ENTERPRISE_MODE so staging can exercise them against test
+# Stripe before the global flag is flipped.
+
+class EnterpriseCreatePayload(BaseModel):
+    name: str
+    description: str | None = None
+    admin_qty: int = 1
+    engineer_qty: int = 0
+    general_qty: int = 0
+    success_url: str | None = None
+    cancel_url: str | None = None
+
+
+class EnterpriseSeatsPayload(BaseModel):
+    admin_qty: int | None = None
+    engineer_qty: int | None = None
+    general_qty: int | None = None
+
+
+class EnterpriseMemberPayload(BaseModel):
+    email: str
+    seat_type: str = "general"
+
+
+class EnterpriseMemberUpdatePayload(BaseModel):
+    seat_type: str
+
+
+def _require_enterprise_admin(conn, org_id: int, user_id: int) -> dict:
+    """Enterprise management endpoints require the caller to hold an admin
+    seat in the target org. Owner is implicitly an admin."""
+    return org_mod.require_org_role(conn, org_id, user_id, "admin")
+
+
+def _require_enterprise_owner(conn, org_id: int, user_id: int) -> None:
+    """Stricter check for billing-cancellation-class actions (seat pool size,
+    subscription cancel). Only the single is_owner=1 member passes."""
+    row = conn.execute(
+        "SELECT is_owner FROM org_members WHERE org_id=? AND user_id=?",
+        (org_id, user_id),
+    ).fetchone()
+    if not row or not row["is_owner"]:
+        raise HTTPException(403, "Only the enterprise owner can perform this action.")
+
+
+@app.post("/api/enterprise", status_code=201)
+def api_enterprise_create(body: EnterpriseCreatePayload,
+                          request: Request,
+                          rubricgen_session: str | None = Cookie(default=None)):
+    """Create a new enterprise org with the caller as owner + admin seat-holder.
+    Returns a Stripe Checkout URL; owner completes payment out-of-band and
+    the subscription.created webhook provisions seats."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        # 1) Create the organization (creator gets is_owner=1 + admin role)
+        org = org_mod.create_organization(
+            conn, user["id"], name=body.name,
+            description=body.description or "", domain=None,
+        )
+        # 2) Build redirect URLs if not supplied. Hard-coded to our host because
+        #    Stripe requires absolute URLs.
+        base = str(request.base_url).rstrip("/")
+        success = body.success_url or f"{base}/enterprise?created=1&org_id={org['id']}"
+        cancel  = body.cancel_url  or f"{base}/onboarding?canceled=1"
+        # 3) Kick off Stripe Checkout
+        checkout_url = enterprise_mod.create_enterprise_checkout(
+            conn, user, org_id=org["id"],
+            admin_qty=body.admin_qty,
+            engineer_qty=body.engineer_qty,
+            general_qty=body.general_qty,
+            success_url=success, cancel_url=cancel,
+        )
+        return {"org_id": org["id"], "org_name": org["name"],
+                "org_slug": org["slug"], "checkout_url": checkout_url}
+    finally:
+        conn.close()
+
+
+@app.get("/api/enterprise/{org_id}")
+def api_enterprise_get(org_id: int,
+                       rubricgen_session: str | None = Cookie(default=None)):
+    """Return consolidated enterprise state: org, subscription, seat usage,
+    credit balance. Visible to any admin-seat holder."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        _require_enterprise_admin(conn, org_id, user["id"])
+        return enterprise_mod.get_enterprise_state(conn, org_id)
+    finally:
+        conn.close()
+
+
+@app.patch("/api/enterprise/{org_id}/seats")
+def api_enterprise_update_seats(org_id: int,
+                                body: EnterpriseSeatsPayload,
+                                rubricgen_session: str | None = Cookie(default=None)):
+    """Adjust seat-pool quantities on the Stripe subscription. Owner only.
+    Reduction below assigned count returns 409."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        _require_enterprise_owner(conn, org_id, user["id"])
+        return enterprise_mod.update_seat_quantities(
+            conn, org_id,
+            admin_qty=body.admin_qty,
+            engineer_qty=body.engineer_qty,
+            general_qty=body.general_qty,
+        )
+    finally:
+        conn.close()
+
+
+@app.post("/api/enterprise/{org_id}/members", status_code=201)
+def api_enterprise_add_member(org_id: int,
+                              body: EnterpriseMemberPayload,
+                              rubricgen_session: str | None = Cookie(default=None)):
+    """Invite/assign a user to a seat. Admin only. 409 if pool full."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        _require_enterprise_admin(conn, org_id, user["id"])
+        email = body.email.strip().lower()
+        target = conn.execute(
+            "SELECT id FROM users WHERE email=?", (email,),
+        ).fetchone()
+        if not target:
+            raise HTTPException(404, f"No user found with email {email}.")
+        return enterprise_mod.assign_seat(
+            conn, org_id, target["id"], body.seat_type, assigned_by=user["id"],
+        )
+    finally:
+        conn.close()
+
+
+@app.patch("/api/enterprise/{org_id}/members/{member_user_id}")
+def api_enterprise_update_member(org_id: int, member_user_id: int,
+                                 body: EnterpriseMemberUpdatePayload,
+                                 rubricgen_session: str | None = Cookie(default=None)):
+    """Change a member's seat type. Admin only. 403 for the owner, 409 on full
+    target pool."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        _require_enterprise_admin(conn, org_id, user["id"])
+        return enterprise_mod.assign_seat(
+            conn, org_id, member_user_id, body.seat_type, assigned_by=user["id"],
+        )
+    finally:
+        conn.close()
+
+
+@app.delete("/api/enterprise/{org_id}/members/{member_user_id}")
+def api_enterprise_remove_member(org_id: int, member_user_id: int,
+                                 rubricgen_session: str | None = Cookie(default=None)):
+    """Remove a member's seat assignment (and org membership). Admin only.
+    403 for the owner."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        _require_enterprise_admin(conn, org_id, user["id"])
+        enterprise_mod.unassign_seat(conn, org_id, member_user_id)
+        return {"status": "removed"}
+    finally:
+        conn.close()
+
+
+@app.post("/api/enterprise/{org_id}/sync")
+def api_enterprise_sync(org_id: int,
+                        rubricgen_session: str | None = Cookie(default=None)):
+    """Reconcile local subscription state from Stripe. Admin only. Used when
+    a webhook is dropped mid-flight or status drifts."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        _require_enterprise_admin(conn, org_id, user["id"])
+        return enterprise_mod.sync_from_stripe(conn, org_id)
+    finally:
+        conn.close()
+
+
 # ─── Org models ───
 
 @app.get("/api/orgs/{org_id}/models")

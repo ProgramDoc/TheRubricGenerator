@@ -336,19 +336,33 @@ def handle_stripe_webhook(payload: bytes, sig_header: str,
                     logger.info("Stripe: credited %d to user %d (session=%s)", credits, user_id, session_id)
             finally:
                 conn.close()
-    # Handle subscription events (membership plans)
+    # Subscription + invoice events can be either enterprise seats (new) or
+    # legacy individual plans (being deprecated). Try enterprise first; if the
+    # event's metadata doesn't resolve to an enterprise org, fall through to
+    # the legacy membership handler until Phase 5 removes it.
     sub_events = (
         "customer.subscription.created",
         "customer.subscription.updated",
         "customer.subscription.deleted",
         "invoice.paid",
+        "invoice.payment_failed",
     )
     if event["type"] in sub_events:
+        conn = get_db_fn()
+        handled = False
         try:
-            from .membership import handle_subscription_webhook
-            handle_subscription_webhook(event, get_db_fn)
+            from . import enterprise as ent_mod
+            handled = ent_mod.handle_subscription_event(conn, event)
         except Exception as e:
-            logger.error("Subscription webhook handling failed: %s", e)
+            logger.error("Enterprise subscription webhook handling failed: %s", e)
+        finally:
+            conn.close()
+        if not handled:
+            try:
+                from .membership import handle_subscription_webhook
+                handle_subscription_webhook(event, get_db_fn)
+            except Exception as e:
+                logger.error("Legacy subscription webhook handling failed: %s", e)
 
     return {"received": True}
 
