@@ -1106,6 +1106,30 @@ def billing_page(rubricgen_session: str | None = Cookie(default=None)):
     return FileResponse(str(FRONTEND / "billing.html"), media_type="text/html")
 
 
+@app.get("/enterprise", include_in_schema=False)
+@app.get("/enterprise/{org_id}", include_in_schema=False)
+def enterprise_page(org_id: int | None = None,
+                    rubricgen_session: str | None = Cookie(default=None)):
+    """Enterprise management page for owner + admin-seat holders.
+    `/enterprise` defaults to the user's primary enterprise; `/enterprise/{id}`
+    scopes to a specific one (the frontend renders the same HTML either way
+    and reads the ID from the URL)."""
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return FileResponse(str(FRONTEND / "enterprise.html"), media_type="text/html")
+
+
+@app.get("/onboarding", include_in_schema=False)
+def onboarding_page(rubricgen_session: str | None = Cookie(default=None)):
+    """Shown to any authenticated user without an active enterprise seat.
+    Two CTAs: start an enterprise, or join one with an invite code."""
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return FileResponse(str(FRONTEND / "onboarding.html"), media_type="text/html")
+
+
 @app.get("/admin/daily", include_in_schema=False)
 def admin_daily_page(rubricgen_session: str | None = Cookie(default=None)):
     user = _get_user_from_token(rubricgen_session)

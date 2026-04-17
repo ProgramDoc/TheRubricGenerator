@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The AI Researcher — Enterprise</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root {
+  --navy: #161b2e; --blue: #274472; --sky: #5e9ad0;
+  --green: #16a34a; --red: #dc2626; --amber: #d97706; --purple: #7c3aed;
+  --bg: #f4f5f9; --card: #ffffff; --border: #dce4ee;
+  --text: #1e293b; --muted: #64748b;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; min-height: 100vh; }
+
+.topbar { background: var(--navy); color: #fff; padding: 12px 28px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,.15); z-index: 10; position: relative; }
+.topbar .brand { font-size: 16px; font-weight: 700; letter-spacing: -.3px; }
+.topbar .brand span { color: var(--sky); }
+.topbar nav { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.topbar nav a { font-family: inherit; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); padding: 6px 12px; border-radius: 5px; text-decoration: none; }
+.topbar nav a:hover { background: rgba(255,255,255,.08); color: #fff; }
+.topbar nav a.active { background: rgba(255,255,255,.15); color: #fff; }
+.topbar .user-badge { margin-left: 14px; padding: 4px 10px; background: rgba(255,255,255,.1); border-radius: 4px; font-size: 11px; color: rgba(255,255,255,.85); }
+.topbar .signout-btn { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); padding: 6px 12px; border-radius: 5px; font-family: inherit; font-size: 11px; font-weight: 600; cursor: pointer; margin-left: 10px; }
+
+.container { max-width: 1180px; margin: 0 auto; padding: 28px; }
+
+.page-title { font-size: 22px; font-weight: 700; color: var(--navy); margin-bottom: 2px; letter-spacing: -.3px; }
+.page-title .org-name { color: var(--blue); }
+.page-subtitle { color: var(--muted); font-size: 12.5px; margin-bottom: 24px; }
+
+.status-pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; margin-left: 8px; vertical-align: 2px; }
+.s-active    { background: rgba(22,163,74,.15);  color: var(--green); }
+.s-past_due  { background: rgba(217,119,6,.15);  color: var(--amber); }
+.s-canceled  { background: rgba(220,38,38,.15);  color: var(--red);   }
+.s-incomplete{ background: rgba(100,116,139,.15);color: var(--muted); }
+.s-none      { background: rgba(100,116,139,.15);color: var(--muted); }
+
+.grid-cards { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 22px; }
+@media (max-width: 980px) { .grid-cards { grid-template-columns: 1fr; } }
+.stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 18px 20px; }
+.stat-card .label { font-size: 10.5px; font-weight: 700; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; margin-bottom: 6px; }
+.stat-card .value { font-size: 26px; font-weight: 700; color: var(--navy); font-family: 'IBM Plex Mono', monospace; letter-spacing: -.5px; }
+.stat-card .sub { color: var(--muted); font-size: 11px; margin-top: 4px; }
+
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 18px; overflow: hidden; }
+.card-header { padding: 14px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.card-header h2 { font-size: 13px; font-weight: 700; color: var(--navy); }
+.card-body { padding: 18px 20px; }
+
+/* Seat pool */
+.seat-row { display: grid; grid-template-columns: 140px 1fr 200px 100px; gap: 14px; align-items: center; padding: 10px 0; border-bottom: 1px solid #f1f5f9; }
+.seat-row:last-child { border-bottom: none; }
+.seat-row .name { font-weight: 700; color: var(--navy); }
+.seat-row .price { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: var(--muted); }
+.seat-row .bar-wrap { background: #f1f5f9; border-radius: 10px; height: 10px; position: relative; overflow: hidden; }
+.seat-row .bar-fill { background: var(--blue); height: 100%; transition: width .2s; }
+.seat-row .bar-full { background: var(--amber); }
+.seat-row .counts { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text); text-align: right; }
+.seat-row .qty-input { display: flex; align-items: center; gap: 4px; }
+.seat-row .qty-input input { width: 56px; padding: 4px 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; text-align: center; border: 1px solid var(--border); border-radius: 4px; }
+.seat-row .qty-input button { background: var(--blue); color: #fff; border: none; padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer; }
+.seat-row .qty-input button:hover { background: var(--navy); }
+.seat-row .qty-input button:disabled { opacity: .5; cursor: not-allowed; }
+
+/* Members table */
+table { width: 100%; border-collapse: collapse; }
+thead th { text-align: left; font-size: 10px; font-weight: 700; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; padding: 10px 14px; background: #f8fafc; border-bottom: 1px solid var(--border); }
+tbody td { padding: 10px 14px; border-bottom: 1px solid #f1f5f9; font-size: 12px; color: var(--text); }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: #f8fafc; }
+.owner-chip { display: inline-block; margin-left: 6px; font-size: 9px; font-weight: 700; color: #fff; background: var(--purple); padding: 1px 6px; border-radius: 10px; text-transform: uppercase; letter-spacing: .04em; }
+.seat-select { padding: 4px 7px; border: 1px solid var(--border); border-radius: 4px; font-family: inherit; font-size: 11.5px; background: #fff; }
+.remove-btn { color: var(--red); background: transparent; border: none; cursor: pointer; font-size: 12px; }
+.remove-btn:hover { text-decoration: underline; }
+
+/* Invite form */
+.invite-row { display: flex; gap: 10px; align-items: flex-end; margin-top: 6px; }
+.invite-row .fg { flex: 1; }
+.invite-row label { display: block; font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 3px; }
+.invite-row input, .invite-row select { width: 100%; padding: 7px 10px; font-family: inherit; font-size: 12.5px; border: 1px solid var(--border); border-radius: 4px; outline: none; }
+.invite-row input:focus, .invite-row select:focus { border-color: var(--sky); }
+.btn { font-family: inherit; font-size: 12px; font-weight: 600; padding: 7px 14px; border-radius: 5px; cursor: pointer; border: 1px solid var(--blue); }
+.btn-primary { background: var(--blue); color: #fff; }
+.btn-primary:hover { background: var(--navy); }
+.btn-secondary { background: #fff; color: var(--blue); }
+
+.empty { padding: 28px; text-align: center; color: var(--muted); font-size: 12px; }
+.toast-container { position: fixed; top: 60px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; }
+.toast { padding: 10px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; color: #fff; box-shadow: 0 4px 12px rgba(0,0,0,.15); max-width: 380px; }
+.toast.success { background: var(--green); }
+.toast.error   { background: var(--red); }
+.toast.info    { background: var(--blue); }
+
+.access-denied { padding: 40px; text-align: center; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">The AI <span>Researcher</span><sub style="font-size:9px;color:rgba(255,255,255,.35);display:block;margin-top:2px">Aitheia LLC</sub></div>
+  <nav>
+    <a href="/">Lab</a>
+    <a href="/dashboard">Dashboard</a>
+    <a href="/challenges">Challenges</a>
+    <a href="/leaderboard">Leaderboard</a>
+    <a href="/analytics">Analytics</a>
+    <a href="/annotator">Annotator</a>
+    <a href="/enterprise" class="active">Enterprise</a>
+    <a href="/admin" id="nav-admin" style="display:none">Admin</a>
+    <span class="user-badge" id="user-badge">—</span>
+    <button class="signout-btn" onclick="signOut()">Sign Out</button>
+  </nav>
+</div>
+
+<div class="container" id="main-area">
+  <div class="empty">Loading…</div>
+</div>
+
+<div class="toast-container" id="toast-container"></div>
+
+<script>
+let orgId = null;
+let state = null;     // latest GET /api/enterprise/{id} response
+let currentUser = null;
+
+// ── Small helpers ─────────────────────────────────────────────────────
+function toast(msg, type='info', ms=4000) {
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  document.getElementById('toast-container').appendChild(t);
+  setTimeout(() => t.remove(), ms);
+}
+function escapeHtml(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+async function signOut() { await fetch('/api/auth/logout', { method: 'POST' }); window.location.href = '/login'; }
+
+// ── Init ──────────────────────────────────────────────────────────────
+(async function init() {
+  let me;
+  try {
+    const r = await fetch('/api/auth/me');
+    if (!r.ok) { window.location.href = '/login'; return; }
+    me = await r.json();
+  } catch { window.location.href = '/login'; return; }
+  currentUser = me;
+  document.getElementById('user-badge').textContent = me.display_name || me.email;
+  if (me.role === 'admin') document.getElementById('nav-admin').style.display = '';
+
+  // Resolve which org to render.
+  const parts = window.location.pathname.split('/');
+  const urlOrgId = parts[2] ? parseInt(parts[2], 10) : null;
+  if (urlOrgId) {
+    orgId = urlOrgId;
+  } else if (me.seat && me.seat.org_id) {
+    orgId = me.seat.org_id;
+    // Canonical URL
+    history.replaceState(null, '', '/enterprise/' + orgId);
+  } else {
+    // No seat at all — send to onboarding
+    window.location.href = '/onboarding';
+    return;
+  }
+
+  await loadState();
+})();
+
+async function loadState() {
+  const host = document.getElementById('main-area');
+  try {
+    const r = await fetch(`/api/enterprise/${orgId}`);
+    if (r.status === 403) {
+      host.innerHTML = `<div class="access-denied">
+        <h2 style="color:var(--navy);margin-bottom:6px">Admin-seat required</h2>
+        You need an admin seat in this organization to view enterprise settings.
+        Ask the owner to upgrade your seat, or <a href="/dashboard" style="color:var(--blue);font-weight:600">go back to your dashboard</a>.
+      </div>`;
+      return;
+    }
+    if (!r.ok) {
+      host.innerHTML = '<div class="access-denied">Failed to load enterprise state (HTTP ' + r.status + ').</div>';
+      return;
+    }
+    state = await r.json();
+    render();
+  } catch (e) {
+    host.innerHTML = '<div class="access-denied">Network error: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function render() {
+  const host = document.getElementById('main-area');
+  const subStatus = state.subscription.status || 'none';
+  const balance = state.credits.balance;
+  const mrrCents = (state.seats.admin.purchased*45000)
+                 + (state.seats.engineer.purchased*25000)
+                 + (state.seats.general.purchased*10000);
+
+  host.innerHTML = `
+    <div class="page-title">
+      <span class="org-name">${escapeHtml(state.org.name)}</span>
+      <span class="status-pill s-${subStatus}">${subStatus.replace('_',' ')}</span>
+    </div>
+    <div class="page-subtitle">
+      ${escapeHtml(state.org.description || '')}
+      ${state.subscription.current_period_end ? ' · Renews ' + new Date(state.subscription.current_period_end + (state.subscription.current_period_end.includes('T')?'':'T00:00:00Z')).toLocaleDateString() : ''}
+    </div>
+
+    <div class="grid-cards">
+      <div class="stat-card">
+        <div class="label">Monthly total</div>
+        <div class="value">$${(mrrCents/100).toLocaleString()}</div>
+        <div class="sub">Billed by Stripe on renewal</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Credit balance</div>
+        <div class="value">${balance.toLocaleString()}</div>
+        <div class="sub">Overage packs top up the pool — <a href="#" onclick="buyCredits();return false;" style="color:var(--blue);font-weight:600;">Buy credits</a></div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Active members</div>
+        <div class="value">${state.seats.admin.assigned + state.seats.engineer.assigned + state.seats.general.assigned}</div>
+        <div class="sub">${state.seats.admin.purchased + state.seats.engineer.purchased + state.seats.general.purchased} seats purchased</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h2>Seat pool</h2>
+        <button class="btn btn-secondary" onclick="syncFromStripe()" title="Reconcile state from Stripe">⟳ Sync</button>
+      </div>
+      <div class="card-body">
+        ${renderSeatRow('admin',    'Admin',        '$450/mo · 500 cr')}
+        ${renderSeatRow('engineer', 'Engineer',     '$250/mo · 300 cr')}
+        ${renderSeatRow('general',  'General User', '$100/mo · 100 cr')}
+        <div style="font-size:11px;color:var(--muted);margin-top:10px;line-height:1.5;">
+          Only the owner can change seat counts. Decreasing below the assigned count requires unassigning members first.
+          Mid-cycle changes are prorated by Stripe; bundled credits grant on the next invoice.
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2>Invite a member</h2></div>
+      <div class="card-body">
+        <div class="invite-row">
+          <div class="fg"><label>Email</label><input type="email" id="invite-email" placeholder="user@example.com"></div>
+          <div class="fg" style="max-width:180px"><label>Seat type</label>
+            <select id="invite-seat">
+              <option value="general">General User</option>
+              <option value="engineer">Engineer</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" onclick="inviteMember()">Assign seat</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px;">
+          The user must already have an account. If the target seat pool is full you'll see "Pool full" and can buy more.
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2>Members</h2></div>
+      <div id="members-wrap">${renderMembers()}</div>
+    </div>
+  `;
+}
+
+function renderSeatRow(code, name, priceStr) {
+  const s = state.seats[code];
+  const pct = s.purchased === 0 ? 0 : Math.min(100, Math.round(100 * s.assigned / s.purchased));
+  const full = s.assigned >= s.purchased && s.purchased > 0;
+  const isOwner = state.subscription.status === 'active' && currentUser && currentUser.seat && currentUser.seat.org_id === orgId && currentUser.seat.is_owner;
+  return `
+    <div class="seat-row">
+      <div>
+        <div class="name">${name}</div>
+        <div class="price">${priceStr}</div>
+      </div>
+      <div class="bar-wrap"><div class="bar-fill ${full?'bar-full':''}" style="width:${pct}%"></div></div>
+      <div class="counts">${s.assigned} / ${s.purchased} seats assigned</div>
+      <div class="qty-input">
+        <input type="number" min="${code==='admin'?1:0}" max="100" value="${s.purchased}" id="qty-${code}">
+        <button onclick="updateSeat('${code}')" ${isOwner?'':'disabled title="Owner only"'}>Save</button>
+      </div>
+    </div>`;
+}
+
+function renderMembers() {
+  // The backend get_enterprise_state doesn't list members; fetch them from
+  // the existing /api/orgs/{id} endpoint and merge here.
+  fetch(`/api/orgs/${orgId}`).then(r => r.json()).then(org => {
+    const members = org.members || [];
+    const isAdminHere = state.seats && (currentUser?.seat?.org_id === orgId && currentUser?.seat?.seat_type === 'admin');
+    let html = `<table><thead><tr>
+      <th>Name</th><th>Email</th><th>Seat</th>${isAdminHere ? '<th style="text-align:right">Actions</th>' : ''}
+    </tr></thead><tbody>`;
+    if (!members.length) { html = '<div class="empty">No members yet. Invite one above.</div>'; }
+    else {
+      members.forEach(m => {
+        html += `<tr>
+          <td>${escapeHtml(m.display_name || '')}${m.is_owner ? '<span class="owner-chip">owner</span>' : ''}</td>
+          <td>${escapeHtml(m.email)}</td>
+          <td>${renderMemberSeat(m, isAdminHere)}</td>
+          ${isAdminHere ? `<td style="text-align:right">${m.is_owner ? '<span style="color:var(--muted);font-size:11px">—</span>' : `<button class="remove-btn" onclick="removeMember(${m.user_id})">Remove</button>`}</td>` : ''}
+        </tr>`;
+      });
+      html += '</tbody></table>';
+    }
+    document.getElementById('members-wrap').innerHTML = html;
+  }).catch(() => {
+    document.getElementById('members-wrap').innerHTML = '<div class="empty">Could not load members.</div>';
+  });
+  return '<div class="empty">Loading…</div>';
+}
+
+function renderMemberSeat(m, canEdit) {
+  if (!canEdit || m.is_owner) {
+    return `<span style="font-weight:600;color:var(--navy)">${m.role}</span>`;
+  }
+  return `<select class="seat-select" onchange="changeSeat(${m.user_id}, this.value)">
+    <option value="general"  ${m.role==='general' ?'selected':''}>General User</option>
+    <option value="engineer" ${m.role==='engineer'?'selected':''}>Engineer</option>
+    <option value="admin"    ${m.role==='admin'   ?'selected':''}>Admin</option>
+  </select>`;
+}
+
+async function inviteMember() {
+  const email = document.getElementById('invite-email').value.trim();
+  const seat  = document.getElementById('invite-seat').value;
+  if (!email) { toast('Enter an email address.', 'error'); return; }
+  const r = await fetch(`/api/enterprise/${orgId}/members`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ email, seat_type: seat }),
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const d = body.detail;
+    if (d && d.error === 'pool_full') {
+      toast(`No ${seat} seats available (${d.assigned}/${d.purchased}). Buy more seats above.`, 'error');
+    } else {
+      toast((d && (d.message || d)) || `Error ${r.status}`, 'error');
+    }
+    return;
+  }
+  toast('Member added.', 'success');
+  document.getElementById('invite-email').value = '';
+  await loadState();
+}
+
+async function changeSeat(userId, seat) {
+  const r = await fetch(`/api/enterprise/${orgId}/members/${userId}`, {
+    method: 'PATCH', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ seat_type: seat }),
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const d = body.detail;
+    if (d && d.error === 'pool_full') toast(`Pool full for ${seat}. Buy more seats first.`, 'error');
+    else toast((d && (d.message || d)) || `Error ${r.status}`, 'error');
+    await loadState();
+    return;
+  }
+  toast('Seat updated.', 'success');
+  await loadState();
+}
+
+async function removeMember(userId) {
+  if (!confirm('Remove this member from the enterprise?')) return;
+  const r = await fetch(`/api/enterprise/${orgId}/members/${userId}`, { method: 'DELETE' });
+  if (!r.ok) { toast('Failed to remove.', 'error'); return; }
+  toast('Member removed.', 'success');
+  await loadState();
+}
+
+async function updateSeat(code) {
+  const qty = parseInt(document.getElementById('qty-' + code).value, 10);
+  if (isNaN(qty) || qty < 0) { toast('Invalid quantity.', 'error'); return; }
+  const body = {}; body[code + '_qty'] = qty;
+  const r = await fetch(`/api/enterprise/${orgId}/seats`, {
+    method: 'PATCH', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const d = j.detail;
+    if (d && d.error === 'pool_reduction_blocked') {
+      toast(`Cannot reduce ${code} seats — ${d.assigned_count} are currently assigned. Unassign members first.`, 'error');
+    } else {
+      toast((d && (d.message || d)) || `Error ${r.status}`, 'error');
+    }
+    return;
+  }
+  toast('Seat count updated. Stripe will send a prorated invoice.', 'success');
+  await loadState();
+}
+
+async function syncFromStripe() {
+  const r = await fetch(`/api/enterprise/${orgId}/sync`, { method: 'POST' });
+  if (!r.ok) { toast('Sync failed.', 'error'); return; }
+  toast('Reconciled from Stripe.', 'success');
+  await loadState();
+}
+
+async function buyCredits() {
+  // Redirect to the existing org credit-pack checkout flow. pack_id=1 is the
+  // default Starter pack; we could let users pick later.
+  const r = await fetch(`/api/orgs/${orgId}/billing/checkout`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ pack_id: 1 }),
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok || !body.checkout_url) { toast('Could not start checkout.', 'error'); return; }
+  window.location.href = body.checkout_url;
+}
+</script>
+</body>
+</html>

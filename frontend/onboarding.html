@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The AI Researcher — Get started</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root {
+  --navy: #161b2e; --blue: #274472; --sky: #5e9ad0;
+  --green: #16a34a; --red: #dc2626; --amber: #d97706; --purple: #7c3aed;
+  --bg: #f4f5f9; --card: #ffffff; --border: #dce4ee;
+  --text: #1e293b; --muted: #64748b;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; min-height: 100vh; }
+
+.topbar { background: var(--navy); color: #fff; padding: 12px 28px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+.topbar .brand { font-size: 16px; font-weight: 700; letter-spacing: -.3px; }
+.topbar .brand span { color: var(--sky); }
+.topbar .user-badge { padding: 4px 10px; background: rgba(255,255,255,.1); border-radius: 4px; font-size: 11px; color: rgba(255,255,255,.85); }
+.topbar .signout-btn { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); padding: 6px 12px; border-radius: 5px; font-family: inherit; font-size: 11px; font-weight: 600; cursor: pointer; margin-left: 10px; }
+
+.container { max-width: 960px; margin: 0 auto; padding: 40px 24px; }
+.page-title { font-size: 26px; font-weight: 700; color: var(--navy); letter-spacing: -.4px; margin-bottom: 6px; }
+.page-subtitle { color: var(--muted); font-size: 14px; margin-bottom: 36px; max-width: 620px; line-height: 1.55; }
+
+.cta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-bottom: 32px; }
+@media (max-width: 720px) { .cta-grid { grid-template-columns: 1fr; } }
+.cta-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 28px 26px; position: relative; transition: border-color .15s, box-shadow .15s;
+}
+.cta-card.primary { border-color: var(--blue); box-shadow: 0 2px 12px rgba(39,68,114,.08); }
+.cta-card:hover { border-color: var(--sky); }
+.cta-card .kicker { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--blue); margin-bottom: 6px; }
+.cta-card h2 { font-size: 18px; font-weight: 700; color: var(--navy); margin-bottom: 8px; }
+.cta-card p { color: var(--muted); font-size: 13px; line-height: 1.55; margin-bottom: 16px; }
+.cta-card ul { list-style: none; margin-bottom: 18px; }
+.cta-card li { color: var(--text); font-size: 12.5px; padding: 4px 0 4px 18px; position: relative; }
+.cta-card li::before { content: '✓'; position: absolute; left: 0; color: var(--green); font-weight: 700; }
+
+.btn-primary { display: inline-flex; align-items: center; gap: 6px; background: var(--blue); color: #fff; border: 1px solid var(--blue); border-radius: 6px; padding: 9px 18px; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; text-decoration: none; }
+.btn-primary:hover { background: var(--navy); }
+.btn-primary:disabled { opacity: .6; cursor: not-allowed; }
+.btn-secondary { display: inline-flex; align-items: center; gap: 6px; background: #fff; color: var(--blue); border: 1px solid var(--border); border-radius: 6px; padding: 9px 18px; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.btn-secondary:hover { border-color: var(--blue); }
+
+.form-row { display: flex; gap: 10px; align-items: flex-start; }
+.form-row input[type=text] { flex: 1; padding: 9px 12px; border: 1px solid var(--border); border-radius: 5px; font-family: inherit; font-size: 13px; outline: none; }
+.form-row input[type=text]:focus { border-color: var(--sky); }
+
+.wizard { display: none; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--border); }
+.wizard.open { display: block; }
+.wizard label { display: block; font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px; margin-top: 12px; }
+.wizard input[type=text], .wizard input[type=number], .wizard textarea {
+  width: 100%; padding: 8px 11px; border: 1px solid var(--border); border-radius: 5px; font-family: inherit; font-size: 13px; outline: none;
+}
+.wizard input[type=text]:focus, .wizard input[type=number]:focus, .wizard textarea:focus { border-color: var(--sky); }
+.seat-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 8px; }
+@media (max-width: 500px) { .seat-grid { grid-template-columns: 1fr; } }
+.seat-col { background: #f8fafc; border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; }
+.seat-col .name { font-weight: 700; color: var(--navy); font-size: 12.5px; }
+.seat-col .price { font-family: 'IBM Plex Mono', monospace; color: var(--muted); font-size: 10.5px; margin-bottom: 6px; }
+.seat-col .bundled { color: var(--green); font-size: 10.5px; margin-top: 2px; }
+.seat-col input { width: 100%; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; text-align: center; }
+
+.summary { margin-top: 16px; padding: 12px 14px; background: #f0f7ff; border: 1px solid #dbeafe; border-radius: 6px; font-size: 12.5px; }
+.summary .line { display: flex; justify-content: space-between; padding: 2px 0; }
+.summary .total { font-weight: 700; color: var(--navy); border-top: 1px solid #dbeafe; padding-top: 6px; margin-top: 6px; }
+
+.error { color: var(--red); font-size: 12px; margin-top: 8px; }
+.success { color: var(--green); font-size: 12px; margin-top: 8px; }
+
+.spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .6s linear infinite; vertical-align: middle; margin-right: 4px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.pending-invites { margin-top: 26px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 18px 20px; display: none; }
+.pending-invites.open { display: block; }
+.pending-invites h3 { font-size: 13px; font-weight: 700; color: var(--navy); margin-bottom: 10px; }
+.invite-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f1f5f9; }
+.invite-row:last-child { border-bottom: none; }
+.invite-row .meta { flex: 1; font-size: 12.5px; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">The AI <span>Researcher</span></div>
+  <div>
+    <span class="user-badge" id="user-badge">—</span>
+    <button class="signout-btn" onclick="signOut()">Sign Out</button>
+  </div>
+</div>
+
+<div class="container">
+  <div class="page-title">Get started</div>
+  <div class="page-subtitle">
+    The AI Researcher runs on enterprise accounts. Either join an existing enterprise
+    with an invite code from your admin, or start a new one and invite your team.
+  </div>
+
+  <div class="cta-grid">
+    <!-- ── Join an existing enterprise ──────────────────────────────── -->
+    <div class="cta-card">
+      <div class="kicker">I already have an invite</div>
+      <h2>Join an enterprise</h2>
+      <p>Paste the invite code your enterprise admin shared with you. You'll be assigned a seat according to what they've allocated.</p>
+      <div class="form-row">
+        <input type="text" id="invite-code" placeholder="INVITE-CODE">
+        <button class="btn-secondary" onclick="joinEnterprise()">Join</button>
+      </div>
+      <div id="join-msg"></div>
+    </div>
+
+    <!-- ── Start a new enterprise ───────────────────────────────────── -->
+    <div class="cta-card primary">
+      <div class="kicker">I'm setting up my team</div>
+      <h2>Start an enterprise</h2>
+      <p>Create your organization and choose initial seat quantities. You become the enterprise owner.</p>
+      <ul>
+        <li>Admin seats manage members, billing, and everything else.</li>
+        <li>Engineer seats create challenges, build rubrics, and run the lab.</li>
+        <li>General User seats use the annotator and view results.</li>
+      </ul>
+      <button class="btn-primary" onclick="toggleWizard()">Start setup →</button>
+
+      <!-- Creation wizard -->
+      <div class="wizard" id="create-wizard">
+        <label>Organization name</label>
+        <input type="text" id="org-name" placeholder="e.g. Acme Research">
+
+        <label>Description <span style="font-weight:400;color:var(--muted);text-transform:none">(optional)</span></label>
+        <textarea id="org-desc" rows="2" placeholder="Short description of your team"></textarea>
+
+        <label>Seat allocation</label>
+        <div class="seat-grid">
+          <div class="seat-col">
+            <div class="name">Admin</div>
+            <div class="price">$450/mo · 500 cr</div>
+            <input type="number" id="q-admin" min="1" max="100" value="1" oninput="updateSummary()">
+          </div>
+          <div class="seat-col">
+            <div class="name">Engineer</div>
+            <div class="price">$250/mo · 300 cr</div>
+            <input type="number" id="q-engineer" min="0" max="100" value="0" oninput="updateSummary()">
+          </div>
+          <div class="seat-col">
+            <div class="name">General User</div>
+            <div class="price">$100/mo · 100 cr</div>
+            <input type="number" id="q-general" min="0" max="100" value="0" oninput="updateSummary()">
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px;">At least 1 admin seat is required — you'll hold it as the enterprise owner.</div>
+
+        <div class="summary" id="summary">
+          <div class="line"><span>Admin · <span id="s-admin-q">1</span></span><span id="s-admin-total">$450</span></div>
+          <div class="line"><span>Engineer · <span id="s-engineer-q">0</span></span><span id="s-engineer-total">$0</span></div>
+          <div class="line"><span>General · <span id="s-general-q">0</span></span><span id="s-general-total">$0</span></div>
+          <div class="line total"><span>Monthly total</span><span id="s-total">$450</span></div>
+          <div class="line" style="color:var(--muted);font-size:11px;margin-top:3px;"><span>Bundled credits this cycle</span><span id="s-credits">500 cr</span></div>
+        </div>
+
+        <button class="btn-primary" onclick="createEnterprise()" id="create-btn" style="margin-top:14px;width:100%;justify-content:center;">Continue to payment →</button>
+        <div id="create-msg"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pending invitations (if any) — surface after auth loads -->
+  <div class="pending-invites" id="pending-invites">
+    <h3>Pending project invitations</h3>
+    <div id="pending-invites-list">—</div>
+  </div>
+</div>
+
+<script>
+const SEATS = {
+  admin:    { price: 450, credits: 500 },
+  engineer: { price: 250, credits: 300 },
+  general:  { price: 100, credits: 100 },
+};
+
+async function signOut() {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  window.location.href = '/login';
+}
+
+// Auth gate: must be logged in. If user already has a seat, send them to /enterprise.
+(async function init() {
+  let me;
+  try {
+    const r = await fetch('/api/auth/me');
+    if (!r.ok) { window.location.href = '/login'; return; }
+    me = await r.json();
+  } catch { window.location.href = '/login'; return; }
+
+  document.getElementById('user-badge').textContent = me.display_name || me.email;
+
+  // Already has a seat? Go straight to the enterprise dashboard.
+  if (me.seat && me.seat.org_id) {
+    window.location.href = '/enterprise/' + me.seat.org_id;
+    return;
+  }
+
+  // Load pending project invites so we can surface them too.
+  loadPendingInvites();
+})();
+
+function toggleWizard() {
+  document.getElementById('create-wizard').classList.toggle('open');
+  updateSummary();
+}
+
+function updateSummary() {
+  const a = Math.max(1, parseInt(document.getElementById('q-admin').value    || '1', 10));
+  const e = Math.max(0, parseInt(document.getElementById('q-engineer').value || '0', 10));
+  const g = Math.max(0, parseInt(document.getElementById('q-general').value  || '0', 10));
+  document.getElementById('s-admin-q').textContent    = a;
+  document.getElementById('s-engineer-q').textContent = e;
+  document.getElementById('s-general-q').textContent  = g;
+  document.getElementById('s-admin-total').textContent    = '$' + (a * SEATS.admin.price);
+  document.getElementById('s-engineer-total').textContent = '$' + (e * SEATS.engineer.price);
+  document.getElementById('s-general-total').textContent  = '$' + (g * SEATS.general.price);
+  document.getElementById('s-total').textContent = '$' + (a*SEATS.admin.price + e*SEATS.engineer.price + g*SEATS.general.price);
+  document.getElementById('s-credits').textContent =
+    (a*SEATS.admin.credits + e*SEATS.engineer.credits + g*SEATS.general.credits) + ' cr';
+}
+
+async function createEnterprise() {
+  const name = document.getElementById('org-name').value.trim();
+  const desc = document.getElementById('org-desc').value.trim();
+  const a = parseInt(document.getElementById('q-admin').value, 10);
+  const e = parseInt(document.getElementById('q-engineer').value, 10);
+  const g = parseInt(document.getElementById('q-general').value, 10);
+  const msg = document.getElementById('create-msg');
+  msg.className = '';
+  if (!name) { msg.className = 'error'; msg.textContent = 'Organization name is required.'; return; }
+  if (a < 1) { msg.className = 'error'; msg.textContent = 'At least 1 admin seat is required.'; return; }
+
+  const btn = document.getElementById('create-btn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Creating…';
+  try {
+    const r = await fetch('/api/enterprise', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name, description: desc,
+        admin_qty: a, engineer_qty: e, general_qty: g,
+      }),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      msg.className = 'error';
+      msg.textContent = (body.detail && (body.detail.message || body.detail)) || `Error: ${r.status}`;
+      btn.disabled = false; btn.textContent = 'Continue to payment →';
+      return;
+    }
+    // Redirect to Stripe Checkout
+    window.location.href = body.checkout_url;
+  } catch (err) {
+    msg.className = 'error';
+    msg.textContent = 'Network error: ' + err.message;
+    btn.disabled = false; btn.textContent = 'Continue to payment →';
+  }
+}
+
+async function joinEnterprise() {
+  const code = document.getElementById('invite-code').value.trim();
+  const msg = document.getElementById('join-msg');
+  msg.className = '';
+  if (!code) { msg.className = 'error'; msg.textContent = 'Enter your invite code.'; return; }
+  try {
+    const r = await fetch('/api/orgs/join', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ invite_code: code }),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      msg.className = 'error';
+      msg.textContent = body.detail || `Error: ${r.status}`;
+      return;
+    }
+    msg.className = 'success';
+    msg.textContent = `Joined "${body.org_name}" as ${body.role}. Redirecting…`;
+    // Land them on the dashboard or enterprise page depending on seat type.
+    setTimeout(() => { window.location.href = '/dashboard'; }, 900);
+  } catch (err) {
+    msg.className = 'error';
+    msg.textContent = 'Network error: ' + err.message;
+  }
+}
+
+async function loadPendingInvites() {
+  try {
+    const r = await fetch('/api/projects/invitations');
+    if (!r.ok) return;
+    const invites = await r.json();
+    if (!invites || !invites.length) return;
+    const host = document.getElementById('pending-invites');
+    const list = document.getElementById('pending-invites-list');
+    list.innerHTML = invites.map(inv => `
+      <div class="invite-row">
+        <div class="meta"><strong>${escapeHtml(inv.project_name)}</strong><br>
+          <span style="color:var(--muted);font-size:11px;">from ${escapeHtml(inv.invited_by_name || inv.invited_by_email || '')}</span>
+        </div>
+        <button class="btn-secondary" style="padding:5px 12px;font-size:11px;" onclick="acceptInvite(${inv.id})">Accept</button>
+        <button class="btn-secondary" style="padding:5px 12px;font-size:11px;" onclick="rejectInvite(${inv.id})">Reject</button>
+      </div>`).join('');
+    host.classList.add('open');
+  } catch { /* non-fatal */ }
+}
+
+async function acceptInvite(id) {
+  await fetch(`/api/projects/invitations/${id}/accept`, { method: 'POST' });
+  loadPendingInvites();
+}
+async function rejectInvite(id) {
+  await fetch(`/api/projects/invitations/${id}/reject`, { method: 'POST' });
+  loadPendingInvites();
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>
