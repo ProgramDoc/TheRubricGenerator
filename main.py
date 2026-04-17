@@ -815,6 +815,138 @@ def require_admin(rubricgen_session: str | None) -> dict:
     return user
 
 
+# ─────────────────────────────────────────────
+# Enterprise seat gating
+# ─────────────────────────────────────────────
+def require_active_seat(user: dict, min_seat: str = "general",
+                        org_id: int | None = None) -> dict:
+    """Require the caller to hold at least `min_seat` access in an active
+    enterprise org. Returns {org_id, seat_type, is_owner}.
+
+    Contract:
+    - Platform admin (users.role='admin') bypasses all seat checks and gets a
+      synthetic {bypass: True} stub. This is Thomas/the operator, not an
+      enterprise admin.
+    - When ENTERPRISE_MODE=0 the entire check is a no-op that returns a
+      bypass stub regardless of seats. This lets the rest of the codebase
+      call require_active_seat freely today without changing behavior until
+      Phase 5 flips the flag on production.
+    - 402 {error:'no_active_seat', redirect:'/onboarding'} when the user has
+      no seat in any active/past_due org — the frontend intercepts globally.
+    - 403 {error:'insufficient_seat', required, held} when the user holds a
+      lower-ranked seat than required.
+    - If org_id is supplied, the check is scoped to that org. Otherwise we
+      pick the user's highest-ranked seat across all orgs they belong to.
+
+    past_due grace: we accept past_due subscriptions as active for a 7-day
+    grace window past current_period_end so transient payment failures don't
+    lock users out immediately.
+    """
+    # Platform admin bypass — the operator runs the site, not an enterprise.
+    if user.get("role") == "admin":
+        return {"org_id": None, "seat_type": "admin",
+                "is_owner": False, "bypass": True}
+
+    # Pre-flag no-op: until ENTERPRISE_MODE flips to "1", the gate returns a
+    # non-enforcing stub so existing flows keep working.
+    if not enterprise_mod.ENTERPRISE_MODE:
+        return {"org_id": None, "seat_type": "admin",
+                "is_owner": False, "bypass": True, "pre_flag": True}
+
+    conn = get_db()
+    try:
+        # Active == 'active' OR ('past_due' AND within 7-day grace). SQLite
+        # and Postgres both accept the julianday/NOW arithmetic below via the
+        # backend.db compat layer — we use a string comparison on ISO dates
+        # that works in both engines.
+        q = ("SELECT om.org_id, om.role AS seat_type, om.is_owner, "
+             "       es.status, es.current_period_end "
+             "  FROM org_members om "
+             "  JOIN enterprise_subscriptions es ON es.org_id=om.org_id "
+             " WHERE om.user_id=? "
+             "   AND es.status IN ('active','past_due')")
+        params: list = [user["id"]]
+        if org_id:
+            q += " AND om.org_id=?"
+            params.append(org_id)
+        rows = conn.execute(q, params).fetchall()
+    finally:
+        conn.close()
+
+    # Filter out past_due subs whose grace window has elapsed.
+    now = datetime.now(timezone.utc).isoformat()
+    grace_cutoff = (datetime.now(timezone.utc) - timedelta(days=-7)).isoformat()  # +7d
+    active_rows = []
+    for r in rows:
+        if r["status"] == "active":
+            active_rows.append(r)
+            continue
+        # past_due: check grace window
+        pe = r["current_period_end"] or ""
+        if pe and pe > now:
+            # Still within the billed period
+            active_rows.append(r)
+        elif pe and pe < grace_cutoff:
+            # Outside the 7-day grace — treat as locked out
+            continue
+        else:
+            # past_due but period_end not yet set, or within 7-day grace
+            active_rows.append(r)
+
+    if not active_rows:
+        raise HTTPException(
+            402,
+            {"error": "no_active_seat",
+             "redirect": "/onboarding",
+             "message": "You need an active enterprise seat to use this feature."},
+        )
+
+    # Pick the highest-ranked seat the user holds.
+    best = max(active_rows,
+               key=lambda r: enterprise_mod.SEAT_RANK.get(r["seat_type"], 0))
+    held_rank = enterprise_mod.SEAT_RANK.get(best["seat_type"], 0)
+    required_rank = enterprise_mod.SEAT_RANK.get(min_seat, 99)
+    if held_rank < required_rank:
+        raise HTTPException(
+            403,
+            {"error": "insufficient_seat",
+             "required": min_seat,
+             "held": best["seat_type"],
+             "message": f"This action requires a {min_seat} seat; you currently hold {best['seat_type']}."},
+        )
+    return {"org_id": best["org_id"],
+            "seat_type": best["seat_type"],
+            "is_owner": bool(best["is_owner"])}
+
+
+def _user_active_seats(user_id: int) -> list[dict]:
+    """Return a list of the user's active seats across all their orgs.
+    Used to populate the `seat` field on /api/auth/me. Returns [] if the
+    user has no active seats."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """SELECT om.org_id, om.role AS seat_type, om.is_owner,
+                      o.slug AS org_slug, o.name AS org_name,
+                      es.status
+                 FROM org_members om
+                 JOIN organizations o ON o.id = om.org_id
+            LEFT JOIN enterprise_subscriptions es ON es.org_id = om.org_id
+                WHERE om.user_id=?
+                ORDER BY om.is_owner DESC, om.role DESC""",
+            (user_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {"org_id": r["org_id"], "org_slug": r["org_slug"],
+         "org_name": r["org_name"], "seat_type": r["seat_type"],
+         "is_owner": bool(r["is_owner"]),
+         "subscription_status": r["status"] or "none"}
+        for r in rows
+    ]
+
+
 def _send_email(to: str, subject: str, body: str) -> None:
     """Send an email via SMTP. Raises HTTPException(500) on failure."""
     if not SMTP_HOST or not SMTP_USER or not SMTP_PASS:
@@ -1135,12 +1267,42 @@ def me(rubricgen_session: str | None = Cookie(default=None)):
     user = _get_user_from_token(rubricgen_session)
     if not user:
         raise HTTPException(401, "Not authenticated")
-    # Add avatar URL if avatar_path is set
+    # Avatar URL
     if user.get("avatar_path"):
         user["avatar_url"] = f"/api/auth/avatar/{user['id']}"
     else:
         user["avatar_url"] = None
     user.pop("avatar_path", None)
+
+    # Enterprise seat info. Frontend uses these to decide whether to redirect
+    # to /onboarding and to gate nav entries (e.g. show /enterprise link).
+    # Platform admin (role=='admin') is never considered to need onboarding.
+    seats = _user_active_seats(user["id"])
+    user["seats"] = seats
+    if seats:
+        # Pick the primary seat — owner if available, otherwise highest rank.
+        primary = next((s for s in seats if s["is_owner"]), None) or max(
+            seats, key=lambda s: enterprise_mod.SEAT_RANK.get(s["seat_type"], 0)
+        )
+        user["seat"] = {
+            "org_id":    primary["org_id"],
+            "org_slug":  primary["org_slug"],
+            "org_name":  primary["org_name"],
+            "seat_type": primary["seat_type"],
+            "is_owner":  primary["is_owner"],
+            "subscription_status": primary["subscription_status"],
+        }
+    else:
+        user["seat"] = None
+
+    # Onboarding is only required when the flag is on, the user isn't a
+    # platform admin, and they hold no seat.
+    user["needs_onboarding"] = (
+        enterprise_mod.ENTERPRISE_MODE
+        and user.get("role") != "admin"
+        and user["seat"] is None
+    )
+    user["enterprise_mode"] = enterprise_mod.ENTERPRISE_MODE
     return user
 
 
