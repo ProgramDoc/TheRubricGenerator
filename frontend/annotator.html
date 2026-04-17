@@ -548,11 +548,15 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
       <button class="tb-btn primary" style="flex:1;font-size:11px;padding:5px;background:#7c3aed;border-color:#7c3aed;" onclick="showBatchModal()">Run batch…</button>
       <button class="tb-btn" style="font-size:11px;padding:5px;" onclick="clearBatchSelection()">Clear</button>
     </div>
-    <select id="batch-move-select" onchange="onBatchMoveChange(this)" style="width:100%;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);color:#e2e8f0;border-radius:3px;padding:4px 6px;font-size:11px;font-family:inherit;cursor:pointer;">
+    <select id="batch-move-select" onchange="onBatchMoveChange(this)" style="width:100%;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);color:#e2e8f0;border-radius:3px;padding:4px 6px;font-size:11px;font-family:inherit;cursor:pointer;margin-bottom:4px;">
       <option value="">Move selected to project…</option>
       <option value="0">— Unassigned —</option>
       <!-- Project options populated by updateBatchBar() -->
     </select>
+    <button class="tb-btn" id="batch-delete-btn" onclick="deleteSelected()"
+      style="width:100%;font-size:11px;padding:5px;background:rgba(220,38,38,.18);border-color:rgba(220,38,38,.4);color:#fca5a5;">
+      ✕ Delete selected
+    </button>
   </div>
   <div id="upload-zone" onclick="document.getElementById('file-input').click()"
        ondragover="event.preventDefault()" ondrop="handleDrop(event)">
@@ -2647,6 +2651,40 @@ function updateBatchBar() {
     ).join('');
     moveSel.value = '';
   }
+}
+
+async function deleteSelected() {
+  const ids = [...batchSelected];
+  if (ids.length === 0) return;
+  const msg = ids.length === 1
+    ? 'Delete 1 paper? This also removes its annotations and stored PDF.'
+    : `Delete ${ids.length} papers? This also removes their annotations and stored PDFs.`;
+  if (!confirm(msg)) return;
+
+  const btn = document.getElementById('batch-delete-btn');
+  btn.disabled = true;
+  btn.textContent = 'Deleting…';
+  let failed = 0;
+  for (const pid of ids) {
+    try {
+      const r = await fetch(`/api/papers/${pid}`, { method: 'DELETE' });
+      if (!r.ok) failed++;
+    } catch(e) { failed++; }
+    // If the active paper was among them, clear the form panel
+    if (currentPaperId === pid) {
+      currentPaperId = null;
+      currentFilename = null;
+      resetForm();
+      document.getElementById('pdf-scroll').innerHTML =
+        '<div id="no-paper"><p>Upload a PDF from the sidebar to begin annotating</p></div>';
+      document.getElementById('save-status').textContent = 'no paper selected';
+    }
+  }
+  btn.disabled = false;
+  btn.textContent = '✕ Delete selected';
+  if (failed) alert(`${failed} of ${ids.length} deletions failed — check the console.`);
+  clearBatchSelection();
+  await loadPapersAndProjects();
 }
 
 async function onBatchMoveChange(selectEl) {
