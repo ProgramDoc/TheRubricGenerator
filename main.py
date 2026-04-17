@@ -45,6 +45,8 @@ from backend.self_improve import EXPERIMENTS_TABLE_SQL
 from backend import analytics as analytics_mod
 from backend.organizations import ORG_TABLES_SQL
 from backend import organizations as org_mod
+from backend.enterprise import ENTERPRISE_TABLES_SQL, seed_seat_types
+from backend import enterprise as enterprise_mod
 from backend.templates import TEMPLATE_TABLES_SQL
 from backend import templates as tmpl_mod
 from backend.search import SEARCH_TABLES_SQL
@@ -356,6 +358,11 @@ def init_db() -> None:
         """)
         # Phase 7: organizations
         conn.executescript(ORG_TABLES_SQL)
+        # Phase 7b: enterprise seat catalog + per-org subscriptions.
+        # Tables are inert until ENTERPRISE_MODE=1 wires them into gating
+        # (follow-up commits). Safe to create on every boot.
+        conn.executescript(ENTERPRISE_TABLES_SQL)
+        seed_seat_types(conn)
         # Phase 8: templates, community library, ground truth
         conn.executescript(TEMPLATE_TABLES_SQL)
         # Literature search
