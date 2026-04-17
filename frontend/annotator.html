@@ -1621,7 +1621,7 @@ function persistToSession(paperId) {
       spans:            JSON.parse(JSON.stringify(spans)),
       fieldAnnotations: JSON.parse(JSON.stringify(fieldAnnotations)),
     };
-    sessionStorage.setItem(ssKey(paperId), JSON.stringify(snapshot));
+    localStorage.setItem(ssKey(paperId), JSON.stringify(snapshot));
   } catch(e) {
     console.warn('sessionStorage write failed:', e);
   }
@@ -1630,7 +1630,7 @@ function persistToSession(paperId) {
 // Read from sessionStorage — returns null if nothing stored.
 function loadFromSession(paperId) {
   try {
-    const raw = sessionStorage.getItem(ssKey(paperId));
+    const raw = localStorage.getItem(ssKey(paperId));
     return raw ? JSON.parse(raw) : null;
   } catch(e) {
     return null;
@@ -1647,6 +1647,29 @@ function captureState(paperId) {
     spans:            JSON.parse(JSON.stringify(spans)),
     fieldAnnotations: JSON.parse(JSON.stringify(fieldAnnotations)),
   };
+}
+
+// Fire-and-forget save that survives page unload. Uses fetch keepalive so
+// the browser queues and delivers the request even as the tab is closing.
+function saveToBackendSync() {
+  if (!currentPaperId) return;
+  try {
+    const snapshot = captureState(currentPaperId);
+    const payload = {
+      data:              snapshot.formData,
+      spans:             snapshot.spans,
+      field_annotations: snapshot.fieldAnnotations,
+      version:           backendVersion,
+    };
+    const body = JSON.stringify(payload);
+    // keepalive bodies are capped at ~64KB; annotations are tiny so fine.
+    fetch(`/api/annotator/papers/${snapshot.paperId}/annotation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+      keepalive: true,
+    }).catch(() => {});
+  } catch(e) { /* best effort */ }
 }
 
 async function saveToBackend(snapshot, force = false) {
@@ -3124,15 +3147,29 @@ async function saveAnnotation() {
   loadPapersAndProjects();
 }
 
-// ── Persist to session on page unload (tab close / refresh) ───────────────
-window.addEventListener('beforeunload', () => {
-  if (currentPaperId) {
-    persistToSession(currentPaperId);
-  }
+// ── Persist on every way the page can go away ─────────────────────────────
+// beforeunload / pagehide cover tab close, refresh, and iframe removal (Lab
+// "Back to Chat"). visibilitychange covers "user tabbed away for a while".
+// All three flush the sessionStorage cache *and* fire a keepalive backend
+// save so in-flight edits aren't lost to the 1.5 s autosave debounce.
+function _flushAnnotationState() {
+  if (!currentPaperId) return;
+  persistToSession(currentPaperId);
+  saveToBackendSync();
+}
+window.addEventListener('beforeunload', _flushAnnotationState);
+window.addEventListener('pagehide',     _flushAnnotationState);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') _flushAnnotationState();
 });
 
 // ── Auth ──────────────────────────────────────────────────────────────────
 async function logout() {
+  // Flush any in-flight edits before the session disappears.
+  if (currentPaperId) {
+    clearTimeout(_autoSaveTimer);
+    try { await saveToBackend(captureState(currentPaperId), true); } catch(e) {}
+  }
   await fetch('/api/auth/logout', { method: 'POST' });
   window.location.href = '/login';
 }
