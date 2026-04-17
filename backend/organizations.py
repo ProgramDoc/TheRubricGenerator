@@ -12,7 +12,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from .db import IntegrityError
+from .db import IntegrityError, column_exists, is_postgres
 
 logger = logging.getLogger("rubricgen")
 
@@ -37,7 +37,8 @@ CREATE INDEX IF NOT EXISTS idx_org_domain ON organizations(domain);
 CREATE TABLE IF NOT EXISTS org_members (
     org_id    INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    role      TEXT    NOT NULL DEFAULT 'viewer' CHECK(role IN ('viewer','contributor','admin')),
+    role      TEXT    NOT NULL DEFAULT 'general' CHECK(role IN ('general','engineer','admin')),
+    is_owner  INTEGER NOT NULL DEFAULT 0,
     joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (org_id, user_id)
 );
@@ -78,8 +79,114 @@ CREATE TABLE IF NOT EXISTS org_leaderboard_cache (
 # Role hierarchy
 # ─────────────────────────────────────────────
 
-ROLE_RANK = {"viewer": 0, "contributor": 1, "admin": 2}
+ROLE_RANK = {"general": 1, "engineer": 2, "admin": 3}
 VALID_ROLES = set(ROLE_RANK.keys())
+
+# Legacy → seat vocabulary. Used during migration and for any stale DB row
+# that slipped through (e.g. a fresh import from a backup). Keep until the
+# Phase-5 cutover is deployed everywhere.
+LEGACY_ROLE_MAP = {"viewer": "general", "contributor": "engineer", "admin": "admin"}
+
+
+def migrate_to_seat_vocab(conn) -> None:
+    """Phase 1b migration: move org_members from the legacy viewer/contributor/
+    admin vocabulary to the seat-based general/engineer/admin vocabulary, and
+    add the ``is_owner`` column (backfilled from organizations.created_by).
+
+    Idempotent: guarded on the presence of the ``is_owner`` column, so re-running
+    on an already-migrated DB is a no-op.
+
+    Portability: handles the CHECK-constraint swap differently on PG vs SQLite.
+      - PostgreSQL: DROP+ADD the named CHECK constraint.
+      - SQLite: rebuild the table (SQLite doesn't allow altering CHECK in-place).
+
+    Callers: invoked from ``main.py:init_db()`` right after ``ORG_TABLES_SQL``
+    executes. Safe to run on boot; the guard skips the heavy work after the
+    first successful run.
+    """
+    # Idempotency guard — if is_owner already exists we've already migrated.
+    if column_exists(conn, "org_members", "is_owner"):
+        return
+
+    logger.info("Enterprise 1b migration: normalizing org_members role vocabulary…")
+
+    try:
+        # Ordering matters: the UPDATE to new values must run under the NEW
+        # CHECK, so on each backend we swap the constraint first, then update.
+        if is_postgres():
+            # Postgres: add column in place, swap CHECK constraint, then update
+            # values. `IF EXISTS` makes the DROP safe across environments where
+            # the constraint name may differ by history.
+            conn.execute(
+                "ALTER TABLE org_members ADD COLUMN is_owner INTEGER NOT NULL DEFAULT 0"
+            )
+            conn.execute(
+                "ALTER TABLE org_members "
+                "DROP CONSTRAINT IF EXISTS org_members_role_check"
+            )
+            conn.execute(
+                "ALTER TABLE org_members "
+                "ADD CONSTRAINT org_members_role_check "
+                "CHECK (role IN ('viewer','contributor','admin','general','engineer'))"
+            )
+            # Translate legacy values — allowed because the interim CHECK above
+            # accepts both vocabularies.
+            conn.execute("UPDATE org_members SET role='general'  WHERE role='viewer'")
+            conn.execute("UPDATE org_members SET role='engineer' WHERE role='contributor'")
+            # Tighten the CHECK to the new vocabulary only.
+            conn.execute(
+                "ALTER TABLE org_members DROP CONSTRAINT org_members_role_check"
+            )
+            conn.execute(
+                "ALTER TABLE org_members "
+                "ADD CONSTRAINT org_members_role_check "
+                "CHECK (role IN ('general','engineer','admin'))"
+            )
+            # Backfill is_owner from organizations.created_by.
+            conn.execute(
+                """UPDATE org_members SET is_owner=1
+                     WHERE (org_id, user_id) IN
+                           (SELECT id, created_by FROM organizations)"""
+            )
+        else:
+            # SQLite: CHECK constraints can't be altered in place — rebuild the
+            # table with the new CHECK and translate the role values inside the
+            # INSERT SELECT so they satisfy the new constraint on write. Row
+            # count is tiny (one per (org,user) pair), copy is cheap.
+            conn.executescript(
+                """
+                CREATE TABLE org_members_new (
+                    org_id    INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                    user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    role      TEXT    NOT NULL DEFAULT 'general'
+                              CHECK(role IN ('general','engineer','admin')),
+                    is_owner  INTEGER NOT NULL DEFAULT 0,
+                    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (org_id, user_id)
+                );
+                INSERT INTO org_members_new (org_id, user_id, role, is_owner, joined_at)
+                  SELECT om.org_id,
+                         om.user_id,
+                         CASE om.role
+                             WHEN 'viewer'      THEN 'general'
+                             WHEN 'contributor' THEN 'engineer'
+                             ELSE om.role                       -- 'admin' stays 'admin'
+                         END,
+                         CASE WHEN o.created_by = om.user_id THEN 1 ELSE 0 END,
+                         om.joined_at
+                    FROM org_members om
+                    LEFT JOIN organizations o ON o.id = om.org_id;
+                DROP TABLE org_members;
+                ALTER TABLE org_members_new RENAME TO org_members;
+                CREATE INDEX IF NOT EXISTS idx_om_user ON org_members(user_id);
+                """
+            )
+
+        conn.commit()
+        logger.info("Enterprise 1b migration: complete.")
+    except Exception as e:
+        logger.error("Enterprise 1b migration failed: %s", e)
+        raise
 
 
 def require_org_role(conn: sqlite3.Connection, org_id: int, user_id: int,
@@ -140,9 +247,12 @@ def create_organization(conn: sqlite3.Connection, creator_user_id: int,
                 (name, slug, description, domain, invite_code, creator_user_id),
             )
             org_id = cur.lastrowid
-            # Auto-add creator as admin
+            # Auto-add creator as admin + enterprise owner (is_owner=1).
+            # Exactly one owner per org; migrations / seat-swap logic rely on
+            # this invariant.
             conn.execute(
-                "INSERT INTO org_members (org_id, user_id, role) VALUES (?, ?, 'admin')",
+                "INSERT INTO org_members (org_id, user_id, role, is_owner) "
+                "VALUES (?, ?, 'admin', 1)",
                 (org_id, creator_user_id),
             )
             # Initialize org credits
@@ -256,7 +366,7 @@ def delete_organization(conn: sqlite3.Connection, org_id: int,
 # ─────────────────────────────────────────────
 
 def add_member(conn: sqlite3.Connection, org_id: int, requester_user_id: int,
-               email: str, role: str = "viewer") -> dict:
+               email: str, role: str = "general") -> dict:
     """Add a member by email. Requires admin role."""
     require_org_role(conn, org_id, requester_user_id, "admin")
 
@@ -377,13 +487,13 @@ def join_by_invite(conn: sqlite3.Connection, user_id: int,
 
     with conn:
         conn.execute(
-            "INSERT INTO org_members (org_id, user_id, role) VALUES (?, ?, 'viewer')",
+            "INSERT INTO org_members (org_id, user_id, role) VALUES (?, ?, 'general')",
             (org["id"], user_id),
         )
         conn.commit()
 
     logger.info("User %d joined org %d via invite code", user_id, org["id"])
-    return {"org_id": org["id"], "org_name": org["name"], "role": "viewer"}
+    return {"org_id": org["id"], "org_name": org["name"], "role": "general"}
 
 
 def join_by_domain(conn: sqlite3.Connection, user_id: int) -> list[dict]:
@@ -411,11 +521,11 @@ def join_by_domain(conn: sqlite3.Connection, user_id: int) -> list[dict]:
         if not existing:
             with conn:
                 conn.execute(
-                    "INSERT INTO org_members (org_id, user_id, role) VALUES (?, ?, 'viewer')",
+                    "INSERT INTO org_members (org_id, user_id, role) VALUES (?, ?, 'general')",
                     (org["id"], user_id),
                 )
                 conn.commit()
-            joined.append({"org_id": org["id"], "org_name": org["name"], "role": "viewer"})
+            joined.append({"org_id": org["id"], "org_name": org["name"], "role": "general"})
             logger.info("User %d auto-joined org %d via domain %s", user_id, org["id"], email_domain)
 
     return joined

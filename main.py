@@ -363,6 +363,11 @@ def init_db() -> None:
         # (follow-up commits). Safe to create on every boot.
         conn.executescript(ENTERPRISE_TABLES_SQL)
         seed_seat_types(conn)
+        # Phase 7c: one-shot migration of org_members from the legacy
+        # viewer/contributor/admin vocabulary to the seat-based
+        # general/engineer/admin vocabulary + add `is_owner` column.
+        # Idempotent (guarded on is_owner existence).
+        org_mod.migrate_to_seat_vocab(conn)
         # Phase 8: templates, community library, ground truth
         conn.executescript(TEMPLATE_TABLES_SQL)
         # Literature search
@@ -3875,7 +3880,7 @@ class OrgUpdatePayload(BaseModel):
 
 class OrgMemberPayload(BaseModel):
     email: str
-    role: str = "viewer"
+    role: str = "general"
 
 class OrgMemberRolePayload(BaseModel):
     role: str
@@ -3915,7 +3920,7 @@ def api_get_org(org_id: int, rubricgen_session: str | None = Cookie(default=None
     user = require_user(rubricgen_session)
     conn = get_db()
     try:
-        org_mod.require_org_role(conn, org_id, user["id"], "viewer")
+        org_mod.require_org_role(conn, org_id, user["id"], "general")
         return org_mod.get_organization(conn, org_id)
     finally:
         conn.close()
@@ -4012,7 +4017,7 @@ def api_org_balance(org_id: int, rubricgen_session: str | None = Cookie(default=
     user = require_user(rubricgen_session)
     conn = get_db()
     try:
-        org_mod.require_org_role(conn, org_id, user["id"], "viewer")
+        org_mod.require_org_role(conn, org_id, user["id"], "general")
         return bill.get_org_balance(conn, org_id)
     finally:
         conn.close()
@@ -4024,7 +4029,7 @@ def api_org_transactions(org_id: int, rubricgen_session: str | None = Cookie(def
     user = require_user(rubricgen_session)
     conn = get_db()
     try:
-        org_mod.require_org_role(conn, org_id, user["id"], "viewer")
+        org_mod.require_org_role(conn, org_id, user["id"], "general")
         return bill.list_org_transactions(conn, org_id)
     finally:
         conn.close()
@@ -4051,7 +4056,7 @@ def api_org_transfer(org_id: int, body: OrgTransferPayload, rubricgen_session: s
     user = require_user(rubricgen_session)
     conn = get_db()
     try:
-        org_mod.require_org_role(conn, org_id, user["id"], "contributor")
+        org_mod.require_org_role(conn, org_id, user["id"], "engineer")
         bill.transfer_credits_to_org(conn, user["id"], org_id, body.amount)
         return {"ok": True}
     finally:
@@ -4066,7 +4071,7 @@ def api_org_models(org_id: int, rubricgen_session: str | None = Cookie(default=N
     user = require_user(rubricgen_session)
     conn = get_db()
     try:
-        org_mod.require_org_role(conn, org_id, user["id"], "viewer")
+        org_mod.require_org_role(conn, org_id, user["id"], "general")
         from backend.models_registry import list_org_models
         return list_org_models(conn, org_id)
     finally:

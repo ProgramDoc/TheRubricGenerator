@@ -37,8 +37,8 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 .org-stat { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--blue); padding: 4px 10px; background: rgba(39,68,114,.08); border-radius: 4px; }
 .role-badge { font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 3px; text-transform: uppercase; letter-spacing: .05em; }
 .role-admin { background: rgba(124,58,237,.15); color: var(--purple); }
-.role-contributor { background: rgba(22,163,74,.15); color: var(--green); }
-.role-viewer { background: rgba(100,116,139,.15); color: var(--muted); }
+.role-engineer { background: rgba(22,163,74,.15); color: var(--green); }
+.role-general { background: rgba(100,116,139,.15); color: var(--muted); }
 
 .tab-bar { display: flex; border-bottom: 2px solid var(--border); margin-bottom: 20px; }
 .tab-btn { padding: 10px 20px; font-family: inherit; font-size: 13px; font-weight: 700; color: var(--muted); background: none; border: none; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; }
@@ -172,7 +172,7 @@ tbody tr:last-child td { border-bottom: none; }
           <div class="form-row">
             <div class="form-group"><label>Email</label><input type="email" id="invite-email" placeholder="user@example.com"></div>
             <div class="form-group" style="max-width:140px"><label>Role</label>
-              <select id="invite-role"><option value="viewer">Viewer</option><option value="contributor">Contributor</option><option value="admin">Admin</option></select>
+              <select id="invite-role"><option value="general">General User</option><option value="engineer">Engineer</option><option value="admin">Admin</option></select>
             </div>
             <button class="btn btn-primary" onclick="inviteMember()">Add</button>
           </div>
@@ -307,7 +307,7 @@ async function loadOrg() {
     document.getElementById('invite-link-box').style.display = '';
     document.getElementById('danger-zone').style.display = '';
     document.getElementById('billing-actions').style.display = '';
-  } else if (myRole === 'contributor') {
+  } else if (myRole === 'engineer') {
     document.getElementById('billing-actions').style.display = '';
   }
 
@@ -344,8 +344,8 @@ function renderMembers() {
       html += '<td>';
       if (m.user_id !== currentUser.id) {
         html += `<select onchange="changeRole(${m.user_id}, this.value)" style="font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:3px;">
-          <option value="viewer" ${m.role === 'viewer' ? 'selected' : ''}>Viewer</option>
-          <option value="contributor" ${m.role === 'contributor' ? 'selected' : ''}>Contributor</option>
+          <option value="general" ${m.role === 'general' ? 'selected' : ''}>General User</option>
+          <option value="engineer" ${m.role === 'engineer' ? 'selected' : ''}>Engineer</option>
           <option value="admin" ${m.role === 'admin' ? 'selected' : ''}>Admin</option>
         </select>
         <button class="btn btn-sm btn-danger" style="margin-left:6px" onclick="removeMember(${m.user_id})">Remove</button>`;

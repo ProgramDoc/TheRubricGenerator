@@ -573,7 +573,7 @@ async function loadOrgDropdown() {
     if (!r.ok) return;
     const orgs = await r.json();
     const sel = document.getElementById('f-org-id');
-    orgs.filter(o => o.role === 'contributor' || o.role === 'admin').forEach(o => {
+    orgs.filter(o => o.role === 'engineer' || o.role === 'admin').forEach(o => {
       const opt = document.createElement('option');
       opt.value = o.id; opt.textContent = o.name;
       sel.appendChild(opt);
