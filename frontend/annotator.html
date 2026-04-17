@@ -287,6 +287,39 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
   grid-column: 1 / -1; padding-left: 0; margin-top: 4px;
 }
 
+/* Per-row hint showing what the currently-selected type means */
+.schema-type-hint {
+  grid-column: 1 / -1; margin-top: 4px; font-size: 10.5px;
+  color: var(--muted); line-height: 1.45; font-style: italic;
+}
+
+/* Field-builder help card (Custom tab) — collapsible guidance for manual entry */
+.schema-help-card {
+  border: 1px solid #dbeafe; background: #f0f7ff; border-radius: 5px;
+  padding: 0; margin-bottom: 10px;
+}
+.schema-help-card > summary {
+  cursor: pointer; padding: 8px 10px; font-size: 11px; font-weight: 700;
+  color: var(--blue); list-style: none; user-select: none;
+}
+.schema-help-card > summary::-webkit-details-marker { display: none; }
+.schema-help-card > summary::before { content: '▸ '; font-size: 10px; margin-right: 2px; }
+.schema-help-card[open] > summary::before { content: '▾ '; }
+.schema-help-card > summary:hover { color: var(--navy); }
+.schema-help-body {
+  padding: 4px 12px 12px; font-size: 11.5px; line-height: 1.55; color: var(--text);
+  border-top: 1px solid #dbeafe;
+}
+.schema-help-body code {
+  background: #fff; border: 1px solid #dbeafe; padding: 1px 4px; border-radius: 3px;
+  font-family: 'IBM Plex Mono', monospace; font-size: 10.5px;
+}
+.schema-help-item { margin: 8px 0; }
+.schema-help-item .schema-help-label {
+  font-weight: 700; color: var(--navy); font-size: 11px;
+  text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px;
+}
+
 /* Saved-schema rows (Custom tab) — whole row is clickable to load a schema. */
 .saved-schema-row {
   display: flex; align-items: center; gap: 6px;
@@ -916,10 +949,74 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
       <div id="schema-builder" style="display:none;">
         <div style="font-size:10px;font-weight:700;color:var(--blue);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Proposed fields <span id="schema-field-count" style="color:var(--muted);font-family:'IBM Plex Mono',monospace;"></span></div>
 
+        <!-- ─── Help card: how to fill out each field ─────────────────────── -->
+        <details class="schema-help-card">
+          <summary>ℹ️ How to fill out each field</summary>
+          <div class="schema-help-body">
+            <p style="margin-bottom:8px;">
+              Each row defines <strong>one piece of information</strong> you want Claude to pull out of every paper.
+              Fill in the three text inputs, pick a type, and mark it required if it must be found in every paper.
+            </p>
+
+            <div class="schema-help-item">
+              <div class="schema-help-label">Label</div>
+              <div>A short, human-readable name shown in the Results tab and in CSV exports.
+                Write it the way you'd phrase it in a spreadsheet header. <em>Example:</em> <code>Sample size</code>,
+                <code>Primary outcome</code>, <code>Intervention dose</code>.</div>
+            </div>
+
+            <div class="schema-help-item">
+              <div class="schema-help-label">ID <span style="color:var(--muted);font-weight:400;">(snake_case)</span></div>
+              <div>A short machine-friendly identifier — lowercase letters, numbers, and underscores only.
+                Used as the column name in CSV exports and as the JSON key Claude returns.
+                <em>Example:</em> <code>sample_size</code>, <code>primary_outcome</code>, <code>intervention_dose</code>.
+                Must be unique within the schema.</div>
+            </div>
+
+            <div class="schema-help-item">
+              <div class="schema-help-label">Description</div>
+              <div>One-sentence hint telling Claude <strong>what to look for and where</strong>.
+                This is the most important field for accuracy — be specific. <em>Examples:</em><br>
+                <code>Total number of participants enrolled at randomization.</code><br>
+                <code>Pre-registered primary outcome (not secondary or exploratory).</code><br>
+                <code>Dose of the experimental intervention, including units.</code></div>
+            </div>
+
+            <div class="schema-help-item">
+              <div class="schema-help-label">Type</div>
+              <div>Tells Claude what kind of value to return. Pick the narrowest type that fits:
+                <ul style="margin:4px 0 0 18px;padding:0;">
+                  <li><code>text</code> — short free-form answer (a phrase or short sentence).</li>
+                  <li><code>textarea</code> — long free-form answer (multiple sentences).</li>
+                  <li><code>number</code> — a numeric value only (counts, percentages, durations, effect sizes).</li>
+                  <li><code>date</code> — a calendar date.</li>
+                  <li><code>select</code> — one of a small predefined set of options.
+                    When you pick this, an extra "Options" input appears — enter the allowed values
+                    as a comma-separated list (e.g. <code>RCT, cohort, case-control</code>).</li>
+                  <li><code>boolean</code> — yes/no question (Claude returns <code>true</code> or <code>false</code>).</li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="schema-help-item">
+              <div class="schema-help-label">Req. (required)</div>
+              <div>When checked, Claude must provide a value for this field on every paper.
+                Leave unchecked for fields that may not apply (e.g. "Blinding method" doesn't apply to
+                observational studies).</div>
+            </div>
+
+            <p style="margin-top:10px;color:var(--muted);">
+              Tip: Claude extracts better when Description is specific. "Number of participants" is vaguer than
+              "Total N enrolled at baseline (ITT population)." Don't write instructions for the AI here —
+              just describe the target piece of information.
+            </p>
+          </div>
+        </details>
+
         <div style="display:grid;grid-template-columns:1fr 90px 20px 22px;gap:4px;font-size:9.5px;color:var(--muted);text-transform:uppercase;padding:2px 0;border-bottom:1px solid var(--border);">
-          <span>Field · description</span>
-          <span>Type</span>
-          <span style="text-align:center;" title="Required">R</span>
+          <span title="Human label, snake_case ID, and one-sentence hint for the extractor">Label · ID · description</span>
+          <span title="What kind of value Claude should return">Type</span>
+          <span style="text-align:center;" title="Required — must be present on every paper">Req.</span>
           <span></span>
         </div>
         <div id="schema-fields"></div>
@@ -3471,25 +3568,52 @@ function renderSchemaBuilder() {
   }
   builder.style.display = 'block';
   count.textContent = '(' + _schemaFields.length + ')';
+  const TYPE_HINTS = {
+    text:     'Short free-form answer (a phrase or short sentence).',
+    textarea: 'Long free-form answer (multiple sentences).',
+    number:   'Numeric value only — counts, percentages, durations, effect sizes.',
+    date:     'A calendar date.',
+    select:   'One of a small predefined set. Enter the allowed values in the Options row.',
+    boolean:  'Yes / no. Claude returns true or false.',
+  };
   host.innerHTML = _schemaFields.map((f, i) => {
     const id = 'sf-' + i;
-    const typeOpts = ['text','textarea','number','date','select','boolean']
-      .map(t => `<option value="${t}" ${f.type === t ? 'selected' : ''}>${t}</option>`)
+    const typeOpts = Object.keys(TYPE_HINTS)
+      .map(t => `<option value="${t}" title="${TYPE_HINTS[t]}" ${f.type === t ? 'selected' : ''}>${t}</option>`)
       .join('');
     const showOpts = f.type === 'select';
+    const currentTypeHint = TYPE_HINTS[f.type] || '';
     return `
       <div class="schema-field-row" data-i="${i}">
         <div>
-          <input type="text" value="${escHtml(f.label || '')}" placeholder="Label" oninput="updateSchemaField(${i},'label',this.value)">
-          <input type="text" value="${escHtml(f.id || '')}" placeholder="snake_case_id" style="font-family:'IBM Plex Mono',monospace;font-size:10px;margin-top:2px;" oninput="updateSchemaField(${i},'id',this.value)">
-          <textarea placeholder="Short hint for the extractor" oninput="updateSchemaField(${i},'description',this.value)" style="margin-top:2px;">${escHtml(f.description || '')}</textarea>
+          <input type="text" value="${escHtml(f.label || '')}"
+                 placeholder="Label — e.g. Sample size"
+                 title="Human-readable name shown in Results and CSV exports."
+                 oninput="updateSchemaField(${i},'label',this.value)">
+          <input type="text" value="${escHtml(f.id || '')}"
+                 placeholder="snake_case_id — e.g. sample_size"
+                 title="Machine-friendly ID: lowercase letters, numbers, underscores. Used as the JSON key / CSV column name."
+                 style="font-family:'IBM Plex Mono',monospace;font-size:10px;margin-top:2px;"
+                 oninput="updateSchemaField(${i},'id',this.value)">
+          <textarea placeholder="Description — one sentence telling Claude what to look for. E.g. &quot;Total N enrolled at baseline.&quot;"
+                    title="One-sentence hint for Claude. Be specific about exactly what to extract."
+                    oninput="updateSchemaField(${i},'description',this.value)"
+                    style="margin-top:2px;">${escHtml(f.description || '')}</textarea>
         </div>
-        <select onchange="updateSchemaField(${i},'type',this.value);renderSchemaBuilder();">${typeOpts}</select>
-        <input type="checkbox" ${f.required ? 'checked' : ''} onchange="updateSchemaField(${i},'required',this.checked)" title="Required">
-        <button class="sfr-remove" onclick="removeSchemaField(${i})" title="Remove">✕</button>
+        <select title="Type — what kind of value Claude returns. Hover each option for details."
+                onchange="updateSchemaField(${i},'type',this.value);renderSchemaBuilder();">${typeOpts}</select>
+        <input type="checkbox" ${f.required ? 'checked' : ''}
+               onchange="updateSchemaField(${i},'required',this.checked)"
+               title="Required — Claude must provide a value on every paper. Leave unchecked for fields that may not apply.">
+        <button class="sfr-remove" onclick="removeSchemaField(${i})" title="Remove this field">✕</button>
         <div class="schema-options" style="${showOpts ? '' : 'display:none;'}">
-          <input type="text" value="${escHtml((f.options || []).join(', '))}" placeholder="comma-separated options" oninput="updateSchemaField(${i},'options',this.value.split(',').map(s=>s.trim()).filter(Boolean))" style="font-size:11px;">
+          <input type="text" value="${escHtml((f.options || []).join(', '))}"
+                 placeholder="Options — comma-separated allowed values, e.g. RCT, cohort, case-control"
+                 title="Allowed values for this select field. Claude will return exactly one of these."
+                 oninput="updateSchemaField(${i},'options',this.value.split(',').map(s=>s.trim()).filter(Boolean))"
+                 style="font-size:11px;">
         </div>
+        <div class="schema-type-hint">${escHtml(currentTypeHint)}</div>
       </div>`;
   }).join('');
   runBtn.disabled = !(batchSelected.size > 0 || currentPaperId);
