@@ -16,6 +16,7 @@ import smtplib
 import urllib.error
 import urllib.request
 from email.message import EmailMessage
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -4945,6 +4946,557 @@ def _refund_annotator(user: dict, amount: int, op: str, filename: str) -> None:
             rc.close()
     except Exception as refund_err:
         logger.error("Annotator refund failed: %s", refund_err)
+
+
+@app.get("/api/annotator/analytics")
+def api_annotator_analytics(project_id: int | None = None,
+                            paper_ids: str | None = None,
+                            rubricgen_session: str | None = Cookie(default=None),
+                            x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Aggregate analytics over a user's annotated papers.
+
+    Scope: ``project_id=N`` OR ``paper_ids=1,2,3``. Omit both for all-user.
+    """
+    user = require_user(rubricgen_session, x_api_key)
+    conn = get_db()
+    try:
+        return annotator_mod.build_analytics(conn, user["id"], project_id, paper_ids)
+    finally:
+        conn.close()
+
+
+# ─────────────────────────────────────────────
+# Custom-extraction schemas (user-defined field sets)
+# ─────────────────────────────────────────────
+
+class CustomSchemaSavePayload(BaseModel):
+    name: str
+    description: str = ""
+    fields: list[dict] = []
+
+
+class CustomSchemaRefinePayload(BaseModel):
+    fields: list[dict] = []
+    instruction: str
+
+
+class CustomSchemaParseTextPayload(BaseModel):
+    text: str
+
+
+class CustomSchemaRunPayload(BaseModel):
+    paper_ids: list[int] = []
+
+
+def _validate_schema_name(name: str) -> str:
+    name = (name or "").strip()
+    if not (1 <= len(name) <= 120):
+        raise HTTPException(400, "schema name must be 1–120 chars")
+    return name
+
+
+@app.post("/api/annotator/schemas/parse")
+async def api_annotator_schemas_parse(
+    file: UploadFile | None = File(default=None),
+    text: str | None = Form(default=None),
+    rubricgen_session: str | None = Cookie(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+):
+    """Propose extraction fields from an uploaded protocol (PDF) or pasted text."""
+    user = require_user(rubricgen_session, x_api_key)
+    conn = get_db()
+    try:
+        _annotator_ai_gate(conn, user,
+                           annotator_mod.CREDIT_COST_SCHEMA_PARSE,
+                           "Annotator schema parse")
+    finally:
+        conn.close()
+
+    try:
+        if file is not None:
+            content = await file.read()
+            if not content:
+                raise HTTPException(400, "uploaded file is empty")
+            fname = (file.filename or "").lower()
+            if fname.endswith(".pdf"):
+                fields = annotator_mod.parse_schema_from_pdf(content)
+            else:
+                # CSV / TXT / anything else: decode as text
+                try:
+                    text_body = content.decode("utf-8", errors="replace")
+                except Exception:
+                    raise HTTPException(400, "could not decode file as text")
+                fields = annotator_mod.parse_schema_from_text(text_body)
+        elif text is not None and text.strip():
+            fields = annotator_mod.parse_schema_from_text(text)
+        else:
+            raise HTTPException(400, "provide either 'file' or 'text'")
+        return {"proposed_fields": fields}
+    except HTTPException:
+        _refund_annotator(user, annotator_mod.CREDIT_COST_SCHEMA_PARSE, "schema-parse", "")
+        raise
+    except Exception as e:
+        _refund_annotator(user, annotator_mod.CREDIT_COST_SCHEMA_PARSE, "schema-parse", "")
+        logger.error("Schema parse failed: %s", e)
+        raise HTTPException(502, f"Schema parse failed: {e}")
+
+
+@app.post("/api/annotator/schemas/refine")
+def api_annotator_schemas_refine(body: CustomSchemaRefinePayload,
+                                 rubricgen_session: str | None = Cookie(default=None),
+                                 x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    conn = get_db()
+    try:
+        _annotator_ai_gate(conn, user,
+                           annotator_mod.CREDIT_COST_SCHEMA_REFINE,
+                           "Annotator schema refine")
+    finally:
+        conn.close()
+    try:
+        fields = annotator_mod.refine_schema(body.fields, body.instruction)
+        return {"proposed_fields": fields}
+    except HTTPException:
+        _refund_annotator(user, annotator_mod.CREDIT_COST_SCHEMA_REFINE, "schema-refine", "")
+        raise
+    except Exception as e:
+        _refund_annotator(user, annotator_mod.CREDIT_COST_SCHEMA_REFINE, "schema-refine", "")
+        logger.error("Schema refine failed: %s", e)
+        raise HTTPException(502, f"Schema refine failed: {e}")
+
+
+@app.get("/api/annotator/schemas")
+def api_annotator_schemas_list(rubricgen_session: str | None = Cookie(default=None),
+                               x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """SELECT id, name, description, fields_json, created_at
+                 FROM annotator_custom_schemas
+                WHERE user_id=? ORDER BY created_at DESC""",
+            (user["id"],),
+        ).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        try:
+            fields = json.loads(r["fields_json"] or "[]")
+        except Exception:
+            fields = []
+        out.append({
+            "id": r["id"], "name": r["name"],
+            "description": r["description"] or "",
+            "fields": fields, "field_count": len(fields),
+            "created_at": r["created_at"],
+        })
+    return out
+
+
+@app.post("/api/annotator/schemas", status_code=201)
+def api_annotator_schemas_create(body: CustomSchemaSavePayload,
+                                 rubricgen_session: str | None = Cookie(default=None),
+                                 x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    name = _validate_schema_name(body.name)
+    fields = annotator_mod.validate_custom_fields(body.fields)
+    conn = get_db()
+    try:
+        with conn:
+            try:
+                cur = conn.execute(
+                    """INSERT INTO annotator_custom_schemas
+                            (user_id, name, description, fields_json)
+                       VALUES (?, ?, ?, ?) RETURNING id""",
+                    (user["id"], name, (body.description or "").strip(),
+                     json.dumps(fields)),
+                )
+                sid = cur.lastrowid
+                conn.commit()
+            except IntegrityError:
+                raise HTTPException(409, f"schema name already exists: {name}")
+    finally:
+        conn.close()
+    return {"id": sid, "name": name, "fields": fields}
+
+
+@app.get("/api/annotator/schemas/{sid}")
+def api_annotator_schemas_get(sid: int,
+                              rubricgen_session: str | None = Cookie(default=None),
+                              x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    conn = get_db()
+    try:
+        row = conn.execute(
+            """SELECT id, name, description, fields_json, created_at
+                 FROM annotator_custom_schemas WHERE id=? AND user_id=?""",
+            (sid, user["id"]),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(404, "schema not found")
+    try:
+        fields = json.loads(row["fields_json"] or "[]")
+    except Exception:
+        fields = []
+    return {"id": row["id"], "name": row["name"],
+            "description": row["description"] or "",
+            "fields": fields, "created_at": row["created_at"]}
+
+
+@app.patch("/api/annotator/schemas/{sid}")
+def api_annotator_schemas_update(sid: int, body: CustomSchemaSavePayload,
+                                 rubricgen_session: str | None = Cookie(default=None),
+                                 x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    name = _validate_schema_name(body.name)
+    fields = annotator_mod.validate_custom_fields(body.fields)
+    conn = get_db()
+    try:
+        exists = conn.execute(
+            "SELECT id FROM annotator_custom_schemas WHERE id=? AND user_id=?",
+            (sid, user["id"]),
+        ).fetchone()
+        if not exists:
+            raise HTTPException(404, "schema not found")
+        with conn:
+            try:
+                conn.execute(
+                    """UPDATE annotator_custom_schemas
+                          SET name=?, description=?, fields_json=?
+                        WHERE id=? AND user_id=?""",
+                    (name, (body.description or "").strip(),
+                     json.dumps(fields), sid, user["id"]),
+                )
+                conn.commit()
+            except IntegrityError:
+                raise HTTPException(409, f"schema name already exists: {name}")
+    finally:
+        conn.close()
+    return {"id": sid, "name": name, "fields": fields}
+
+
+@app.delete("/api/annotator/schemas/{sid}")
+def api_annotator_schemas_delete(sid: int,
+                                 rubricgen_session: str | None = Cookie(default=None),
+                                 x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    conn = get_db()
+    try:
+        with conn:
+            conn.execute(
+                "DELETE FROM annotator_custom_schemas WHERE id=? AND user_id=?",
+                (sid, user["id"]),
+            )
+            conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+# ─────────────────────────────────────────────
+# Custom-extraction runs
+# ─────────────────────────────────────────────
+
+def _run_custom_extraction(user_id: int, is_admin: bool, run_id: int,
+                           fields: list[dict], paper_ids: list[int]) -> None:
+    """Execute a custom-extraction run. Safe to call from a background thread.
+
+    Writes ``results_json`` + ``status`` on completion, refunds per-paper on
+    failure. Each paper is isolated: a deleted paper or a flaky LLM call
+    fails just that row, not the whole run.
+    """
+    from backend import billing as bill_mod
+    per_paper_cost = annotator_mod.CREDIT_COST_CUSTOM_PREFILL
+    paper_results: dict[str, Any] = {}
+    refunded = 0
+
+    def _mark(status: str, payload: dict) -> None:
+        conn2 = get_db()
+        try:
+            with conn2:
+                conn2.execute(
+                    """UPDATE annotator_custom_runs
+                          SET status=?, results_json=?, credits_refunded=?,
+                              error_message=?, completed_at=CURRENT_TIMESTAMP
+                        WHERE id=?""",
+                    (status, json.dumps(payload), refunded,
+                     payload.get("error_message"), run_id),
+                )
+                conn2.commit()
+        finally:
+            conn2.close()
+
+    for pid in paper_ids:
+        paper_conn = get_db()
+        entry: dict[str, Any] = {"status": "error", "filename": None,
+                                 "fields": {}, "error": None,
+                                 "completed_at": None}
+        try:
+            try:
+                pdf_bytes, filename = annotator_mod.load_paper_pdf(
+                    paper_conn, PAPERS_DIR, pid, user_id, is_admin=is_admin
+                )
+                entry["filename"] = filename
+            except HTTPException as he:
+                code = getattr(he, "status_code", 0)
+                if code == 404:
+                    entry["status"] = "skipped_deleted"
+                elif code == 403:
+                    entry["status"] = "skipped_permission_denied"
+                else:
+                    entry["status"] = "error"
+                entry["error"] = str(he.detail)
+                entry["completed_at"] = datetime.now(timezone.utc).isoformat()
+                paper_results[str(pid)] = entry
+                if not is_admin:
+                    try:
+                        bill_mod.refund_credits(paper_conn, user_id,
+                                                per_paper_cost,
+                                                f"Refund: custom run {run_id} paper {pid}")
+                        refunded += per_paper_cost
+                    except Exception:
+                        pass
+                continue
+        finally:
+            paper_conn.close()
+
+        try:
+            extracted = annotator_mod.extract_custom_fields(pdf_bytes, fields)
+            entry["fields"] = extracted
+            entry["status"] = "ok"
+        except Exception as e:
+            logger.error("Custom extraction failed (run=%s paper=%s): %s",
+                         run_id, pid, e)
+            entry["status"] = "error"
+            entry["error"] = str(e)
+            if not is_admin:
+                refund_conn = get_db()
+                try:
+                    bill_mod.refund_credits(refund_conn, user_id,
+                                            per_paper_cost,
+                                            f"Refund: custom run {run_id} paper {pid}")
+                    refunded += per_paper_cost
+                except Exception:
+                    pass
+                finally:
+                    refund_conn.close()
+
+        entry["completed_at"] = datetime.now(timezone.utc).isoformat()
+        paper_results[str(pid)] = entry
+
+    _mark("complete", {"papers": paper_results})
+
+
+def _run_custom_extraction_async(user_id: int, is_admin: bool, run_id: int,
+                                 fields: list[dict], paper_ids: list[int]) -> None:
+    t = threading.Thread(
+        target=_run_custom_extraction,
+        args=(user_id, is_admin, run_id, fields, paper_ids),
+        daemon=True,
+        name=f"annotator-custom-run-{run_id}",
+    )
+    t.start()
+
+
+@app.post("/api/annotator/schemas/{sid}/run")
+def api_annotator_schemas_run(sid: int, body: CustomSchemaRunPayload,
+                              rubricgen_session: str | None = Cookie(default=None),
+                              x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    paper_ids = [int(p) for p in (body.paper_ids or [])]
+    if not paper_ids:
+        raise HTTPException(400, "paper_ids must be a non-empty list")
+    if len(paper_ids) > 100:
+        raise HTTPException(400, "at most 100 papers per run")
+
+    conn = get_db()
+    try:
+        # Load + validate schema
+        srow = conn.execute(
+            """SELECT id, name, description, fields_json
+                 FROM annotator_custom_schemas WHERE id=? AND user_id=?""",
+            (sid, user["id"]),
+        ).fetchone()
+        if not srow:
+            raise HTTPException(404, "schema not found")
+        try:
+            fields = json.loads(srow["fields_json"] or "[]")
+        except Exception:
+            raise HTTPException(500, "schema has invalid fields_json")
+        fields = annotator_mod.validate_custom_fields(fields)
+
+        # Ownership-check every paper so an attacker can't run over someone else's files.
+        placeholders = ",".join("?" * len(paper_ids))
+        owned = conn.execute(
+            f"SELECT id FROM papers WHERE user_id=? AND id IN ({placeholders})",
+            (user["id"], *paper_ids),
+        ).fetchall()
+        owned_ids = [r["id"] for r in owned]
+        missing = [p for p in paper_ids if p not in owned_ids]
+        if missing:
+            raise HTTPException(400, f"unknown or unowned paper ids: {missing}")
+
+        # Credit pre-flight
+        total_cost = len(paper_ids) * annotator_mod.CREDIT_COST_CUSTOM_PREFILL
+        is_admin = user.get("role") == "admin"
+        _annotator_ai_gate(conn, user, total_cost,
+                           f"Annotator custom run (schema {sid}, {len(paper_ids)} papers)")
+
+        snapshot = {"id": sid, "name": srow["name"],
+                    "description": srow["description"] or "",
+                    "fields": fields}
+        with conn:
+            cur = conn.execute(
+                """INSERT INTO annotator_custom_runs
+                        (user_id, schema_id, schema_snapshot_json, paper_ids_json,
+                         credit_cost, status)
+                   VALUES (?, ?, ?, ?, ?, 'running') RETURNING id""",
+                (user["id"], sid, json.dumps(snapshot),
+                 json.dumps(paper_ids), total_cost),
+            )
+            run_id = cur.lastrowid
+            conn.commit()
+    finally:
+        conn.close()
+
+    # Small runs finish inside the request; larger ones run in a background thread.
+    if len(paper_ids) <= 10:
+        _run_custom_extraction(user["id"], is_admin, run_id, fields, paper_ids)
+        return {"run_id": run_id, "status": "complete"}
+    _run_custom_extraction_async(user["id"], is_admin, run_id, fields, paper_ids)
+    return {"run_id": run_id, "status": "running"}
+
+
+@app.get("/api/annotator/runs")
+def api_annotator_runs_list(rubricgen_session: str | None = Cookie(default=None),
+                            x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """SELECT r.id, r.schema_id, r.schema_snapshot_json,
+                      r.paper_ids_json, r.status, r.credit_cost,
+                      r.credits_refunded, r.created_at, r.completed_at,
+                      s.name AS schema_name
+                 FROM annotator_custom_runs r
+            LEFT JOIN annotator_custom_schemas s ON s.id = r.schema_id
+                WHERE r.user_id = ?
+                ORDER BY r.created_at DESC LIMIT 50""",
+            (user["id"],),
+        ).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        try:
+            pids = json.loads(r["paper_ids_json"] or "[]")
+        except Exception:
+            pids = []
+        snap_name = r["schema_name"]
+        if not snap_name:
+            try:
+                snap = json.loads(r["schema_snapshot_json"] or "{}")
+                snap_name = snap.get("name", "(deleted schema)")
+            except Exception:
+                snap_name = "(deleted schema)"
+        out.append({
+            "id": r["id"], "schema_id": r["schema_id"],
+            "schema_name": snap_name,
+            "paper_count": len(pids), "status": r["status"],
+            "credit_cost": r["credit_cost"] or 0,
+            "credits_refunded": r["credits_refunded"] or 0,
+            "created_at": r["created_at"],
+            "completed_at": r["completed_at"],
+        })
+    return out
+
+
+@app.get("/api/annotator/runs/{rid}")
+def api_annotator_runs_get(rid: int,
+                           rubricgen_session: str | None = Cookie(default=None),
+                           x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    conn = get_db()
+    try:
+        row = conn.execute(
+            """SELECT id, schema_id, schema_snapshot_json, paper_ids_json,
+                      results_json, status, credit_cost, credits_refunded,
+                      error_message, created_at, completed_at
+                 FROM annotator_custom_runs WHERE id=? AND user_id=?""",
+            (rid, user["id"]),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(404, "run not found")
+    try:
+        snap = json.loads(row["schema_snapshot_json"] or "{}")
+    except Exception:
+        snap = {}
+    try:
+        results = json.loads(row["results_json"] or "{}")
+    except Exception:
+        results = {}
+    try:
+        pids = json.loads(row["paper_ids_json"] or "[]")
+    except Exception:
+        pids = []
+    return {
+        "id": row["id"],
+        "schema_id": row["schema_id"],
+        "schema": snap,
+        "paper_ids": pids,
+        "results": results,
+        "status": row["status"],
+        "credit_cost": row["credit_cost"] or 0,
+        "credits_refunded": row["credits_refunded"] or 0,
+        "error_message": row["error_message"],
+        "created_at": row["created_at"],
+        "completed_at": row["completed_at"],
+    }
+
+
+@app.get("/api/annotator/runs/{rid}.csv")
+def api_annotator_runs_csv(rid: int,
+                           rubricgen_session: str | None = Cookie(default=None),
+                           x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    conn = get_db()
+    try:
+        row = conn.execute(
+            """SELECT schema_snapshot_json, results_json
+                 FROM annotator_custom_runs WHERE id=? AND user_id=?""",
+            (rid, user["id"]),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(404, "run not found")
+    try:
+        snap = json.loads(row["schema_snapshot_json"] or "{}")
+        results = json.loads(row["results_json"] or "{}").get("papers", {})
+    except Exception:
+        raise HTTPException(500, "corrupt run data")
+
+    fields = snap.get("fields", [])
+    field_ids = [f["id"] for f in fields]
+    header = ["paper_id", "filename", "status"] + field_ids
+    rows_out: list[str] = [annotator_mod._csv_row(header)]
+    for pid_str, entry in results.items():
+        line = [pid_str, entry.get("filename", ""), entry.get("status", "")]
+        vals = entry.get("fields", {}) or {}
+        line += [vals.get(fid, "") for fid in field_ids]
+        rows_out.append(annotator_mod._csv_row(line))
+    schema_name = snap.get("name") or f"run_{rid}"
+    safe = (schema_name.replace('"', '') + "_" + str(rid) + ".csv").replace(" ", "_")
+    return StreamingResponse(
+        iter(rows_out),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{safe}"'},
+    )
 
 
 @app.get("/api/annotator/export.csv")
