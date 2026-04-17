@@ -20,7 +20,8 @@
 | Modify challenge scoring | `backend/challenges.py` (scoring functions + `run_challenge()`) |
 | Call an LLM | `backend/helpers.py` — `call_anthropic()`, `call_gemini()`, `call_openai_compatible()` |
 | Modify billing/credits | `backend/billing.py` |
-| Modify membership/storage limits | `backend/membership.py` |
+| **Modify enterprise seats** | `backend/enterprise.py` — seat catalog, Stripe subscription, per-org seat pool, webhook dispatch |
+| Modify membership/storage limits (legacy, being deprecated) | `backend/membership.py` — scheduled for deletion in the flag-flip commit |
 | Modify file storage (S3/local) | `backend/storage.py` |
 | Read/write paper PDF bytes | `backend/paper_files.py` (handles `storage_path` + legacy `disk_filename` fallback) |
 | Modify the annotator | `backend/annotator.py` (tables, field catalog, prompts, analytics) + `frontend/annotator.html` (3-pane UI + tabbed right pane) |
@@ -133,6 +134,56 @@ Challenges run on daemon threads (`threading.Thread`). Progress is logged to `ch
 | **Annotator iframe chrome** | When the annotator is opened from the Lab it loads in an iframe. Elements tagged `tb-chrome` in the annotator's topbar get hidden via `.in-iframe` CSS. Don't tag annotator-specific action buttons (Batch, Save, Export CSV) with `tb-chrome` or they'll disappear inside the Lab. |
 | **Annotator form tab must stay in DOM** | `renderSpans()` looks up `getElementById('spans-' + fieldName)`. The right-pane tabs use `display: none` to hide inactive panes — do NOT remove them from the DOM or span linking breaks. |
 | **LLM JSON parsing** | Use `backend/helpers.py:parse_json_response(raw)` — it strips markdown fences Claude sometimes wraps JSON in. Don't `json.loads` raw Anthropic output directly. |
+
+## Enterprise Seat Model (being rolled out; flag-gated)
+
+The legacy individual Free/Pro/Enterprise plans are being replaced by an enterprise-only, seat-based model. Rolled out in 5 commits (`1a`–`4b`) and gated behind `ENTERPRISE_MODE` (default `"0"` — inert). When `ENTERPRISE_MODE=1`, the system enforces seat-based access and the legacy `/api/membership/*` UI is dead.
+
+**Seat pricing** (source of truth: [backend/enterprise.py:SEAT_TYPES](backend/enterprise.py)):
+- **Admin** — $450/mo + 500 credit floor, rank 3 (full org control)
+- **Engineer** — $250/mo + 300 credit floor, rank 2 (create/run challenges, rubrics, lab, annotator)
+- **General** — $100/mo + 100 credit floor, rank 1 (annotator + view)
+
+**Stripe model:** one `Subscription` per org, three `SubscriptionItem`s (one per seat type) with quantity = purchased pool size. Stripe is the canonical source for quantities; our `enterprise_subscriptions` table mirrors state via webhook. Monthly bundled credits grant on `invoice.paid` via `_grant_monthly_credits`.
+
+**Distinct roles** — don't confuse them:
+- **Platform admin** (`users.role='admin'`) — Thomas, the operator. Bypasses every seat check. Unchanged by this rollout.
+- **Enterprise owner** — the user who created an enterprise org; `org_members.is_owner=1`. Unique per org. Controls billing (seat-qty changes, subscription cancel). Always holds an admin seat.
+- **Enterprise admin** — any member with `org_members.role='admin'`. Manages members + seat assignments but not billing cancellation.
+- **Engineer / General** seat-holders — their role is their seat type.
+
+**Role migration (Phase 1b, already shipped):** `org_members.role` moved from `{viewer, contributor, admin}` → `{general, engineer, admin}`. Migration function `organizations.migrate_to_seat_vocab(conn)` is idempotent, runs in `init_db`, works on both PG and SQLite. Legacy → new mapping: viewer→general, contributor→engineer, admin→admin. `is_owner` column added + backfilled from `organizations.created_by`.
+
+**Access gating:** `main.py:require_active_seat(user, min_seat, org_id)` sits next to `require_user`. When `ENTERPRISE_MODE=0` it's a no-op returning `{bypass:True, pre_flag:True}` — safe to call from anywhere today. When the flag flips:
+- Platform admin bypasses.
+- Unseated users get `402 {error:'no_active_seat', redirect:'/onboarding'}`.
+- Held seat ranked below `min_seat` gets `403 {error:'insufficient_seat', required, held}`.
+- `past_due` subs honored for 7 days past `current_period_end` (grace window).
+
+**Endpoints** (all in `main.py`, handlers in [backend/enterprise.py](backend/enterprise.py)):
+- `POST /api/enterprise` — create org + Stripe Checkout (caller becomes owner+admin seat)
+- `GET /api/enterprise/{org_id}` — consolidated state (org, sub, seats, credits)
+- `PATCH /api/enterprise/{org_id}/seats` — owner-only; adjusts subscription item qty
+- `POST /api/enterprise/{org_id}/members` — admin; 409 `pool_full`
+- `PATCH /api/enterprise/{org_id}/members/{user_id}` — admin; 409 `pool_full`, 403 if owner
+- `DELETE /api/enterprise/{org_id}/members/{user_id}` — admin; 403 if owner
+- `POST /api/enterprise/{org_id}/sync` — reconcile from Stripe after a webhook drop
+- Credit pack overage reuses `POST /api/orgs/{org_id}/billing/checkout` (existing)
+
+**Frontend:** `/onboarding` (`frontend/onboarding.html`) for unseated users — join with invite code or start an enterprise; `/enterprise/{id}` (`frontend/enterprise.html`) for owners + admin-seat users — seat pool management, members table, cost card. `frontend/billing.html` plan grid is gone; shows an enterprise banner that routes to `/enterprise/{id}` or `/onboarding` depending on seat state. `frontend/login.html:postAuthRedirect()` routes to `/onboarding` when `me.needs_onboarding` is true.
+
+**Required env vars:**
+- `STRIPE_PRICE_SEAT_ADMIN`, `STRIPE_PRICE_SEAT_ENGINEER`, `STRIPE_PRICE_SEAT_GENERAL` — set after running [scripts/setup_enterprise_stripe.py](scripts/setup_enterprise_stripe.py), which provisions the Products and Prices in Stripe and prints them for you to paste.
+- `ENTERPRISE_MODE=1` — flip this last, after cutover.
+
+**Cutover checklist (follow-up work, not yet shipped):**
+1. [scripts/setup_enterprise_stripe.py](scripts/setup_enterprise_stripe.py) — run against Stripe test, then live, paste env vars.
+2. [scripts/cancel_legacy_subscriptions.py](scripts/cancel_legacy_subscriptions.py) — dry-run first, then real run; marks every active Pro/Enterprise individual sub as `cancel_at_period_end=True`. Leaves accounts + data intact.
+3. **Endpoint gating audit** — add `require_active_seat(user, min_seat=…)` calls to every write endpoint. Suggested minimums: `engineer` for paper upload / challenge create / rubric generator / lab run / model register / project create; `general` for annotator routes / read endpoints; `admin` for org-settings mutation. This is currently the one material TODO before flag-flip — until it lands, `ENTERPRISE_MODE=1` doesn't actually restrict non-admin-seated users from write actions.
+4. **Nav sprinkle** — add `<a id="nav-enterprise" href="/enterprise" style="display:none">Enterprise</a>` to the ~18 remaining HTML files' topbar nav, plus a JS toggle `if (me.seat && (me.seat.is_owner || me.seat.seat_type === 'admin')) document.getElementById('nav-enterprise').style.display='';`.
+5. **402 global interceptor** — optional; today each page's `loadMe` / auth check already redirects on `me.needs_onboarding`. A shared fetch wrapper would catch 402s from mid-session API calls too.
+6. Delete `backend/membership.py` + `/api/membership/*` routes + `membership_plans` / `user_memberships` tables after a 30-day soak.
+7. Flip `ENTERPRISE_MODE=1` in Render env.
 
 ## OGAI Annotator
 
