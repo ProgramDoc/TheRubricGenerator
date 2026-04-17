@@ -67,9 +67,10 @@ def call_anthropic(messages: list, system: str, max_tokens: int = 4096,
         return data["content"][0]["text"]
     except urllib.error.HTTPError as e:
         body = e.read().decode()
+        # Keep vendor names in server logs for debugging …
         logger.error("Anthropic error: %s", body)
-        # Translate well-known Anthropic errors into user-facing messages so the
-        # annotator's batch log shows something actionable instead of raw JSON.
+        # … but scrub them from anything user-visible. The annotator UI treats
+        # the AI backend as a black-box extraction service.
         try:
             err = (json.loads(body) or {}).get("error") or {}
             err_msg = str(err.get("message") or "")
@@ -81,18 +82,20 @@ def call_anthropic(messages: list, system: str, max_tokens: int = 4096,
             m = re.search(r"(\d+)\s*tokens?\s*>\s*(\d+)", err_msg)
             if m:
                 friendly = (
-                    f"This paper is too large for Claude's context window "
-                    f"({int(m.group(1)):,} tokens vs {int(m.group(2)):,} limit). "
+                    f"This paper is too large for the AI model's input limit "
+                    f"({int(m.group(1)):,} tokens vs {int(m.group(2)):,} allowed). "
+                    "The system will try a text-only fallback automatically — "
+                    "if you see this message the fallback also failed. "
                     "Try uploading a smaller version (remove images or supplements), "
                     "or split the PDF and run on the main body only. Credits have been refunded."
                 )
             else:
                 friendly = (
-                    "This paper exceeds Claude's context window (~200k tokens). "
+                    "This paper exceeds the AI model's input limit. "
                     "Try uploading a smaller version or splitting the PDF. Credits have been refunded."
                 )
             raise HTTPException(413, friendly)
-        raise HTTPException(502, f"Anthropic API error: {body[:200]}")
+        raise HTTPException(502, f"Extraction service error: {body[:200]}")
 
 
 def call_gemini(system: str, user_text: str, model: str, pdf_b64: str | None = None,
@@ -124,13 +127,13 @@ def call_gemini(system: str, user_text: str, model: str, pdf_b64: str | None = N
             data = json.loads(resp.read())
         candidates = data.get("candidates", [])
         if not candidates:
-            raise HTTPException(502, f"Gemini returned no candidates: {str(data)[:200]}")
+            raise HTTPException(502, f"AI service returned no candidates: {str(data)[:200]}")
         parts_out = candidates[0].get("content", {}).get("parts", [])
         return "".join(p.get("text", "") for p in parts_out)
     except urllib.error.HTTPError as e:
         body = e.read().decode()
         logger.error("Gemini error: %s", body)
-        raise HTTPException(502, f"Gemini API error: {body[:200]}")
+        raise HTTPException(502, f"AI service error: {body[:200]}")
 
 
 def call_openai(messages: list, model: str, max_tokens: int = 4096) -> str:

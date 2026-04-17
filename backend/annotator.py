@@ -504,18 +504,26 @@ CREDIT_COST_CUSTOM_PREFILL = 8  # per paper; mirrors prefill cost
 
 
 # ─────────────────────────────────────────────
-# Anthropic call with PDF attachment
+# AI call with PDF attachment + multi-stage fallback for oversized papers
 # ─────────────────────────────────────────────
-_ANTHROPIC_PDF_BYTE_LIMIT = 32 * 1024 * 1024  # 32 MB — hard limit on Anthropic's PDF beta
-_TEXT_FALLBACK_CHAR_LIMIT = 500_000  # ~125k tokens — leaves headroom under the 200k ceiling
+# User-facing error messages here deliberately avoid vendor names (Claude,
+# Anthropic, etc.). The annotator treats the AI backend as a black-box
+# "extraction service" from the user's perspective. Vendor details stay in
+# server logs for debugging.
+
+_PDF_UPLOAD_BYTE_LIMIT = 32 * 1024 * 1024   # 32 MB — hard limit on the PDF upload
+_CHUNK_CHAR_SIZE = 300_000                   # ~75k tokens per chunk — plenty of headroom
+_CHUNK_OVERLAP  = 8_000                      # trailing chars repeated in the next chunk
+_MAX_CHUNKS     = 8                          # ceiling on total parallel calls per paper
+_MAX_CHUNK_WORKERS = 4                       # parallel in-flight calls
 
 
 def _extract_pdf_text(pdf_bytes: bytes) -> str:
     """Extract plain text from a PDF using pypdf.
 
-    Used as a fallback when the PDF-as-document path blows Claude's context
-    window (often because the PDF carries lots of high-res images). The text
-    of a paper almost always fits even when the image-laden document doesn't.
+    Used when the PDF-as-document path blows the AI's input limit (often on
+    image-heavy papers). The plain text of a paper almost always fits even
+    when the image-laden document doesn't.
     """
     try:
         import io
@@ -530,7 +538,7 @@ def _extract_pdf_text(pdf_bytes: bytes) -> str:
     except Exception as e:
         raise HTTPException(400, f"could not parse PDF for text fallback: {e}")
 
-    chunks: list[str] = []
+    pages: list[str] = []
     for i, page in enumerate(reader.pages, start=1):
         try:
             text = page.extract_text() or ""
@@ -538,38 +546,157 @@ def _extract_pdf_text(pdf_bytes: bytes) -> str:
             text = ""
         text = text.strip()
         if text:
-            chunks.append(f"=== Page {i} ===\n{text}")
-    body = "\n\n".join(chunks).strip()
+            pages.append(f"=== Page {i} ===\n{text}")
+    body = "\n\n".join(pages).strip()
     if not body:
         raise HTTPException(
             413,
-            "Paper exceeds Claude's context window and no extractable text was found "
+            "Paper exceeds the AI model's input limit and no extractable text was found "
             "(likely a scanned image-only PDF). Try OCR'ing the paper first. Credits refunded."
         )
-    if len(body) > _TEXT_FALLBACK_CHAR_LIMIT:
-        # Conservative truncation — still leaves plenty of room for the prompt.
-        body = body[:_TEXT_FALLBACK_CHAR_LIMIT] + "\n\n[… truncated at 500,000 chars for fallback …]"
     return body
 
 
-def _call_with_pdf(pdf_bytes: bytes, prompt: str, max_tokens: int = 4096) -> dict:
-    """Send the PDF as a base64 document block alongside the text prompt.
+def _chunk_text(text: str, chunk_size: int = _CHUNK_CHAR_SIZE,
+                overlap: int = _CHUNK_OVERLAP) -> list[str]:
+    """Split text into overlapping character-windowed chunks.
 
-    ``call_anthropic`` in ``helpers.py`` already sets the ``pdfs-2024-09-25`` beta
-    header, so we just need to format the message content blocks.
-
-    Defensive behaviour:
-    - Hard 32 MB byte-size limit (Anthropic rejects anything larger).
-    - If Anthropic returns a context-window 413 (usually on image-heavy PDFs),
-      we extract the PDF's text with pypdf and retry as a text-only prompt.
-      Typical image-heavy papers are ~200k tokens as a document but well under
-      100k tokens as plain text, so the fallback succeeds in most cases.
+    Overlap preserves cross-boundary context (a sentence that starts in one
+    chunk and finishes in the next is still visible to both extractors).
     """
-    if len(pdf_bytes) > _ANTHROPIC_PDF_BYTE_LIMIT:
+    if len(text) <= chunk_size:
+        return [text]
+    chunks: list[str] = []
+    start = 0
+    while start < len(text):
+        end = min(start + chunk_size, len(text))
+        chunks.append(text[start:end])
+        if end >= len(text):
+            break
+        start = max(end - overlap, start + 1)
+    return chunks
+
+
+def _text_only_call(text: str, prompt: str, max_tokens: int, *,
+                    chunk_idx: int | None = None, chunk_total: int | None = None) -> dict:
+    """Send prompt + paper text (no PDF document block) and parse JSON response."""
+    context_note = (
+        "NOTE: This paper was too large to attach as a PDF, so only its extracted "
+        "plain text is provided below (figures and images are not visible)."
+    )
+    if chunk_total and chunk_total > 1:
+        context_note += (
+            f" You are seeing chunk {chunk_idx}/{chunk_total} of the paper. "
+            "If a field is not present in this chunk, omit it from your JSON response."
+        )
+    full_prompt = (
+        f"{context_note}\n\n{prompt}\n\n"
+        "=====  PAPER TEXT  =====\n"
+        f"{text}"
+    )
+    messages = [{"role": "user",
+                 "content": [{"type": "text", "text": full_prompt}]}]
+    raw = call_anthropic(messages, system="", max_tokens=max_tokens)
+    return parse_json_response(raw)
+
+
+def _merge_extractions(results: list[dict]) -> dict:
+    """Reduce: per key, first non-empty value across chunks wins.
+
+    Scientific papers typically state each fact in one place, so first-hit
+    merging matches how a reviewer would read. For fields with disagreement
+    we take the earliest chunk's answer — earlier chunks contain abstract,
+    methods, and results, where authoritative values usually live.
+    """
+    merged: dict = {}
+    for r in results:
+        if not isinstance(r, dict):
+            continue
+        for k, v in r.items():
+            cur = merged.get(k)
+            cur_empty = cur in (None, "", [], {}, 0, "0")
+            new_empty = v in (None, "", [], {})
+            if new_empty:
+                continue
+            if k not in merged or cur_empty:
+                merged[k] = v
+    return merged
+
+
+def _extract_chunked(text: str, prompt: str, max_tokens: int, *,
+                     first_chunk_only: bool = False) -> dict:
+    """Map-reduce extraction over chunked paper text.
+
+    first_chunk_only=True is for tasks (like study-design classification)
+    that need global context; we only send the first chunk — usually abstract
+    + introduction — and don't merge.
+
+    Otherwise we run one extraction per chunk in parallel and merge the
+    per-field values.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    chunks = _chunk_text(text)
+    if first_chunk_only:
+        chunks = chunks[:1]
+    if len(chunks) > _MAX_CHUNKS:
+        logger.warning("Paper produced %d chunks — truncating to %d to bound cost",
+                       len(chunks), _MAX_CHUNKS)
+        chunks = chunks[:_MAX_CHUNKS]
+
+    if len(chunks) == 1:
+        return _text_only_call(chunks[0], prompt, max_tokens,
+                               chunk_idx=1, chunk_total=1)
+
+    logger.info("Extraction running on %d chunks in parallel", len(chunks))
+    results: list[dict] = []
+    errors: list[str] = []
+    with ThreadPoolExecutor(max_workers=min(_MAX_CHUNK_WORKERS, len(chunks))) as pool:
+        futures = {
+            pool.submit(_text_only_call, c, prompt, max_tokens,
+                        chunk_idx=i + 1, chunk_total=len(chunks)): i
+            for i, c in enumerate(chunks)
+        }
+        for f in as_completed(futures):
+            try:
+                results.append(f.result())
+            except Exception as e:
+                idx = futures[f]
+                errors.append(f"chunk {idx + 1}: {e}")
+                logger.warning("Chunk %d extraction failed: %s", idx + 1, e)
+
+    if not results:
+        raise HTTPException(
+            502,
+            "Large-paper extraction failed on every chunk. " + (errors[0] if errors else "")
+        )
+    merged = _merge_extractions(results)
+    if errors:
+        logger.info("Chunked extraction merged %d/%d chunks; %d errored",
+                    len(results), len(chunks), len(errors))
+    return merged
+
+
+def _call_with_pdf(pdf_bytes: bytes, prompt: str, max_tokens: int = 4096, *,
+                   classification_mode: bool = False) -> dict:
+    """Send the PDF as a base64 document block + text prompt. Handles oversized
+    papers by falling back through a multi-stage pipeline:
+
+    1) PDF-as-document — the fast path; works for most papers.
+    2) If that blows the AI's input limit, extract PDF text with pypdf.
+    3) If the text fits in a single call, send it as one text-only prompt.
+    4) Otherwise split into overlapping 300k-char chunks, run them in
+       parallel (max 4 workers, 8 chunks total), and merge the per-field
+       results. Classification tasks (classification_mode=True) only run on
+       the first chunk since study design is a paper-level property.
+
+    ``call_anthropic`` in ``helpers.py`` already sets the PDF beta header.
+    """
+    if len(pdf_bytes) > _PDF_UPLOAD_BYTE_LIMIT:
         size_mb = len(pdf_bytes) / (1024 * 1024)
         raise HTTPException(
             413,
-            f"PDF is {size_mb:.1f} MB — Anthropic's 32 MB upload limit exceeded. "
+            f"PDF is {size_mb:.1f} MB — exceeds the extractor's 32 MB upload limit. "
             "Try compressing the PDF (remove images/supplements) or splitting it into smaller files. "
             "Credits have been refunded."
         )
@@ -584,30 +711,25 @@ def _call_with_pdf(pdf_bytes: bytes, prompt: str, max_tokens: int = 4096) -> dic
     }]
     try:
         raw = call_anthropic(messages, system="", max_tokens=max_tokens)
+        return parse_json_response(raw)
     except HTTPException as e:
-        # 413 from call_anthropic means the PDF-as-document blew the context window.
-        # Fall back to text extraction and retry once.
-        if e.status_code == 413 and "context window" in str(e.detail).lower():
-            logger.warning("PDF too large for context window (%d bytes) — trying text fallback",
-                           len(pdf_bytes))
-            body = _extract_pdf_text(pdf_bytes)  # may itself raise 413
-            fallback_prompt = (
-                "NOTE: This paper was too large to send as a PDF, so only its extracted "
-                "plain text is attached below (figures/tables may be missing).\n\n"
-                f"{prompt}\n\n"
-                "=====  PAPER TEXT  =====\n"
-                f"{body}"
-            )
-            text_messages = [{"role": "user",
-                              "content": [{"type": "text", "text": fallback_prompt}]}]
-            raw = call_anthropic(text_messages, system="", max_tokens=max_tokens)
-        else:
+        # 413 from call_anthropic means the PDF-as-document blew the input limit.
+        # Escalate to the chunked-text fallback pipeline.
+        is_context_error = e.status_code == 413 and "input limit" in str(e.detail).lower()
+        if not is_context_error:
             raise
-    return parse_json_response(raw)
+        logger.warning("PDF (%d bytes) exceeds input limit — entering chunked-text fallback",
+                       len(pdf_bytes))
+        body = _extract_pdf_text(pdf_bytes)  # may itself raise 413 for OCR cases
+        return _extract_chunked(body, prompt, max_tokens,
+                                first_chunk_only=classification_mode)
 
 
 def classify_study_design(pdf_bytes: bytes) -> dict:
-    result = _call_with_pdf(pdf_bytes, build_classify_prompt())
+    # Classification is a paper-level property; if we fall back to chunks,
+    # we only need the abstract + intro, so set classification_mode=True.
+    result = _call_with_pdf(pdf_bytes, build_classify_prompt(),
+                            classification_mode=True)
     allowed = {"major_category", "subcategory", "study_type"}
     filtered = {k: str(v) for k, v in result.items() if k in allowed}
     if "study_type" not in filtered:
@@ -943,7 +1065,11 @@ def parse_schema_from_pdf(pdf_bytes: bytes) -> list[dict]:
         "information from matching research papers.\n\n"
         f"{_schema_fields_prompt_suffix()}"
     )
-    result = _call_with_pdf(pdf_bytes, prompt, max_tokens=4096)
+    # Schema *proposal* is a one-shot holistic task — chunk-and-merge doesn't
+    # apply (we want a single field list, not N partial lists to reconcile).
+    # If the protocol PDF is oversized we use only the first chunk.
+    result = _call_with_pdf(pdf_bytes, prompt, max_tokens=4096,
+                            classification_mode=True)
     fields = result.get("proposed_fields") or []
     # Re-validate so the UI always sees a clean shape.
     return validate_custom_fields(fields)
