@@ -544,10 +544,15 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
   <div id="project-list"></div>
   <div id="batch-bar" style="display:none;padding:10px 10px 6px;border-top:1px solid rgba(255,255,255,.06);background:rgba(124,58,237,.12);">
     <div style="font-size:10px;font-weight:700;color:#c4b5fd;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em;"><span id="batch-count">0</span> selected</div>
-    <div style="display:flex;gap:4px;">
+    <div style="display:flex;gap:4px;margin-bottom:6px;">
       <button class="tb-btn primary" style="flex:1;font-size:11px;padding:5px;background:#7c3aed;border-color:#7c3aed;" onclick="showBatchModal()">Run batch…</button>
       <button class="tb-btn" style="font-size:11px;padding:5px;" onclick="clearBatchSelection()">Clear</button>
     </div>
+    <select id="batch-move-select" onchange="onBatchMoveChange(this)" style="width:100%;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);color:#e2e8f0;border-radius:3px;padding:4px 6px;font-size:11px;font-family:inherit;cursor:pointer;">
+      <option value="">Move selected to project…</option>
+      <option value="0">— Unassigned —</option>
+      <!-- Project options populated by updateBatchBar() -->
+    </select>
   </div>
   <div id="upload-zone" onclick="document.getElementById('file-input').click()"
        ondragover="event.preventDefault()" ondrop="handleDrop(event)">
@@ -2468,15 +2473,32 @@ function buildPaperItem(p, projLabel) {
     div.appendChild(meta);
   }
 
-  // Row 3: status chip
+  // Row 3: status chip + move-to-project
   const bottomRow = document.createElement('div');
   bottomRow.style.cssText = 'display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:4px;';
   const chip = document.createElement('span');
   chip.className = 'pi-chip ' + (done ? 'done' : 'none');
   chip.textContent = done ? (p.ann_status === 'complete' ? 'complete' : p.ann_status) : 'pending';
   bottomRow.appendChild(chip);
-  div.appendChild(bottomRow);
 
+  // Move-to-project dropdown (visible on hover — same `.move-select` styling as before)
+  const sel = document.createElement('select');
+  sel.className = 'move-select';
+  sel.title = 'Move to project';
+  sel.innerHTML = `<option value="">move to…</option>
+    <option value="0">— Unassigned —</option>
+    ${allProjects.map(proj =>
+      `<option value="${proj.id}" ${p.project_id === proj.id ? 'selected' : ''}>${escHtml(proj.name)}</option>`
+    ).join('')}`;
+  sel.addEventListener('change', ev => {
+    ev.stopPropagation();
+    const val = ev.target.value;
+    if (val !== '') assignPaperToProject(p.id, val === '0' ? null : parseInt(val));
+  });
+  sel.addEventListener('click', ev => ev.stopPropagation());
+  bottomRow.appendChild(sel);
+
+  div.appendChild(bottomRow);
   return div;
 }
 
@@ -2614,6 +2636,39 @@ function updateBatchBar() {
   if (count) count.textContent = n;
   const btn = document.getElementById('batch-btn');
   if (btn) btn.disabled = n === 0;
+
+  // Refresh the project options on the bulk-move select (preserve the "Move to…" placeholder)
+  const moveSel = document.getElementById('batch-move-select');
+  if (moveSel && n > 0) {
+    const baseOpts = '<option value="">Move selected to project…</option>'
+                   + '<option value="0">— Unassigned —</option>';
+    moveSel.innerHTML = baseOpts + allProjects.map(proj =>
+      `<option value="${proj.id}">${escHtml(proj.name)}</option>`
+    ).join('');
+    moveSel.value = '';
+  }
+}
+
+async function onBatchMoveChange(selectEl) {
+  const val = selectEl.value;
+  if (val === '') return;
+  const projectId = val === '0' ? null : parseInt(val);
+  const ids = [...batchSelected];
+  selectEl.disabled = true;
+  selectEl.value = '';
+  try {
+    for (const pid of ids) {
+      await fetch(`/api/papers/${pid}/assign`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: projectId }),
+      });
+    }
+  } finally {
+    selectEl.disabled = false;
+  }
+  clearBatchSelection();
+  await loadPapersAndProjects();
 }
 
 function populateBatchGroups() {
