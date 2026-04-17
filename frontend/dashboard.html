@@ -121,6 +121,20 @@ tbody tr:last-child td { border-bottom: none; }
 .status-failed { background: #fee2e2; color: #b91c1c; }
 
 .empty { padding: 24px; text-align: center; color: var(--muted); font-size: 11.5px; }
+
+.papers-card { margin-top: 16px; }
+.paper-actions-bar { display: flex; align-items: center; gap: 8px; }
+.paper-upload-btn {
+  background: var(--blue); color: #fff; border: 1px solid var(--blue);
+  border-radius: 5px; padding: 5px 10px; font-family: inherit; font-size: 10.5px;
+  font-weight: 600; cursor: pointer;
+}
+.paper-upload-btn:hover { background: var(--navy); }
+.paper-upload-btn[disabled] { opacity: .6; pointer-events: none; }
+.paper-row-actions { display: flex; gap: 10px; }
+.paper-row-actions a { font-size: 10.5px; color: var(--blue); text-decoration: none; font-weight: 600; }
+.paper-row-actions a:hover { text-decoration: underline; }
+.paper-row-actions .danger { color: var(--red); cursor: pointer; }
 .nav-dropdown { position: relative; display: inline-block; }
 .nav-dropdown > a { cursor: default; }
 .nav-dropdown-menu { display: none; position: absolute; top: 100%; left: 0; min-width: 160px; background: var(--navy); border: 1px solid rgba(255,255,255,.15); border-radius: 6px; padding: 4px 0; margin-top: 4px; z-index: 50; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
@@ -258,6 +272,18 @@ tbody tr:last-child td { border-bottom: none; }
         <div id="top-models"><div class="empty">Loading…</div></div>
       </div>
     </div>
+
+    <div class="card papers-card">
+      <div class="card-header">
+        <h2 id="papers-card-title">Papers</h2>
+        <div class="paper-actions-bar">
+          <input type="file" id="paper-upload-input" accept="application/pdf" style="display:none" onchange="uploadPaperToProject()">
+          <button class="paper-upload-btn" id="paper-upload-btn" onclick="document.getElementById('paper-upload-input').click()">＋ Upload PDF</button>
+          <a href="/annotator">Open Annotator →</a>
+        </div>
+      </div>
+      <div id="papers-list"><div class="empty">Loading…</div></div>
+    </div>
   </div>
 </div>
 
@@ -301,6 +327,8 @@ function setButtonLoading(btn, loading, originalText) {
 
 let currentUser = null;
 let allChallenges = [];
+let allPapers = [];
+let allProjects = [];
 let selectedProject = null;
 
 async function signOut() {
@@ -341,48 +369,64 @@ async function loadProjects() {
   let res;
   try { res = await fetch('/api/projects'); } catch (e) { showToast('Failed to load projects', 'error'); return; }
   if (!res.ok) return;
-  const projects = await res.json();
+  allProjects = await res.json();
+  renderProjects();
+}
 
-  const own = projects.filter(p => p.role === 'admin');
-  const shared = projects.filter(p => p.role === 'member');
+function paperCountFor(projectId) {
+  return allPapers.filter(p => p.project_id === projectId).length;
+}
 
-  document.getElementById('own-folders').innerHTML = own.map(p => `
+function renderProjects() {
+  const own = allProjects.filter(p => p.role === 'admin');
+  const shared = allProjects.filter(p => p.role === 'member');
+
+  document.getElementById('own-folders').innerHTML = own.map(p => {
+    const papers = paperCountFor(p.id);
+    return `
     <div class="folder-item ${selectedProject === p.id ? 'active' : ''}" onclick="selectFolder(${p.id})">
       <div>
         <div class="folder-name">${escapeHtml(p.name)}</div>
-        <div class="folder-meta">${p.challenge_count || 0} challenges · ${p.member_count || 0} members</div>
+        <div class="folder-meta">${p.challenge_count || 0} challenges · ${papers} paper${papers === 1 ? '' : 's'} · ${p.member_count || 0} members</div>
         <div class="folder-actions" onclick="event.stopPropagation()">
           <span class="folder-action" onclick="shareProjectPrompt(${p.id})" title="Share">Share</span>
           <span class="folder-action" onclick="renameProjectPrompt(${p.id},'${escapeHtml(p.name)}')" title="Rename">Rename</span>
           <span class="folder-action" onclick="deleteProjectPrompt(${p.id},'${escapeHtml(p.name)}')" title="Delete" style="color:var(--red)">Delete</span>
         </div>
       </div>
-      <span class="folder-count">${p.challenge_count || 0}</span>
-    </div>
-  `).join('');
+      <span class="folder-count" title="${p.challenge_count || 0} challenges, ${papers} papers">${(p.challenge_count || 0)}·${papers}</span>
+    </div>`;
+  }).join('');
 
+  const sharedLabel = document.getElementById('shared-label');
   if (shared.length > 0) {
-    document.getElementById('shared-label').style.display = '';
-    document.getElementById('shared-folders').innerHTML = shared.map(p => `
+    sharedLabel.style.display = '';
+    document.getElementById('shared-folders').innerHTML = shared.map(p => {
+      const papers = paperCountFor(p.id);
+      return `
       <div class="folder-item ${selectedProject === p.id ? 'active' : ''}" onclick="selectFolder(${p.id})">
         <div>
           <div class="folder-name">${escapeHtml(p.name)}</div>
-          <div class="folder-meta">${escapeHtml(p.owner_name || '')} · ${p.challenge_count || 0} challenges</div>
+          <div class="folder-meta">${escapeHtml(p.owner_name || '')} · ${p.challenge_count || 0} challenges · ${papers} paper${papers === 1 ? '' : 's'}</div>
           <div class="folder-shared">Shared</div>
           <div class="folder-actions" onclick="event.stopPropagation()">
             <span class="folder-action" onclick="leaveProject(${p.id},'${escapeHtml(p.name)}')" style="color:var(--amber)">Leave</span>
           </div>
         </div>
-        <span class="folder-count">${p.challenge_count || 0}</span>
-      </div>
-    `).join('');
+        <span class="folder-count" title="${p.challenge_count || 0} challenges, ${papers} papers">${(p.challenge_count || 0)}·${papers}</span>
+      </div>`;
+    }).join('');
+  } else {
+    sharedLabel.style.display = 'none';
+    document.getElementById('shared-folders').innerHTML = '';
   }
 }
 
 function selectFolder(projectId) {
   selectedProject = projectId;
-  loadProjects();
+  renderProjects();
   renderChallenges();
+  renderPapers();
 }
 
 function toggleNewProject() {
@@ -449,6 +493,121 @@ function renderChallenges() {
   container.innerHTML = `<table><thead><tr><th>Title</th><th>Status</th><th>Created</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
+// ── Papers ──
+async function loadPapers() {
+  let res;
+  try { res = await fetch('/api/papers'); } catch (e) { showToast('Failed to load papers', 'error'); return; }
+  if (!res.ok) return;
+  allPapers = await res.json();
+  renderPapers();
+  renderProjects(); // refresh folder paper counts
+}
+
+function projectNameFor(pid) {
+  if (!pid) return '—';
+  const p = allProjects.find(x => x.id === pid);
+  return p ? p.name : '(unknown)';
+}
+
+function renderPapers() {
+  const container = document.getElementById('papers-list');
+  const titleEl = document.getElementById('papers-card-title');
+
+  let filtered;
+  if (selectedProject !== null) {
+    filtered = allPapers.filter(p => p.project_id === selectedProject);
+    const proj = allProjects.find(x => x.id === selectedProject);
+    titleEl.textContent = proj ? `Papers in "${proj.name}"` : 'Papers in project';
+  } else {
+    filtered = allPapers.slice(0, 20);
+    titleEl.textContent = 'Recent Papers';
+  }
+
+  if (filtered.length === 0) {
+    container.innerHTML = '<div class="empty">'
+      + (selectedProject !== null
+         ? 'No papers in this project yet. Upload one below or from the Annotator.'
+         : 'No papers yet. Upload a PDF to get started.')
+      + '</div>';
+    return;
+  }
+
+  const rows = filtered.map(p => {
+    const projLabel = selectedProject !== null ? '' : `<div style="color:var(--muted);font-size:10px;margin-top:2px;">${escapeHtml(projectNameFor(p.project_id))}</div>`;
+    const removeLink = (selectedProject !== null && p.project_id === selectedProject)
+      ? `<span class="danger" onclick="event.stopPropagation(); removeFromProject(${p.id})">Remove from project</span>`
+      : '';
+    return `
+    <tr>
+      <td><strong>${escapeHtml(p.filename)}</strong>${projLabel}</td>
+      <td style="color:var(--muted);font-size:10.5px;">${fmtDate(p.created_at)}</td>
+      <td class="num">${p.rubric_count || 0}</td>
+      <td>
+        <div class="paper-row-actions">
+          <a href="/annotator" title="Open in Annotator">Annotate</a>
+          <a href="/api/papers/${p.id}/pdf" target="_blank" rel="noopener">PDF</a>
+          ${removeLink}
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+  container.innerHTML = `<table><thead><tr><th>Filename</th><th>Uploaded</th><th style="text-align:right">Rubrics</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+async function uploadPaperToProject() {
+  const input = document.getElementById('paper-upload-input');
+  const btn = document.getElementById('paper-upload-btn');
+  const file = input.files && input.files[0];
+  if (!file) return;
+
+  const form = new FormData();
+  form.append('file', file);
+  let url = '/api/papers/upload';
+  if (selectedProject !== null) url += '?project_id=' + selectedProject;
+
+  btn.disabled = true;
+  const origText = btn.textContent;
+  btn.innerHTML = '<span class="spinner-inline"></span> Uploading…';
+
+  try {
+    const res = await fetch(url, { method: 'POST', body: form });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(body.detail || ('Upload failed: ' + res.statusText), 'error');
+    } else if (body.duplicate) {
+      showToast('Paper already uploaded — using existing copy.', 'info');
+    } else {
+      showToast('Paper uploaded.', 'success');
+    }
+    await loadPapers();
+  } catch (e) {
+    showToast('Upload failed: ' + e.message, 'error');
+  } finally {
+    input.value = '';
+    btn.disabled = false;
+    btn.textContent = origText;
+  }
+}
+
+async function removeFromProject(paperId) {
+  if (!confirm('Remove this paper from the project? The file stays in your library.')) return;
+  try {
+    const res = await fetch(`/api/papers/${paperId}/assign`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id: null }),
+    });
+    if (!res.ok) {
+      const b = await res.json().catch(() => ({}));
+      showToast(b.detail || 'Failed to remove paper', 'error');
+      return;
+    }
+    await loadPapers();
+  } catch (e) {
+    showToast('Network error: ' + e.message, 'error');
+  }
+}
+
 // ── Leaderboard preview ──
 async function loadLeaderboard() {
   let res;
@@ -510,7 +669,8 @@ async function deleteProjectPrompt(pid, name) {
     if (!res.ok) { const b = await res.json(); showToast(b.detail || 'Delete failed', 'error'); return; }
   }
   if (selectedProject === pid) selectedProject = null;
-  loadProjects();
+  await loadProjects();
+  await loadPapers();
   loadChallenges();
 }
 
@@ -519,7 +679,8 @@ async function leaveProject(pid, name) {
   const res = await fetch(`/api/projects/${pid}/leave`, { method: 'POST' });
   if (!res.ok) { const b = await res.json(); showToast(b.detail || 'Failed to leave', 'error'); return; }
   if (selectedProject === pid) selectedProject = null;
-  loadProjects();
+  await loadProjects();
+  await loadPapers();
   loadChallenges();
 }
 
@@ -554,7 +715,10 @@ function promptCreateOrg() {
 
 (async () => {
   await loadMe();
-  loadProjects();
+  // loadPapers populates allPapers, then renderProjects() (called via loadProjects)
+  // will pick up the paper counts. Kick them off in parallel and let both render.
+  await Promise.all([loadProjects(), loadPapers()]);
+  renderProjects(); // ensure folder counts reflect papers once both are loaded
   loadOrgs();
   loadChallenges();
   loadLeaderboard();
