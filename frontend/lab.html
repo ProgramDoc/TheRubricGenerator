@@ -71,9 +71,16 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 /* Left pane */
 .lab-sidebar { width: 240px; min-width: 240px; background: #fff; border-right: 1px solid var(--border); overflow-y: auto; display: flex; flex-direction: column; flex-shrink: 0; }
 .sidebar-section { border-bottom: 1px solid var(--border); }
+.sidebar-section.conv-section { flex-shrink: 0; }
 .sidebar-header { padding: 10px 14px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); display: flex; align-items: center; justify-content: space-between; }
 .sidebar-header button { background: none; border: none; font-size: 16px; color: var(--muted); cursor: pointer; padding: 0 4px; line-height: 1; font-family: inherit; }
 .sidebar-header button:hover { color: var(--blue); }
+.conv-section .sidebar-header { cursor: pointer; }
+.conv-section .sidebar-header:hover { background: rgba(0,0,0,.03); }
+.conv-section .conv-chevron { display: inline-block; font-size: 9px; color: var(--muted); transition: transform .15s; margin-left: 4px; }
+.conv-section.expanded .conv-chevron { transform: rotate(90deg); }
+.conv-section #unsorted-sessions { max-height: 180px; overflow-y: auto; transition: max-height .2s ease; }
+.conv-section.expanded #unsorted-sessions { max-height: 60vh; }
 .session-item { padding: 8px 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-left: 3px solid transparent; position: relative; }
 .session-item:hover { background: #f8fafc; }
 .session-item.active { background: #f0f4ff; border-left-color: var(--sky); }
@@ -430,8 +437,11 @@ table.res-table tbody tr:hover { background: #f8fafc; }
   <!-- LEFT PANE: Conversations + Context + Projects + Interfaces -->
   <div class="lab-sidebar" id="lab-sidebar">
     <button class="sidebar-collapse-btn" onclick="collapseSidebar()" title="Collapse sidebar">&laquo;</button>
-    <div class="sidebar-section">
-      <div class="sidebar-header">Conversations <button onclick="newSession()" title="New conversation">+</button></div>
+    <div class="sidebar-section conv-section" id="conv-section">
+      <div class="sidebar-header" onclick="toggleConvSection(event)">
+        <span style="display:flex;align-items:center;gap:4px;flex:1;">Conversations<span class="conv-chevron">&#9656;</span></span>
+        <button onclick="event.stopPropagation();newSession()" title="New conversation">+</button>
+      </div>
       <div id="unsorted-sessions"></div>
     </div>
     <div class="sidebar-section">
@@ -1581,6 +1591,24 @@ function expandSidebar() {
   sb.classList.remove('collapsed');
   sessionStorage.setItem('sidebar_collapsed', '0');
 }
+
+/* ── Conversations section: click header to expand/collapse ── */
+function toggleConvSection(ev) {
+  // Ignore clicks on the "+" button (handled separately)
+  if (ev && ev.target && ev.target.tagName === 'BUTTON') return;
+  var sec = document.getElementById('conv-section');
+  var expanded = sec.classList.toggle('expanded');
+  try { localStorage.setItem('lab_conv_expanded', expanded ? '1' : '0'); } catch(e) {}
+}
+// Restore persisted state on load
+(function() {
+  try {
+    if (localStorage.getItem('lab_conv_expanded') === '1') {
+      var sec = document.getElementById('conv-section');
+      if (sec) sec.classList.add('expanded');
+    }
+  } catch(e) {}
+})();
 
 /* ==============================
    PANE RESIZER (center ↔ right)
