@@ -171,16 +171,20 @@ tbody tr:last-child td { border-bottom: none; }
     </div>
   </div>
 
-  <!-- MEMBERSHIP -->
-  <div class="card" style="margin-bottom:20px">
-    <div class="card-header"><h2>Membership Plan</h2></div>
-    <div style="padding:20px">
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
-        <span id="plan-badge" style="font-size:14px;font-weight:700;padding:6px 14px;border-radius:6px;background:var(--blue);color:#fff">Free</span>
-        <span id="pdf-usage" style="font-size:12px;color:var(--muted)"></span>
+  <!-- ENTERPRISE BILLING BANNER -->
+  <!-- Individual Free/Pro/Enterprise plans are deprecated; all billing is now
+       managed at the enterprise level. When the user has an admin seat we
+       surface a direct link to that org's enterprise page. -->
+  <div class="card" id="ent-banner" style="margin-bottom:20px;background:linear-gradient(180deg,#f0f7ff 0%,#fff 100%);border-color:#dbeafe;">
+    <div style="padding:22px 26px;">
+      <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--blue);margin-bottom:4px;">Billing</div>
+      <div style="font-size:16px;font-weight:700;color:var(--navy);margin-bottom:6px;">Managed at the enterprise level</div>
+      <div style="font-size:12.5px;color:var(--muted);line-height:1.55;margin-bottom:12px;max-width:680px;">
+        Subscriptions, seat allocation, and usage-credit overage purchases are all managed from your enterprise page.
+        This page still handles your profile, personal promo codes, and the history of credits purchased on your own account before your org joined.
       </div>
-      <div id="plan-cards" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
-        <div style="text-align:center;color:var(--muted);font-size:12px">Loading plans...</div>
+      <div id="ent-banner-actions" style="display:flex;gap:8px;flex-wrap:wrap;">
+        <!-- Populated in loadEnterpriseBanner() based on the user's seat -->
       </div>
     </div>
   </div>
@@ -281,8 +285,10 @@ if (new URLSearchParams(location.search).get('success') === '1') {
 
 async function loadMe() {
   const res = await fetch('/api/auth/me');
-  if (!res.ok) { window.location.href = '/login'; return; }
+  if (!res.ok) { window.location.href = '/login'; return null; }
   const me = await res.json();
+  // ENTERPRISE_MODE redirect: unseated non-admin users belong on /onboarding.
+  if (me.needs_onboarding) { window.location.href = '/onboarding'; return null; }
   if (me.role === 'admin') document.getElementById('nav-admin').style.display = '';
   // Populate profile section
   var displayName = me.display_name || me.email || '';
@@ -301,6 +307,7 @@ async function loadMe() {
     const status = await agRes.json();
     agreementAccepted = !!status.payment;
   }
+  return me;
 }
 
 async function uploadAvatar(file) {
@@ -431,62 +438,23 @@ async function applyPromo() {
   }
 }
 
-async function loadMembership() {
-  try {
-    const [memRes, plansRes] = await Promise.all([
-      fetch('/api/membership'),
-      fetch('/api/membership/plans'),
-    ]);
-    if (!memRes.ok || !plansRes.ok) { showToast('Failed to load membership data', 'error'); return; }
-    const membership = await memRes.json();
-    const plans = await plansRes.json();
-
-    // Show current plan badge
-    const badge = document.getElementById('plan-badge');
-    const colors = { Free: '#64748b', Pro: '#274472', Enterprise: '#7c3aed' };
-    badge.textContent = membership.plan_name || 'Free';
-    badge.style.background = colors[membership.plan_name] || '#64748b';
-
-    // Show PDF usage
-    const ps = membership.pdf_status || {};
-    const usageEl = document.getElementById('pdf-usage');
-    if (ps.limit === -1) {
-      usageEl.textContent = `${ps.used} PDFs uploaded (unlimited)`;
-    } else {
-      usageEl.textContent = `${ps.used}/${ps.limit} PDFs used`;
-    }
-
-    // Show plan cards
-    const container = document.getElementById('plan-cards');
-    container.innerHTML = plans.map(p => {
-      const isCurrent = p.name === membership.plan_name;
-      const price = p.price_cents === 0 ? 'Free' : `$${(p.price_cents/100).toFixed(0)}/mo`;
-      const features = (p.features || []).map(f => `<div style="font-size:10.5px;color:var(--text);padding:2px 0">${escapeHtml(f)}</div>`).join('');
-      const btnStyle = isCurrent
-        ? 'background:var(--green);color:#fff;cursor:default'
-        : p.price_cents === 0 ? 'background:#f0f4ff;color:var(--muted);cursor:default' : 'background:var(--blue);color:#fff;cursor:pointer';
-      const btnText = isCurrent ? 'Current Plan' : p.price_cents === 0 ? 'Free' : 'Subscribe';
-      const btnClick = isCurrent || p.price_cents === 0 ? '' : `onclick="subscribePlan(${p.id})"`;
-      return `<div style="border:1px solid ${isCurrent ? 'var(--blue)' : 'var(--border)'};border-radius:8px;padding:16px;text-align:center;${isCurrent ? 'box-shadow:0 0 0 2px rgba(39,68,114,.2)' : ''}">
-        <div style="font-size:15px;font-weight:700;color:var(--navy)">${escapeHtml(p.name)}</div>
-        <div style="font-size:20px;font-weight:700;color:var(--blue);margin:6px 0">${price}</div>
-        <div style="margin:10px 0">${features}</div>
-        <button ${btnClick} style="width:100%;padding:8px;border:none;border-radius:5px;font-family:inherit;font-size:12px;font-weight:700;${btnStyle}">${btnText}</button>
-      </div>`;
-    }).join('');
-  } catch (e) { console.error('Failed to load membership:', e); }
-}
-
-async function subscribePlan(planId) {
-  try {
-    const r = await fetch('/api/membership/subscribe', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ plan_id: planId }),
-    });
-    if (!r.ok) { const e = await r.json(); showToast(e.detail || 'Failed', 'error'); return; }
-    const data = await r.json();
-    if (data.checkout_url) window.location.href = data.checkout_url;
-  } catch (e) { showToast('Error: ' + e.message, 'error'); }
+// Replaces the old Free/Pro/Enterprise plan grid. Surfaces the relevant CTA
+// for the current user — manage their enterprise if they're seated, join one
+// otherwise. The legacy /api/membership* endpoints still exist for backward
+// compatibility until Phase 5 removes them, but they're no longer called here.
+async function loadEnterpriseBanner(me) {
+  const host = document.getElementById('ent-banner-actions');
+  if (!host) return;
+  const seat = me.seat;
+  let buttons = '';
+  if (seat && (seat.is_owner || seat.seat_type === 'admin')) {
+    buttons = `<a href="/enterprise/${seat.org_id}" style="background:var(--blue);color:#fff;padding:9px 18px;border-radius:5px;font-family:inherit;font-size:13px;font-weight:600;text-decoration:none;">Manage "${escapeHtml(seat.org_name)}" →</a>`;
+  } else if (seat) {
+    buttons = `<div style="font-size:12.5px;color:var(--text);">You hold a <strong>${escapeHtml(seat.seat_type)}</strong> seat in <strong>${escapeHtml(seat.org_name)}</strong>. Ask an admin there to change your seat or billing.</div>`;
+  } else {
+    buttons = `<a href="/onboarding" style="background:var(--blue);color:#fff;padding:9px 18px;border-radius:5px;font-family:inherit;font-size:13px;font-weight:600;text-decoration:none;">Create or join an enterprise →</a>`;
+  }
+  host.innerHTML = buttons;
 }
 
 async function loadOrgCredits() {
@@ -508,8 +476,9 @@ async function loadOrgCredits() {
 }
 
 (async () => {
-  await loadMe();
-  loadMembership();
+  const me = await loadMe();
+  if (!me) return; // loadMe redirected (unauthenticated or needs_onboarding)
+  loadEnterpriseBanner(me);
   loadBalance();
   loadPacks();
   loadTransactions();

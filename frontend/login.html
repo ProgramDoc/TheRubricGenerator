@@ -377,7 +377,7 @@ async function submitLogin() {
     if (!res.ok) {
       showBanner('login-banner', body.detail || 'Login failed.');
     } else {
-      window.location.href = '/';
+      await postAuthRedirect();
     }
   } catch (e) {
     showBanner('login-banner', 'Network error — is the server running?');
@@ -446,14 +446,15 @@ async function submitRegister() {
       showBanner('register-banner', body.detail || 'Registration failed.');
     } else {
       showBanner('register-banner', 'Account created! Signing you in…', 'success');
-      // Auto-login after register
+      // Auto-login after register — then route via postAuthRedirect so brand-
+      // new users land on /onboarding when ENTERPRISE_MODE is live.
       setTimeout(async () => {
         const lr = await fetch('/api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, password }),
         });
-        if (lr.ok) window.location.href = '/';
+        if (lr.ok) await postAuthRedirect();
       }, 800);
     }
   } catch (e) {
@@ -463,11 +464,33 @@ async function submitRegister() {
   }
 }
 
-// ── Check if already logged in ────────────────────────────────────────────
+// ── Post-auth routing ─────────────────────────────────────────────────────
+// Centralized so the login, register, and "already logged in" paths all route
+// consistently. Unseated users (non-admin) land on /onboarding when
+// ENTERPRISE_MODE is live on the backend; otherwise everyone goes to /.
+async function postAuthRedirect() {
+  try {
+    const r = await fetch('/api/auth/me');
+    if (!r.ok) { window.location.href = '/login'; return; }
+    const me = await r.json();
+    if (me.needs_onboarding) {
+      window.location.href = '/onboarding';
+      return;
+    }
+    window.location.href = '/';
+  } catch (_) {
+    window.location.href = '/';
+  }
+}
+
+// Check if already logged in — route accordingly.
 (async () => {
   try {
     const res = await fetch('/api/auth/me');
-    if (res.ok) window.location.href = '/';
+    if (!res.ok) return;  // not logged in, stay on /login
+    const me = await res.json();
+    if (me.needs_onboarding) { window.location.href = '/onboarding'; return; }
+    window.location.href = '/';
   } catch (_) {}
 })();
 </script>
