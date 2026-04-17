@@ -578,8 +578,47 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
       <div id="batch-groups" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
         <!-- Populated by populateBatchGroups() -->
       </div>
-      <div style="font-size:10px;color:var(--muted);margin-top:10px;line-height:1.5;">
-        Type-specific fields (e.g. RCT randomization, cohort exposure) are always included when a study type is known. Fields already confirmed or corrected on a paper are preserved — extraction only fills empty or amber fields.
+
+      <!-- ── Layer 2: Study-specific fields ───────────────────────────────── -->
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);">
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;">
+          <input type="checkbox" id="batch-include-type" checked onchange="onIncludeTypeToggle()">
+          <strong>Include study-specific fields (Layer 2)</strong>
+        </label>
+        <div style="font-size:10px;color:var(--muted);margin:3px 0 0 24px;line-height:1.5;">
+          Each paper uses the field set for its classified study type. All fields selected by default.
+        </div>
+        <div id="batch-type-customize-host" style="margin-top:8px;margin-left:24px;">
+          <a href="#" id="batch-type-customize-toggle" onclick="toggleTypeCustomize(event)" style="font-size:11px;color:var(--blue);text-decoration:none;font-weight:600;">▸ Customize per study type</a>
+          <div id="batch-type-customize" style="display:none;margin-top:8px;padding:10px;background:#f8fafc;border:1px solid var(--border);border-radius:5px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+              <label style="font-size:10px;font-weight:700;color:var(--blue);text-transform:uppercase;letter-spacing:.05em;">Study type:</label>
+              <select id="batch-type-select" onchange="renderTypeFieldsFor(this.value)" style="flex:1;padding:3px 6px;font-size:11px;border:1px solid var(--border);border-radius:3px;background:#fff;font-family:inherit;"></select>
+              <button class="tb-btn" style="font-size:10px;padding:2px 6px;background:#fff;border-color:var(--border);color:var(--text);" onclick="selectAllType(true)">All</button>
+              <button class="tb-btn" style="font-size:10px;padding:2px 6px;background:#fff;border-color:var(--border);color:var(--text);" onclick="selectAllType(false)">None</button>
+            </div>
+            <div id="batch-type-fields" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Layer 3: Cross-cutting / design modifiers ────────────────────── -->
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;">
+            <input type="checkbox" id="batch-include-modifiers" checked onchange="onIncludeModifiersToggle()">
+            <strong>Include cross-cutting fields (Layer 3)</strong>
+          </label>
+          <div style="display:flex;gap:4px;">
+            <button class="tb-btn" style="font-size:10px;padding:2px 6px;background:#fff;border-color:var(--border);color:var(--text);" onclick="selectAllModifiers(true)">All</button>
+            <button class="tb-btn" style="font-size:10px;padding:2px 6px;background:#fff;border-color:var(--border);color:var(--text);" onclick="selectAllModifiers(false)">None</button>
+          </div>
+        </div>
+        <div id="batch-modifier-fields" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-left:24px;"></div>
+      </div>
+
+      <div style="font-size:10px;color:var(--muted);margin-top:14px;line-height:1.5;">
+        Fields already confirmed or corrected on a paper are preserved — extraction only fills empty or amber-flagged fields.
       </div>
       <div id="batch-progress" style="display:none;margin-top:14px;padding:10px;background:#f8fafc;border:1px solid var(--border);border-radius:5px;max-height:220px;overflow-y:auto;">
         <div style="font-size:10px;font-weight:700;color:var(--blue);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">Progress</div>
@@ -1133,6 +1172,14 @@ let allProjects = [];           // [{id, name}]
 let collapsedProjects = new Set();      // unused; kept for any legacy references
 let batchSelected = new Set();          // paper ids checked for batch run
 let batchRunning = false;
+let batchSchema = null;                 // fetched once: {universal_groups, type_fields, modifier_fields}
+// Per-study-type selection overrides. Key: study_type. Value: Set of field IDs.
+// Absence of a key means "use all fields for that study type".
+let batchTypeFieldsOverride = {};
+// Selected Layer 3 modifier field IDs. null = all; Set = explicit subset.
+let batchModifierSelected = null;
+let batchIncludeTypeSpecific = true;
+let batchIncludeModifiers = true;
 
 // Available field groups for extraction (must stay in sync with backend FIELD_GROUPS)
 const FIELD_GROUPS = [
@@ -2579,9 +2626,156 @@ function populateBatchGroups() {
   `).join('');
 }
 
-function showBatchModal() {
+// ── Label helpers ──────────────────────────────────────────────────────────
+function prettyLabel(fid) {
+  return fid.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// ── Layer 2 (type-specific) UI ─────────────────────────────────────────────
+async function ensureSchemaLoaded() {
+  if (batchSchema) return batchSchema;
+  try {
+    const r = await fetch('/api/annotator/schema');
+    batchSchema = r.ok ? await r.json() : { type_fields: {}, modifier_fields: [] };
+  } catch(e) {
+    batchSchema = { type_fields: {}, modifier_fields: [] };
+  }
+  return batchSchema;
+}
+
+function onIncludeTypeToggle() {
+  batchIncludeTypeSpecific = document.getElementById('batch-include-type').checked;
+  const host = document.getElementById('batch-type-customize-host');
+  host.style.opacity = batchIncludeTypeSpecific ? '1' : '.45';
+  host.style.pointerEvents = batchIncludeTypeSpecific ? 'auto' : 'none';
+}
+
+function toggleTypeCustomize(ev) {
+  if (ev) ev.preventDefault();
+  const box = document.getElementById('batch-type-customize');
+  const link = document.getElementById('batch-type-customize-toggle');
+  const open = box.style.display === 'none';
+  box.style.display = open ? 'block' : 'none';
+  link.textContent = (open ? '▾' : '▸') + ' Customize per study type';
+  if (open) {
+    const sel = document.getElementById('batch-type-select');
+    if (sel.options.length === 0) populateTypeSelect();
+    if (sel.value) renderTypeFieldsFor(sel.value);
+  }
+}
+
+function populateTypeSelect() {
+  const sel = document.getElementById('batch-type-select');
+  const types = Object.keys(batchSchema.type_fields || {}).sort();
+  // Prioritise study types present in the batch selection for easier access
+  const papersInBatch = allPapers.filter(p => batchSelected.has(p.id));
+  const presentTypes = new Set();
+  papersInBatch.forEach(p => {
+    // paper.ann_status doesn't carry study_type; try pipeline_predictions from annotation.data — skipped (async)
+  });
+  sel.innerHTML = types.map(t => `<option value="${escHtml(t)}">${escHtml(t)}</option>`).join('');
+  if (types.length) renderTypeFieldsFor(types[0]);
+}
+
+function renderTypeFieldsFor(studyType) {
+  const host = document.getElementById('batch-type-fields');
+  const fields = (batchSchema.type_fields || {})[studyType] || [];
+  if (!fields.length) {
+    host.innerHTML = `<div style="font-size:11px;color:var(--muted);grid-column:1/-1;font-style:italic;">No type-specific fields for this study type.</div>`;
+    return;
+  }
+  const override = batchTypeFieldsOverride[studyType];  // Set or undefined
+  host.innerHTML = fields.map(fid => {
+    const checked = override ? override.has(fid) : true;
+    return `
+      <label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;">
+        <input type="checkbox" data-studytype="${escHtml(studyType)}" data-fid="${escHtml(fid)}"
+               ${checked ? 'checked' : ''} onchange="onTypeFieldToggle(this)">
+        <span title="${escHtml(fid)}">${escHtml(prettyLabel(fid))}</span>
+      </label>
+    `;
+  }).join('');
+}
+
+function onTypeFieldToggle(el) {
+  const st = el.dataset.studytype;
+  const fid = el.dataset.fid;
+  const all = (batchSchema.type_fields || {})[st] || [];
+  let override = batchTypeFieldsOverride[st];
+  if (!override) override = new Set(all);    // start from "all"
+  if (el.checked) override.add(fid); else override.delete(fid);
+  // If the override equals all fields, drop it (default = all)
+  if (override.size === all.length && all.every(f => override.has(f))) {
+    delete batchTypeFieldsOverride[st];
+  } else {
+    batchTypeFieldsOverride[st] = override;
+  }
+}
+
+function selectAllType(on) {
+  const sel = document.getElementById('batch-type-select');
+  const st = sel.value;
+  if (!st) return;
+  const all = (batchSchema.type_fields || {})[st] || [];
+  if (on) {
+    delete batchTypeFieldsOverride[st];   // "all" = no override
+  } else {
+    batchTypeFieldsOverride[st] = new Set();
+  }
+  renderTypeFieldsFor(st);
+}
+
+// ── Layer 3 (design modifier) UI ───────────────────────────────────────────
+function onIncludeModifiersToggle() {
+  batchIncludeModifiers = document.getElementById('batch-include-modifiers').checked;
+  const host = document.getElementById('batch-modifier-fields');
+  host.style.opacity = batchIncludeModifiers ? '1' : '.45';
+  host.style.pointerEvents = batchIncludeModifiers ? 'auto' : 'none';
+}
+
+function renderModifierFields() {
+  const host = document.getElementById('batch-modifier-fields');
+  const mods = (batchSchema && batchSchema.modifier_fields) || [];
+  host.innerHTML = mods.map(fid => {
+    const checked = batchModifierSelected === null || batchModifierSelected.has(fid);
+    return `
+      <label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;">
+        <input type="checkbox" data-fid="${escHtml(fid)}"
+               ${checked ? 'checked' : ''} onchange="onModifierToggle(this)">
+        <span title="${escHtml(fid)}">${escHtml(prettyLabel(fid))}</span>
+      </label>
+    `;
+  }).join('');
+}
+
+function onModifierToggle(el) {
+  const fid = el.dataset.fid;
+  const mods = (batchSchema && batchSchema.modifier_fields) || [];
+  if (batchModifierSelected === null) batchModifierSelected = new Set(mods);
+  if (el.checked) batchModifierSelected.add(fid);
+  else batchModifierSelected.delete(fid);
+  // If the selection equals all mods, normalise back to null (= all)
+  if (batchModifierSelected.size === mods.length && mods.every(f => batchModifierSelected.has(f))) {
+    batchModifierSelected = null;
+  }
+}
+
+function selectAllModifiers(on) {
+  const mods = (batchSchema && batchSchema.modifier_fields) || [];
+  batchModifierSelected = on ? null : new Set();
+  renderModifierFields();
+}
+
+async function showBatchModal() {
   if (batchSelected.size === 0) return;
+  await ensureSchemaLoaded();
   populateBatchGroups();
+  populateTypeSelect();
+  renderModifierFields();
+  document.getElementById('batch-include-type').checked = batchIncludeTypeSpecific;
+  document.getElementById('batch-include-modifiers').checked = batchIncludeModifiers;
+  onIncludeTypeToggle();
+  onIncludeModifiersToggle();
   document.getElementById('batch-modal-sub').textContent = `${batchSelected.size} paper${batchSelected.size === 1 ? '' : 's'} selected`;
   document.getElementById('batch-progress').style.display = 'none';
   document.getElementById('batch-progress-list').innerHTML = '';
@@ -2662,11 +2856,25 @@ async function runBatch() {
         _logBatch('    prefill: no study_type — run classify first or open the paper and set it manually.', 'err');
         skipped++; continue;
       }
+      // Build per-paper field selections:
+      //   type_fields: if Layer 2 excluded → []; else if override exists for this type → list; else omit (= all)
+      //   modifier_fields: if Layer 3 excluded → []; else if subset explicit → list; else omit (= all)
+      const prefillBody = { study_type: studyType, groups: groups };
+      if (!batchIncludeTypeSpecific) {
+        prefillBody.type_fields = [];
+      } else if (batchTypeFieldsOverride[studyType]) {
+        prefillBody.type_fields = [...batchTypeFieldsOverride[studyType]];
+      }
+      if (!batchIncludeModifiers) {
+        prefillBody.modifier_fields = [];
+      } else if (batchModifierSelected !== null) {
+        prefillBody.modifier_fields = [...batchModifierSelected];
+      }
       try {
         const r = await fetch(`/api/annotator/papers/${pid}/prefill`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ study_type: studyType, groups: groups }),
+          body: JSON.stringify(prefillBody),
         });
         if (!r.ok) {
           const err = await r.json().catch(() => ({}));

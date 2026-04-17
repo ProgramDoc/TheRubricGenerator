@@ -306,9 +306,32 @@ Example output:
 {{"major_category": "Primary Studies", "subcategory": "Randomized Controlled", "study_type": "Randomized Controlled Trial"}}"""
 
 
-def build_prefill_prompt(study_type: str, groups: list[str] | None = None) -> str:
+def build_prefill_prompt(study_type: str,
+                         groups: list[str] | None = None,
+                         type_fields: list[str] | None = None,
+                         modifier_fields: list[str] | None = None) -> str:
+    """Assemble the prefill prompt.
+
+    ``groups``          → universal fields (None/empty = all 8 groups)
+    ``type_fields``     → subset of ``TYPE_FIELD_IDS[study_type]``.
+                          None = all type-specific; [] = none.
+    ``modifier_fields`` → subset of ``DESIGN_MODIFIER_COLS``.
+                          None = all modifiers; [] = none.
+    """
     universal = filter_universal_by_groups(groups)
-    all_ids = universal + TYPE_FIELD_IDS.get(study_type, [])
+
+    all_type = TYPE_FIELD_IDS.get(study_type, [])
+    if type_fields is None:
+        selected_type = list(all_type)
+    else:
+        selected_type = [f for f in type_fields if f in all_type]
+
+    if modifier_fields is None:
+        selected_modifiers = list(DESIGN_MODIFIER_COLS)
+    else:
+        selected_modifiers = [f for f in modifier_fields if f in DESIGN_MODIFIER_COLS]
+
+    all_ids = universal + selected_type + selected_modifiers
     field_list = "\n".join(f"  - {f}" for f in all_ids)
     return f"""You are a clinical research data extractor. Extract information from this PDF to fill a structured annotation form for a {study_type} study.
 
@@ -365,12 +388,32 @@ def classify_study_design(pdf_bytes: bytes) -> dict:
 
 
 def prefill_fields(pdf_bytes: bytes, study_type: str,
-                   groups: list[str] | None = None) -> dict:
+                   groups: list[str] | None = None,
+                   type_fields: list[str] | None = None,
+                   modifier_fields: list[str] | None = None) -> dict:
     if not study_type:
         raise HTTPException(400, "study_type is required for prefill")
     # 40+ fields comfortably fit in 8k tokens; bump ceiling to be safe for big papers
-    result = _call_with_pdf(pdf_bytes, build_prefill_prompt(study_type, groups), max_tokens=8192)
+    prompt = build_prefill_prompt(
+        study_type, groups=groups,
+        type_fields=type_fields, modifier_fields=modifier_fields,
+    )
+    result = _call_with_pdf(pdf_bytes, prompt, max_tokens=8192)
     return {k: str(v) for k, v in result.items() if v not in (None, "", [])}
+
+
+def get_schema() -> dict:
+    """Field catalog used by the frontend to render selection UI."""
+    return {
+        "universal_groups": [
+            {"id": g, "field_ids": list(FIELD_GROUPS[g])}
+            for g in ("citation", "objective", "population", "sample",
+                      "setting", "outcomes", "results", "admin")
+            if g in FIELD_GROUPS
+        ],
+        "type_fields": {st: list(fs) for st, fs in TYPE_FIELD_IDS.items()},
+        "modifier_fields": list(DESIGN_MODIFIER_COLS),
+    }
 
 
 # ─────────────────────────────────────────────

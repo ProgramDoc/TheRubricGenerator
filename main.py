@@ -4771,6 +4771,13 @@ def api_annotator_list_papers(rubricgen_session: str | None = Cookie(default=Non
         conn.close()
 
 
+@app.get("/api/annotator/schema")
+def api_annotator_schema():
+    """Field catalog (universal groups, type-specific, design modifiers)
+    used by the batch modal to render selectable checkboxes."""
+    return annotator_mod.get_schema()
+
+
 @app.get("/api/annotator/papers/{pid}/annotation")
 def api_annotator_get_annotation(pid: int,
                                  rubricgen_session: str | None = Cookie(default=None),
@@ -4874,10 +4881,17 @@ def api_annotator_prefill(pid: int, body: dict,
     body = body or {}
     study_type = body.get("study_type", "")
     groups = body.get("groups") or None
+    # Pass explicit [] to disable, None (omit) to include all
+    type_fields = body.get("type_fields")
+    modifier_fields = body.get("modifier_fields")
     if not study_type:
         raise HTTPException(400, "study_type is required")
     if groups is not None and not isinstance(groups, list):
         raise HTTPException(400, "groups must be a list of group IDs")
+    if type_fields is not None and not isinstance(type_fields, list):
+        raise HTTPException(400, "type_fields must be a list of field IDs")
+    if modifier_fields is not None and not isinstance(modifier_fields, list):
+        raise HTTPException(400, "modifier_fields must be a list of field IDs")
 
     user = require_user(rubricgen_session, x_api_key)
     conn = get_db()
@@ -4893,7 +4907,12 @@ def api_annotator_prefill(pid: int, body: dict,
         conn.close()
 
     try:
-        return annotator_mod.prefill_fields(pdf_bytes, study_type, groups=groups)
+        return annotator_mod.prefill_fields(
+            pdf_bytes, study_type,
+            groups=groups,
+            type_fields=type_fields,
+            modifier_fields=modifier_fields,
+        )
     except HTTPException:
         _refund_annotator(user, annotator_mod.CREDIT_COST_PREFILL, "prefill", filename)
         raise

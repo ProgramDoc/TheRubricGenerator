@@ -188,6 +188,52 @@ def test_prefill_rejects_non_list_groups(client, test_user):
     assert r.status_code == 400
 
 
+def test_prefill_rejects_non_list_type_or_modifier_fields(client, test_user):
+    pid = _make_paper(client, test_user["cookie"], "bad_shape.pdf")
+    cookie = {"rubricgen_session": test_user["cookie"]}
+    r = client.post(f"/api/annotator/papers/{pid}/prefill", cookies=cookie,
+                    json={"study_type": "Cohort Study", "type_fields": "exposure_definition"})
+    assert r.status_code == 400
+    r = client.post(f"/api/annotator/papers/{pid}/prefill", cookies=cookie,
+                    json={"study_type": "Cohort Study", "modifier_fields": "clinical_trial_phase"})
+    assert r.status_code == 400
+
+
+def test_prefill_prompt_respects_type_and_modifier_fields():
+    from backend.annotator import build_prefill_prompt, TYPE_FIELD_IDS, DESIGN_MODIFIER_COLS
+    # type_fields=[] disables type-specific; modifier_fields=[] disables modifiers
+    prompt = build_prefill_prompt("Cohort Study", groups=["citation"],
+                                  type_fields=[], modifier_fields=[])
+    for fid in TYPE_FIELD_IDS["Cohort Study"]:
+        assert f"- {fid}" not in prompt, f"{fid} should be excluded"
+    for fid in DESIGN_MODIFIER_COLS:
+        assert f"- {fid}" not in prompt, f"{fid} should be excluded"
+
+    # Explicit subsets show exactly those fields
+    prompt = build_prefill_prompt(
+        "Cohort Study",
+        groups=[],    # empty groups → all universal; still, Layer 2/3 filters verify here
+        type_fields=["exposure_definition"],
+        modifier_fields=["clinical_trial_phase"],
+    )
+    assert "- exposure_definition" in prompt
+    assert "- outcome_ascertainment" not in prompt  # other type-specific excluded
+    assert "- clinical_trial_phase" in prompt
+    assert "- industry_sponsored" not in prompt
+
+
+def test_schema_endpoint_exposes_catalog(client, test_user):
+    r = client.get("/api/annotator/schema",
+                   cookies={"rubricgen_session": test_user["cookie"]})
+    assert r.status_code == 200
+    schema = r.json()
+    assert "type_fields" in schema
+    assert "Randomized Controlled Trial" in schema["type_fields"]
+    assert "randomization_method" in schema["type_fields"]["Randomized Controlled Trial"]
+    assert "modifier_fields" in schema
+    assert "clinical_trial_phase" in schema["modifier_fields"]
+
+
 def test_cross_user_annotation_is_forbidden(client, test_user):
     """User A cannot read or write User B's annotations."""
     pid = _make_paper(client, test_user["cookie"], "privacy.pdf")
