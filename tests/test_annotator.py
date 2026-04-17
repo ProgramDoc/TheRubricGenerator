@@ -144,6 +144,50 @@ def test_prefill_missing_study_type_returns_400(client, test_user):
     assert r.status_code == 400
 
 
+def test_field_groups_filter_universal_fields():
+    from backend.annotator import (
+        filter_universal_by_groups, UNIVERSAL_FIELD_IDS, FIELD_GROUPS,
+    )
+    # None / empty → all universal fields
+    assert filter_universal_by_groups(None) == list(UNIVERSAL_FIELD_IDS)
+    assert filter_universal_by_groups([]) == list(UNIVERSAL_FIELD_IDS)
+
+    # Citation-only group returns citation fields, nothing else
+    citation = filter_universal_by_groups(["citation"])
+    assert set(citation) == set(FIELD_GROUPS["citation"])
+    assert "population_participants" not in citation
+
+    # Unknown groups are silently skipped; known ones still included
+    got = filter_universal_by_groups(["citation", "unknown_xyz"])
+    assert set(got) == set(FIELD_GROUPS["citation"])
+
+    # All groups together cover every universal field
+    all_ids: set[str] = set()
+    for ids in FIELD_GROUPS.values():
+        all_ids.update(ids)
+    assert all_ids == set(UNIVERSAL_FIELD_IDS), "FIELD_GROUPS must partition UNIVERSAL_FIELD_IDS"
+
+
+def test_prefill_prompt_honours_groups():
+    from backend.annotator import build_prefill_prompt, FIELD_GROUPS
+    prompt = build_prefill_prompt("Cohort Study", groups=["citation"])
+    # Selected fields are listed
+    for fid in FIELD_GROUPS["citation"]:
+        assert f"- {fid}" in prompt
+    # Unselected universal group is NOT listed
+    assert "- funding_source" not in prompt
+    # Type-specific fields always come along
+    assert "- exposure_definition" in prompt
+
+
+def test_prefill_rejects_non_list_groups(client, test_user):
+    pid = _make_paper(client, test_user["cookie"], "bad_groups.pdf")
+    r = client.post(f"/api/annotator/papers/{pid}/prefill",
+                    cookies={"rubricgen_session": test_user["cookie"]},
+                    json={"study_type": "Cohort Study", "groups": "citation"})
+    assert r.status_code == 400
+
+
 def test_cross_user_annotation_is_forbidden(client, test_user):
     """User A cannot read or write User B's annotations."""
     pid = _make_paper(client, test_user["cookie"], "privacy.pdf")

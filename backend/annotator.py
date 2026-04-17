@@ -194,6 +194,45 @@ TYPE_FIELD_IDS: dict[str, list[str]] = {
     ],
 }
 
+# ─────────────────────────────────────────────
+# Field groups for batch extraction (mirrors the frontend FIELD_GROUPS array)
+# ─────────────────────────────────────────────
+FIELD_GROUPS: dict[str, list[str]] = {
+    "citation":   ["citation_authors", "citation_year", "citation_title",
+                   "citation_journal", "citation_doi"],
+    "objective":  ["study_objective"],
+    "population": ["population_participants", "population_intervention_exposure",
+                   "population_comparator", "population_outcomes"],
+    "sample":     ["sample_size_total", "sample_size_per_group", "power_calculation_reported"],
+    "setting":    ["setting", "country_region",
+                   "study_period_enrollment_start", "study_period_enrollment_end",
+                   "follow_up_duration"],
+    "outcomes":   ["primary_outcome_definition", "primary_outcome_measurement",
+                   "primary_outcome_timing", "secondary_outcomes"],
+    "results":    ["key_findings_effect_estimate", "key_findings_metric",
+                   "key_findings_ci_lower", "key_findings_ci_upper",
+                   "key_findings_pvalue", "key_findings_direction"],
+    "admin":      ["funding_source", "conflicts_of_interest",
+                   "limitations_stated", "protocol_registration"],
+}
+
+
+def filter_universal_by_groups(groups: list[str] | None) -> list[str]:
+    """Return the universal field IDs selected by ``groups``.
+
+    ``None`` / empty ``groups`` → all universal fields (full extraction).
+    Unknown groups are silently skipped.
+    """
+    if not groups:
+        return list(UNIVERSAL_FIELD_IDS)
+    seen: list[str] = []
+    for g in groups:
+        for fid in FIELD_GROUPS.get(g, []):
+            if fid in UNIVERSAL_FIELD_IDS and fid not in seen:
+                seen.append(fid)
+    return seen
+
+
 # Extra columns that appear in the CSV beyond the universal + type-specific fields
 CLASSIFICATION_COLS: list[str] = [
     "major_category", "subcategory", "study_type",
@@ -267,8 +306,9 @@ Example output:
 {{"major_category": "Primary Studies", "subcategory": "Randomized Controlled", "study_type": "Randomized Controlled Trial"}}"""
 
 
-def build_prefill_prompt(study_type: str) -> str:
-    all_ids = UNIVERSAL_FIELD_IDS + TYPE_FIELD_IDS.get(study_type, [])
+def build_prefill_prompt(study_type: str, groups: list[str] | None = None) -> str:
+    universal = filter_universal_by_groups(groups)
+    all_ids = universal + TYPE_FIELD_IDS.get(study_type, [])
     field_list = "\n".join(f"  - {f}" for f in all_ids)
     return f"""You are a clinical research data extractor. Extract information from this PDF to fill a structured annotation form for a {study_type} study.
 
@@ -324,11 +364,12 @@ def classify_study_design(pdf_bytes: bytes) -> dict:
     return filtered
 
 
-def prefill_fields(pdf_bytes: bytes, study_type: str) -> dict:
+def prefill_fields(pdf_bytes: bytes, study_type: str,
+                   groups: list[str] | None = None) -> dict:
     if not study_type:
         raise HTTPException(400, "study_type is required for prefill")
     # 40+ fields comfortably fit in 8k tokens; bump ceiling to be safe for big papers
-    result = _call_with_pdf(pdf_bytes, build_prefill_prompt(study_type), max_tokens=8192)
+    result = _call_with_pdf(pdf_bytes, build_prefill_prompt(study_type, groups), max_tokens=8192)
     return {k: str(v) for k, v in result.items() if v not in (None, "", [])}
 
 

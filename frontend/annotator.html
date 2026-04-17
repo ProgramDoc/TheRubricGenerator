@@ -18,6 +18,10 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; }
 
+/* When rendered inside the Lab's iframe, hide chrome duplicated by the parent Lab */
+.in-iframe #topbar .tb-chrome { display: none !important; }
+.in-iframe #topbar { padding-left: 12px; gap: 8px; }
+
 /* ── TOP BAR ── */
 #topbar {
   height: 46px; background: var(--navy); display: flex; align-items: center;
@@ -498,12 +502,13 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
 </style>
 </head>
 <body>
+<script>if(window.self!==window.top)document.documentElement.classList.add('in-iframe')</script>
 
 <!-- ── TOP BAR ──────────────────────────────────────────────────────────── -->
 <div id="topbar">
-  <a href="/" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.6);text-decoration:none;margin-right:6px;padding:4px 8px;border:1px solid rgba(255,255,255,.2);border-radius:5px">&larr; Lab</a>
-  <div class="brand">The AI <span>Researcher</span></div>
-  <nav style="display:flex;gap:2px;align-items:center;">
+  <a href="/" class="tb-chrome" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.6);text-decoration:none;margin-right:6px;padding:4px 8px;border:1px solid rgba(255,255,255,.2);border-radius:5px">&larr; Lab</a>
+  <div class="brand tb-chrome">The AI <span>Researcher</span></div>
+  <nav class="tb-chrome" style="display:flex;gap:2px;align-items:center;">
     <a href="/dashboard" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:4px 8px;border-radius:4px">Dashboard</a>
     <a href="/challenges" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:4px 8px;border-radius:4px">Challenges</a>
     <a href="/pdf-viewer" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:4px 8px;border-radius:4px">PDF Viewer</a>
@@ -511,30 +516,80 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
     <a href="/analytics" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:4px 8px;border-radius:4px">Analytics</a>
     <a href="/library" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:4px 8px;border-radius:4px">Library</a>
   </nav>
-  <div class="tb-sep"></div>
-  <span id="user-display" style="font-size:11px;color:rgba(255,255,255,.55);font-family:'IBM Plex Mono',monospace;"></span>
-  <div class="tb-sep"></div>
+  <div class="tb-sep tb-chrome"></div>
+  <span id="user-display" class="tb-chrome" style="font-size:11px;color:rgba(255,255,255,.55);font-family:'IBM Plex Mono',monospace;"></span>
+  <div class="tb-sep tb-chrome"></div>
+  <button class="tb-btn" onclick="showBatchModal()" id="batch-btn" disabled title="Select papers in the sidebar to enable">&#9776; Batch</button>
   <button class="tb-btn" onclick="showExportDialog()">⬇ Export CSV</button>
   <button class="tb-btn primary" onclick="saveAnnotation()" id="save-btn">Save</button>
   <span id="save-status">no paper selected</span>
-  <div class="tb-sep"></div>
-  <button class="tb-btn" onclick="logout()" style="color:#f87171;border-color:rgba(248,113,113,.3);">Sign out</button>
+  <div class="tb-sep tb-chrome"></div>
+  <button class="tb-btn tb-chrome" onclick="logout()" style="color:#f87171;border-color:rgba(248,113,113,.3);">Sign out</button>
 </div>
 
 <div id="layout">
 
-<!-- ── SIDEBAR: PROJECT FOLDERS ────────────────────────────────────────── -->
+<!-- ── SIDEBAR: PAPER LIST (flat, filter by Lab project) ───────────────── -->
 <div id="sidebar">
-  <div id="sidebar-header">
-    Projects
-    <button id="new-proj-btn" onclick="createNewProject()" title="New project">+</button>
+  <div id="sidebar-header" style="flex-direction:column;gap:6px;align-items:stretch;padding:10px 10px 6px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;">
+      <span>Papers</span>
+      <span id="paper-count" style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:rgba(255,255,255,.35);font-weight:500;"></span>
+    </div>
+    <select id="project-filter" onchange="onProjectFilterChange()" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);color:#e2e8f0;border-radius:4px;padding:4px 6px;font-size:11px;font-family:inherit;outline:none;">
+      <option value="">All projects</option>
+      <option value="0">— Unassigned —</option>
+    </select>
   </div>
   <div id="project-list"></div>
+  <div id="batch-bar" style="display:none;padding:10px 10px 6px;border-top:1px solid rgba(255,255,255,.06);background:rgba(124,58,237,.12);">
+    <div style="font-size:10px;font-weight:700;color:#c4b5fd;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em;"><span id="batch-count">0</span> selected</div>
+    <div style="display:flex;gap:4px;">
+      <button class="tb-btn primary" style="flex:1;font-size:11px;padding:5px;background:#7c3aed;border-color:#7c3aed;" onclick="showBatchModal()">Run batch…</button>
+      <button class="tb-btn" style="font-size:11px;padding:5px;" onclick="clearBatchSelection()">Clear</button>
+    </div>
+  </div>
   <div id="upload-zone" onclick="document.getElementById('file-input').click()"
        ondragover="event.preventDefault()" ondrop="handleDrop(event)">
     <p><strong>Upload PDF</strong><br>click or drag &amp; drop</p>
   </div>
   <input type="file" id="file-input" accept=".pdf" multiple>
+</div>
+
+<!-- ── BATCH MODAL ──────────────────────────────────────────────────────── -->
+<div id="batch-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:2000;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:8px;width:560px;max-width:92vw;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.4);">
+    <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <div style="font-size:15px;font-weight:700;color:var(--navy);">Batch extraction</div>
+        <div id="batch-modal-sub" style="font-size:11px;color:var(--muted);margin-top:2px;">0 papers selected</div>
+      </div>
+      <button class="tb-btn" onclick="hideBatchModal()" style="background:#f1f5f9;border-color:var(--border);color:var(--text);">Cancel</button>
+    </div>
+    <div style="padding:16px 20px;overflow-y:auto;flex:1;">
+      <div style="font-size:10px;font-weight:700;color:var(--blue);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">Steps</div>
+      <label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:12px;cursor:pointer;">
+        <input type="checkbox" id="batch-step-classify" checked> <strong>Classify study design</strong> — run AI classification on papers without a study type
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:12px;cursor:pointer;">
+        <input type="checkbox" id="batch-step-prefill" checked> <strong>Extract fields</strong> — run AI prefill with the selected groups below
+      </label>
+      <div style="font-size:10px;font-weight:700;color:var(--blue);text-transform:uppercase;letter-spacing:.08em;margin:14px 0 8px;">Extraction field groups</div>
+      <div id="batch-groups" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+        <!-- Populated by populateBatchGroups() -->
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-top:10px;line-height:1.5;">
+        Type-specific fields (e.g. RCT randomization, cohort exposure) are always included when a study type is known. Fields already confirmed or corrected on a paper are preserved — extraction only fills empty or amber fields.
+      </div>
+      <div id="batch-progress" style="display:none;margin-top:14px;padding:10px;background:#f8fafc;border:1px solid var(--border);border-radius:5px;max-height:220px;overflow-y:auto;">
+        <div style="font-size:10px;font-weight:700;color:var(--blue);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">Progress</div>
+        <div id="batch-progress-list" style="font-size:11px;font-family:'IBM Plex Mono',monospace;line-height:1.6;"></div>
+      </div>
+    </div>
+    <div style="padding:12px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;background:#fafbfd;border-radius:0 0 8px 8px;">
+      <button class="tb-btn" id="batch-run-btn" onclick="runBatch()" style="background:#7c3aed;color:#fff;border-color:#7c3aed;padding:6px 16px;font-size:12px;">Run</button>
+    </div>
+  </div>
 </div>
 
 <!-- ── PDF VIEWER ──────────────────────────────────────────────────────── -->
@@ -1075,7 +1130,21 @@ let fieldAnnotations = {};      // per-field annotation state
 let backendVersion = null;      // last-seen annotation version (optimistic concurrency)
 let allPapers = [];             // [{id, filename, annotated_by, project_id}]
 let allProjects = [];           // [{id, name}]
-let collapsedProjects = new Set();
+let collapsedProjects = new Set();      // unused; kept for any legacy references
+let batchSelected = new Set();          // paper ids checked for batch run
+let batchRunning = false;
+
+// Available field groups for extraction (must stay in sync with backend FIELD_GROUPS)
+const FIELD_GROUPS = [
+  { id: 'citation',     label: 'Citation',           default: true  },
+  { id: 'objective',    label: 'Objective',          default: true  },
+  { id: 'population',   label: 'Population (PICO)',  default: true  },
+  { id: 'sample',       label: 'Sample size',        default: true  },
+  { id: 'setting',      label: 'Setting & timeline', default: false },
+  { id: 'outcomes',     label: 'Outcomes',           default: true  },
+  { id: 'results',      label: 'Key findings',       default: true  },
+  { id: 'admin',        label: 'Funding, COI, reg.', default: false },
+];
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -2279,85 +2348,61 @@ function escHtml(str) {
     .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// Flat paper list, optionally filtered by the project-filter dropdown.
 function renderSidebar() {
   const list = document.getElementById('project-list');
   list.innerHTML = '';
 
-  allProjects.forEach(proj => {
-    const projPapers = allPapers.filter(p => p.project_id === proj.id);
-    list.appendChild(buildProjectFolder(proj, projPapers));
-  });
+  // Refresh project-filter options (preserve selection)
+  const filter = document.getElementById('project-filter');
+  const prevVal = filter.value;
+  filter.innerHTML = '<option value="">All projects</option><option value="0">— Unassigned —</option>'
+    + allProjects.map(p => `<option value="${p.id}">${escHtml(p.name)}</option>`).join('');
+  if ([...filter.options].some(o => o.value === prevVal)) filter.value = prevVal;
 
-  // Unassigned section
-  const unassigned = allPapers.filter(p => !p.project_id);
-  if (unassigned.length > 0 || allProjects.length === 0) {
-    list.appendChild(buildUnassigned(unassigned));
-  }
+  const papers = filteredPapers();
+  const projName = id => (allProjects.find(p => p.id === id) || {}).name || '';
+  papers.forEach(p => list.appendChild(buildPaperItem(p, projName(p.project_id))));
+
+  document.getElementById('paper-count').textContent = `${papers.length}`;
+  updateBatchBar();
 }
 
-function buildProjectFolder(proj, papers) {
-  const collapsed = collapsedProjects.has(proj.id);
-  const folder = document.createElement('div');
-  folder.className = 'project-folder';
-
-  const header = document.createElement('div');
-  header.className = 'project-header';
-  header.innerHTML = `
-    <span class="project-arrow">${collapsed ? '▶' : '▼'}</span>
-    <span class="project-name-text" title="${escHtml(proj.name)}">${escHtml(proj.name)}</span>
-    <span class="project-count">${papers.length}</span>
-    <div class="project-actions">
-      <button class="proj-act-btn" title="Rename project"
-        onclick="renameProjectUI(event, ${proj.id})">✎</button>
-      <button class="proj-act-btn del" title="Delete project"
-        onclick="deleteProjectConfirm(event, ${proj.id})">✕</button>
-    </div>`;
-  header.addEventListener('click', () => toggleProject(proj.id));
-  folder.appendChild(header);
-
-  const papersDiv = document.createElement('div');
-  papersDiv.className = 'project-papers';
-  papersDiv.style.display = collapsed ? 'none' : 'block';
-  papers.forEach(p => papersDiv.appendChild(buildPaperItem(p)));
-  folder.appendChild(papersDiv);
-
-  return folder;
+function filteredPapers() {
+  const val = document.getElementById('project-filter').value;
+  if (val === '') return allPapers;                       // all projects
+  if (val === '0') return allPapers.filter(p => !p.project_id);   // unassigned
+  const pid = parseInt(val);
+  return allPapers.filter(p => p.project_id === pid);
 }
 
-function buildUnassigned(papers) {
-  const collapsed = collapsedProjects.has('__unassigned__');
-  const folder = document.createElement('div');
-  folder.className = 'project-folder';
+function onProjectFilterChange() { renderSidebar(); }
 
-  const header = document.createElement('div');
-  header.className = 'project-header';
-  header.innerHTML = `
-    <span class="project-arrow">${collapsed ? '▶' : '▼'}</span>
-    <span class="project-name-text unassigned">Unassigned</span>
-    <span class="project-count">${papers.length}</span>`;
-  header.addEventListener('click', () => toggleProject('__unassigned__'));
-  folder.appendChild(header);
-
-  const papersDiv = document.createElement('div');
-  papersDiv.className = 'project-papers';
-  papersDiv.style.display = collapsed ? 'none' : 'block';
-  papers.forEach(p => papersDiv.appendChild(buildPaperItem(p)));
-  folder.appendChild(papersDiv);
-
-  return folder;
-}
-
-function buildPaperItem(p) {
+function buildPaperItem(p, projLabel) {
   const div = document.createElement('div');
   div.className = 'paper-item' + (p.id === currentPaperId ? ' active' : '');
-  div.addEventListener('click', () => { if (p.id) loadPdf(p.id, p.filename); });
 
-  const done = p.annotated_by && p.annotated_by.length > 0;
+  const done = !!p.ann_status && p.ann_status !== 'in_progress';
 
-  // Name row with delete button
-  const nameRow = document.createElement('div');
-  nameRow.style.cssText = 'display:flex;align-items:center;position:relative';
-  nameRow.innerHTML = `<div class="pi-name" title="${escHtml(p.filename)}">${escHtml(p.filename)}</div>`;
+  // Row 1: checkbox + name + delete
+  const row1 = document.createElement('div');
+  row1.style.cssText = 'display:flex;align-items:center;gap:6px;position:relative;';
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = batchSelected.has(p.id);
+  cb.style.cssText = 'flex-shrink:0;accent-color:#7c3aed;cursor:pointer;';
+  cb.addEventListener('click', ev => ev.stopPropagation());
+  cb.addEventListener('change', () => toggleBatchSelect(p.id, cb.checked));
+  row1.appendChild(cb);
+
+  const name = document.createElement('div');
+  name.className = 'pi-name';
+  name.style.flex = '1';
+  name.title = p.filename;
+  name.textContent = p.filename;
+  name.addEventListener('click', () => { if (p.id) loadPdf(p.id, p.filename); });
+  row1.appendChild(name);
+
   const actions = document.createElement('div');
   actions.className = 'paper-item-actions';
   actions.innerHTML = `<button class="paper-act-btn" title="Delete paper">✕</button>`;
@@ -2365,43 +2410,26 @@ function buildPaperItem(p) {
     ev.stopPropagation();
     deletePaperConfirm(p.id, p.filename);
   });
-  nameRow.appendChild(actions);
-  div.appendChild(nameRow);
+  row1.appendChild(actions);
+  div.appendChild(row1);
 
-  // Meta row
-  const meta = document.createElement('div');
-  meta.className = 'pi-meta';
-  meta.textContent = (p.annotated_by || []).join(', ') || 'no annotations';
-  div.appendChild(meta);
-
-  // Chip + move select
-  const bottomRow = document.createElement('div');
-  bottomRow.style.cssText = 'display:flex;align-items:center;gap:5px;flex-wrap:wrap';
-
-  const chip = document.createElement('span');
-  chip.className = 'pi-chip ' + (done ? 'done' : 'none');
-  chip.textContent = done ? 'annotated' : 'pending';
-  bottomRow.appendChild(chip);
-
-  if (allProjects.length > 0) {
-    const sel = document.createElement('select');
-    sel.className = 'move-select';
-    sel.title = 'Move to project';
-    sel.innerHTML = `<option value="">move to…</option>
-      <option value="0">— Unassigned —</option>
-      ${allProjects.map(proj =>
-        `<option value="${proj.id}" ${p.project_id === proj.id ? 'selected' : ''}>${escHtml(proj.name)}</option>`
-      ).join('')}`;
-    sel.addEventListener('change', ev => {
-      ev.stopPropagation();
-      const val = ev.target.value;
-      if (val !== '') assignPaperToProject(p.id, val === '0' ? null : parseInt(val));
-    });
-    sel.addEventListener('click', ev => ev.stopPropagation());
-    bottomRow.appendChild(sel);
+  // Row 2: meta (project label + timestamp)
+  if (projLabel) {
+    const meta = document.createElement('div');
+    meta.className = 'pi-meta';
+    meta.textContent = projLabel;
+    div.appendChild(meta);
   }
 
+  // Row 3: status chip
+  const bottomRow = document.createElement('div');
+  bottomRow.style.cssText = 'display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:4px;';
+  const chip = document.createElement('span');
+  chip.className = 'pi-chip ' + (done ? 'done' : 'none');
+  chip.textContent = done ? (p.ann_status === 'complete' ? 'complete' : p.ann_status) : 'pending';
+  bottomRow.appendChild(chip);
   div.appendChild(bottomRow);
+
   return div;
 }
 
@@ -2516,6 +2544,172 @@ async function loadPapersAndProjects() {
   } catch(e) { allProjects = []; }
 
   renderSidebar();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BATCH SELECTION + RUN
+// ═══════════════════════════════════════════════════════════════════════════
+function toggleBatchSelect(paperId, checked) {
+  if (checked) batchSelected.add(paperId); else batchSelected.delete(paperId);
+  updateBatchBar();
+}
+
+function clearBatchSelection() {
+  batchSelected.clear();
+  renderSidebar();
+}
+
+function updateBatchBar() {
+  const n = batchSelected.size;
+  const bar = document.getElementById('batch-bar');
+  if (bar) bar.style.display = n > 0 ? 'block' : 'none';
+  const count = document.getElementById('batch-count');
+  if (count) count.textContent = n;
+  const btn = document.getElementById('batch-btn');
+  if (btn) btn.disabled = n === 0;
+}
+
+function populateBatchGroups() {
+  const host = document.getElementById('batch-groups');
+  host.innerHTML = FIELD_GROUPS.map(g => `
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;">
+      <input type="checkbox" id="bg-${g.id}" ${g.default ? 'checked' : ''}>
+      ${g.label}
+    </label>
+  `).join('');
+}
+
+function showBatchModal() {
+  if (batchSelected.size === 0) return;
+  populateBatchGroups();
+  document.getElementById('batch-modal-sub').textContent = `${batchSelected.size} paper${batchSelected.size === 1 ? '' : 's'} selected`;
+  document.getElementById('batch-progress').style.display = 'none';
+  document.getElementById('batch-progress-list').innerHTML = '';
+  document.getElementById('batch-run-btn').disabled = false;
+  document.getElementById('batch-run-btn').textContent = 'Run';
+  document.getElementById('batch-modal').style.display = 'flex';
+}
+
+function hideBatchModal() {
+  if (batchRunning) return;   // don't close while running
+  document.getElementById('batch-modal').style.display = 'none';
+}
+
+function _logBatch(msg, kind) {
+  const host = document.getElementById('batch-progress-list');
+  const color = kind === 'err' ? '#dc2626' : kind === 'ok' ? '#16a34a' : 'var(--text)';
+  const line = document.createElement('div');
+  line.style.color = color;
+  line.textContent = msg;
+  host.appendChild(line);
+  host.scrollTop = host.scrollHeight;
+}
+
+async function runBatch() {
+  if (batchRunning) return;
+  const doClassify = document.getElementById('batch-step-classify').checked;
+  const doPrefill  = document.getElementById('batch-step-prefill').checked;
+  if (!doClassify && !doPrefill) { alert('Select at least one step.'); return; }
+
+  const groups = FIELD_GROUPS
+    .filter(g => document.getElementById('bg-' + g.id).checked)
+    .map(g => g.id);
+  if (doPrefill && groups.length === 0) { alert('Pick at least one field group.'); return; }
+
+  const paperIds = [...batchSelected];
+  batchRunning = true;
+  document.getElementById('batch-run-btn').disabled = true;
+  document.getElementById('batch-run-btn').textContent = 'Running…';
+  document.getElementById('batch-progress').style.display = 'block';
+  _logBatch(`Starting batch on ${paperIds.length} paper(s)…`);
+
+  let ok = 0, failed = 0, skipped = 0;
+  for (const pid of paperIds) {
+    const paper = allPapers.find(p => p.id === pid) || { filename: `#${pid}` };
+    _logBatch(`• ${paper.filename}`);
+    let studyType = null;
+
+    // 1) Classify (if requested) → gives us study_type
+    if (doClassify) {
+      try {
+        const r = await fetch(`/api/annotator/papers/${pid}/classify`, { method: 'POST' });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          const msg = (err.detail && typeof err.detail === 'object') ? (err.detail.detail || 'error') : (err.detail || `HTTP ${r.status}`);
+          _logBatch(`    classify: ${msg}`, 'err');
+          failed++; continue;
+        }
+        const out = await r.json();
+        studyType = out.study_type;
+        _logBatch(`    classified: ${studyType}`, 'ok');
+      } catch(e) {
+        _logBatch(`    classify error: ${e.message}`, 'err');
+        failed++; continue;
+      }
+    }
+
+    // 2) Prefill (if requested) — need a study_type from somewhere
+    if (doPrefill) {
+      if (!studyType) {
+        // Fall back to the paper's existing annotation if available
+        try {
+          const r = await fetch(`/api/annotator/papers/${pid}/annotation`);
+          const body = r.ok ? await r.json() : {};
+          studyType = body.annotation?.data?.study_type || null;
+        } catch(e) { /* ignore */ }
+      }
+      if (!studyType) {
+        _logBatch('    prefill: no study_type — run classify first or open the paper and set it manually.', 'err');
+        skipped++; continue;
+      }
+      try {
+        const r = await fetch(`/api/annotator/papers/${pid}/prefill`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ study_type: studyType, groups: groups }),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          const msg = (err.detail && typeof err.detail === 'object')
+            ? `${err.detail.detail || 'error'}${err.detail.required != null ? ` — need ${err.detail.required}, balance ${err.detail.balance}` : ''}`
+            : (err.detail || `HTTP ${r.status}`);
+          _logBatch(`    prefill: ${msg}`, 'err');
+          failed++; continue;
+        }
+        const extracted = await r.json();
+        const n = Object.keys(extracted).length;
+        _logBatch(`    extracted ${n} field(s)`, 'ok');
+
+        // Persist extraction to the paper's annotation so the sidebar chip updates
+        await fetch(`/api/annotator/papers/${pid}/annotation`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            data: { study_type: studyType, ...extracted, pipeline_predictions_json: JSON.stringify(extracted) },
+            field_annotations: {},
+            spans: [],
+          }),
+        });
+      } catch(e) {
+        _logBatch(`    prefill error: ${e.message}`, 'err');
+        failed++; continue;
+      }
+    }
+
+    ok++;
+  }
+
+  _logBatch(`Done — ${ok} ok, ${failed} failed, ${skipped} skipped.`,
+            failed || skipped ? 'err' : 'ok');
+  batchRunning = false;
+  document.getElementById('batch-run-btn').disabled = false;
+  document.getElementById('batch-run-btn').textContent = 'Close';
+  document.getElementById('batch-run-btn').onclick = function() {
+    hideBatchModal();
+    document.getElementById('batch-run-btn').onclick = runBatch;
+    clearBatchSelection();
+    loadPapersAndProjects();
+  };
 }
 
 async function uploadFiles(files) {
@@ -2661,7 +2855,18 @@ document.getElementById('file-input').addEventListener('change', function () {
     window.location.href = '/login';
     return;
   }
-  loadPapersAndProjects();
+  await loadPapersAndProjects();
+
+  // Auto-scope to a specific project when opened with ?project_id=N
+  const params = new URLSearchParams(window.location.search);
+  const pid = params.get('project_id');
+  if (pid !== null) {
+    const filter = document.getElementById('project-filter');
+    if ([...filter.options].some(o => o.value === pid)) {
+      filter.value = pid;
+      onProjectFilterChange();
+    }
+  }
 })();
 </script>
 </body>

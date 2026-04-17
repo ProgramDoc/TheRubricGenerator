@@ -4866,10 +4866,18 @@ def api_annotator_classify(pid: int,
 def api_annotator_prefill(pid: int, body: dict,
                           rubricgen_session: str | None = Cookie(default=None),
                           x_api_key: str | None = Header(default=None, alias="X-API-Key")):
-    """AI-extract structured fields for the given study_type. Credit-gated."""
-    study_type = (body or {}).get("study_type", "")
+    """AI-extract structured fields for the given study_type. Credit-gated.
+
+    Optional ``groups`` (list of field-group IDs) narrows which universal
+    fields are extracted. Omitted → full extraction.
+    """
+    body = body or {}
+    study_type = body.get("study_type", "")
+    groups = body.get("groups") or None
     if not study_type:
         raise HTTPException(400, "study_type is required")
+    if groups is not None and not isinstance(groups, list):
+        raise HTTPException(400, "groups must be a list of group IDs")
 
     user = require_user(rubricgen_session, x_api_key)
     conn = get_db()
@@ -4885,7 +4893,7 @@ def api_annotator_prefill(pid: int, body: dict,
         conn.close()
 
     try:
-        return annotator_mod.prefill_fields(pdf_bytes, study_type)
+        return annotator_mod.prefill_fields(pdf_bytes, study_type, groups=groups)
     except HTTPException:
         _refund_annotator(user, annotator_mod.CREDIT_COST_PREFILL, "prefill", filename)
         raise

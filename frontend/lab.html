@@ -1126,6 +1126,8 @@ function showFolderCtx(e, pid, name, role) {
   items += '<button class="ctx-menu-item" onclick="hideCtxMenu();openShareModal(' + pid + ',\'' + escapedName + '\')">Share</button>';
   items += '<button class="ctx-menu-item" onclick="hideCtxMenu();openShareModal(' + pid + ',\'' + escapedName + '\')">Members</button>';
   items += '<div class="ctx-menu-sep"></div>';
+  items += '<button class="ctx-menu-item" onclick="hideCtxMenu();openFullscreenTab(\'Annotator\',\'/annotator?project_id=' + pid + '\')">Open in Annotator</button>';
+  items += '<div class="ctx-menu-sep"></div>';
   if (isAdmin) {
     items += '<button class="ctx-menu-item" onclick="hideCtxMenu();renameProject(' + pid + ')">Rename</button>';
     items += '<button class="ctx-menu-item" onclick="hideCtxMenu();transferOwnership(' + pid + ')">Transfer Ownership</button>';
