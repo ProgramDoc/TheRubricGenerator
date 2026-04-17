@@ -145,7 +145,7 @@ Lives at `/annotator` (route in `main.py`, UI in `frontend/annotator.html`, back
 
 **Data model:** `annotations` (per paper+reviewer, optimistic-concurrency `version` column, `updated_at` not `timestamp`), `annotation_spans` (text→field linkages), plus `annotator_custom_schemas` + `annotator_custom_runs` for the custom-extraction feature. All initialised from `ANNOTATOR_TABLES_SQL` in `backend/annotator.py`, executed by `main.py:init_db()`.
 
-**Right-pane tab bar:** `Form` / `✨ Custom` / `Results` / `Analytics`. Form uses `display: none` when inactive so span linking keeps working. Active tab persists in `localStorage` under `annotator_active_tab`.
+**Right-pane tab bar:** `Form` / `✨ Custom` / `Results` / `Analytics ↗`. Form uses `display: none` when inactive so span linking keeps working. Active tab persists in `localStorage` under `annotator_active_tab` (allowed values: `form` / `chat` / `results`). The `Analytics ↗` button is NOT a pane — it navigates to `/analytics#annotator`. All annotator analytics live in the unified analytics page ([frontend/analytics.html](frontend/analytics.html)) which has tabs for Benchmark / Annotator / Admin analytics; hash routing (`#annotator`, `#admin`) selects the initial tab.
 
 **AI calls (all credit-gated, admin bypass, auto-refund on failure):**
 - Classify study design: 3 credits — `POST /api/annotator/papers/{id}/classify`
