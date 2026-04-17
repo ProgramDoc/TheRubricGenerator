@@ -6,17 +6,17 @@
 
 ---
 
-## Current State (April 14, 2026)
+## Current State (April 16, 2026)
 
 ### Codebase Summary
 
 | Component | Files | Lines |
 |-----------|-------|-------|
-| `main.py` | 1 | ~5,040 |
-| `backend/` modules | 23 | ~10,060 |
-| `frontend/` pages | 19 | ~12,430 |
-| `tests/` | 3 | ~250 |
-| **Total** | **46** | **~27,780** |
+| `main.py` | 1 | ~5,900 |
+| `backend/` modules | 25 | ~11,200 |
+| `frontend/` pages | 20 | ~16,600 |
+| `tests/` | 3 | ~670 |
+| **Total** | **49** | **~34,370** |
 
 ### What's Live
 
@@ -60,8 +60,14 @@
 - **Rebranded:** "The AI Researcher" (no OGAI/UCLA/INOVAi references)
 - **The AI Researcher Lab:** 3-pane interface (sidebar + chat + tabbed workspace) with 8 AI agent speed buttons (Research Chat, Search Strategist, Statistician, Study Appraiser, Hypothesis Generator, Literature Reviewer, Study Builder, Protocol Evaluator), contextual right-pane tabs per agent, chat-first file uploads with context prompt, clipboard paste screenshot support, drag-and-drop documents
 - **Nav restructured:** Benchmark Lab dropdown (Challenges + Leaderboard), Settings gear (Billing + Preferences), Developers tab, user display name
-- **Unit tests:** pytest suite for Competition API (16 test cases covering full model lifecycle)
+- **Unit tests:** pytest suite for Competition API (16 test cases) + Annotator (24 test cases) = 40 total
 - **Daily scheduler fix:** Removed restrictive OA filter, MeSH-based queries, broad PubMed search → rank by citations → top 10
+- **OGAI Annotator integration:** Native port of the annotator into the Benchmark Lab as `/annotator`. Full classify-and-extract flow with universal / type-specific / cross-cutting field groups, credit-gated AI calls, project-shared paper pool, optimistic-concurrency save/load with localStorage draft + keepalive-backed backend persistence
+- **Annotator batch extraction:** Checkbox selection + batch bar with "Run batch…", "Move selected to project…", and "✕ Delete selected"; batch modal lets users pick field groups (Layer 1), per-study-type field subsets (Layer 2), and cross-cutting modifiers (Layer 3)
+- **Annotator custom extraction:** ✨ Custom tab — upload a protocol/CRF/CSV, AI proposes an extraction schema, user inline-edits + refines with free-text instructions, saves per-user, runs on batch with credit-gated per-paper extraction. Results appear as a paper×field grid in the Results tab with CSV export
+- **Annotator analytics dashboard:** Right-pane Analytics tab with four Chart.js views (field completion rates, categorical distributions, min/median/max numeric summaries, reviewer-action breakdown) scoped to current paper / project / batch / all
+- **Paper storage on S3:** Paper uploads now route through `backend/paper_files.py` → `backend/storage.py` (S3 when `AWS_S3_BUCKET` is set, local `uploads/` otherwise). `papers.storage_path` records the durable location; legacy `disk_filename` is kept as a fallback for pre-migration rows. Survives Render's ephemeral-disk wipes
+- **Lab Conversations section:** Now capped at 180px with internal scroll; click the header to expand to 60vh. State persists in localStorage so other sections (Context, Projects, Invitations, Interfaces) stay in view
 
 ---
 
@@ -251,6 +257,61 @@ New primary interface replacing dashboard as homepage — a 3-pane research work
 - **Storage usage endpoint**: `GET /api/lab/storage` returns used vs. limit for the user's plan
 - **Env vars**: `AWS_S3_BUCKET`, `AWS_S3_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
 
+### OGAI Annotator — Native Integration (April 16, 2026)
+
+Ported [OGAI_Annotator](https://github.com/ProgramDoc/OGAI_Annotator) into The AI Researcher as a Benchmark Lab application at `/annotator`. Reuses the platform's auth, `papers` table, projects, credits, and `call_anthropic` helper — no duplicated infrastructure.
+
+- **`backend/annotator.py`** (NEW, ~800 lines) — `ANNOTATOR_TABLES_SQL` (annotations + annotation_spans), universal/type-specific/modifier field catalogs, classify + prefill prompts, save/load with optimistic concurrency, CSV export with formula-injection protection
+- **`frontend/annotator.html`** (NEW, ~3,900 lines) — Ported 3-pane layout (paper list + PDF viewer + form panel) with PDF.js 3.11, per-field confirm/correct/flag UI, text-to-field span linking, localStorage draft + debounced backend save
+- **`/annotator` page route + 6 `/api/annotator/*` endpoints** in `main.py` covering paper list, annotation load/save, AI classify, AI prefill, CSV export
+- **Credit gating**: classify = 3 credits, prefill = 8 credits; admins bypass; automatic refund on LLM or storage failure
+- **New tables**: `annotations` (one per paper+reviewer, optimistic `version` column) and `annotation_spans` (text→field linkages)
+- **Sidebar entry in `frontend/lab.html`** under Interfaces + entries added to the duplicated nav bar across 17 other HTML files
+- **Tests**: new `tests/test_annotator.py` — save/load round-trip, 409 on stale version, span replacement, CSV export, cross-user isolation, classify-without-auth, prefill validation
+
+### Annotator Refinements & Batch Workflow (April 16, 2026)
+
+- **In-iframe chrome hiding**: annotator's own topbar brand/nav/sign-out/back-link are tagged `tb-chrome` and hidden via `.in-iframe #topbar .tb-chrome { display: none }` so nothing duplicates the Lab's topbar when opened from the Lab
+- **Sidebar redesign**: removed the annotator's independent project folder tree (previously duplicated Lab projects). Replaced with a flat paper list + compact "All projects / Unassigned / …" dropdown that reads from the shared `/api/projects`
+- **Project scoping via URL**: `?project_id=N` auto-filters to a specific project. The Lab's project context menu now has an "Open in Annotator" item that threads the id through
+- **Batch bar in the sidebar**: checkboxes per paper enable a purple bar with "Run batch…", "Move selected to project…", and "✕ Delete selected"
+- **Batch modal**: pick steps (classify / extract) and Layer 1 field groups. Later expanded with Layer 2 (collapsible per-study-type subsets with "All"/"None" buttons) and Layer 3 (cross-cutting modifier field checkboxes)
+- **`/api/annotator/schema`** endpoint exposes the field catalog so the modal can render without hard-coding field lists in JS
+- **Prefill endpoint extensions**: `POST /api/annotator/papers/{id}/prefill` now accepts optional `groups`, `type_fields`, and `modifier_fields` (None = include all, `[]` = exclude)
+- **Persistence hardening**: save flow now fires on `beforeunload`, `pagehide`, and `visibilitychange → hidden` via `fetch({keepalive: true})` — edits survive tab close, Lab "Back to Chat", and tab switches. `logout()` awaits a final forced save. Draft cache moved from sessionStorage to localStorage so unsent edits survive tab close in any tab
+- **Tab bar + right-pane panes** (Form / ✨ Custom / Results / Analytics). Inactive panes use `display: none` so span-linking DOM lookups (`getElementById('spans-…')`) keep resolving
+
+### Paper Storage Migration to S3 (April 16, 2026)
+
+Paper uploads now route through durable storage so PDFs survive Render redeploys.
+
+- **`backend/paper_files.py`** (NEW) — thin helper over `backend/storage.py` with `write_paper_file()`, `read_paper_bytes()`, `delete_paper_file()`
+- **`papers.storage_path`** column added via additive migration in `_migrate_challenge_columns_v2`. `s3://bucket/key` when S3 configured, else `uploads/<uuid>.pdf`
+- **Legacy fallback**: rows with NULL storage_path still read from `PAPERS_DIR / disk_filename` so pre-migration PDFs on persistent disks keep working. New error message prompts re-upload for wiped ephemeral files
+- **All paper readers migrated**: `/api/papers/{id}/pdf`, `_pdf_to_base64`, the /last-test-papers helper, comparative-rubric loader, `backend/annotator.py:load_paper_pdf`, `backend/challenges.py:_load_papers_b64`, and `backend/self_improve.py`
+- **Auto-fetch paths updated**: `backend/pubmed.py:download_pmc_pdf` now also uploads to storage.py and returns a dict including `storage_path`. `backend/scheduler.py` and `backend/search.py` thread it through to `INSERT INTO papers`
+- **DELETE `/api/papers/{pid}`** now calls `delete_paper_file()` to clean up the S3 object (and any legacy local copy) before removing the row
+- **Tests**: new `test_upload_records_storage_path` and `test_pdf_read_survives_wiped_papers_dir` — the second simulates a Render disk wipe by redirecting `PAPERS_DIR` to an empty tmp dir and confirming `/api/papers/{id}/pdf` still serves from storage
+
+### Annotator Custom Extraction & Analytics (April 16, 2026)
+
+Two long-requested features behind a right-pane tab bar in the annotator.
+
+- **✨ Custom tab (schema chat)**: upload a protocol PDF / CSV / pasted description → AI proposes an extraction schema (field id, label, type, options, required, description). Users inline-edit, optionally "refine with an instruction" for a free-text follow-up pass, save per-user, run on any batch selection with pre-flight credit debit (8 credits/paper) and per-paper refund on deletion / permission / extraction failure
+- **Results tab**: runs dropdown, sticky-header paper×field table with cell styling for ok / error / skipped, ⬇ CSV export via `GET /api/annotator/runs/{id}.csv`
+- **Analytics tab**: four Chart.js cards over the existing annotations table
+  1. Field completion rates (20 lowest-populated fields, horizontal bar)
+  2. Categorical distributions (picker → doughnut chart; `study_type`, `country_region`, `funding_source`, etc.)
+  3. Numeric summaries (log-scale grouped bar: min / median / max across `NUMERIC_FIELDS`)
+  4. Reviewer actions (stacked bar: confirmed / corrected / flagged / empty per field)
+- **Scope selector**: current paper / current project / batch selection / all my papers — drives the same `/api/annotator/analytics` endpoint with different query params
+- **2 new DB tables**: `annotator_custom_schemas` (per-user unique name, fields_json blob) and `annotator_custom_runs` (schema_snapshot_json, paper_ids_json, results_json, credit_cost, credits_refunded, status)
+- **New constants in `backend/annotator.py`**: `NUMERIC_FIELDS` (17 fields), `CATEGORICAL_FIELDS` (17 fields), `FIELD_GROUPS` (8 universal groups), plus `validate_custom_fields`, `build_custom_prompt`, `_to_float` coercion
+- **9 new endpoints** under `/api/annotator/*`: `schemas/parse`, `schemas/refine`, `schemas` CRUD (`GET`, `POST`, `PATCH`, `DELETE`), `schemas/{id}/run`, `runs`, `runs/{id}`, `runs/{id}.csv`, `analytics`
+- **Credit costs**: parse = 2, refine = 1, run = 8/paper
+- **Background threading**: runs ≤10 papers finish in-request; larger runs run in a daemon thread and the Results tab polls
+- **8 new tests**: validator happy/error paths, `_to_float` coercion, prompt builder, schema CRUD round-trip, cross-user isolation, analytics endpoint with fixture annotations, run ownership checks
+
 ### Search Results Improvements (April 13, 2026)
 
 - **Sortable columns**: click Title, Authors, Journal, Year, or Cites headers to sort ascending/descending with arrow indicators; Cites defaults to descending
@@ -298,6 +359,26 @@ pytest tests/ -v
 - Results retrieval
 - API key regeneration (old key invalidated)
 - User API key auth (`X-API-Key` header on platform endpoints)
+
+### Test Suite: `tests/test_annotator.py`
+
+24 test cases covering annotator CRUD, storage, and analytics:
+- Papers list includes annotation status
+- Save/load round-trip bumps version 1 → 2; stale version returns 409
+- Span replacement on save (set A → set B is atomic)
+- CSV export contains header + one row per annotated paper
+- Cross-user annotation is forbidden (403)
+- `FIELD_GROUPS` partition UNIVERSAL_FIELD_IDS; prefill prompt honours groups/type_fields/modifier_fields
+- Paper upload records `storage_path`; PDF read survives wiped `PAPERS_DIR`
+- Schema endpoint exposes the type/modifier catalog
+- Custom-field validator rejects empty lists, bad ids, duplicate ids, select-without-options, bad type
+- `_to_float` accepts `"12.3"`, `"1,234"`, `"85%"`, `"1e3"`; rejects `"n/a"`
+- `build_custom_prompt` describes each field with type + options
+- Schema CRUD round-trip (create, list, duplicate-name 409, patch, get, delete)
+- Schema cross-user isolation (list + get both filtered by user_id)
+- Analytics endpoint empty scope returns all four keys
+- Analytics with 2 annotated papers computes numeric summaries, categorical distributions, and reviewer-action counts
+- Run endpoint validates schema ownership + known papers + non-empty `paper_ids`
 
 Tests use FastAPI's TestClient with SQLite fallback (no DATABASE_URL) — no external API calls, no PostgreSQL required.
 
@@ -433,6 +514,9 @@ User syncs to local machine via Obsidian Sync/iCloud/rsync/git.
 | `backend/db.py` | ~220 | Database compatibility layer (PostgreSQL + SQLite fallback) |
 | `backend/helpers.py` | ~163 | LLM callers (Anthropic, Gemini, OpenAI-compatible) |
 | `backend/storage.py` | ~152 | S3/local file storage abstraction |
+| `backend/annotator.py` | ~970 | OGAI Annotator: tables, field catalog, classify/prefill/custom-run prompts, analytics helpers |
+| `backend/paper_files.py` | ~85 | Paper-file read/write/delete helper (S3 via storage.py + legacy disk fallback) |
+| `frontend/annotator.html` | ~3,900 | Annotator UI: 3-pane layout, PDF.js viewer, tabbed right pane (Form / Custom / Results / Analytics), batch bar, span linking |
 | `backend/promo.py` | ~180 | Promo codes, 48h auto-approve |
 | `backend/agents/participants.py` | ~142 | Frontier + custom model runner |
 | `backend/agents/lab_agents.py` | ~130 | Lab agent runners (6 new agent types) |
@@ -482,4 +566,4 @@ User syncs to local machine via Obsidian Sync/iCloud/rsync/git.
 
 ---
 
-**Last updated:** April 14, 2026
+**Last updated:** April 16, 2026

@@ -10,12 +10,13 @@ Repository: [github.com/ProgramDoc/TheRubricGenerator](https://github.com/Progra
 
 The AI Researcher is a platform for benchmarking frontier LLMs on clinical research comprehension. It uses a **two-agent architecture** where one Claude agent generates difficult evaluation rubrics from research papers and another Claude agent judges competing models' answers. The agents autonomously improve their own prompts using an autoresearch-style experiment loop.
 
-The platform supports four modes of operation:
+The platform supports five modes of operation:
 
 1. **Daily AI Researcher Challenge** - Automated daily benchmarks (7am PST Mon-Fri) using PubMed papers, mixed difficulty (2/2/4/2 composition), bonus round, 100 pts/correct, dual leaderboard with streak tracking
 2. **Individual Tests** - User-designed tests with custom papers, four cognitive difficulty levels, private or public
 3. **Competition API** - External models fetch questions and submit answers via API (Kaggle-style)
 4. **Manual Evaluation** - Traditional rubric-based evaluation with human-in-the-loop editing
+5. **Annotator** - Native OGAI Annotator port at `/annotator` for expert review: classify study design, AI-extract structured fields by study type, link PDF text spans to fields, run custom user-defined extraction schemas in batch, and explore aggregate analytics (field completion rates, categorical distributions, numeric summaries, reviewer-action breakdown)
 
 ---
 
@@ -46,13 +47,20 @@ TheRubricGenerator/
 │   ├── analytics.py                 # Performance breakdown, CSV/PDF export
 │   ├── templates.py                 # Rubric templates, community library
 │   ├── membership.py                # Free/Pro/Enterprise plans
+│   ├── storage.py                   # S3/local file storage abstraction
+│   ├── paper_files.py               # Paper-file reader (S3 storage_path + legacy fallback)
+│   ├── annotator.py                 # OGAI Annotator: tables, field catalog, prompts, analytics
+│   ├── lab.py                       # Lab session CRUD, chat orchestrator, document mgmt
 │   └── agents/
 │       ├── generator.py             # Rubric Generator Agent (daily composition)
 │       ├── judge.py                 # Judge Agent + shadow regrade
-│       └── participants.py          # Frontier model runner (routes to provider APIs)
+│       ├── participants.py          # Frontier model runner (routes to provider APIs)
+│       └── lab_agents.py            # Lab agent runners (6 specialised agents)
 │
 └── frontend/
-    ├── dashboard.html               # Main hub (stats, recent challenges, top models)
+    ├── lab.html                     # The AI Researcher Lab (3-pane; homepage)
+    ├── annotator.html               # OGAI Annotator (3-pane; tabbed right pane)
+    ├── dashboard.html               # Benchmark hub (stats, recent challenges, top models)
     ├── challenges.html              # Create + list challenges
     ├── challenge_viewer.html        # Detail view (rubric, answers, grades side-by-side)
     ├── leaderboard.html             # Model rankings with podium
@@ -60,6 +68,9 @@ TheRubricGenerator/
     ├── models.html                  # Model registry (name, version, team, API)
     ├── billing.html                 # Credit balance, purchase packs, transactions
     ├── rubric_generator.html        # Paper upload + manual rubric editing
+    ├── search.html                  # Literature search (AI chat + PubMed/Europe PMC)
+    ├── library.html                 # Community rubric-template library
+    ├── analytics.html               # Benchmark analytics (Chart.js)
     ├── daily.html                   # Admin: scheduler + skill improvement panel
     ├── admin.html                   # Admin: users + model approval queue
     ├── login.html                   # Authentication (login, register, admin, forgot password)
@@ -181,6 +192,33 @@ After each daily challenge, the Generator and Judge agents run an autonomous exp
 
 All experiments logged in `skill_experiments` table (like autoresearch's results.tsv).
 
+## OGAI Annotator
+
+Natively integrated at `/annotator` (no separate deployment). Opens as a fullscreen tab from the Benchmark Lab sidebar.
+
+**Workflow:**
+1. Upload a PDF — or reuse any paper already uploaded via the PDF Viewer / challenge creator (all papers share one pool keyed on `sha256`).
+2. Click **Classify with AI** to pick a major_category / subcategory / study_type from the OGAI taxonomy.
+3. Click **Auto-fill from PDF** to populate the universal + type-specific + cross-cutting fields for the classified study design.
+4. Per-field **Confirm / Correct / Flag** with optional PDF span links (select text, click "Link to: field").
+5. Mark the paper **Complete / Needs Review / Flagged** and move on.
+
+**Batch workflow:**
+- Check multiple papers in the sidebar → purple bar appears with **Run batch…**, **Move selected to project…**, and **✕ Delete selected**.
+- Batch modal offers per-study-type field subsets (Layer 2) and cross-cutting modifiers (Layer 3) in addition to the universal Layer 1 groups. Defaults to "all selected".
+
+**Custom extraction (✨ Custom tab):**
+- Upload a protocol / CRF / CSV — or paste a description — and an AI proposes a structured extraction schema. Inline-edit fields (label, id, type, options, required, description) or "refine with an instruction" ("add ethnicity", "remove funding") for a second LLM pass. Save per-user, then run on any batch selection.
+- Results land in the **Results tab** as a sticky-header paper×field table with CSV export.
+
+**Analytics (Analytics tab):**
+- Scope selector: current paper / current project / batch selection / all my papers.
+- Four Chart.js views: field completion rates, categorical distributions, numeric min/median/max, confirmed / corrected / flagged / empty breakdown per field.
+
+**Storage:** Papers persist on S3 when `AWS_S3_BUCKET` is set (recommended for Render), else `uploads/` locally. `papers.storage_path` survives redeploys; legacy rows keep their original `disk_filename` fallback.
+
+---
+
 ## Model Marketplace
 
 Users can register custom models for public benchmarking:
@@ -224,6 +262,16 @@ DAILY_MAX_PAPERS=10               # Papers per daily challenge
 ADMIN_EMAIL=tck936@mail.harvard.edu
 ```
 
+**Durable paper storage (recommended for Render):**
+```bash
+AWS_S3_BUCKET=...                 # S3 bucket name (omit → local uploads/ fallback)
+AWS_S3_REGION=us-east-1
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_S3_PREFIX=lab-documents/      # optional key prefix
+```
+When unset the app writes to `uploads/` locally, which Render's free tier wipes on redeploy. Setting the S3 vars makes paper PDFs durable.
+
 ### Local Development
 
 ```bash
@@ -240,7 +288,7 @@ pip install -r requirements.txt
 pytest tests/ -v
 ```
 
-16 unit tests covering the Competition API lifecycle (model registration, approval, question fetching, submission, grading, auth validation, key regeneration, user API keys).
+40 unit tests: 16 covering the Competition API lifecycle (model registration, approval, question fetching, submission, grading, auth validation, key regeneration, user API keys) and 24 covering the Annotator (save/load concurrency, span replacement, CSV export, field validators, custom-schema CRUD, analytics aggregations, S3 storage_path resilience).
 
 ---
 
@@ -312,13 +360,16 @@ Full reference at `/developers` page.
 ### Analytics tables
 `analytics_snapshots`, `notification_preferences`, `challenge_events`
 
+### Annotator tables
+`annotations`, `annotation_spans`, `annotator_custom_schemas`, `annotator_custom_runs`
+
 ---
 
 ## Related Projects
 
 | Repo | Description |
 |------|-------------|
-| [OGAI_Annotator](https://ogai-annotator.onrender.com) | Human annotation platform for clinical studies |
+| [OGAI_Annotator](https://github.com/ProgramDoc/OGAI_Annotator) | Original standalone annotator — now natively integrated in this repo at `/annotator` |
 | StudyTaxonomy | The AI Researcher taxonomy v2.1 (33 study types) |
 | [TheReviewer](https://github.com/ProgramDoc/TheReviewer) | Evidence reviewer interface |
 | **The AI Researcher** | This repository |

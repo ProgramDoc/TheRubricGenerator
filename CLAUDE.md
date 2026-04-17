@@ -22,6 +22,9 @@
 | Modify billing/credits | `backend/billing.py` |
 | Modify membership/storage limits | `backend/membership.py` |
 | Modify file storage (S3/local) | `backend/storage.py` |
+| Read/write paper PDF bytes | `backend/paper_files.py` (handles `storage_path` + legacy `disk_filename` fallback) |
+| Modify the annotator | `backend/annotator.py` (tables, field catalog, prompts, analytics) + `frontend/annotator.html` (3-pane UI + tabbed right pane) |
+| Add an annotator field group / type-specific / modifier constant | `backend/annotator.py` — `FIELD_GROUPS`, `TYPE_FIELD_IDS`, `DESIGN_MODIFIER_COLS`, `NUMERIC_FIELDS`, `CATEGORICAL_FIELDS` |
 | Add a new lab agent | `backend/agents/lab_agents.py` + `backend/skills.py` (prompt) + `backend/lab.py` (routing) |
 | Modify lab chat/sessions | `backend/lab.py` |
 | Modify exports | `backend/exports.py` |
@@ -52,6 +55,8 @@ backend/
   │   └── lab_agents.py — Lab agent runners (6 new agent types)
   ├── lab.py            — Lab session CRUD, chat orchestrator, document management
   ├── storage.py        — S3/local file storage abstraction
+  ├── paper_files.py    — Paper-file read/write/delete (uses storage.py + legacy fallback)
+  ├── annotator.py      — OGAI Annotator: tables, field catalog, AI prompts, analytics
   ├── exports.py        — Export converters (Word, LaTeX, Excel, CSV, Python, R)
   ├── code_runner.py    — Sandboxed Python/R code execution
   ├── pubmed.py         — PubMed E-utilities, iCite citations, PMC PDF download
@@ -61,15 +66,15 @@ backend/
   ├── membership.py     — Free/Pro/Enterprise plans, PDF limits, storage limits
   ├── organizations.py  — Multi-tenant orgs with roles
   ├── templates.py      — Rubric templates, community library
-  ├── analytics.py      — Performance breakdown, CSV/PDF export
+  ├── analytics.py      — Performance breakdown, CSV/PDF export (challenge benchmarks)
   ├── skills.py         — Agent skill versioning (10 agent types)
   ├── self_improve.py   — Autoresearch experiment loop
   ├── obsidian.py       — Markdown vault writer
   ├── agreements.py     — Legal text
   └── promo.py          — Promo codes
 
-frontend/ — 19 self-contained HTML files (inline CSS + JS, no build step)
-tests/    — pytest suite (Competition API lifecycle)
+frontend/ — 20 self-contained HTML files (inline CSS + JS, no build step)
+tests/    — pytest suite (Competition API + Annotator; 40 cases)
 ```
 
 ## Critical Patterns
@@ -121,6 +126,35 @@ Challenges run on daemon threads (`threading.Thread`). Progress is logged to `ch
 | **Circular imports** | `backend/helpers.py` exists to break circular imports. Agents import from helpers, not from main. |
 | **PDF batching** | Generator can't handle >3 PDFs in one API call (context window). `run_challenge()` batches into groups of 3. |
 | **Admin bypass** | Admins skip credit checks on challenge runs. Regular users need credits. |
+| **Column named `timestamp`** | The SQLite compat wrapper in `backend/db.py` case-insensitively rewrites `TIMESTAMP` → `TEXT`, which **also clobbers any column literally named `timestamp`**. Use `updated_at` / `created_at` etc. The annotator's `annotations` table was renamed for exactly this reason. |
+| **Paper file access** | Always go through `backend/paper_files.py:read_paper_bytes(row, PAPERS_DIR)` — it picks S3 or local automatically. Direct `PAPERS_DIR / disk_filename` works for legacy rows only and will fail on new S3-backed uploads. |
+| **Annotator iframe chrome** | When the annotator is opened from the Lab it loads in an iframe. Elements tagged `tb-chrome` in the annotator's topbar get hidden via `.in-iframe` CSS. Don't tag annotator-specific action buttons (Batch, Save, Export CSV) with `tb-chrome` or they'll disappear inside the Lab. |
+| **Annotator form tab must stay in DOM** | `renderSpans()` looks up `getElementById('spans-' + fieldName)`. The right-pane tabs use `display: none` to hide inactive panes — do NOT remove them from the DOM or span linking breaks. |
+| **LLM JSON parsing** | Use `backend/helpers.py:parse_json_response(raw)` — it strips markdown fences Claude sometimes wraps JSON in. Don't `json.loads` raw Anthropic output directly. |
+
+## OGAI Annotator
+
+Lives at `/annotator` (route in `main.py`, UI in `frontend/annotator.html`, backend in `backend/annotator.py`). Reuses `papers`, `projects`, `require_user`, credits, and `call_anthropic` — no parallel user system.
+
+**Three field layers:**
+- **Layer 1 (universal)** — `UNIVERSAL_FIELD_IDS` + `FIELD_GROUPS` (citation / objective / population / sample / setting / outcomes / results / admin).
+- **Layer 2 (type-specific)** — `TYPE_FIELD_IDS` keyed by study type (RCT, Cohort, Meta-Analysis, etc.).
+- **Layer 3 (cross-cutting)** — `DESIGN_MODIFIER_COLS` (clinical_trial_phase, industry_sponsored, …).
+
+`NUMERIC_FIELDS` + `CATEGORICAL_FIELDS` drive chart selection in the Analytics tab.
+
+**Data model:** `annotations` (per paper+reviewer, optimistic-concurrency `version` column, `updated_at` not `timestamp`), `annotation_spans` (text→field linkages), plus `annotator_custom_schemas` + `annotator_custom_runs` for the custom-extraction feature. All initialised from `ANNOTATOR_TABLES_SQL` in `backend/annotator.py`, executed by `main.py:init_db()`.
+
+**Right-pane tab bar:** `Form` / `✨ Custom` / `Results` / `Analytics`. Form uses `display: none` when inactive so span linking keeps working. Active tab persists in `localStorage` under `annotator_active_tab`.
+
+**AI calls (all credit-gated, admin bypass, auto-refund on failure):**
+- Classify study design: 3 credits — `POST /api/annotator/papers/{id}/classify`
+- Prefill fields: 8 credits — `POST /api/annotator/papers/{id}/prefill` (accepts `groups`, `type_fields`, `modifier_fields`)
+- Parse custom schema from upload/text: 2 credits — `POST /api/annotator/schemas/parse`
+- Refine custom schema: 1 credit — `POST /api/annotator/schemas/refine`
+- Custom batch run: 8 credits × paper — `POST /api/annotator/schemas/{id}/run` (≤10 papers in-request, larger = background thread)
+
+**Persistence:** localStorage draft (not sessionStorage, so it survives tab close) + backend save on `input` (1.5 s debounce) + `keepalive: true` fetch on `beforeunload` / `pagehide` / `visibilitychange → hidden` / `logout()`. `loadExistingAnnotation` prefers the local draft over the backend copy, so unsent edits come back even if the network save failed.
 
 ## Environment Variables
 
