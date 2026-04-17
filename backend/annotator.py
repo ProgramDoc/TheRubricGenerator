@@ -868,6 +868,62 @@ def parse_schema_from_pdf(pdf_bytes: bytes) -> list[dict]:
     return validate_custom_fields(fields)
 
 
+def _docx_bytes_to_markdown(docx_bytes: bytes) -> str:
+    """Convert a .docx payload to a markdown-ish plain-text representation.
+
+    We keep it simple: paragraphs become blank-line-separated blocks; anything
+    styled as a heading gets prefixed with `#`s; list items (numbered + bullet)
+    get a `-` marker. That's enough structure for the LLM to understand field
+    lists, section headers, and tables converted to pipe rows.
+    """
+    try:
+        import io
+        from docx import Document  # python-docx, already in requirements.txt
+    except Exception as e:
+        raise HTTPException(502, f"docx support unavailable on server: {e}")
+    try:
+        doc = Document(io.BytesIO(docx_bytes))
+    except Exception as e:
+        raise HTTPException(400, f"could not read .docx file: {e}")
+
+    lines: list[str] = []
+    for para in doc.paragraphs:
+        text = (para.text or "").strip()
+        if not text:
+            lines.append("")
+            continue
+        style = (para.style.name or "").lower() if para.style else ""
+        if style.startswith("heading"):
+            # "Heading 1" → "# ", "Heading 2" → "## ", …
+            try:
+                level = int(style.replace("heading", "").strip() or "1")
+            except ValueError:
+                level = 1
+            lines.append("#" * max(1, min(level, 6)) + " " + text)
+        elif style.startswith("list") or style in ("bullet", "number"):
+            lines.append(f"- {text}")
+        else:
+            lines.append(text)
+
+    # Pull table content through as pipe-separated rows so field tables survive.
+    for tbl in doc.tables:
+        lines.append("")
+        for row in tbl.rows:
+            cells = [(c.text or "").strip().replace("|", "\\|") for c in row.cells]
+            if any(cells):
+                lines.append("| " + " | ".join(cells) + " |")
+
+    return "\n".join(lines).strip()
+
+
+def parse_schema_from_docx(docx_bytes: bytes) -> list[dict]:
+    """User uploaded a Word document — convert to markdown then propose fields."""
+    text = _docx_bytes_to_markdown(docx_bytes)
+    if not text:
+        raise HTTPException(400, "the .docx appears to be empty")
+    return parse_schema_from_text(text)
+
+
 def parse_schema_from_text(text: str) -> list[dict]:
     """User pasted a CSV / markdown list / prose description — propose fields."""
     text = (text or "").strip()

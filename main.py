@@ -5098,8 +5098,17 @@ async def api_annotator_schemas_parse(
             fname = (file.filename or "").lower()
             if fname.endswith(".pdf"):
                 fields = annotator_mod.parse_schema_from_pdf(content)
+            elif fname.endswith(".docx"):
+                # Word 2007+ — convert to markdown then treat as text
+                fields = annotator_mod.parse_schema_from_docx(content)
+            elif fname.endswith(".doc"):
+                # Legacy Word binary format — python-docx can't read it.
+                raise HTTPException(
+                    400,
+                    "legacy .doc files are not supported — please save as .docx or paste the text.",
+                )
             else:
-                # CSV / TXT / anything else: decode as text
+                # CSV / TXT / MD / anything else: decode as text
                 try:
                     text_body = content.decode("utf-8", errors="replace")
                 except Exception:

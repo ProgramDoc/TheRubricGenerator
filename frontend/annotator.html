@@ -287,6 +287,17 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
   grid-column: 1 / -1; padding-left: 0; margin-top: 4px;
 }
 
+/* Saved-schema rows (Custom tab) — whole row is clickable to load a schema. */
+.saved-schema-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 5px;
+  margin-bottom: 6px; background: #fff; cursor: pointer;
+  transition: background .12s, border-color .12s, box-shadow .12s;
+}
+.saved-schema-row:hover { background: #f8fafc; border-color: var(--sky); }
+.saved-schema-row:focus { outline: none; border-color: var(--sky); box-shadow: 0 0 0 2px rgba(94,154,208,.2); }
+.saved-schema-row.active { background: #f5f0ff; border-color: #7c3aed; }
+
 /* Results grid */
 .rt-table {
   width: 100%; border-collapse: separate; border-spacing: 0; font-size: 11px;
@@ -686,6 +697,23 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
         <div id="batch-modifier-fields" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-left:24px;"></div>
       </div>
 
+      <!-- ── Custom schema (optional) ────────────────────────────────────── -->
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);">
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;">
+          <input type="checkbox" id="batch-include-custom" onchange="onIncludeCustomToggle()">
+          <strong>Also run a custom schema</strong>
+        </label>
+        <div style="font-size:10px;color:var(--muted);margin:3px 0 6px 24px;line-height:1.5;">
+          Runs a user-defined extraction (built in the ✨ Custom tab) on the same papers. Results show in the Results tab.
+        </div>
+        <div id="batch-custom-picker" style="display:none;margin-left:24px;">
+          <select id="batch-custom-schema" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:3px;font-family:inherit;font-size:11.5px;background:#fff;outline:none;">
+            <option value="">— select a saved schema —</option>
+          </select>
+          <div style="font-size:10px;color:var(--muted);margin-top:4px;">Save a schema first in the ✨ Custom tab if the list is empty.</div>
+        </div>
+      </div>
+
       <div style="font-size:10px;color:var(--muted);margin-top:14px;line-height:1.5;">
         Fields already confirmed or corrected on a paper are preserved — extraction only fills empty or amber-flagged fields.
       </div>
@@ -871,10 +899,11 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
   <div class="rp-pane" id="tab-pane-chat">
     <div class="rp-scroll">
       <div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:10px;">
-        Upload a protocol, CRF, or list of fields — or paste a description — and an AI will propose an extraction schema. Edit inline, save, then run on selected papers.
+        Upload a protocol, CRF, or list of fields — or paste a description — and an AI will propose an extraction schema.
+        Word docs and PDFs are converted internally for the AI to read. Edit inline, save, then run.
       </div>
       <div style="display:flex;gap:6px;margin-bottom:8px;">
-        <input type="file" id="schema-file" accept=".pdf,.csv,.txt,.md" style="flex:1;font-size:11px;">
+        <input type="file" id="schema-file" accept=".pdf,.docx,.csv,.txt,.md" style="flex:1;font-size:11px;">
       </div>
       <textarea id="schema-text" placeholder="…or describe your extraction fields in plain English (or paste CSV/markdown)." style="width:100%;min-height:70px;padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-family:inherit;font-size:12px;resize:vertical;outline:none;margin-bottom:8px;"></textarea>
       <div style="display:flex;gap:6px;margin-bottom:12px;">
@@ -907,8 +936,11 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
             <input type="text" id="schema-name" placeholder="Schema name" style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:3px;font-family:inherit;font-size:11px;outline:none;">
             <button class="tb-btn primary" onclick="saveSchema()" style="font-size:11px;padding:5px 10px;">Save schema</button>
           </div>
-          <button class="tb-btn" id="schema-run-btn" onclick="runSchema()" style="width:100%;font-size:11px;padding:6px;background:#7c3aed;color:#fff;border-color:#7c3aed;" disabled>Run on selected papers</button>
-          <div style="font-size:10px;color:var(--muted);margin-top:3px;line-height:1.5;">Uses the papers checked in the left sidebar (or the currently-open paper if none selected).</div>
+          <button class="tb-btn" id="schema-run-btn" onclick="openBatchForCustomSchema()" style="width:100%;font-size:11px;padding:7px;background:#7c3aed;color:#fff;border-color:#7c3aed;" disabled>▶ Run extraction (batch)</button>
+          <div style="font-size:10px;color:var(--muted);margin-top:4px;line-height:1.5;">
+            Opens the batch extractor with this schema preselected. The same batch also classifies study design and
+            fills the Form-tab fields — one run, all three.
+          </div>
         </div>
       </div>
 
@@ -3022,8 +3054,25 @@ function selectAllModifiers(on) {
   renderModifierFields();
 }
 
-async function showBatchModal() {
-  if (batchSelected.size === 0) return;
+function onIncludeCustomToggle() {
+  const cb = document.getElementById('batch-include-custom');
+  document.getElementById('batch-custom-picker').style.display = cb.checked ? '' : 'none';
+}
+
+async function populateBatchCustomSchemas(preselectId) {
+  // Make sure the list is loaded even if the user hasn't visited the Custom tab yet.
+  if (_schemaList === null) await loadSchemas();
+  const sel = document.getElementById('batch-custom-schema');
+  const preselect = preselectId != null ? String(preselectId) : '';
+  sel.innerHTML = '<option value="">— select a saved schema —</option>' +
+    (_schemaList || []).map(s =>
+      `<option value="${s.id}" ${String(s.id) === preselect ? 'selected' : ''}>${escHtml(s.name)} (${s.field_count} fields)</option>`
+    ).join('');
+}
+
+async function showBatchModal(opts) {
+  opts = opts || {};
+  if (batchSelected.size === 0 && !opts.allowEmpty) return;
   await ensureSchemaLoaded();
   populateBatchGroups();
   populateTypeSelect();
@@ -3032,12 +3081,40 @@ async function showBatchModal() {
   document.getElementById('batch-include-modifiers').checked = batchIncludeModifiers;
   onIncludeTypeToggle();
   onIncludeModifiersToggle();
-  document.getElementById('batch-modal-sub').textContent = `${batchSelected.size} paper${batchSelected.size === 1 ? '' : 's'} selected`;
+
+  // Custom-schema section
+  await populateBatchCustomSchemas(opts.preselectSchemaId);
+  const customCb = document.getElementById('batch-include-custom');
+  customCb.checked = !!opts.preselectSchemaId;
+  onIncludeCustomToggle();
+
+  document.getElementById('batch-modal-sub').textContent =
+    `${batchSelected.size} paper${batchSelected.size === 1 ? '' : 's'} selected`;
   document.getElementById('batch-progress').style.display = 'none';
   document.getElementById('batch-progress-list').innerHTML = '';
   document.getElementById('batch-run-btn').disabled = false;
   document.getElementById('batch-run-btn').textContent = 'Run';
+  document.getElementById('batch-run-btn').onclick = runBatch;
   document.getElementById('batch-modal').style.display = 'flex';
+}
+
+// Entry point from the Custom tab's "Run extraction (batch)" button.
+async function openBatchForCustomSchema() {
+  if (!_schemaId) {
+    alert('Save the schema first so it can be selected in the batch.');
+    return;
+  }
+  if (batchSelected.size === 0) {
+    if (currentPaperId) {
+      // Fall back to the open paper so the button is not a dead-end.
+      batchSelected.add(currentPaperId);
+      updateBatchBar();
+    } else {
+      alert('Select papers with checkboxes in the sidebar (or open one first).');
+      return;
+    }
+  }
+  await showBatchModal({ preselectSchemaId: _schemaId });
 }
 
 function hideBatchModal() {
@@ -3163,6 +3240,37 @@ async function runBatch() {
     ok++;
   }
 
+  // ── 3) Custom schema (optional) — run once over all selected papers ──
+  const doCustom = document.getElementById('batch-include-custom').checked;
+  const customSid = document.getElementById('batch-custom-schema').value;
+  let customRunId = null;
+  if (doCustom) {
+    if (!customSid) {
+      _logBatch('Custom schema: no schema selected — skipping.', 'err');
+    } else {
+      _logBatch(`Custom schema: running on ${paperIds.length} paper(s)…`);
+      try {
+        const r = await fetch(`/api/annotator/schemas/${customSid}/run`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ paper_ids: paperIds }),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          const msg = (err.detail && typeof err.detail === 'object')
+            ? `${err.detail.detail || 'error'}${err.detail.required != null ? ` — need ${err.detail.required}, balance ${err.detail.balance}` : ''}`
+            : (err.detail || `HTTP ${r.status}`);
+          _logBatch(`    custom run failed: ${msg}`, 'err');
+        } else {
+          const body = await r.json();
+          customRunId = body.run_id;
+          _logBatch(`    custom run #${customRunId}: ${body.status}`, 'ok');
+        }
+      } catch (e) {
+        _logBatch(`    custom run error: ${e.message}`, 'err');
+      }
+    }
+  }
+
   _logBatch(`Done — ${ok} ok, ${failed} failed, ${skipped} skipped.`,
             failed || skipped ? 'err' : 'ok');
   batchRunning = false;
@@ -3173,6 +3281,14 @@ async function runBatch() {
     document.getElementById('batch-run-btn').onclick = runBatch;
     clearBatchSelection();
     loadPapersAndProjects();
+    // If a custom run was kicked off, jump to its results.
+    if (customRunId) {
+      showRpTab('results');
+      setTimeout(() => {
+        const sel = document.getElementById('runs-select');
+        if (sel) { sel.value = customRunId; loadRun(customRunId); }
+      }, 400);
+    }
   };
 }
 
@@ -3474,53 +3590,44 @@ async function saveSchema() {
   }
 }
 
-async function runSchema() {
-  if (!_schemaId) { alert('Save the schema first.'); return; }
-  const ids = batchSelected.size > 0 ? [...batchSelected] : (currentPaperId ? [currentPaperId] : []);
-  if (!ids.length) { alert('Select papers with checkboxes (or open one first).'); return; }
-  const btn = document.getElementById('schema-run-btn');
-  btn.disabled = true; btn.textContent = 'Running on ' + ids.length + ' papers…';
-  try {
-    const r = await fetch(`/api/annotator/schemas/${_schemaId}/run`, {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({paper_ids: ids}),
-    });
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}));
-      const msg = (err.detail && typeof err.detail === 'object')
-        ? `${err.detail.detail || ''}${err.detail.required != null ? ` — need ${err.detail.required}, balance ${err.detail.balance}` : ''}`
-        : (err.detail || `HTTP ${r.status}`);
-      alert('Run failed: ' + msg);
-      return;
-    }
-    const body = await r.json();
-    _setSchemaStatus(`Run #${body.run_id}: ${body.status}. Switching to Results…`, 'ok');
-    showRpTab('results');
-    setTimeout(() => { document.getElementById('runs-select').value = body.run_id; loadRun(body.run_id); }, 500);
-  } catch(e) {
-    alert('Network error: ' + e.message);
-  } finally {
-    btn.disabled = false; btn.textContent = 'Run on selected papers';
-  }
-}
+// Legacy runSchema() removed — custom runs now happen through the unified batch
+// modal (openBatchForCustomSchema → showBatchModal → runBatch).
 
 async function loadSchemas() {
   try {
     const r = await fetch('/api/annotator/schemas');
     _schemaList = r.ok ? await r.json() : [];
   } catch(e) { _schemaList = []; }
+  renderSchemaList();
+}
+
+function renderSchemaList() {
   const host = document.getElementById('schema-list');
   if (!host) return;
-  if (!_schemaList.length) { host.innerHTML = '<em style="color:var(--muted);">(none yet)</em>'; return; }
-  host.innerHTML = _schemaList.map(s => `
-    <div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid #f1f5f9;">
-      <div style="flex:1;font-size:11px;">
-        <div style="font-weight:600;color:var(--navy);">${escHtml(s.name)}</div>
-        <div style="font-size:10px;color:var(--muted);font-family:'IBM Plex Mono',monospace;">${s.field_count} fields</div>
+  if (!_schemaList || !_schemaList.length) {
+    host.innerHTML = '<em style="color:var(--muted);">(none yet — save one above to reuse it later)</em>';
+    return;
+  }
+  host.innerHTML = _schemaList.map(s => {
+    const isActive = _schemaId === s.id;
+    return `
+    <div class="saved-schema-row${isActive ? ' active' : ''}"
+         onclick="loadSchemaIntoBuilder(${s.id})"
+         role="button" tabindex="0"
+         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();loadSchemaIntoBuilder(${s.id});}"
+         title="Click to load this schema into the builder">
+      <div style="flex:1;font-size:11px;min-width:0;">
+        <div style="font-weight:600;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+          ${escHtml(s.name)}
+          ${isActive ? '<span style="margin-left:6px;font-size:9px;font-weight:700;color:#fff;background:#7c3aed;padding:1px 6px;border-radius:10px;text-transform:uppercase;letter-spacing:.04em;">loaded</span>' : ''}
+        </div>
+        <div style="font-size:10px;color:var(--muted);font-family:'IBM Plex Mono',monospace;">${s.field_count} fields · click to load</div>
       </div>
-      <button class="tb-btn" onclick="loadSchemaIntoBuilder(${s.id})" style="font-size:10px;padding:3px 7px;background:#fff;color:var(--blue);border-color:var(--border);">Edit</button>
-      <button class="tb-btn" onclick="deleteSchema(${s.id})" style="font-size:10px;padding:3px 7px;background:#fff;color:var(--red);border-color:var(--border);">✕</button>
-    </div>`).join('');
+      <button class="tb-btn" onclick="event.stopPropagation();deleteSchema(${s.id})"
+              title="Delete schema"
+              style="font-size:10px;padding:3px 7px;background:#fff;color:var(--red);border-color:var(--border);">✕</button>
+    </div>`;
+  }).join('');
 }
 
 async function loadSchemaIntoBuilder(sid) {
@@ -3531,8 +3638,12 @@ async function loadSchemaIntoBuilder(sid) {
     _schemaId = s.id;
     _schemaFields = s.fields || [];
     document.getElementById('schema-name').value = s.name || '';
-    _setSchemaStatus('Loaded "' + s.name + '" — edit or run.', 'ok');
+    _setSchemaStatus('Loaded "' + s.name + '" — ready to run or edit.', 'ok');
     renderSchemaBuilder();
+    renderSchemaList(); // move the "loaded" chip to the selected row
+    // Scroll the builder into view so the user sees what they just loaded.
+    const builder = document.getElementById('schema-builder');
+    if (builder) builder.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch(e) {}
 }
 
