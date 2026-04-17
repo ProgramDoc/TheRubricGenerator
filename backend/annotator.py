@@ -506,12 +506,73 @@ CREDIT_COST_CUSTOM_PREFILL = 8  # per paper; mirrors prefill cost
 # ─────────────────────────────────────────────
 # Anthropic call with PDF attachment
 # ─────────────────────────────────────────────
+_ANTHROPIC_PDF_BYTE_LIMIT = 32 * 1024 * 1024  # 32 MB — hard limit on Anthropic's PDF beta
+_TEXT_FALLBACK_CHAR_LIMIT = 500_000  # ~125k tokens — leaves headroom under the 200k ceiling
+
+
+def _extract_pdf_text(pdf_bytes: bytes) -> str:
+    """Extract plain text from a PDF using pypdf.
+
+    Used as a fallback when the PDF-as-document path blows Claude's context
+    window (often because the PDF carries lots of high-res images). The text
+    of a paper almost always fits even when the image-laden document doesn't.
+    """
+    try:
+        import io
+        from pypdf import PdfReader
+    except Exception as e:
+        raise HTTPException(
+            502,
+            f"Text fallback unavailable (pypdf missing on server): {e}"
+        )
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+    except Exception as e:
+        raise HTTPException(400, f"could not parse PDF for text fallback: {e}")
+
+    chunks: list[str] = []
+    for i, page in enumerate(reader.pages, start=1):
+        try:
+            text = page.extract_text() or ""
+        except Exception:
+            text = ""
+        text = text.strip()
+        if text:
+            chunks.append(f"=== Page {i} ===\n{text}")
+    body = "\n\n".join(chunks).strip()
+    if not body:
+        raise HTTPException(
+            413,
+            "Paper exceeds Claude's context window and no extractable text was found "
+            "(likely a scanned image-only PDF). Try OCR'ing the paper first. Credits refunded."
+        )
+    if len(body) > _TEXT_FALLBACK_CHAR_LIMIT:
+        # Conservative truncation — still leaves plenty of room for the prompt.
+        body = body[:_TEXT_FALLBACK_CHAR_LIMIT] + "\n\n[… truncated at 500,000 chars for fallback …]"
+    return body
+
+
 def _call_with_pdf(pdf_bytes: bytes, prompt: str, max_tokens: int = 4096) -> dict:
     """Send the PDF as a base64 document block alongside the text prompt.
 
     ``call_anthropic`` in ``helpers.py`` already sets the ``pdfs-2024-09-25`` beta
     header, so we just need to format the message content blocks.
+
+    Defensive behaviour:
+    - Hard 32 MB byte-size limit (Anthropic rejects anything larger).
+    - If Anthropic returns a context-window 413 (usually on image-heavy PDFs),
+      we extract the PDF's text with pypdf and retry as a text-only prompt.
+      Typical image-heavy papers are ~200k tokens as a document but well under
+      100k tokens as plain text, so the fallback succeeds in most cases.
     """
+    if len(pdf_bytes) > _ANTHROPIC_PDF_BYTE_LIMIT:
+        size_mb = len(pdf_bytes) / (1024 * 1024)
+        raise HTTPException(
+            413,
+            f"PDF is {size_mb:.1f} MB — Anthropic's 32 MB upload limit exceeded. "
+            "Try compressing the PDF (remove images/supplements) or splitting it into smaller files. "
+            "Credits have been refunded."
+        )
     pdf_b64 = base64.standard_b64encode(pdf_bytes).decode()
     messages = [{
         "role": "user",
@@ -521,7 +582,27 @@ def _call_with_pdf(pdf_bytes: bytes, prompt: str, max_tokens: int = 4096) -> dic
             {"type": "text", "text": prompt},
         ],
     }]
-    raw = call_anthropic(messages, system="", max_tokens=max_tokens)
+    try:
+        raw = call_anthropic(messages, system="", max_tokens=max_tokens)
+    except HTTPException as e:
+        # 413 from call_anthropic means the PDF-as-document blew the context window.
+        # Fall back to text extraction and retry once.
+        if e.status_code == 413 and "context window" in str(e.detail).lower():
+            logger.warning("PDF too large for context window (%d bytes) — trying text fallback",
+                           len(pdf_bytes))
+            body = _extract_pdf_text(pdf_bytes)  # may itself raise 413
+            fallback_prompt = (
+                "NOTE: This paper was too large to send as a PDF, so only its extracted "
+                "plain text is attached below (figures/tables may be missing).\n\n"
+                f"{prompt}\n\n"
+                "=====  PAPER TEXT  =====\n"
+                f"{body}"
+            )
+            text_messages = [{"role": "user",
+                              "content": [{"type": "text", "text": fallback_prompt}]}]
+            raw = call_anthropic(text_messages, system="", max_tokens=max_tokens)
+        else:
+            raise
     return parse_json_response(raw)
 
 

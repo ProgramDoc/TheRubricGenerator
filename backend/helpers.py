@@ -68,6 +68,30 @@ def call_anthropic(messages: list, system: str, max_tokens: int = 4096,
     except urllib.error.HTTPError as e:
         body = e.read().decode()
         logger.error("Anthropic error: %s", body)
+        # Translate well-known Anthropic errors into user-facing messages so the
+        # annotator's batch log shows something actionable instead of raw JSON.
+        try:
+            err = (json.loads(body) or {}).get("error") or {}
+            err_msg = str(err.get("message") or "")
+            err_type = str(err.get("type") or "")
+        except Exception:
+            err_msg, err_type = "", ""
+        if err_type == "invalid_request_error" and "prompt is too long" in err_msg.lower():
+            # Example message: "prompt is too long: 202456 tokens > 200000 maximum"
+            m = re.search(r"(\d+)\s*tokens?\s*>\s*(\d+)", err_msg)
+            if m:
+                friendly = (
+                    f"This paper is too large for Claude's context window "
+                    f"({int(m.group(1)):,} tokens vs {int(m.group(2)):,} limit). "
+                    "Try uploading a smaller version (remove images or supplements), "
+                    "or split the PDF and run on the main body only. Credits have been refunded."
+                )
+            else:
+                friendly = (
+                    "This paper exceeds Claude's context window (~200k tokens). "
+                    "Try uploading a smaller version or splitting the PDF. Credits have been refunded."
+                )
+            raise HTTPException(413, friendly)
         raise HTTPException(502, f"Anthropic API error: {body[:200]}")
 
 
