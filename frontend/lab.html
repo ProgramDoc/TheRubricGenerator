@@ -453,6 +453,57 @@ table.res-table tbody tr:hover { background: #f8fafc; }
 .inv-accept:hover { background: #15803d; }
 .inv-reject { font-family: inherit; font-size: 10px; font-weight: 600; padding: 3px 8px; background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 4px; cursor: pointer; }
 .inv-reject:hover { border-color: var(--red); color: var(--red); }
+
+  /* ─── Batch-4 polish: repaint topbar internals from dark to paper
+     The lab's topbar structure is the new brand-mark/.topbar-right
+     shell, but individual elements were still styled for a dark
+     background. Repaint search, user-info, sign-out, and the
+     dropdown menu for the Paper theme. */
+  .topbar .topbar-search {
+    background: var(--paper-2) !important;
+    border: 1px solid var(--rule) !important;
+    color: var(--ink) !important;
+  }
+  .topbar .topbar-search::placeholder { color: var(--ink-4); }
+  .topbar .topbar-search:focus {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 3px oklch(from var(--accent) l c h / .18);
+  }
+  .topbar .topbar-search-icon { color: var(--ink-4); }
+  .topbar .user-avatar {
+    background: linear-gradient(135deg, var(--accent), oklch(0.58 0.13 290)) !important;
+    color: #fff !important;
+  }
+  .topbar .user-info-name { color: var(--ink) !important; font-weight: 600; }
+  .topbar .user-info-email { color: var(--ink-3) !important; font-family: var(--mono); }
+  .topbar #nav-admin {
+    color: var(--ink-2) !important;
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+  }
+  .topbar #nav-admin:hover { background: var(--paper-3); color: var(--ink) !important; }
+  .topbar .sidebar-toggle { /* hidden by default */ }
+
+  /* Sidebar sections on paper */
+  .sidebar-header {
+    color: var(--ink-3) !important;
+    font-family: var(--mono) !important;
+    letter-spacing: .12em !important;
+  }
+  .sidebar-header button { color: var(--ink-3) !important; }
+  .sidebar-header button:hover { color: var(--ink) !important; }
+  .session-item.active {
+    background: var(--accent-soft) !important;
+    border-left-color: var(--accent) !important;
+  }
+  .folder-icon { color: var(--warn) !important; }
+  .folder-badge {
+    background: var(--accent-soft) !important;
+    color: var(--accent-ink) !important;
+  }
+  .sidebar-collapse-btn { color: var(--ink-3) !important; }
+  .sidebar-collapse-btn:hover { color: var(--ink) !important; }
+
 </style>
 </head>
 <body>
@@ -485,7 +536,7 @@ table.res-table tbody tr:hover { background: #f8fafc; }
     </div>
     <button class="signout-btn" onclick="signOut()">Sign Out</button>
   </div>
-</div>
+</header>
 
 <button class="sidebar-toggle" onclick="document.getElementById('lab-sidebar').style.display='flex'">&#9776; Menu</button>
 

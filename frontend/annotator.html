@@ -656,6 +656,83 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+  /* ─── Batch-4 polish: repaint dark-theme surfaces as Paper ──────────
+     The annotator's original chrome (#topbar, #sidebar, .tb-btn) was
+     designed for a dark navy shell. Restyle them to use Paper tokens so
+     they match the rest of the redesigned app. */
+  #topbar {
+    background: var(--paper);
+    color: var(--ink);
+    border-bottom: 1px solid var(--rule);
+  }
+  #topbar .brand { color: var(--ink); font-family: var(--serif); letter-spacing: -.01em; }
+  #topbar .brand span { color: var(--accent); }
+  #topbar nav a {
+    color: var(--ink-2) !important;
+    border-radius: var(--radius-sm);
+    font-weight: 500 !important;
+  }
+  #topbar nav a:hover,
+  #topbar nav a[style*="background:rgba(255,255,255,.08)"],
+  #topbar nav a[style*="color:#fff"] {
+    background: var(--paper-2) !important;
+    color: var(--ink) !important;
+  }
+  #topbar a[href="/"] {
+    color: var(--ink-2) !important;
+    border-color: var(--rule) !important;
+    background: var(--paper-2);
+  }
+  #topbar input[type=text] {
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    color: var(--ink);
+  }
+  #topbar input[type=text]::placeholder { color: var(--ink-4); }
+  #topbar input[type=text]:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px oklch(from var(--accent) l c h / .18);
+  }
+  #topbar .tb-sep { background: var(--rule); }
+  #topbar #user-display,
+  #topbar #save-status {
+    color: var(--ink-3) !important;
+    font-family: var(--mono);
+  }
+  .tb-btn {
+    border: 1px solid var(--rule) !important;
+    background: var(--paper-2) !important;
+    color: var(--ink) !important;
+    font-family: var(--sans);
+    font-weight: 500 !important;
+  }
+  .tb-btn:hover { background: var(--paper-3) !important; }
+  .tb-btn.primary {
+    background: var(--ink) !important; color: var(--paper) !important;
+    border-color: var(--ink) !important;
+  }
+  .tb-btn.primary:hover { background: oklch(from var(--ink) calc(l - .04) c h) !important; }
+  .tb-btn.success {
+    background: var(--ok) !important; color: #fff !important; border-color: var(--ok) !important;
+  }
+  #topbar .tb-btn[style*="#f87171"] {
+    color: var(--err) !important;
+    border-color: oklch(from var(--err) l c h / .3) !important;
+  }
+
+  /* Sidebar — was dark navy, repaint as paper */
+  #sidebar {
+    background: var(--paper);
+    border-right: 1px solid var(--rule);
+  }
+  #sidebar-header {
+    color: var(--ink-3) !important;
+    border-bottom: 1px solid var(--rule) !important;
+    font-family: var(--mono) !important;
+    letter-spacing: .12em !important;
+  }
+
 </style>
 </head>
 <body>
