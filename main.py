@@ -1419,7 +1419,8 @@ def _generate_sso_token(user: dict) -> str:
 def sso_to_annotator(rubricgen_session: str | None = Cookie(default=None)):
     """Legacy SSO endpoint — the external Annotator is deprecated.
     The PDF Viewer is now the consolidated local page."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     return RedirectResponse("/pdf-viewer", status_code=302)
 
 
@@ -1638,6 +1639,7 @@ class UpdateChallengePayload(BaseModel):
 def api_create_challenge(body: CreateChallengePayload,
                          rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     try:
         cid = bench.create_challenge(
             get_db, user["id"], body.title.strip(), (body.theme or "").strip(),
@@ -1656,6 +1658,7 @@ def api_create_challenge(body: CreateChallengePayload,
 def api_update_challenge(cid: int, body: UpdateChallengePayload,
                          rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     row = conn.execute("SELECT * FROM challenges WHERE id=?", (cid,)).fetchone()
     if not row:
@@ -1729,6 +1732,7 @@ def api_estimate_cost(paper_count: int = 1, models: str = "",
                       rubricgen_session: str | None = Cookie(default=None)):
     """Estimate the cost of running a challenge."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     model_ids = [m.strip() for m in models.split(",") if m.strip()]
     conn = get_db()
     try:
@@ -1748,6 +1752,7 @@ class RunChallengePayload(BaseModel):
 def api_run_challenge(cid: int, body: RunChallengePayload | None = None,
                       rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     approved = body.approved if body else False
     conn = get_db()
     try:
@@ -1819,6 +1824,7 @@ def api_list_challenges(project_id: Optional[int] = None,
                         rubricgen_session: str | None = Cookie(default=None),
                         x_api_key: str | None = Header(default=None, alias="X-API-Key")):
     user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
     conn = get_db()
     # Default view: user's own challenges (any visibility) + all public challenges
     where_parts = ["(c.created_by=? OR c.visibility='public')"]
@@ -1855,6 +1861,7 @@ def api_list_challenges(project_id: Optional[int] = None,
 @app.get("/api/challenges/{cid}")
 def api_get_challenge(cid: int, rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     challenge = conn.execute("SELECT * FROM challenges WHERE id=?", (cid,)).fetchone()
     if not challenge:
@@ -1939,7 +1946,8 @@ def api_get_challenge(cid: int, rubricgen_session: str | None = Cookie(default=N
 @app.get("/api/challenges/{cid}/events")
 def api_challenge_events(cid: int, rubricgen_session: str | None = Cookie(default=None)):
     """Get real-time progress events for a challenge (AI Brain Window)."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         rows = conn.execute(
@@ -1955,6 +1963,7 @@ def api_challenge_events(cid: int, rubricgen_session: str | None = Cookie(defaul
 def api_cancel_challenge(cid: int, rubricgen_session: str | None = Cookie(default=None)):
     """Cancel a pending/running challenge. Refunds credits."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         row = conn.execute("SELECT * FROM challenges WHERE id=?", (cid,)).fetchone()
@@ -1986,6 +1995,7 @@ def api_cancel_challenge(cid: int, rubricgen_session: str | None = Cookie(defaul
 def api_delete_challenge(cid: int, rubricgen_session: str | None = Cookie(default=None)):
     """Delete a private challenge. Only owner, only if not running."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         row = conn.execute("SELECT * FROM challenges WHERE id=?", (cid,)).fetchone()
@@ -2008,7 +2018,8 @@ def api_delete_challenge(cid: int, rubricgen_session: str | None = Cookie(defaul
 @app.get("/api/leaderboard")
 def api_leaderboard(rubricgen_session: str | None = Cookie(default=None)):
     """Overall leaderboard ranked by total points."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     rows = conn.execute(
         """SELECT * FROM leaderboard_cache
@@ -2021,7 +2032,8 @@ def api_leaderboard(rubricgen_session: str | None = Cookie(default=None)):
 @app.get("/api/leaderboard/daily")
 def api_daily_leaderboard(rubricgen_session: str | None = Cookie(default=None)):
     """Daily AI Researcher Challenge leaderboard with streak and movement."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     rows = conn.execute(
         """SELECT * FROM leaderboard_cache
@@ -2039,7 +2051,8 @@ def api_head_to_head(
     rubricgen_session: str | None = Cookie(default=None),
 ):
     """Head-to-head comparison of two models across shared challenges."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         m1 = conn.execute("SELECT * FROM leaderboard_cache WHERE model_id=?", (model1,)).fetchone()
@@ -2082,7 +2095,8 @@ def api_head_to_head(
 @app.get("/api/daily-results")
 def api_daily_results(rubricgen_session: str | None = Cookie(default=None)):
     """Recent Daily AI Researcher Challenge results with drill-down data."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return bench.get_daily_results(conn, limit=30)
@@ -2268,6 +2282,7 @@ class UpdateModelPayload(BaseModel):
 def api_create_model(body: RegisterModelPayload,
                      rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         model = mreg.create_registered_model(
@@ -2287,6 +2302,7 @@ def api_create_model(body: RegisterModelPayload,
 def api_list_models(mine_only: bool = False,
                     rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         models = mreg.list_registered_models(conn, user_id=user["id"] if mine_only else None)
@@ -2298,6 +2314,7 @@ def api_list_models(mine_only: bool = False,
 @app.get("/api/models/mine")
 def api_list_my_models(rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         models = mreg.list_registered_models(conn, user_id=user["id"])
@@ -2308,7 +2325,8 @@ def api_list_my_models(rubricgen_session: str | None = Cookie(default=None)):
 
 @app.get("/api/models/{model_id}")
 def api_get_model(model_id: int, rubricgen_session: str | None = Cookie(default=None)):
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return mreg.get_registered_model(conn, model_id)
@@ -2319,6 +2337,7 @@ def api_get_model(model_id: int, rubricgen_session: str | None = Cookie(default=
 @app.delete("/api/models/{model_id}")
 def api_delete_model(model_id: int, rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         mreg.delete_registered_model(conn, model_id, user["id"])
@@ -2332,6 +2351,7 @@ def api_update_model(model_id: int, body: UpdateModelPayload,
                      rubricgen_session: str | None = Cookie(default=None)):
     """Update model metadata. Creator only. If version changes, logs to version history."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         model = mreg.update_model(
@@ -2348,7 +2368,8 @@ def api_update_model(model_id: int, body: UpdateModelPayload,
 @app.get("/api/models/{model_id}/versions")
 def api_model_versions(model_id: int, rubricgen_session: str | None = Cookie(default=None)):
     """Get version history for a model."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return mreg.get_version_history(conn, model_id)
@@ -2360,6 +2381,7 @@ def api_model_versions(model_id: int, rubricgen_session: str | None = Cookie(def
 def api_add_member(model_id: int, body: AddMemberPayload,
                    rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return mreg.add_member(conn, model_id, user["id"], body.email)
@@ -2371,6 +2393,7 @@ def api_add_member(model_id: int, body: AddMemberPayload,
 def api_remove_member(model_id: int, member_user_id: int,
                       rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "admin")
     conn = get_db()
     try:
         return mreg.remove_member(conn, model_id, user["id"], member_user_id)
@@ -2388,6 +2411,7 @@ def api_update_member_perm(model_id: int, member_user_id: int,
                            body: UpdateMemberPermPayload,
                            rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "admin")
     if body.can_run and not body.acknowledged:
         return {
             "ok": False,
@@ -2408,7 +2432,8 @@ def api_update_member_perm(model_id: int, member_user_id: int,
 def api_list_public_tests(difficulty: Optional[str] = None,
                           rubricgen_session: str | None = Cookie(default=None)):
     """Feed of user-designed public tests. Not part of the leaderboard."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     where = ["c.visibility='public'"]
     params: list = []
@@ -2490,7 +2515,8 @@ def api_billing_balance(rubricgen_session: str | None = Cookie(default=None)):
 
 @app.get("/api/billing/packs")
 def api_billing_packs(rubricgen_session: str | None = Cookie(default=None)):
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return bill.list_packs(conn)
@@ -2512,6 +2538,7 @@ def api_billing_transactions(rubricgen_session: str | None = Cookie(default=None
 def api_billing_checkout(body: CheckoutPayload,
                          rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     # Check payment agreement
     conn = get_db()
     try:
@@ -2619,7 +2646,8 @@ def api_approve_promo(activation_id: int,
 @app.get("/api/agreements/{agreement_type}")
 def api_get_agreement(agreement_type: str,
                       rubricgen_session: str | None = Cookie(default=None)):
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     return {"text": agree.get_agreement_text(agreement_type), "version": agree.CURRENT_VERSION}
 
 
@@ -2860,6 +2888,7 @@ def admin_reject_model(model_id: int, rubricgen_session: str | None = Cookie(def
 def model_accept_agreement(model_id: int, rubricgen_session: str | None = Cookie(default=None)):
     """Accept the Model Publishing Agreement (required before opt-in to daily challenges)."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     row = conn.execute("SELECT created_by FROM registered_models WHERE id=?", (model_id,)).fetchone()
     if not row:
@@ -2882,6 +2911,7 @@ def model_accept_agreement(model_id: int, rubricgen_session: str | None = Cookie
 def model_opt_in_daily(model_id: int, rubricgen_session: str | None = Cookie(default=None)):
     """Model owner opts into daily challenges (pending admin approval)."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     row = conn.execute("SELECT created_by, agreement_signed_at FROM registered_models WHERE id=?", (model_id,)).fetchone()
     if not row:
@@ -2903,6 +2933,7 @@ def model_opt_in_daily(model_id: int, rubricgen_session: str | None = Cookie(def
 @app.post("/api/models/{model_id}/opt-out-daily")
 def model_opt_out_daily(model_id: int, rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     row = conn.execute("SELECT created_by FROM registered_models WHERE id=?", (model_id,)).fetchone()
     if not row or row["created_by"] != user["id"]:
@@ -2922,6 +2953,7 @@ def model_opt_out_daily(model_id: int, rubricgen_session: str | None = Cookie(de
 def model_regenerate_key(model_id: int, rubricgen_session: str | None = Cookie(default=None)):
     """Regenerate the competition API key for a model."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         new_key = mreg.regenerate_api_key(conn, model_id, user["id"])
@@ -3039,6 +3071,7 @@ class TransferAdminPayload(BaseModel):
 def list_projects(rubricgen_session: str | None = Cookie(default=None)):
     """List user's own projects + projects shared with them."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     own = conn.execute(
         """SELECT p.id, p.name, p.created_at, 'admin' AS role,
@@ -3066,6 +3099,7 @@ def list_projects(rubricgen_session: str | None = Cookie(default=None)):
 def create_project(body: ProjectCreatePayload, rubricgen_session: str | None = Cookie(default=None)):
     """Create a project, optionally sharing with team members at creation time."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     name = body.name.strip()
     if not name:
         raise HTTPException(400, "Project name is required")
@@ -3114,6 +3148,7 @@ def create_project(body: ProjectCreatePayload, rubricgen_session: str | None = C
 def rename_project(pid: int, body: ProjectRename, rubricgen_session: str | None = Cookie(default=None)):
     """Rename a project. Admin only."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     role = _user_project_role(conn, pid, user["id"])
     if role != "admin":
@@ -3135,6 +3170,7 @@ def delete_project(pid: int, confirmed: bool = False,
     """Delete a project. Admin only. Requires confirmed=true query param.
     Returns a warning if not confirmed."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     role = _user_project_role(conn, pid, user["id"])
     if role != "admin":
@@ -3170,6 +3206,7 @@ def delete_project(pid: int, confirmed: bool = False,
 def list_project_members(pid: int, rubricgen_session: str | None = Cookie(default=None)):
     """List members. Any project member or admin can view."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     role = _user_project_role(conn, pid, user["id"])
     if not role:
@@ -3197,6 +3234,7 @@ def share_project(pid: int, body: ShareProjectPayload,
                   rubricgen_session: str | None = Cookie(default=None)):
     """Share a project with a user by email. Admin only."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     role = _user_project_role(conn, pid, user["id"])
     if role != "admin":
@@ -3342,6 +3380,7 @@ def api_reject_invitation(invitation_id: int, rubricgen_session: str | None = Co
 def api_project_invitations(pid: int, rubricgen_session: str | None = Cookie(default=None)):
     """List pending invitations for a project (owner view)."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         role = _user_project_role(conn, pid, user["id"])
@@ -3364,7 +3403,8 @@ def api_project_invitations(pid: int, rubricgen_session: str | None = Cookie(def
 @app.get("/api/users/lookup")
 def api_user_lookup(email: str, rubricgen_session: str | None = Cookie(default=None)):
     """Check if an email belongs to a registered user."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     email = email.strip().lower()
     conn = get_db()
     row = conn.execute(
@@ -3383,6 +3423,7 @@ def transfer_project_admin(pid: int, body: TransferAdminPayload,
     """Transfer project admin to another member. Current admin only.
     The current admin becomes a regular member."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     proj = conn.execute("SELECT user_id FROM projects WHERE id=?", (pid,)).fetchone()
     if not proj:
@@ -3420,6 +3461,7 @@ def leave_project(pid: int, rubricgen_session: str | None = Cookie(default=None)
     """Remove yourself from a shared project. Non-admin members only.
     Admins must transfer admin first."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     proj = conn.execute("SELECT user_id FROM projects WHERE id=?", (pid,)).fetchone()
     if not proj:
@@ -3448,6 +3490,7 @@ def remove_project_member(pid: int, member_user_id: int,
                           rubricgen_session: str | None = Cookie(default=None)):
     """Remove a member from a project. Admin only."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     role = _user_project_role(conn, pid, user["id"])
     if role != "admin":
@@ -3467,6 +3510,7 @@ def remove_project_member(pid: int, member_user_id: int,
 @app.get("/api/papers")
 def list_papers(rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     rows = conn.execute(
         """SELECT p.id, p.filename, p.sha256, p.project_id, p.created_at,
@@ -3488,19 +3532,23 @@ async def upload_paper(
     rubricgen_session: str | None = Cookie(default=None),
 ):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     content = await file.read()
     if len(content) > 50 * 1024 * 1024:
         raise HTTPException(413, "File too large. Maximum size is 50 MB.")
 
-    # Check membership PDF limit
+    # Legacy membership PDF limit — enforced only while the enterprise-seat
+    # model is still dark. When ENTERPRISE_MODE=1, the seat check above has
+    # already authorized the upload and org credits are the new resource gate.
     conn = get_db()
     try:
-        pdf_status = member_mod.check_pdf_limit(conn, user["id"])
-        if not pdf_status["allowed"]:
-            raise HTTPException(403, {
-                "detail": f"PDF upload limit reached ({pdf_status['used']}/{pdf_status['limit']}). Upgrade your membership to upload more.",
-                "pdf_status": pdf_status,
-            })
+        if not enterprise_mod.ENTERPRISE_MODE:
+            pdf_status = member_mod.check_pdf_limit(conn, user["id"])
+            if not pdf_status["allowed"]:
+                raise HTTPException(403, {
+                    "detail": f"PDF upload limit reached ({pdf_status['used']}/{pdf_status['limit']}). Upgrade your membership to upload more.",
+                    "pdf_status": pdf_status,
+                })
 
         sha256 = hashlib.sha256(content).hexdigest()
         existing = conn.execute(
@@ -3529,10 +3577,12 @@ async def upload_paper(
         except Exception as e:
             logger.exception("Paper upload: DB insert failed for %s", file.filename)
             raise HTTPException(500, f"Upload stored but DB insert failed: {e}")
-        try:
-            member_mod.increment_pdf_count(conn, user["id"])
-        except Exception:
-            logger.exception("Paper upload: PDF count increment failed — continuing")
+        if not enterprise_mod.ENTERPRISE_MODE:
+            # Legacy per-user PDF counter — unused when seats are in play.
+            try:
+                member_mod.increment_pdf_count(conn, user["id"])
+            except Exception:
+                logger.exception("Paper upload: PDF count increment failed — continuing")
         return {"id": pid, "filename": file.filename, "duplicate": False,
                 "storage": "s3" if storage_path.startswith("s3://") else "local"}
     finally:
@@ -3542,6 +3592,7 @@ async def upload_paper(
 @app.patch("/api/papers/{pid}/assign")
 def assign_paper(pid: int, body: PaperAssign, rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     with conn:
         conn.execute(
@@ -3556,6 +3607,7 @@ def assign_paper(pid: int, body: PaperAssign, rubricgen_session: str | None = Co
 @app.delete("/api/papers/{pid}")
 def delete_paper(pid: int, rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     row = conn.execute(
         "SELECT filename, disk_filename, storage_path FROM papers WHERE id=? AND user_id=?",
@@ -3573,6 +3625,7 @@ def delete_paper(pid: int, rubricgen_session: str | None = Cookie(default=None))
 @app.get("/api/papers/{pid}/pdf")
 def get_pdf(pid: int, rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     row = conn.execute(
         "SELECT filename, disk_filename, storage_path FROM papers WHERE id=? AND user_id=?",
@@ -3648,6 +3701,7 @@ def _pdf_to_base64(paper_id: int) -> str:
 async def generate_rubric(body: GenerateRubricRequest, rubricgen_session: str | None = Cookie(default=None)):
     """Use Claude to generate a structured rubric from a PDF."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     if body.instructions and len(body.instructions) > 5000:
         raise HTTPException(400, "Instructions must be 5000 characters or fewer")
 
@@ -3735,6 +3789,7 @@ Make ideal_answer specific to this exact paper's content — include actual valu
 @app.get("/api/rubrics")
 def list_rubrics(paper_id: int, rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     rows = conn.execute(
         "SELECT id, rubric_type, rubric_json, instructions, updated_at FROM rubrics WHERE paper_id=? AND user_id=? ORDER BY updated_at DESC",
@@ -3756,6 +3811,7 @@ def list_rubrics(paper_id: int, rubricgen_session: str | None = Cookie(default=N
 def save_rubric(rid: int, body: SaveRubricRequest, rubricgen_session: str | None = Cookie(default=None)):
     """Save/update a manually edited rubric."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     with conn:
         conn.execute(
@@ -3770,6 +3826,7 @@ def save_rubric(rid: int, body: SaveRubricRequest, rubricgen_session: str | None
 @app.delete("/api/rubrics/{rid}")
 def delete_rubric(rid: int, rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     with conn:
         conn.execute("DELETE FROM rubrics WHERE id=? AND user_id=?", (rid, user["id"]))
@@ -3785,6 +3842,7 @@ def delete_rubric(rid: int, rubricgen_session: str | None = Cookie(default=None)
 def run_evaluation(body: RunEvaluationRequest, rubricgen_session: str | None = Cookie(default=None)):
     """Send rubric questions to the specified LLM and collect answers."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
 
     # Fetch rubric
     conn = get_db()
@@ -3879,6 +3937,7 @@ Respond ONLY with the JSON object, no preamble."""
 def grade_evaluation(eid: int, rubricgen_session: str | None = Cookie(default=None)):
     """Use Claude as judge to grade the LLM's answers against the rubric."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
 
     conn = get_db()
     eval_row = conn.execute(
@@ -3961,6 +4020,7 @@ Respond ONLY with this JSON structure, no preamble:
 @app.get("/api/evaluations")
 def list_evaluations(paper_id: int, rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     rows = conn.execute(
         """SELECT e.id, e.rubric_id, e.eval_model, e.total_score, e.max_score, e.status, e.created_at,
@@ -3986,6 +4046,7 @@ def list_evaluations(paper_id: int, rubricgen_session: str | None = Cookie(defau
 @app.get("/api/evaluations/{eid}")
 def get_evaluation(eid: int, rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     row = conn.execute(
         """SELECT e.*, r.rubric_json
@@ -4010,6 +4071,7 @@ def get_evaluation(eid: int, rubricgen_session: str | None = Cookie(default=None
 def export_evaluation(eid: int, rubricgen_session: str | None = Cookie(default=None)):
     """Export evaluation results as CSV."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     row = conn.execute(
         """SELECT e.*, r.rubric_json
@@ -4104,6 +4166,7 @@ def api_list_orgs(rubricgen_session: str | None = Cookie(default=None)):
 def api_get_org(org_id: int, rubricgen_session: str | None = Cookie(default=None)):
     """Get organization details. Requires viewer+ role."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         org_mod.require_org_role(conn, org_id, user["id"], "general")
@@ -4116,6 +4179,7 @@ def api_get_org(org_id: int, rubricgen_session: str | None = Cookie(default=None
 def api_update_org(org_id: int, body: OrgUpdatePayload, rubricgen_session: str | None = Cookie(default=None)):
     """Update organization settings. Requires admin role."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "admin")
     conn = get_db()
     try:
         return org_mod.update_organization(conn, org_id, user["id"], body.name, body.description, body.domain)
@@ -4127,6 +4191,7 @@ def api_update_org(org_id: int, body: OrgUpdatePayload, rubricgen_session: str |
 def api_delete_org(org_id: int, rubricgen_session: str | None = Cookie(default=None)):
     """Delete organization. Requires admin role."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "admin")
     conn = get_db()
     try:
         org_mod.delete_organization(conn, org_id, user["id"])
@@ -4150,6 +4215,7 @@ def api_join_org(body: OrgJoinPayload, rubricgen_session: str | None = Cookie(de
 def api_regenerate_invite(org_id: int, rubricgen_session: str | None = Cookie(default=None)):
     """Generate a new invite code. Requires admin role."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "admin")
     conn = get_db()
     try:
         code = org_mod.regenerate_invite_code(conn, org_id, user["id"])
@@ -4164,6 +4230,7 @@ def api_regenerate_invite(org_id: int, rubricgen_session: str | None = Cookie(de
 def api_add_org_member(org_id: int, body: OrgMemberPayload, rubricgen_session: str | None = Cookie(default=None)):
     """Add a member to the organization by email. Requires admin role."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "admin")
     conn = get_db()
     try:
         return org_mod.add_member(conn, org_id, user["id"], body.email, body.role)
@@ -4175,6 +4242,7 @@ def api_add_org_member(org_id: int, body: OrgMemberPayload, rubricgen_session: s
 def api_update_org_member(org_id: int, member_user_id: int, body: OrgMemberRolePayload, rubricgen_session: str | None = Cookie(default=None)):
     """Change a member's role. Requires admin role."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "admin")
     conn = get_db()
     try:
         org_mod.update_member_role(conn, org_id, user["id"], member_user_id, body.role)
@@ -4187,6 +4255,7 @@ def api_update_org_member(org_id: int, member_user_id: int, body: OrgMemberRoleP
 def api_remove_org_member(org_id: int, member_user_id: int, rubricgen_session: str | None = Cookie(default=None)):
     """Remove a member or leave the organization."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "admin")
     conn = get_db()
     try:
         org_mod.remove_member(conn, org_id, user["id"], member_user_id)
@@ -4201,6 +4270,7 @@ def api_remove_org_member(org_id: int, member_user_id: int, rubricgen_session: s
 def api_org_balance(org_id: int, rubricgen_session: str | None = Cookie(default=None)):
     """Get organization credit balance. Requires viewer+ role."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         org_mod.require_org_role(conn, org_id, user["id"], "general")
@@ -4213,6 +4283,7 @@ def api_org_balance(org_id: int, rubricgen_session: str | None = Cookie(default=
 def api_org_transactions(org_id: int, rubricgen_session: str | None = Cookie(default=None)):
     """List organization credit transactions. Requires viewer+ role."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         org_mod.require_org_role(conn, org_id, user["id"], "general")
@@ -4225,6 +4296,7 @@ def api_org_transactions(org_id: int, rubricgen_session: str | None = Cookie(def
 def api_org_checkout(org_id: int, body: dict, rubricgen_session: str | None = Cookie(default=None)):
     """Create Stripe checkout session for org credits. Requires admin role."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "admin")
     conn = get_db()
     try:
         org_mod.require_org_role(conn, org_id, user["id"], "admin")
@@ -4240,6 +4312,7 @@ def api_org_checkout(org_id: int, body: dict, rubricgen_session: str | None = Co
 def api_org_transfer(org_id: int, body: OrgTransferPayload, rubricgen_session: str | None = Cookie(default=None)):
     """Transfer personal credits to org pool. Requires contributor+ role."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         org_mod.require_org_role(conn, org_id, user["id"], "engineer")
@@ -4442,6 +4515,7 @@ def api_enterprise_sync(org_id: int,
 def api_org_models(org_id: int, rubricgen_session: str | None = Cookie(default=None)):
     """List models belonging to an organization. Requires viewer+ role."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         org_mod.require_org_role(conn, org_id, user["id"], "general")
@@ -4456,7 +4530,8 @@ def api_org_models(org_id: int, rubricgen_session: str | None = Cookie(default=N
 @app.get("/api/leaderboard/organizations")
 def api_org_leaderboard(rubricgen_session: str | None = Cookie(default=None)):
     """Organization leaderboard."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         rows = conn.execute(
@@ -4511,7 +4586,8 @@ def api_get_membership(rubricgen_session: str | None = Cookie(default=None)):
 @app.get("/api/membership/plans")
 def api_list_plans(rubricgen_session: str | None = Cookie(default=None)):
     """List available membership plans."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return member_mod.list_plans(conn)
@@ -4646,6 +4722,7 @@ class SearchSessionUpdatePayload(BaseModel):
 def api_search_chat(body: SearchChatPayload, rubricgen_session: str | None = Cookie(default=None)):
     """Send a message to the AI search strategist."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         session_id = body.session_id
@@ -4661,6 +4738,7 @@ def api_search_chat(body: SearchChatPayload, rubricgen_session: str | None = Coo
 def api_search_execute(body: SearchExecutePayload, rubricgen_session: str | None = Cookie(default=None)):
     """Execute a search against a database."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     if not body.query:
         raise HTTPException(400, "Query is required")
     conn = get_db()
@@ -4677,6 +4755,7 @@ def api_search_execute(body: SearchExecutePayload, rubricgen_session: str | None
 def api_search_create_session(rubricgen_session: str | None = Cookie(default=None)):
     """Create a new search session (no LLM call — just creates the DB row)."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         return search_mod.create_session(conn, user["id"])
@@ -4688,6 +4767,7 @@ def api_search_create_session(rubricgen_session: str | None = Cookie(default=Non
 def api_search_sessions(rubricgen_session: str | None = Cookie(default=None)):
     """List user's search sessions."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return search_mod.list_sessions(conn, user["id"])
@@ -4699,6 +4779,7 @@ def api_search_sessions(rubricgen_session: str | None = Cookie(default=None)):
 def api_search_session(session_id: int, rubricgen_session: str | None = Cookie(default=None)):
     """Get a search session with messages and results."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return search_mod.get_session(conn, session_id, user["id"])
@@ -4710,6 +4791,7 @@ def api_search_session(session_id: int, rubricgen_session: str | None = Cookie(d
 def api_delete_search_session(session_id: int, rubricgen_session: str | None = Cookie(default=None)):
     """Delete a search session."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         search_mod.delete_session(conn, session_id, user["id"])
@@ -4723,6 +4805,7 @@ def api_update_search_session(session_id: int, body: SearchSessionUpdatePayload,
                               rubricgen_session: str | None = Cookie(default=None)):
     """Rename a search session or move it to/from a project."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         if body.title is not None:
@@ -4740,12 +4823,14 @@ def api_update_search_session(session_id: int, body: SearchSessionUpdatePayload,
 def api_search_import(body: SearchImportPayload, rubricgen_session: str | None = Cookie(default=None)):
     """Import selected search results as papers."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
-        # Check PDF limit before import
-        pdf_status = member_mod.check_pdf_limit(conn, user["id"])
-        if not pdf_status["allowed"]:
-            raise HTTPException(403, f"PDF limit reached ({pdf_status['used']}/{pdf_status['limit']}). Upgrade your membership.")
+        # Legacy membership PDF limit — only while flag is off (see paper upload).
+        if not enterprise_mod.ENTERPRISE_MODE:
+            pdf_status = member_mod.check_pdf_limit(conn, user["id"])
+            if not pdf_status["allowed"]:
+                raise HTTPException(403, f"PDF limit reached ({pdf_status['used']}/{pdf_status['limit']}). Upgrade your membership.")
         return search_mod.import_results(
             conn, body.session_id, body.result_ids, user["id"], PAPERS_DIR,
             project_id=body.project_id,
@@ -4757,7 +4842,8 @@ def api_search_import(body: SearchImportPayload, rubricgen_session: str | None =
 @app.post("/api/search/export/ris")
 def api_search_export_ris(body: SearchExportPayload, rubricgen_session: str | None = Cookie(default=None)):
     """Export selected results as RIS."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         ris = search_mod.export_ris(conn, body.session_id, body.result_ids)
@@ -4773,7 +4859,8 @@ def api_search_export_ris(body: SearchExportPayload, rubricgen_session: str | No
 @app.post("/api/search/export/bibtex")
 def api_search_export_bibtex(body: SearchExportPayload, rubricgen_session: str | None = Cookie(default=None)):
     """Export selected results as BibTeX."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         bib = search_mod.export_bibtex(conn, body.session_id, body.result_ids)
@@ -4789,7 +4876,8 @@ def api_search_export_bibtex(body: SearchExportPayload, rubricgen_session: str |
 @app.post("/api/search/results/select")
 def api_search_select(body: SearchSelectionPayload, rubricgen_session: str | None = Cookie(default=None)):
     """Toggle selection on search results."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         search_mod.toggle_result_selection(conn, body.result_ids, body.selected)
@@ -4801,7 +4889,8 @@ def api_search_select(body: SearchSelectionPayload, rubricgen_session: str | Non
 @app.post("/api/search/results/select-all")
 def api_search_select_all(body: SearchSelectAllPayload, rubricgen_session: str | None = Cookie(default=None)):
     """Select/deselect all results for a query version."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         search_mod.select_all_results(conn, body.session_id, body.query_version, body.selected)
@@ -4835,6 +4924,7 @@ class LabExportPayload(BaseModel):
 def api_lab_chat(body: LabChatPayload, rubricgen_session: str | None = Cookie(default=None)):
     """Send a message to any lab agent."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         session_id = body.session_id
@@ -4867,6 +4957,7 @@ class LabCreateSessionPayload(BaseModel):
 def api_lab_create_session(body: LabCreateSessionPayload, rubricgen_session: str | None = Cookie(default=None)):
     """Create a new lab session."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         return lab_mod.create_session(conn, user["id"], body.agent_type, body.title)
@@ -4878,6 +4969,7 @@ def api_lab_create_session(body: LabCreateSessionPayload, rubricgen_session: str
 def api_lab_sessions(agent_type: str | None = None, rubricgen_session: str | None = Cookie(default=None)):
     """List lab sessions, optionally filtered by agent_type."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return lab_mod.list_sessions(conn, user["id"], agent_type)
@@ -4889,6 +4981,7 @@ def api_lab_sessions(agent_type: str | None = None, rubricgen_session: str | Non
 def api_lab_session(session_id: int, rubricgen_session: str | None = Cookie(default=None)):
     """Get a lab session with messages."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return lab_mod.get_session(conn, session_id, user["id"])
@@ -4900,6 +4993,7 @@ def api_lab_session(session_id: int, rubricgen_session: str | None = Cookie(defa
 def api_lab_session_delete(session_id: int, rubricgen_session: str | None = Cookie(default=None)):
     """Delete a lab session."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         lab_mod.delete_session(conn, session_id, user["id"])
@@ -4912,6 +5006,7 @@ def api_lab_session_delete(session_id: int, rubricgen_session: str | None = Cook
 def api_lab_session_update(session_id: int, body: LabSessionUpdatePayload, rubricgen_session: str | None = Cookie(default=None)):
     """Rename or move a lab session to a project."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         return lab_mod.update_session(conn, session_id, user["id"],
@@ -4925,6 +5020,7 @@ def api_lab_session_update(session_id: int, body: LabSessionUpdatePayload, rubri
 def api_lab_export(body: LabExportPayload, rubricgen_session: str | None = Cookie(default=None)):
     """Export a lab session to a file format."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         session = lab_mod.get_session(conn, body.session_id, user["id"])
@@ -5015,6 +5111,7 @@ class CodeExecutePayload(BaseModel):
 def api_lab_execute_code(body: CodeExecutePayload, rubricgen_session: str | None = Cookie(default=None)):
     """Execute Python or R code for the AI Statistician. Rate-limited."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     from backend.code_runner import run_python_analysis, run_r_analysis
     if body.language == "r":
         return run_r_analysis(body.code, user["id"])
@@ -5035,19 +5132,22 @@ async def api_lab_upload_document(
 ):
     """Upload a document to cloud/local storage. Enforces plan storage limits."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     content = await file.read()
     filename = file.filename or "file"
 
-    # Check storage limit
+    # Legacy membership storage limit — bypassed in enterprise mode where
+    # storage would be pooled at the org level instead (not yet implemented).
     conn = get_db()
     try:
-        limit_check = check_storage_limit(conn, user["id"], len(content))
-        if not limit_check["allowed"]:
-            raise HTTPException(
-                403,
-                f"Storage limit reached ({limit_check['used_mb']:.1f} / {limit_check['limit_mb']} MB). "
-                f"Upgrade your plan for more storage.",
-            )
+        if not enterprise_mod.ENTERPRISE_MODE:
+            limit_check = check_storage_limit(conn, user["id"], len(content))
+            if not limit_check["allowed"]:
+                raise HTTPException(
+                    403,
+                    f"Storage limit reached ({limit_check['used_mb']:.1f} / {limit_check['limit_mb']} MB). "
+                    f"Upgrade your plan for more storage.",
+                )
 
         # Upload to storage (S3 or local)
         ct = get_content_type(filename)
@@ -5071,6 +5171,7 @@ def api_lab_list_documents(
     rubricgen_session: str | None = Cookie(default=None),
 ):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return lab_mod.list_documents(conn, user["id"], project_id)
@@ -5083,6 +5184,7 @@ def api_lab_download_document(doc_id: int, rubricgen_session: str | None = Cooki
     """Download a document from storage."""
     from fastapi.responses import Response
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         row = conn.execute(
@@ -5109,6 +5211,7 @@ def api_lab_download_document(doc_id: int, rubricgen_session: str | None = Cooki
 def api_lab_storage_usage(rubricgen_session: str | None = Cookie(default=None)):
     """Get user's current storage usage vs plan limit."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return check_storage_limit(conn, user["id"])
@@ -5123,6 +5226,7 @@ class DocUpdatePayload(BaseModel):
 @app.patch("/api/lab/documents/{doc_id}")
 def api_lab_update_document(doc_id: int, body: DocUpdatePayload, rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         lab_mod.update_document(conn, doc_id, user["id"], body.project_id)
@@ -5134,6 +5238,7 @@ def api_lab_update_document(doc_id: int, body: DocUpdatePayload, rubricgen_sessi
 @app.delete("/api/lab/documents/{doc_id}")
 def api_lab_delete_document(doc_id: int, rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         file_path = lab_mod.delete_document(conn, doc_id, user["id"])
@@ -5174,6 +5279,7 @@ def api_annotator_list_papers(rubricgen_session: str | None = Cookie(default=Non
                               x_api_key: str | None = Header(default=None, alias="X-API-Key")):
     """Paper list for the annotator sidebar, including per-paper annotation status."""
     user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return annotator_mod.list_papers_with_status(conn, user["id"])
@@ -5257,6 +5363,7 @@ def api_annotator_get_annotation(pid: int,
                                  rubricgen_session: str | None = Cookie(default=None),
                                  x_api_key: str | None = Header(default=None, alias="X-API-Key")):
     user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         row = conn.execute(
@@ -5276,6 +5383,7 @@ def api_annotator_save_annotation(pid: int, payload: AnnotationSavePayload,
                                   rubricgen_session: str | None = Cookie(default=None),
                                   x_api_key: str | None = Header(default=None, alias="X-API-Key")):
     user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         row = conn.execute(
@@ -5320,6 +5428,7 @@ def api_annotator_classify(pid: int,
                            x_api_key: str | None = Header(default=None, alias="X-API-Key")):
     """AI-classify the paper's study design. Credit-gated."""
     user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         is_admin = user.get("role") == "admin"
@@ -5368,6 +5477,7 @@ def api_annotator_prefill(pid: int, body: dict,
         raise HTTPException(400, "modifier_fields must be a list of field IDs")
 
     user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         is_admin = user.get("role") == "admin"
@@ -5421,6 +5531,7 @@ def api_annotator_analytics(project_id: int | None = None,
     Scope: ``project_id=N`` OR ``paper_ids=1,2,3``. Omit both for all-user.
     """
     user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return annotator_mod.build_analytics(conn, user["id"], project_id, paper_ids)
@@ -5467,6 +5578,7 @@ async def api_annotator_schemas_parse(
 ):
     """Propose extraction fields from an uploaded protocol (PDF) or pasted text."""
     user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         _annotator_ai_gate(conn, user,
@@ -5518,6 +5630,7 @@ def api_annotator_schemas_refine(body: CustomSchemaRefinePayload,
                                  rubricgen_session: str | None = Cookie(default=None),
                                  x_api_key: str | None = Header(default=None, alias="X-API-Key")):
     user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         _annotator_ai_gate(conn, user,
@@ -5541,6 +5654,7 @@ def api_annotator_schemas_refine(body: CustomSchemaRefinePayload,
 def api_annotator_schemas_list(rubricgen_session: str | None = Cookie(default=None),
                                x_api_key: str | None = Header(default=None, alias="X-API-Key")):
     user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         rows = conn.execute(
@@ -5571,6 +5685,7 @@ def api_annotator_schemas_create(body: CustomSchemaSavePayload,
                                  rubricgen_session: str | None = Cookie(default=None),
                                  x_api_key: str | None = Header(default=None, alias="X-API-Key")):
     user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
     name = _validate_schema_name(body.name)
     fields = annotator_mod.validate_custom_fields(body.fields)
     conn = get_db()
@@ -5598,6 +5713,7 @@ def api_annotator_schemas_get(sid: int,
                               rubricgen_session: str | None = Cookie(default=None),
                               x_api_key: str | None = Header(default=None, alias="X-API-Key")):
     user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         row = conn.execute(
@@ -5623,6 +5739,7 @@ def api_annotator_schemas_update(sid: int, body: CustomSchemaSavePayload,
                                  rubricgen_session: str | None = Cookie(default=None),
                                  x_api_key: str | None = Header(default=None, alias="X-API-Key")):
     user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
     name = _validate_schema_name(body.name)
     fields = annotator_mod.validate_custom_fields(body.fields)
     conn = get_db()
@@ -5655,6 +5772,7 @@ def api_annotator_schemas_delete(sid: int,
                                  rubricgen_session: str | None = Cookie(default=None),
                                  x_api_key: str | None = Header(default=None, alias="X-API-Key")):
     user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         with conn:
@@ -5778,6 +5896,7 @@ def api_annotator_schemas_run(sid: int, body: CustomSchemaRunPayload,
                               rubricgen_session: str | None = Cookie(default=None),
                               x_api_key: str | None = Header(default=None, alias="X-API-Key")):
     user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
     paper_ids = [int(p) for p in (body.paper_ids or [])]
     if not paper_ids:
         raise HTTPException(400, "paper_ids must be a non-empty list")
@@ -5846,6 +5965,7 @@ def api_annotator_schemas_run(sid: int, body: CustomSchemaRunPayload,
 def api_annotator_runs_list(rubricgen_session: str | None = Cookie(default=None),
                             x_api_key: str | None = Header(default=None, alias="X-API-Key")):
     user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         rows = conn.execute(
@@ -5891,6 +6011,7 @@ def api_annotator_runs_get(rid: int,
                            rubricgen_session: str | None = Cookie(default=None),
                            x_api_key: str | None = Header(default=None, alias="X-API-Key")):
     user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         row = conn.execute(
@@ -5936,6 +6057,7 @@ def api_annotator_runs_csv(rid: int,
                            rubricgen_session: str | None = Cookie(default=None),
                            x_api_key: str | None = Header(default=None, alias="X-API-Key")):
     user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         row = conn.execute(
@@ -5977,6 +6099,7 @@ def api_annotator_export_csv(paper_id: int | None = None,
                              rubricgen_session: str | None = Cookie(default=None),
                              x_api_key: str | None = Header(default=None, alias="X-API-Key")):
     user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         rows, filename = annotator_mod.build_export_rows(
@@ -6031,6 +6154,7 @@ class GroundTruthImportPayload(BaseModel):
 def api_create_template(body: TemplateCreatePayload, rubricgen_session: str | None = Cookie(default=None)):
     """Create a new rubric template."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         return tmpl_mod.create_template(conn, user["id"], body.name, body.description,
@@ -6043,6 +6167,7 @@ def api_create_template(body: TemplateCreatePayload, rubricgen_session: str | No
 def api_create_template_from_rubric(body: TemplateFromRubricPayload, rubricgen_session: str | None = Cookie(default=None)):
     """Create a template from an existing rubric."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         return tmpl_mod.create_template_from_rubric(conn, body.rubric_id, user["id"], body.name, body.description)
@@ -6054,6 +6179,7 @@ def api_create_template_from_rubric(body: TemplateFromRubricPayload, rubricgen_s
 def api_list_templates(rubricgen_session: str | None = Cookie(default=None)):
     """List current user's templates."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return tmpl_mod.list_user_templates(conn, user["id"])
@@ -6064,7 +6190,8 @@ def api_list_templates(rubricgen_session: str | None = Cookie(default=None)):
 @app.get("/api/templates/{template_id}")
 def api_get_template(template_id: int, rubricgen_session: str | None = Cookie(default=None)):
     """Get a template with question stats."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return tmpl_mod.get_template(conn, template_id)
@@ -6076,6 +6203,7 @@ def api_get_template(template_id: int, rubricgen_session: str | None = Cookie(de
 def api_update_template(template_id: int, body: TemplateUpdatePayload, rubricgen_session: str | None = Cookie(default=None)):
     """Update a template. Bumps version on content change."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return tmpl_mod.update_template(conn, template_id, user["id"], body.name, body.description, body.template_json)
@@ -6087,6 +6215,7 @@ def api_update_template(template_id: int, body: TemplateUpdatePayload, rubricgen
 def api_delete_template(template_id: int, rubricgen_session: str | None = Cookie(default=None)):
     """Delete a template."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         tmpl_mod.delete_template(conn, template_id, user["id"])
@@ -6099,6 +6228,7 @@ def api_delete_template(template_id: int, rubricgen_session: str | None = Cookie
 def api_fork_template(template_id: int, rubricgen_session: str | None = Cookie(default=None)):
     """Fork a template to your account."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         return tmpl_mod.fork_template(conn, template_id, user["id"])
@@ -6109,7 +6239,8 @@ def api_fork_template(template_id: int, rubricgen_session: str | None = Cookie(d
 @app.get("/api/templates/{template_id}/flagged")
 def api_flagged_questions(template_id: int, rubricgen_session: str | None = Cookie(default=None)):
     """Get questions flagged as too easy or broken."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return tmpl_mod.get_flagged_questions(conn, template_id)
@@ -6123,6 +6254,7 @@ def api_flagged_questions(template_id: int, rubricgen_session: str | None = Cook
 def api_publish_template(template_id: int, body: TemplatePublishPayload, rubricgen_session: str | None = Cookie(default=None)):
     """Publish a template to the community library."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return tmpl_mod.publish_template(conn, template_id, user["id"], body.title, body.description)
@@ -6134,6 +6266,7 @@ def api_publish_template(template_id: int, body: TemplatePublishPayload, rubricg
 def api_unpublish_template(template_id: int, rubricgen_session: str | None = Cookie(default=None)):
     """Remove a template from the community library."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "admin")
     conn = get_db()
     try:
         tmpl_mod.unpublish_template(conn, template_id, user["id"])
@@ -6151,7 +6284,8 @@ def api_community_templates(
     rubricgen_session: str | None = Cookie(default=None),
 ):
     """Browse the community template library."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     limit = 20
     offset = (page - 1) * limit
     conn = get_db()
@@ -6164,7 +6298,8 @@ def api_community_templates(
 @app.get("/api/community/templates/{community_id}")
 def api_get_community_template(community_id: int, rubricgen_session: str | None = Cookie(default=None)):
     """Preview a community template."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return tmpl_mod.get_community_template(conn, community_id)
@@ -6176,6 +6311,7 @@ def api_get_community_template(community_id: int, rubricgen_session: str | None 
 def api_rate_community_template(community_id: int, body: TemplateRatePayload, rubricgen_session: str | None = Cookie(default=None)):
     """Rate a community template (1-5)."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return tmpl_mod.rate_template(conn, community_id, user["id"], body.rating)
@@ -6187,6 +6323,7 @@ def api_rate_community_template(community_id: int, body: TemplateRatePayload, ru
 def api_fork_community_template(community_id: int, rubricgen_session: str | None = Cookie(default=None)):
     """Fork a community template to your account."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         return tmpl_mod.fork_community_template(conn, community_id, user["id"])
@@ -6200,6 +6337,7 @@ def api_fork_community_template(community_id: int, rubricgen_session: str | None
 def api_generate_comparative(body: dict, rubricgen_session: str | None = Cookie(default=None)):
     """Generate a comparative rubric from multiple papers."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     paper_ids = body.get("paper_ids", [])
     if len(paper_ids) < 2:
         raise HTTPException(400, "Comparative rubrics require at least 2 papers")
@@ -6286,7 +6424,8 @@ def api_import_ground_truth(body: GroundTruthImportPayload, request: Request,
 def api_get_ground_truth(rubric_id: int | None = None, challenge_id: int | None = None,
                          rubricgen_session: str | None = Cookie(default=None)):
     """Get ground truth annotations for a rubric or challenge."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return tmpl_mod.get_ground_truth(conn, rubric_id, challenge_id)
@@ -6297,7 +6436,8 @@ def api_get_ground_truth(rubric_id: int | None = None, challenge_id: int | None 
 @app.get("/api/evaluations/{evaluation_id}/accuracy")
 def api_evaluation_accuracy(evaluation_id: int, rubricgen_session: str | None = Cookie(default=None)):
     """Compare judge grades to ground truth for an evaluation."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return tmpl_mod.compare_judge_to_ground_truth(conn, evaluation_id)
@@ -6310,7 +6450,8 @@ def api_evaluation_accuracy(evaluation_id: int, rubricgen_session: str | None = 
 @app.post("/api/templates/{template_id}/record-stats")
 def api_record_template_stats(template_id: int, body: dict, rubricgen_session: str | None = Cookie(default=None)):
     """Record question stats from an evaluation. Called after grading."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     conn = get_db()
     try:
         tmpl_mod.update_question_stats(conn, template_id, body)
@@ -6326,7 +6467,8 @@ def api_record_template_stats(template_id: int, body: dict, rubricgen_session: s
 @app.get("/api/analytics/filters")
 def api_analytics_filters(rubricgen_session: str | None = Cookie(default=None)):
     """Available filter values for the analytics page."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return analytics_mod.get_available_filters(conn)
@@ -6344,7 +6486,8 @@ def api_analytics_breakdown(
     rubricgen_session: str | None = Cookie(default=None),
 ):
     """Per-model performance breakdown by theme and difficulty."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return analytics_mod.get_model_breakdown(conn, model, theme, difficulty, date_from, date_to)
@@ -6360,7 +6503,8 @@ def api_analytics_trends(
     rubricgen_session: str | None = Cookie(default=None),
 ):
     """Historical accuracy time-series per model."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     model_ids = [m.strip() for m in models.split(",")] if models else None
     conn = get_db()
     try:
@@ -6372,7 +6516,8 @@ def api_analytics_trends(
 @app.get("/api/analytics/themes")
 def api_analytics_themes(rubricgen_session: str | None = Cookie(default=None)):
     """Theme-level summary statistics."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         return analytics_mod.get_theme_stats(conn)
@@ -6390,7 +6535,8 @@ def api_analytics_export_csv(
     rubricgen_session: str | None = Cookie(default=None),
 ):
     """Download benchmark data as CSV."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         csv_bytes = analytics_mod.generate_csv_report(conn, model, theme, difficulty, date_from, date_to)
@@ -6413,7 +6559,8 @@ def api_analytics_export_pdf(
     rubricgen_session: str | None = Cookie(default=None),
 ):
     """Download benchmark report as PDF."""
-    require_user(rubricgen_session)
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
     conn = get_db()
     try:
         pdf_bytes = analytics_mod.generate_pdf_report(conn, model, theme, difficulty, date_from, date_to)
@@ -6532,6 +6679,7 @@ class BatchEvalRequest(BaseModel):
 def batch_evaluate(body: BatchEvalRequest, rubricgen_session: str | None = Cookie(default=None)):
     """Generate rubric and evaluate multiple papers."""
     user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
     if not body.paper_ids:
         raise HTTPException(400, "paper_ids must not be empty")
     if len(body.paper_ids) > 50:
