@@ -4,195 +4,217 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>The AI Researcher — Sign In</title>
+<link rel="stylesheet" href="/static/_shared/design.css">
 <style>
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+  /* Centered sign-in card on a warm Paper ground. All tokens come from
+     /static/_shared/design.css (Paper/Graphite/Midnight themes + Geist +
+     Source Serif 4 + JetBrains Mono). */
+  html, body { height: 100%; }
+  body {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    min-height: 100vh; padding: 40px 16px;
+    background:
+      radial-gradient(900px 500px at 50% -10%, oklch(0.96 0.02 85 / .9), transparent 60%),
+      var(--paper-2);
+  }
 
-:root {
-  --navy: #161b2e; --blue: #274472; --sky: #5e9ad0;
-  --green: #16a34a; --red: #dc2626; --amber: #d97706;
-  --bg: #f4f5f9; --card: #ffffff; --border: #dce4ee;
-  --text: #1e293b; --muted: #64748b;
-}
+  /* Brand heading */
+  .brand-header { text-align: center; margin-bottom: 26px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .brand-header .mark {
+    width: 44px; height: 44px; border-radius: 10px;
+    background: var(--ink); color: var(--paper);
+    display: grid; place-items: center;
+    font-family: var(--serif); font-weight: 700; font-size: 26px;
+    font-style: italic; letter-spacing: -.02em;
+  }
+  .brand-header .title {
+    font-family: var(--serif); font-size: 20px; font-weight: 600;
+    color: var(--ink); letter-spacing: -.02em;
+  }
+  .brand-header .kicker {
+    font-family: var(--mono); font-size: 10px;
+    color: var(--ink-3); text-transform: uppercase; letter-spacing: .14em;
+  }
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
-html, body {
-  height: 100%; font-family: 'IBM Plex Sans', sans-serif;
-  background: var(--navy); color: var(--text); font-size: 14px;
-}
+  /* Card */
+  .card {
+    width: 400px; max-width: 100%;
+    background: var(--paper); border: 1px solid var(--rule);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-3);
+    overflow: hidden;
+  }
 
-body {
-  display: flex; flex-direction: column;
-  align-items: center; justify-content: center; min-height: 100vh;
-  background: radial-gradient(ellipse at 60% 20%, #1e2d4a 0%, #161b2e 60%);
-}
+  /* Tabs */
+  .tabs {
+    display: flex; border-bottom: 1px solid var(--rule);
+    background: var(--paper-2);
+  }
+  .tab {
+    flex: 1; padding: 13px 14px;
+    text-align: center;
+    font-family: var(--sans); font-size: 12.5px; font-weight: 600;
+    color: var(--ink-3);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: color var(--t), background var(--t);
+    user-select: none;
+  }
+  .tab.active {
+    color: var(--ink); background: var(--paper);
+    border-bottom-color: var(--ink);
+  }
+  .tab:hover:not(.active) { color: var(--ink); background: var(--paper-3); }
 
-/* ── Brand header ── */
-.brand {
-  font-size: 22px; font-weight: 700; color: #fff;
-  letter-spacing: -.3px; margin-bottom: 28px; text-align: center;
-}
-.brand span { color: var(--sky); }
-.brand sub {
-  display: block; font-size: 11px; font-weight: 400;
-  color: rgba(255,255,255,.35); letter-spacing: .08em;
-  text-transform: uppercase; margin-top: 4px; font-family: 'IBM Plex Mono', monospace;
-}
+  /* Form */
+  .form-body { padding: 26px 26px 20px; }
+  .field { margin-bottom: 14px; }
+  .field label {
+    display: block;
+    font-family: var(--mono); font-size: 10px; font-weight: 500;
+    color: var(--ink-3);
+    text-transform: uppercase; letter-spacing: .12em;
+    margin-bottom: 5px;
+  }
+  .field input {
+    width: 100%; padding: 9px 11px;
+    font-family: var(--sans); font-size: 13px;
+    color: var(--ink); background: var(--paper);
+    border: 1px solid var(--rule); border-radius: var(--radius-sm);
+    outline: none;
+    transition: border-color var(--t), box-shadow var(--t);
+  }
+  .field input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px oklch(from var(--accent) l c h / .18);
+  }
+  .field input.error { border-color: var(--err); }
+  .field-hint {
+    font-size: 11px; color: var(--ink-4); margin-top: 4px;
+  }
 
-/* ── Card ── */
-.card {
-  background: var(--card); border-radius: 12px;
-  width: 380px; box-shadow: 0 24px 60px rgba(0,0,0,.45);
-  overflow: hidden;
-}
+  .forgot-link {
+    display: block; text-align: right; font-size: 11.5px;
+    color: var(--accent); text-decoration: none; margin-top: 6px;
+    cursor: pointer; font-weight: 500;
+  }
+  .forgot-link:hover { text-decoration: underline; }
 
-/* ── Tabs ── */
-.tabs {
-  display: flex; border-bottom: 1px solid var(--border);
-}
-.tab {
-  flex: 1; padding: 14px; text-align: center;
-  font-size: 13px; font-weight: 600; cursor: pointer;
-  color: var(--muted); background: #f8fafc;
-  border-bottom: 2px solid transparent; transition: all .15s;
-  user-select: none;
-}
-.tab.active {
-  color: var(--blue); background: var(--card);
-  border-bottom-color: var(--sky);
-}
-.tab:hover:not(.active) { color: var(--text); background: #f1f5f9; }
+  /* Forgot panel */
+  .forgot-panel {
+    display: none; margin-top: 12px; padding: 14px;
+    background: var(--accent-soft); border: 1px solid var(--accent-soft);
+    border-radius: var(--radius-sm);
+  }
+  .forgot-panel.open { display: block; }
+  .forgot-panel label { color: var(--accent-ink) !important; }
+  .forgot-submit {
+    width: 100%; padding: 8px;
+    font-family: var(--sans); font-size: 12px; font-weight: 600;
+    color: #fff; background: var(--accent); border: 0;
+    border-radius: var(--radius-sm); cursor: pointer; margin-top: 10px;
+    transition: background var(--t);
+  }
+  .forgot-submit:hover { background: oklch(from var(--accent) calc(l - .05) c h); }
 
-/* ── Form body ── */
-.form-body { padding: 28px; }
+  /* Banners */
+  .banner {
+    padding: 10px 12px; border-radius: var(--radius-sm);
+    font-size: 12px; line-height: 1.45;
+    margin-bottom: 14px; display: none;
+    font-family: var(--sans);
+  }
+  .banner.error   { background: var(--err-soft);  color: var(--err);  display: block; }
+  .banner.success { background: var(--ok-soft);   color: var(--ok);   display: block; }
 
-.field { margin-bottom: 16px; }
-.field label {
-  display: block; font-size: 11px; font-weight: 700;
-  color: var(--blue); letter-spacing: .05em; text-transform: uppercase;
-  margin-bottom: 6px;
-}
-.field input {
-  width: 100%; padding: 9px 12px; border: 1.5px solid var(--border);
-  border-radius: 6px; font-family: inherit; font-size: 13px;
-  color: var(--text); background: #f8fafc; outline: none;
-  transition: border-color .15s, background .15s;
-}
-.field input:focus { border-color: var(--sky); background: #fff; }
-.field input.error { border-color: var(--red); }
+  /* Submit */
+  .submit-btn {
+    width: 100%; padding: 10px;
+    font-family: var(--sans); font-size: 13px; font-weight: 600;
+    color: var(--paper); background: var(--ink);
+    border: 1px solid var(--ink);
+    border-radius: var(--radius-sm); cursor: pointer; margin-top: 2px;
+    transition: background var(--t);
+  }
+  .submit-btn:hover:not(:disabled) { background: oklch(from var(--ink) calc(l - .04) c h); }
+  .submit-btn:disabled { opacity: .5; cursor: not-allowed; }
 
-.field-hint {
-  font-size: 10.5px; color: var(--muted); margin-top: 4px;
-}
+  /* Divider */
+  .divider {
+    display: flex; align-items: center; gap: 10px;
+    margin: 18px 0;
+    font-family: var(--mono); font-size: 10px;
+    text-transform: uppercase; letter-spacing: .14em;
+    color: var(--ink-4);
+  }
+  .divider::before, .divider::after {
+    content: ''; flex: 1; height: 1px; background: var(--rule);
+  }
 
-.forgot-link {
-  display: block; text-align: right; font-size: 11px;
-  color: var(--blue); text-decoration: none; margin-top: 6px;
-  cursor: pointer; font-weight: 500;
-}
-.forgot-link:hover { text-decoration: underline; }
+  /* Admin shortcut */
+  .admin-btn {
+    width: 100%; padding: 9px;
+    font-family: var(--sans); font-size: 12px; font-weight: 600;
+    color: var(--ink-3); background: transparent;
+    border: 1px solid var(--rule); border-radius: var(--radius-sm);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    transition: background var(--t), border-color var(--t), color var(--t);
+  }
+  .admin-btn:hover {
+    background: var(--paper-2); border-color: var(--rule-2); color: var(--ink);
+  }
 
-/* Forgot-password panel (reuses admin-panel styling pattern) */
-.forgot-panel {
-  display: none; margin-top: 12px;
-  background: #eff6ff; border: 1.5px solid var(--sky);
-  border-radius: 6px; padding: 14px;
-}
-.forgot-panel.open { display: block; }
-.forgot-panel label { color: var(--blue) !important; }
-.forgot-submit {
-  width: 100%; padding: 8px; border: none; border-radius: 5px;
-  background: var(--blue); color: #fff; font-family: inherit;
-  font-size: 12px; font-weight: 700; cursor: pointer; margin-top: 10px;
-}
-.forgot-submit:hover { background: #1e3358; }
+  /* Admin panel */
+  .admin-panel {
+    display: none; margin-top: 12px; padding: 14px;
+    background: var(--warn-soft); border: 1px solid var(--warn-soft);
+    border-radius: var(--radius-sm);
+  }
+  .admin-panel.open { display: block; }
+  .admin-panel .field { margin-bottom: 12px; }
+  .admin-panel .field:last-child { margin-bottom: 0; }
+  .admin-panel label { color: var(--warn) !important; }
+  .admin-submit {
+    width: 100%; padding: 8px;
+    font-family: var(--sans); font-size: 12px; font-weight: 600;
+    color: #fff; background: var(--warn); border: 0;
+    border-radius: var(--radius-sm); cursor: pointer; margin-top: 10px;
+    transition: background var(--t);
+  }
+  .admin-submit:hover { background: oklch(from var(--warn) calc(l - .05) c h); }
 
-/* ── Error / success banners ── */
-.banner {
-  padding: 10px 12px; border-radius: 6px; font-size: 12px;
-  margin-bottom: 16px; display: none; line-height: 1.4;
-}
-.banner.error   { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; display: block; }
-.banner.success { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; display: block; }
+  /* Footer */
+  .card-footer {
+    padding: 14px 26px; background: var(--paper-2);
+    border-top: 1px solid var(--rule);
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em;
+    color: var(--ink-4); text-align: center;
+  }
 
-/* ── Submit button ── */
-.submit-btn {
-  width: 100%; padding: 10px; border: none; border-radius: 6px;
-  background: var(--sky); color: #fff; font-family: inherit;
-  font-size: 13px; font-weight: 700; cursor: pointer;
-  transition: background .15s; margin-top: 4px;
-}
-.submit-btn:hover:not(:disabled) { background: #4a8ac0; }
-.submit-btn:disabled { opacity: .5; cursor: not-allowed; }
+  /* Spinner */
+  .spinner {
+    display: inline-block; width: 14px; height: 14px;
+    border: 2px solid rgba(255,255,255,.4); border-top-color: #fff;
+    border-radius: 50%; animation: spin .6s linear infinite;
+    vertical-align: middle; margin-right: 4px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ── Divider ── */
-.divider {
-  display: flex; align-items: center; gap: 10px;
-  margin: 18px 0; color: var(--muted); font-size: 11px;
-}
-.divider::before, .divider::after {
-  content: ''; flex: 1; height: 1px; background: var(--border);
-}
-
-/* ── Admin shortcut ── */
-.admin-btn {
-  width: 100%; padding: 9px; border: 1.5px solid var(--border);
-  border-radius: 6px; background: transparent; font-family: inherit;
-  font-size: 12px; font-weight: 600; color: var(--muted);
-  cursor: pointer; transition: all .15s; display: flex;
-  align-items: center; justify-content: center; gap: 6px;
-}
-.admin-btn:hover { border-color: var(--navy); color: var(--navy); background: #f8fafc; }
-
-/* Admin secret panel */
-.admin-panel {
-  display: none; margin-top: 12px;
-  background: #fefce8; border: 1.5px solid #fbbf24;
-  border-radius: 6px; padding: 14px;
-}
-.admin-panel.open { display: block; }
-.admin-panel .field { margin-bottom: 12px; }
-.admin-panel .field:last-child { margin-bottom: 0; }
-.admin-panel label { color: #92400e !important; }
-.admin-panel input { background: #fffbeb !important; }
-.admin-submit {
-  width: 100%; padding: 8px; border: none; border-radius: 5px;
-  background: #d97706; color: #fff; font-family: inherit;
-  font-size: 12px; font-weight: 700; cursor: pointer; margin-top: 10px;
-}
-.admin-submit:hover { background: #b45309; }
-
-/* ── Footer ── */
-.card-footer {
-  padding: 14px 28px; background: #f8fafc;
-  border-top: 1px solid var(--border); font-size: 11px;
-  color: var(--muted); text-align: center;
-}
-
-/* Loading spinner */
-.spinner {
-  display: inline-block; width: 14px; height: 14px;
-  border: 2px solid rgba(255,255,255,.4);
-  border-top-color: #fff; border-radius: 50%;
-  animation: spin .6s linear infinite; vertical-align: middle;
-  margin-right: 4px;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-@media (max-width: 600px) {
-  .topbar { padding: 10px 14px; flex-wrap: wrap; gap: 6px; }
-  .topbar .brand { font-size: 14px; }
-  .topbar nav { gap: 2px; }
-  .topbar nav a { font-size: 10px; padding: 4px 6px; }
-  .topbar nav a[href="/developers"], .topbar nav a[href*="sso/annotator"], .topbar nav a[href="/library"] { display: none; }
-  .topbar .user-badge { font-size: 9px; margin-left: 4px; padding: 3px 6px; }
-  .topbar .signout-btn { font-size: 9px; padding: 4px 8px; margin-left: 4px; }
-}
+  @media (max-width: 600px) {
+    .card { width: 100%; }
+    .form-body { padding: 20px 18px 16px; }
+    .card-footer { padding: 12px 18px; }
+  }
 </style>
 </head>
 <body>
 
-<div class="brand">
-  <span>The AI <span>Researcher</span>
-  <sub>Aitheia LLC</sub>
+<div class="brand-header">
+  <div class="mark" aria-hidden="true">R</div>
+  <div class="title">The AI Researcher</div>
+  <div class="kicker">Aitheia LLC</div>
 </div>
 
 <div class="card">
