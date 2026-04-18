@@ -4,16 +4,69 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>The AI Researcher — Literature Search</title>
+<link rel="stylesheet" href="/static/_shared/design.css">
 <style>
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
-
-:root {
-  --navy: #161b2e; --blue: #274472; --sky: #5e9ad0;
-  --green: #16a34a; --red: #dc2626; --amber: #d97706; --purple: #7c3aed; --gold: #d4af37;
-  --bg: #f4f5f9; --card: #ffffff; --border: #dce4ee;
-  --text: #1e293b; --muted: #64748b;
-}
-
+  /* ─── Shared design tokens ─────────────────────────────────────────
+     Load the global Paper theme (Geist + Source Serif 4 + JetBrains
+     Mono) and remap this page's legacy --navy/--blue/--sky/etc.
+     variables onto the shared tokens. Existing layout CSS below keeps
+     working; new rules should use the shared tokens directly. */
+  :root {
+    --navy:   oklch(0.22 0.025 260);
+    --blue:   var(--accent);
+    --sky:    var(--accent);
+    --green:  var(--ok);
+    --red:    var(--err);
+    --amber:  var(--warn);
+    --purple: oklch(0.46 0.12 300);
+    --gold:   oklch(0.76 0.11 85);
+    --bg:     var(--paper-2);
+    --card:   var(--paper);
+    --border: var(--rule);
+    --text:   var(--ink);
+    --muted:  var(--ink-3);
+  }
+  html, body { font-family: var(--sans) !important; background: var(--paper-2) !important; color: var(--ink) !important; }
+  .topbar {
+    background: var(--paper) !important;
+    color: var(--ink) !important;
+    border-bottom: 1px solid var(--rule) !important;
+    box-shadow: none !important;
+    height: var(--topbar-h) !important;
+    padding: 0 16px !important;
+    gap: 14px !important;
+  }
+  .topbar nav a, .topbar .nav a { color: var(--ink-2) !important; }
+  .topbar nav a:hover, .topbar .nav a:hover,
+  .topbar nav a.active, .topbar .nav a.is-active {
+    background: var(--paper-2) !important; color: var(--ink) !important;
+  }
+  .topbar .user-badge {
+    background: transparent !important;
+    color: var(--ink-3) !important;
+    border: 1px solid var(--rule) !important; border-radius: 999px !important;
+    font-family: var(--mono) !important; font-size: 10.5px !important;
+  }
+  .topbar .signout-btn {
+    color: var(--ink-2) !important;
+    border: 1px solid var(--rule) !important; background: transparent !important;
+    font-family: var(--sans) !important;
+  }
+  .topbar .signout-btn:hover { background: var(--paper-2) !important; border-color: var(--rule-2) !important; color: var(--ink) !important; }
+  .nav-dropdown-menu, .nav-settings-menu {
+    background: var(--paper) !important;
+    border: 1px solid var(--rule) !important;
+    box-shadow: var(--shadow-3) !important;
+  }
+  .nav-dropdown-menu a, .nav-settings-menu a { color: var(--ink-2) !important; }
+  .nav-dropdown-menu a:hover, .nav-settings-menu a:hover {
+    background: var(--paper-2) !important; color: var(--ink) !important;
+  }
+  .nav-settings .settings-icon { color: var(--ink-3) !important; }
+  .nav-settings .settings-icon:hover { color: var(--ink) !important; }
+  .topbar .badge {
+    background: var(--warn-soft) !important; color: var(--warn) !important;
+  }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; height: 100vh; overflow: hidden; }
 
@@ -263,8 +316,11 @@ table.res-table thead th.sortable.sort-desc::after { content: '↓'; opacity: .8
 <body>
 <script>if(window.self!==window.top)document.documentElement.classList.add('in-iframe')</script>
 
-<div class="topbar">
-  <div class="brand">The AI <span>Researcher</span><sub style="font-size:9px;color:rgba(255,255,255,.35);display:block;margin-top:2px">Aitheia LLC</sub></div>
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark" aria-hidden="true"></div>
+    <div class="brand-name">The AI Researcher<span class="tag">Search</span></div>
+  </div>
   <nav>
     <a href="/">Lab</a>
     <a href="/dashboard">Dashboard</a>
