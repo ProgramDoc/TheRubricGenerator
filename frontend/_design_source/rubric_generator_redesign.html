@@ -1,0 +1,1561 @@
+<!doctype html>
+<html lang="en">
+<head>
+<style data-omelette-injected>html,body{background:transparent}</style><script data-omelette-injected>(()=>{var W=["https://claude.ai","https://preview.claude.ai","https://eap-omelette.claude.ai"];var Y=30000;document.addEventListener("DOMContentLoaded",()=>{const D="transform-react-jsx-source";document.querySelectorAll('script[type="text/babel"],script[type="text/jsx"]').forEach((C,F)=>{const Q=C.getAttribute("data-plugins")||"";if(Q.indexOf(D)<0){C.setAttribute("data-plugins",Q?`${Q},${D}`:D)}if(!C.hasAttribute("data-filename")){C.setAttribute("data-filename",C.getAttribute("src")||`inline-${F}`)}})});var K=window.parent;if(K&&K!==window){const D=(k,f)=>{try{K.postMessage({__omelette_log:true,type:k,data:f},"*")}catch{}};["log","warn","error"].forEach((k)=>{const f=console[k];console[k]=(...w)=>{const z=w.map((h)=>{try{return typeof h==="object"?JSON.stringify(h):String(h)}catch{try{return String(h)}catch{return"[unstringifiable]"}}}).join(" ");D(k,z);f.apply(console,w)}});window.addEventListener("error",(k)=>{const f=k.target;if(f&&f!==window&&f.tagName){const w=f.src||f.href||"";D("resource_error",`${f.tagName} failed to load: ${w}`)}else{D("error",`${k.message||"Unknown error"} at ${k.filename||"?"}:${k.lineno||0}:${k.colno||0}`)}},true);window.addEventListener("unhandledrejection",(k)=>{const f=k.reason;const w=f instanceof Error?`${f.message} ${f.stack}`:String(f);D("error",`Unhandled rejection: ${w}`)});const C=()=>{try{K.postMessage({type:"omelette:height",height:document.documentElement.scrollHeight},"*")}catch{}};if(document.readyState==="complete")C();else window.addEventListener("load",C);if(window.ResizeObserver)new ResizeObserver(C).observe(document.documentElement);const F={};let Q=0;window.claude={complete(k){return new Promise((f,w)=>{if(!W.length){w(new Error("claude.complete: no parent origin"));return}const z=`c${++Q}`;const h=()=>setTimeout(()=>{delete F[z];w(new Error(`claude.complete: no data for ${Y/1000}s`))},Y);const J=h();F[z]={resolve:f,reject:w,text:"",t:J,arm:h};try{for(const V of W){K.postMessage({__om_api:true,id:z,body:k},V)}}catch(V){clearTimeout(J);delete F[z];w(V)}})}};const X=(k)=>{try{return JSON.stringify(k)}catch{return JSON.stringify(String(k))}};window.addEventListener("message",(k)=>{if(W.indexOf(k.origin)<0)return;if(k.source!==K)return;const f=k.data;if(!f)return;if(f.__om_api_r){const h=F[f.id];if(!h)return;if(f.error!=null){clearTimeout(h.t);delete F[f.id];h.reject(new Error(f.error));return}if(f.chunk!=null){clearTimeout(h.t);h.t=h.arm();h.text+=f.chunk;return}if(f.done){clearTimeout(h.t);delete F[f.id];h.resolve(f.text!=null?f.text:h.text);return}return}if(!f.__om_eval)return;const w=f;const z=(h)=>{k.source.postMessage({...h,__om_eval_r:1,id:w.id},k.origin)};try{const h=(0,eval)(w.code);if(h&&typeof h.then==="function"){h.then((J)=>z({ok:1,v:X(J)}),(J)=>z({ok:0,e:String(J)}))}else{z({ok:1,v:X(h)})}}catch(h){z({ok:0,e:String(h)})}})}})();
+</script>
+
+<meta charset="utf-8">
+<title>The AI Researcher — Redesign</title>
+<template id="__bundler_thumbnail" data-bg-color="#f7f4ec">
+  <svg viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg">
+    <rect width="1200" height="800" fill="#f7f4ec"/>
+    <rect x="0" y="0" width="1200" height="70" fill="#ffffff" stroke="#e4dfd1" stroke-width="1"/>
+    <rect x="36" y="26" width="34" height="18" rx="4" fill="#26243a"/>
+    <rect x="84" y="28" width="160" height="14" rx="3" fill="#26243a"/>
+    <rect x="0" y="70" width="320" height="730" fill="#ffffff" stroke="#e4dfd1" stroke-width="1"/>
+    <rect x="24" y="110" width="220" height="10" rx="2" fill="#c9c2b0"/>
+    <rect x="24" y="150" width="272" height="46" rx="8" fill="#f2ede0"/>
+    <rect x="24" y="206" width="272" height="46" rx="8" fill="#f2ede0"/>
+    <rect x="24" y="262" width="272" height="46" rx="8" fill="#f2ede0"/>
+    <rect x="320" y="70" width="520" height="730" fill="#efeadd"/>
+    <rect x="400" y="140" width="360" height="500" rx="2" fill="#fdfcf8" stroke="#d7cfba" stroke-width="1"/>
+    <rect x="428" y="180" width="180" height="8" rx="2" fill="#8c8570"/>
+    <rect x="428" y="208" width="280" height="16" rx="2" fill="#26243a"/>
+    <rect x="428" y="232" width="220" height="10" rx="2" fill="#6b6551"/>
+    <rect x="428" y="280" width="120" height="140" fill="#f0ecdf" stroke="#d7cfba"/>
+    <rect x="560" y="280" width="148" height="140" fill="#f0ecdf" stroke="#d7cfba"/>
+    <rect x="428" y="450" width="280" height="8" rx="2" fill="#c9c2b0"/>
+    <rect x="428" y="470" width="260" height="8" rx="2" fill="#c9c2b0"/>
+    <rect x="428" y="490" width="240" height="8" rx="2" fill="#c9c2b0"/>
+    <rect x="840" y="70" width="360" height="730" fill="#ffffff" stroke="#e4dfd1" stroke-width="1"/>
+    <rect x="862" y="108" width="60" height="12" rx="2" fill="#26243a"/>
+    <rect x="930" y="108" width="60" height="12" rx="2" fill="#a59f8b"/>
+    <rect x="862" y="148" width="316" height="80" rx="8" fill="#faf7ef" stroke="#e4dfd1"/>
+    <circle cx="882" cy="170" r="10" fill="#3b5fa8"/>
+    <rect x="902" y="162" width="240" height="8" rx="2" fill="#26243a"/>
+    <rect x="902" y="178" width="200" height="8" rx="2" fill="#7a7460"/>
+    <rect x="862" y="240" width="316" height="80" rx="8" fill="#faf7ef" stroke="#e4dfd1"/>
+    <circle cx="882" cy="262" r="10" fill="#3b5fa8"/>
+    <rect x="902" y="254" width="220" height="8" rx="2" fill="#26243a"/>
+    <rect x="902" y="270" width="180" height="8" rx="2" fill="#7a7460"/>
+    <rect x="862" y="332" width="316" height="80" rx="8" fill="#faf7ef" stroke="#e4dfd1"/>
+    <circle cx="882" cy="354" r="10" fill="#3b5fa8"/>
+    <rect x="902" y="346" width="236" height="8" rx="2" fill="#26243a"/>
+    <rect x="902" y="362" width="160" height="8" rx="2" fill="#7a7460"/>
+  </svg>
+</template>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* ── TOKENS ───────────────────────────────────────────────────────── */
+  :root{
+    /* Paper theme (default) */
+    --paper: oklch(0.985 0.006 85);          /* warm off-white */
+    --paper-2: oklch(0.965 0.008 85);        /* slight tone */
+    --paper-3: oklch(0.935 0.01 85);
+    --rule:   oklch(0.89 0.01 85);
+    --rule-2: oklch(0.82 0.012 85);
+    --ink:    oklch(0.22 0.025 260);         /* near-black ink */
+    --ink-2:  oklch(0.38 0.02 260);
+    --ink-3:  oklch(0.55 0.015 260);
+    --ink-4:  oklch(0.70 0.012 260);
+
+    --accent: oklch(0.46 0.11 250);          /* ink blue */
+    --accent-soft: oklch(0.94 0.03 250);
+    --accent-ink: oklch(0.30 0.09 250);
+
+    --ok:   oklch(0.55 0.10 150);
+    --ok-soft: oklch(0.94 0.04 150);
+    --warn: oklch(0.66 0.13 70);
+    --warn-soft: oklch(0.95 0.04 80);
+    --err:  oklch(0.55 0.16 25);
+    --err-soft: oklch(0.95 0.03 25);
+
+    --shadow-1: 0 1px 0 oklch(0.89 0.01 85);
+    --shadow-2: 0 1px 2px oklch(0.2 0.02 260 / .04), 0 4px 12px oklch(0.2 0.02 260 / .04);
+    --shadow-3: 0 2px 4px oklch(0.2 0.02 260 / .06), 0 12px 32px oklch(0.2 0.02 260 / .08);
+
+    --radius-xs: 4px;
+    --radius-sm: 6px;
+    --radius: 10px;
+    --radius-lg: 14px;
+
+    --sans: "Geist", ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+    --serif: "Source Serif 4", Georgia, serif;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+    --t: 140ms cubic-bezier(.2,.7,.2,1);
+
+    --left-w: 280px;
+    --right-w: 440px;
+
+    --density: 1;  /* multiplies paddings */
+  }
+  :root.density-compact{ --density: .78; --left-w: 252px; --right-w: 400px; }
+
+  /* Graphite theme */
+  :root.theme-graphite{
+    --paper: oklch(0.965 0.004 250);
+    --paper-2: oklch(0.945 0.005 250);
+    --paper-3: oklch(0.92 0.006 250);
+    --rule: oklch(0.88 0.006 250);
+    --rule-2: oklch(0.80 0.008 250);
+    --ink: oklch(0.22 0.02 260);
+    --accent-soft: oklch(0.93 0.04 250);
+  }
+  /* Midnight theme */
+  :root.theme-midnight{
+    --paper: oklch(0.19 0.015 260);
+    --paper-2: oklch(0.225 0.017 260);
+    --paper-3: oklch(0.26 0.018 260);
+    --rule: oklch(0.30 0.02 260);
+    --rule-2: oklch(0.38 0.02 260);
+    --ink: oklch(0.96 0.006 85);
+    --ink-2: oklch(0.85 0.01 85);
+    --ink-3: oklch(0.70 0.012 85);
+    --ink-4: oklch(0.55 0.015 85);
+    --accent: oklch(0.72 0.12 250);
+    --accent-soft: oklch(0.28 0.04 250);
+    --accent-ink: oklch(0.88 0.1 250);
+    --ok-soft: oklch(0.28 0.04 150);
+    --warn-soft: oklch(0.30 0.05 70);
+    --err-soft: oklch(0.30 0.06 25);
+    --shadow-1: 0 1px 0 oklch(0.28 0.02 260);
+    --shadow-2: 0 1px 2px oklch(0 0 0 / .3), 0 4px 12px oklch(0 0 0 / .25);
+    --shadow-3: 0 2px 4px oklch(0 0 0 / .35), 0 12px 32px oklch(0 0 0 / .45);
+  }
+
+  *,*::before,*::after{ box-sizing:border-box; }
+  html,body{ height:100%; margin:0; }
+  body{
+    font-family: var(--sans);
+    font-size: 13.5px;
+    color: var(--ink);
+    background: var(--paper);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "ss01","cv11";
+  }
+  button{ font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  input, textarea, select{ font: inherit; color: inherit; }
+  ::selection{ background: var(--accent-soft); color: var(--accent-ink); }
+
+  /* ── APP SHELL ──────────────────────────────────────────────────── */
+  .app{
+    display: grid;
+    grid-template-rows: 52px 1fr;
+    height: 100vh;
+    min-height: 100vh;
+  }
+
+  /* ── TOP BAR ────────────────────────────────────────────────────── */
+  .topbar{
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--paper);
+    position: relative; z-index: 20;
+  }
+  .brand{ display: flex; align-items: center; gap: 10px; }
+  .brand-mark{
+    width: 26px; height: 26px; border-radius: 6px;
+    background: var(--ink);
+    color: var(--paper);
+    display: grid; place-items: center;
+    font-family: var(--serif); font-weight: 700; font-size: 16px;
+    letter-spacing: -.02em;
+  }
+  .brand-mark::after{ content:"R"; font-style: italic; }
+  .brand-name{
+    font-family: var(--serif); font-weight: 600; font-size: 15.5px;
+    letter-spacing: -.01em;
+  }
+  .brand-name .tag{
+    font-family: var(--sans); font-weight: 500; font-size: 10.5px;
+    color: var(--ink-3); margin-left: 6px;
+    padding: 2px 7px; border: 1px solid var(--rule); border-radius: 999px;
+    vertical-align: 2px;
+  }
+
+  .nav{ display: flex; gap: 2px; margin-left: 8px; }
+  .nav a{
+    color: var(--ink-2);
+    text-decoration: none;
+    font-weight: 500; font-size: 12.5px;
+    padding: 6px 10px; border-radius: 6px;
+    letter-spacing: -.005em;
+  }
+  .nav a:hover{ background: var(--paper-2); color: var(--ink); }
+  .nav a.is-active{ background: var(--paper-2); color: var(--ink); }
+  .nav a.is-active::after{
+    content:""; display: block; height: 1.5px; background: var(--ink);
+    margin: 3px -2px -8px; border-radius: 2px;
+  }
+
+  .topbar-right{ margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .kbd{
+    font-family: var(--mono); font-size: 10.5px;
+    color: var(--ink-3);
+    border: 1px solid var(--rule); border-bottom-width: 2px;
+    background: var(--paper);
+    padding: 1px 5px; border-radius: 4px;
+  }
+  .search{
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 10px; border: 1px solid var(--rule); border-radius: 8px;
+    background: var(--paper-2); color: var(--ink-3);
+    font-size: 12.5px; min-width: 260px;
+  }
+  .search svg{ width: 14px; height: 14px; flex: 0 0 auto; }
+  .search .k{ margin-left: auto; }
+  .avatar{
+    width: 28px; height: 28px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), oklch(0.58 0.13 290));
+    color: #fff; display: grid; place-items: center;
+    font-weight: 600; font-size: 11.5px; letter-spacing: .02em;
+    border: 1px solid oklch(0 0 0 / .08);
+  }
+
+  /* ── LAYOUT ─────────────────────────────────────────────────────── */
+  .layout{
+    display: grid;
+    grid-template-columns: var(--left-w) 1fr var(--right-w);
+    height: 100%;
+    min-height: 0;
+  }
+  body.hide-pdf .layout{ grid-template-columns: var(--left-w) 0 1fr; }
+  body.hide-pdf .pane-reader{ display: none; }
+
+  .pane{
+    min-height: 0; min-width: 0;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .pane + .pane{ border-left: 1px solid var(--rule); }
+
+  .pane-header{
+    display: flex; align-items: center; gap: 10px;
+    padding: calc(10px * var(--density)) 14px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--paper);
+    min-height: 44px;
+  }
+  .pane-eyebrow{
+    font-family: var(--mono);
+    font-size: 10px; font-weight: 500;
+    color: var(--ink-3);
+    text-transform: uppercase; letter-spacing: .12em;
+  }
+  .pane-title{
+    font-family: var(--serif); font-weight: 600; font-size: 15px;
+    letter-spacing: -.01em;
+  }
+  .pane-actions{ margin-left: auto; display: flex; gap: 6px; align-items: center; }
+
+  .icon-btn{
+    width: 28px; height: 28px; border-radius: 7px;
+    display: grid; place-items: center;
+    color: var(--ink-3);
+  }
+  .icon-btn:hover{ background: var(--paper-2); color: var(--ink); }
+  .icon-btn svg{ width: 15px; height: 15px; }
+
+  /* ── LEFT PANE: LIBRARY ─────────────────────────────────────────── */
+  .lib-search{
+    padding: 10px 12px 4px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .lib-search .search{ width: 100%; min-width: 0; }
+
+  .lib-section{
+    padding: calc(14px * var(--density)) 12px 4px;
+    font-family: var(--mono);
+    font-size: 10px; font-weight: 500;
+    color: var(--ink-3);
+    text-transform: uppercase; letter-spacing: .14em;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .lib-section .hr{
+    flex: 1; height: 1px; background: var(--rule);
+  }
+  .lib-section .count{
+    font-family: var(--mono); color: var(--ink-4); font-weight: 500;
+    font-size: 10px;
+  }
+
+  .lib-scroll{ overflow: auto; flex: 1; padding-bottom: 16px; }
+
+  .proj{
+    margin: 0 8px 2px;
+    border-radius: var(--radius-sm);
+  }
+  .proj-head{
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px; border-radius: var(--radius-sm);
+    cursor: pointer;
+    color: var(--ink-2);
+  }
+  .proj-head:hover{ background: var(--paper-2); }
+  .proj-head .chev{
+    width: 14px; height: 14px; color: var(--ink-4);
+    transition: transform var(--t);
+  }
+  .proj[data-open="true"] .proj-head .chev{ transform: rotate(90deg); }
+  .proj-name{
+    font-size: 12.5px; font-weight: 600; color: var(--ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .proj-count{
+    margin-left: auto; font-family: var(--mono);
+    font-size: 10px; color: var(--ink-4);
+    padding: 1px 6px; background: var(--paper-2);
+    border: 1px solid var(--rule); border-radius: 999px;
+  }
+  .proj-body{ display: none; padding: 2px 4px 4px; }
+  .proj[data-open="true"] .proj-body{ display: block; }
+
+  .paper{
+    position: relative;
+    padding: 8px 10px 8px 24px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    display: grid; grid-template-columns: 1fr auto; gap: 2px 8px;
+    align-items: center;
+  }
+  .paper:hover{ background: var(--paper-2); }
+  .paper.is-active{
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+  }
+  .paper::before{
+    content:""; position: absolute; left: 12px; top: 12px;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--ink-4);
+  }
+  .paper.has-rubric::before{ background: var(--accent); }
+  .paper.has-eval::before{ background: var(--ok); }
+  .paper .t{
+    font-size: 12.5px; font-weight: 500; line-height: 1.3;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    grid-column: 1 / 2;
+  }
+  .paper .m{
+    grid-column: 1 / 3;
+    font-family: var(--mono); font-size: 10px; color: var(--ink-4);
+    display: flex; gap: 8px; align-items: center;
+  }
+  .paper .m .dot{ width: 2px; height: 2px; border-radius: 50%; background: var(--ink-4); }
+  .paper .chip{
+    grid-column: 2 / 3; grid-row: 1 / 2;
+    font-family: var(--mono); font-size: 9.5px; font-weight: 600;
+    padding: 1px 6px; border-radius: 3px;
+    background: var(--paper-2); color: var(--ink-3);
+    border: 1px solid var(--rule);
+    letter-spacing: .04em;
+  }
+  .paper .chip.rubric{ background: var(--accent-soft); color: var(--accent-ink); border-color: transparent; }
+  .paper .chip.eval{ background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+
+  .lib-upload{
+    margin: 8px 12px 14px;
+    padding: 14px;
+    border: 1px dashed var(--rule-2); border-radius: var(--radius);
+    text-align: center;
+    color: var(--ink-3); font-size: 12px;
+    background: var(--paper);
+  }
+  .lib-upload strong{ color: var(--ink); font-weight: 600; display:block; margin-bottom: 2px; font-size: 12.5px; }
+  .lib-upload .u-hint{ font-family: var(--mono); font-size: 10px; color: var(--ink-4); margin-top: 6px; }
+
+  /* ── MIDDLE PANE: READER ────────────────────────────────────────── */
+  .pane-reader{ background: var(--paper-2); }
+  .reader-toolbar{
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--paper);
+    min-height: 44px;
+  }
+  .crumb{
+    font-family: var(--mono); font-size: 10.5px; color: var(--ink-3);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .crumb .s{ color: var(--ink-4); }
+  .page-box{
+    display: inline-flex; align-items: center; gap: 0;
+    border: 1px solid var(--rule); border-radius: 7px;
+    background: var(--paper);
+    overflow: hidden;
+    font-family: var(--mono); font-size: 12px;
+  }
+  .page-box button{ padding: 4px 8px; color: var(--ink-3); }
+  .page-box button:hover{ color: var(--ink); background: var(--paper-2); }
+  .page-box .curr{
+    padding: 4px 8px; border-left: 1px solid var(--rule); border-right: 1px solid var(--rule);
+    color: var(--ink);
+  }
+  .zoom{
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--mono); font-size: 11.5px; color: var(--ink-3);
+    margin-left: auto;
+  }
+  .zoom button{
+    width: 24px; height: 24px; border-radius: 6px;
+    display: grid; place-items: center; color: var(--ink-3);
+  }
+  .zoom button:hover{ background: var(--paper-2); color: var(--ink); }
+  .tool-sep{ width: 1px; height: 18px; background: var(--rule); }
+
+  .reader-scroll{
+    overflow: auto;
+    padding: 24px;
+    flex: 1;
+    display: flex; justify-content: center;
+    background:
+      radial-gradient(1200px 400px at 50% -50px, oklch(0.95 0.012 85 / .6), transparent 60%),
+      var(--paper-2);
+  }
+  :root.theme-midnight .reader-scroll{
+    background: radial-gradient(1200px 400px at 50% -50px, oklch(0.22 0.02 260), transparent 60%), var(--paper-2);
+  }
+
+  .sheet{
+    background: #fdfcf8;
+    color: #1a1a1a;
+    width: min(100%, 720px);
+    aspect-ratio: 1 / 1.414;
+    max-width: 720px;
+    border-radius: 2px;
+    box-shadow: var(--shadow-3);
+    padding: 72px 72px 64px;
+    position: relative;
+    overflow: hidden;
+    font-family: var(--serif);
+    line-height: 1.55;
+    font-size: 14.5px;
+  }
+  :root.theme-midnight .sheet{ background: #f5f2ea; }
+
+  .sheet .venue{
+    font-family: var(--mono); font-size: 10.5px;
+    color: oklch(0.45 0.02 260); letter-spacing: .12em; text-transform: uppercase;
+  }
+  .sheet h1{
+    font-size: 22px; line-height: 1.2; margin: 6px 0 6px;
+    font-weight: 600; letter-spacing: -.01em; color: #111;
+  }
+  .sheet .authors{ font-size: 12.5px; color: #333; margin-bottom: 18px; font-style: italic; }
+  .sheet .cols{
+    column-count: 2; column-gap: 28px; column-rule: 1px solid oklch(0.85 0.01 85);
+    font-size: 12.5px;
+  }
+  .sheet h2{
+    font-size: 13px; letter-spacing: .06em; text-transform: uppercase;
+    font-weight: 700; margin: 14px 0 6px; color: #222;
+    break-after: avoid;
+  }
+  .sheet p{ margin: 0 0 10px; text-align: justify; hyphens: auto; }
+  .sheet .callout{
+    break-inside: avoid;
+    margin: 10px 0; padding: 10px 12px;
+    background: oklch(0.96 0.008 85);
+    border-left: 3px solid oklch(0.46 0.11 250);
+    font-family: var(--sans); font-size: 11.5px; color: #222;
+  }
+  .sheet .pageno{
+    position: absolute; bottom: 20px; left: 0; right: 0; text-align: center;
+    font-family: var(--mono); font-size: 10px; color: oklch(0.55 0.02 260);
+  }
+  .sheet .hi{
+    background: oklch(0.95 0.09 95 / .7);
+    border-bottom: 1.5px solid oklch(0.75 0.14 85);
+    padding: 0 2px;
+    cursor: pointer;
+  }
+  .sheet .hi.is-active{
+    background: oklch(0.92 0.14 85 / .8);
+    box-shadow: 0 0 0 3px oklch(0.92 0.14 85 / .4);
+  }
+  .sheet .fig{
+    break-inside: avoid;
+    margin: 10px 0 12px;
+    border: 1px solid oklch(0.85 0.01 85);
+    padding: 10px;
+    background: #fff;
+  }
+  .sheet .fig .bar{
+    display: grid; grid-template-columns: 1fr; gap: 6px;
+  }
+  .sheet .fig .bar .row{
+    display: grid; grid-template-columns: 80px 1fr auto; gap: 8px; align-items: center;
+    font-family: var(--sans); font-size: 10.5px;
+  }
+  .sheet .fig .bar .fill{
+    height: 8px; background: oklch(0.92 0.01 85); border-radius: 2px; overflow: hidden; position: relative;
+  }
+  .sheet .fig .bar .fill > span{
+    position: absolute; left: 0; top: 0; bottom: 0; background: oklch(0.46 0.11 250); border-radius: 2px;
+  }
+  .sheet .fig cap{
+    display: block; font-family: var(--sans); font-size: 10.5px; color: #555; margin-top: 8px; text-align: center; font-style: italic;
+  }
+
+  .reader-empty{
+    margin: auto; text-align: center;
+    color: var(--ink-3);
+    font-family: var(--serif);
+    max-width: 320px;
+  }
+  .reader-empty .e{
+    font-family: var(--mono); font-size: 10px; letter-spacing: .2em;
+    text-transform: uppercase; color: var(--ink-4); margin-bottom: 10px;
+  }
+  .reader-empty h2{ font-size: 20px; font-weight: 600; letter-spacing: -.01em; margin: 0 0 8px; color: var(--ink); }
+  .reader-empty p{ font-family: var(--sans); font-size: 12.5px; line-height: 1.55; color: var(--ink-3); }
+
+  /* ── RIGHT PANE: RUBRIC ─────────────────────────────────────────── */
+  .pane-rubric{ background: var(--paper); }
+  .tabs{
+    display: flex; gap: 0;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--paper);
+  }
+  .tab{
+    position: relative;
+    padding: 10px 14px 11px;
+    font-size: 12.5px; font-weight: 500;
+    color: var(--ink-3);
+    display: inline-flex; align-items: center; gap: 6px;
+    border-bottom: 1.5px solid transparent;
+    margin-bottom: -1px;
+  }
+  .tab:hover{ color: var(--ink); }
+  .tab.is-active{ color: var(--ink); border-bottom-color: var(--ink); }
+  .tab .count{
+    font-family: var(--mono); font-size: 10px; color: var(--ink-4);
+    padding: 1px 5px; background: var(--paper-2); border-radius: 999px;
+    border: 1px solid var(--rule);
+  }
+  .tab.is-active .count{ color: var(--ink); }
+
+  .rubric-scroll{ overflow: auto; flex: 1; }
+  .rubric-panel{ display: none; padding: 16px 18px 60px; }
+  .rubric-panel.is-active{ display: block; }
+
+  .card{
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin-bottom: 14px;
+    box-shadow: var(--shadow-1);
+  }
+  .card.flush{ padding: 0; overflow: hidden; }
+  .card-h{
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 10px;
+  }
+  .card-title{
+    font-family: var(--serif); font-weight: 600; font-size: 14.5px;
+    letter-spacing: -.005em;
+  }
+  .card-sub{
+    font-size: 12px; color: var(--ink-3);
+    line-height: 1.5;
+  }
+  .card-h .step{
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--ink); color: var(--paper);
+    display: grid; place-items: center;
+    font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+  }
+
+  .field{ display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
+  .field label{
+    font-family: var(--mono); font-size: 10px; font-weight: 500;
+    text-transform: uppercase; letter-spacing: .1em; color: var(--ink-3);
+  }
+  .field .hint{ font-size: 11.5px; color: var(--ink-4); }
+
+  .select, .input, .textarea{
+    font-family: var(--sans); font-size: 13px; color: var(--ink);
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 7px;
+    padding: 7px 10px;
+    outline: none; transition: border-color var(--t), box-shadow var(--t);
+  }
+  .select:hover, .input:hover, .textarea:hover{ border-color: var(--rule-2); }
+  .select:focus, .input:focus, .textarea:focus{
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px oklch(from var(--accent) l c h / .18);
+  }
+  .textarea{ min-height: 72px; resize: vertical; line-height: 1.5; }
+
+  .seg{
+    display: inline-flex; border: 1px solid var(--rule); border-radius: 8px;
+    background: var(--paper-2); padding: 2px; gap: 2px;
+  }
+  .seg button{
+    font-size: 11.5px; font-weight: 500; color: var(--ink-3);
+    padding: 4px 10px; border-radius: 6px;
+  }
+  .seg button.is-on{
+    background: var(--paper); color: var(--ink);
+    box-shadow: var(--shadow-1), 0 0 0 1px var(--rule);
+  }
+
+  .btn{
+    display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+    font-size: 12.5px; font-weight: 600;
+    padding: 8px 14px; border-radius: 8px;
+    border: 1px solid var(--rule);
+    background: var(--paper-2);
+    color: var(--ink);
+    transition: background var(--t), border-color var(--t), transform var(--t);
+  }
+  .btn:hover{ background: var(--paper-3); }
+  .btn:active{ transform: translateY(1px); }
+  .btn-primary{
+    background: var(--ink); color: var(--paper);
+    border-color: var(--ink);
+  }
+  .btn-primary:hover{ background: oklch(from var(--ink) calc(l - .04) c h); }
+  .btn-accent{
+    background: var(--accent); color: #fff; border-color: var(--accent);
+  }
+  .btn-accent:hover{ background: oklch(from var(--accent) calc(l - .04) c h); }
+  .btn-ghost{ background: transparent; border-color: transparent; color: var(--ink-2); }
+  .btn-ghost:hover{ background: var(--paper-2); color: var(--ink); }
+  .btn .kbd{ font-size: 10px; padding: 0 4px; border-width: 1px; border-bottom-width: 1px; background: oklch(from var(--paper) l c h / .25); color: currentColor; border-color: oklch(from currentColor l c h / .25); }
+  .btn svg{ width: 14px; height: 14px; }
+
+  .action-row{ display: flex; gap: 8px; flex-wrap: wrap; }
+
+  /* Rubric questions */
+  .qlist{ display: flex; flex-direction: column; gap: 10px; }
+  .q{
+    border: 1px solid var(--rule); border-radius: var(--radius);
+    background: var(--paper);
+    overflow: hidden;
+    transition: border-color var(--t), box-shadow var(--t);
+  }
+  .q:hover{ border-color: var(--rule-2); }
+  .q.is-focus{ border-color: var(--accent); box-shadow: 0 0 0 3px oklch(from var(--accent) l c h / .15); }
+
+  .q-head{
+    display: grid; grid-template-columns: 28px 1fr auto; gap: 8px; align-items: center;
+    padding: 10px 12px; cursor: pointer;
+  }
+  .q-num{
+    width: 24px; height: 24px; border-radius: 6px;
+    background: var(--paper-2); border: 1px solid var(--rule);
+    display: grid; place-items: center;
+    font-family: var(--mono); font-size: 10.5px; font-weight: 600; color: var(--ink-2);
+  }
+  .q-text{
+    font-family: var(--serif); font-size: 14px; line-height: 1.4; font-weight: 500;
+    color: var(--ink);
+  }
+  .q-tag{
+    font-family: var(--mono); font-size: 9.5px; font-weight: 600; letter-spacing: .06em;
+    padding: 2px 6px; border-radius: 4px;
+    background: var(--paper-2); border: 1px solid var(--rule); color: var(--ink-3);
+    text-transform: uppercase;
+  }
+  .q-tag.method{ background: var(--accent-soft); color: var(--accent-ink); border-color: transparent; }
+  .q-tag.bias{ background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+  .q-tag.result{ background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+
+  .q-body{
+    border-top: 1px solid var(--rule);
+    background: var(--paper-2);
+    padding: 12px; display: none;
+    font-size: 12px;
+  }
+  .q.is-open .q-body{ display: block; }
+  .q-body .meta-grid{
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+    font-family: var(--mono); font-size: 10.5px;
+  }
+  .meta-grid .cell{
+    padding: 6px 8px; background: var(--paper); border: 1px solid var(--rule);
+    border-radius: 6px;
+  }
+  .meta-grid .cell .k{ color: var(--ink-4); font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; }
+  .meta-grid .cell .v{ color: var(--ink); margin-top: 2px; font-weight: 500; }
+
+  .q-scale{
+    margin-top: 10px;
+    display: grid; grid-template-columns: 80px 1fr; gap: 8px 10px;
+    align-items: start;
+    font-family: var(--sans); font-size: 11.5px;
+  }
+  .q-scale .lv{
+    font-family: var(--mono); font-size: 10px; font-weight: 600;
+    padding: 3px 7px; border-radius: 999px;
+    text-align: center;
+    border: 1px solid var(--rule);
+    background: var(--paper);
+  }
+  .q-scale .lv.l0{ color: var(--err); background: var(--err-soft); border-color: transparent; }
+  .q-scale .lv.l1{ color: var(--warn); background: var(--warn-soft); border-color: transparent; }
+  .q-scale .lv.l2{ color: var(--ok); background: var(--ok-soft); border-color: transparent; }
+  .q-scale .desc{ color: var(--ink-2); line-height: 1.45; }
+
+  .q-actions{ margin-top: 12px; display: flex; gap: 6px; flex-wrap: wrap; }
+
+  /* Model grid */
+  .models{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .model{
+    display: flex; flex-direction: column; gap: 4px;
+    padding: 10px 12px; border-radius: 9px;
+    border: 1px solid var(--rule);
+    background: var(--paper);
+    cursor: pointer;
+    transition: border-color var(--t), background var(--t);
+    text-align: left;
+  }
+  .model:hover{ border-color: var(--rule-2); }
+  .model.is-on{
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .model .m-head{ display: flex; align-items: center; gap: 6px; }
+  .model .m-mark{
+    width: 16px; height: 16px; border-radius: 4px;
+    display: grid; place-items: center;
+    font-family: var(--mono); font-size: 9px; font-weight: 700;
+    background: var(--ink); color: var(--paper);
+  }
+  .model.p-openai .m-mark{ background: oklch(0.45 0.08 150); }
+  .model.p-anthropic .m-mark{ background: oklch(0.56 0.12 40); }
+  .model.p-google .m-mark{ background: oklch(0.48 0.13 250); }
+  .model .m-name{ font-size: 12.5px; font-weight: 600; color: var(--ink); }
+  .model .m-meta{ font-family: var(--mono); font-size: 10px; color: var(--ink-4); }
+  .model .m-tokens{
+    margin-top: 2px; font-family: var(--mono); font-size: 10px; color: var(--ink-3);
+    display: flex; gap: 8px;
+  }
+  .model .m-tokens span{ display: inline-flex; align-items: center; gap: 4px; }
+  .model .m-tokens .sw{ width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .5; }
+
+  /* Eval status stepper */
+  .stepper{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; margin: 4px 0 0; }
+  .step-it{
+    display: flex; flex-direction: column; gap: 4px;
+    padding: 10px 12px;
+    border: 1px solid var(--rule);
+    background: var(--paper);
+    position: relative;
+  }
+  .step-it:first-child{ border-radius: 9px 0 0 9px; }
+  .step-it:last-child{ border-radius: 0 9px 9px 0; }
+  .step-it + .step-it{ margin-left: -1px; }
+  .step-it.done{ background: var(--ok-soft); border-color: transparent; color: var(--ok); }
+  .step-it.live{ background: var(--accent-soft); border-color: transparent; color: var(--accent-ink); }
+  .step-it .s-n{ font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; opacity: .8; }
+  .step-it .s-l{ font-family: var(--serif); font-size: 13.5px; font-weight: 600; letter-spacing: -.005em; }
+  .step-it .s-m{ font-family: var(--mono); font-size: 10px; opacity: .7; }
+
+  .live-log{
+    margin-top: 12px;
+    border: 1px solid var(--rule); border-radius: 9px;
+    background: var(--paper-2);
+    overflow: hidden;
+  }
+  .live-log .ll-h{
+    padding: 8px 12px; border-bottom: 1px solid var(--rule);
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 10.5px; color: var(--ink-3);
+  }
+  .live-log .ll-h .pulse{
+    width: 6px; height: 6px; border-radius: 50%; background: var(--ok);
+    box-shadow: 0 0 0 0 oklch(from var(--ok) l c h / .5);
+    animation: pulse 1.6s ease-out infinite;
+  }
+  @keyframes pulse{
+    0%{ box-shadow: 0 0 0 0 oklch(from var(--ok) l c h / .5); }
+    80%, 100%{ box-shadow: 0 0 0 8px oklch(from var(--ok) l c h / 0); }
+  }
+  .live-log .ll-body{
+    padding: 10px 12px;
+    font-family: var(--mono); font-size: 11.5px; color: var(--ink-2);
+    line-height: 1.7;
+    max-height: 140px; overflow: auto;
+  }
+  .live-log .ll-body .ok{ color: var(--ok); }
+  .live-log .ll-body .wait{ color: var(--ink-4); }
+
+  /* Results */
+  .kpi-row{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
+  .kpi{
+    border: 1px solid var(--rule); border-radius: var(--radius);
+    padding: 12px 14px; background: var(--paper);
+  }
+  .kpi .k{ font-family: var(--mono); font-size: 10px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .1em; }
+  .kpi .v{
+    font-family: var(--serif); font-size: 28px; font-weight: 600; margin-top: 4px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.02em;
+  }
+  .kpi .d{ font-family: var(--mono); font-size: 10.5px; color: var(--ink-4); margin-top: 2px; }
+  .kpi .trend{
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+    padding: 2px 6px; border-radius: 999px;
+    margin-top: 6px;
+  }
+  .trend.up{ color: var(--ok); background: var(--ok-soft); }
+  .trend.down{ color: var(--err); background: var(--err-soft); }
+
+  .result-row{
+    display: grid; grid-template-columns: 24px 1fr auto; gap: 10px; align-items: center;
+    padding: 12px 0;
+    border-top: 1px solid var(--rule);
+  }
+  .result-row:last-child{ border-bottom: 1px solid var(--rule); }
+  .result-num{
+    font-family: var(--mono); font-size: 10px; color: var(--ink-4);
+  }
+  .result-q{
+    font-family: var(--serif); font-size: 13.5px; color: var(--ink); line-height: 1.35;
+  }
+  .result-q .a{
+    display: block; font-family: var(--sans); font-size: 11.5px; color: var(--ink-3);
+    margin-top: 4px; line-height: 1.5;
+  }
+  .score-pill{
+    font-family: var(--mono); font-size: 11px; font-weight: 700;
+    padding: 3px 8px; border-radius: 999px;
+    background: var(--paper-2); border: 1px solid var(--rule); color: var(--ink-2);
+    letter-spacing: .02em;
+  }
+  .score-pill.good{ background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+  .score-pill.mid{ background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+  .score-pill.bad{ background: var(--err-soft); color: var(--err); border-color: transparent; }
+
+  /* ── TWEAKS PANEL ───────────────────────────────────────────────── */
+  .tweaks{
+    position: fixed; right: 16px; bottom: 16px;
+    width: 280px;
+    background: var(--paper);
+    border: 1px solid var(--rule); border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-3);
+    z-index: 100;
+    padding: 14px;
+    display: none;
+    font-size: 12.5px;
+  }
+  .tweaks.open{ display: block; }
+  .tweaks h4{
+    font-family: var(--serif); font-weight: 600; font-size: 13.5px;
+    margin: 0 0 10px; letter-spacing: -.005em;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .tweaks h4::before{
+    content:""; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent);
+  }
+  .tweaks h4 .x{ margin-left: auto; cursor: pointer; color: var(--ink-3); font-size: 15px; }
+  .tweak-grp{ margin-bottom: 10px; }
+  .tweak-grp label{
+    font-family: var(--mono); font-size: 10px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--ink-3); display: block; margin-bottom: 6px;
+  }
+  .tweak-grp .seg{ width: 100%; }
+  .tweak-grp .seg button{ flex: 1; }
+  .hue-row{ display: flex; gap: 6px; }
+  .hue{
+    width: 22px; height: 22px; border-radius: 50%;
+    cursor: pointer;
+    border: 1px solid var(--rule);
+  }
+  .hue.is-on{ box-shadow: 0 0 0 2px var(--paper), 0 0 0 3.5px var(--ink); }
+
+  /* Tweaks toggle trigger (FAB) when overlay hidden */
+  .tweak-fab{
+    position: fixed; right: 16px; bottom: 16px;
+    padding: 9px 14px; border-radius: 999px;
+    background: var(--ink); color: var(--paper);
+    font-size: 12px; font-weight: 600;
+    box-shadow: var(--shadow-3);
+    z-index: 99;
+    display: none;
+    align-items: center; gap: 8px;
+  }
+  body.show-tweak-fab .tweak-fab{ display: inline-flex; }
+
+  /* ── Suggestions ticker over design ───────────────────────────── */
+  .suggest-dot{
+    position: absolute;
+    width: 22px; height: 22px; border-radius: 50%;
+    background: var(--ink); color: var(--paper);
+    display: grid; place-items: center;
+    font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+    box-shadow: 0 0 0 3px var(--paper), 0 2px 10px oklch(0 0 0 / .2);
+    cursor: pointer;
+    z-index: 30;
+  }
+  .suggest-dot:hover{ background: var(--accent); }
+
+  /* scroll style */
+  ::-webkit-scrollbar{ width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb{ background: var(--rule-2); border-radius: 6px; border: 2px solid var(--paper); }
+  ::-webkit-scrollbar-track{ background: transparent; }
+
+  /* Small screens */
+  @media (max-width: 1100px){
+    body{ --left-w: 240px; --right-w: 380px; }
+  }
+  @media (max-width: 900px){
+    .layout{ grid-template-columns: 56px 1fr var(--right-w); }
+    .lib-section, .lib-upload, .proj-count, .proj-name, .paper .t, .paper .m, .paper .chip, .lib-search{ display: none; }
+    .proj-head{ justify-content: center; padding: 8px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- TOP BAR -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"></div>
+      <div class="brand-name">The AI Researcher<span class="tag">Rubrics</span></div>
+    </div>
+    <nav class="nav">
+      <a href="#" class="is-active">Workspace</a>
+      <a href="#">Library</a>
+      <a href="#">Evaluations</a>
+      <a href="#">Challenges</a>
+      <a href="#">Analytics</a>
+    </nav>
+    <div class="topbar-right">
+      <div class="search" role="search" aria-label="Search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <span>Search papers, rubrics, evaluations…</span>
+        <span class="k"><span class="kbd">⌘</span> <span class="kbd">K</span></span>
+      </div>
+      <button class="icon-btn" title="Notifications">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+      </button>
+      <button class="icon-btn" title="Help">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r=".5"/></svg>
+      </button>
+      <div class="avatar" title="Jamie Carver">JC</div>
+    </div>
+  </header>
+
+  <div class="layout">
+
+    <!-- ── LEFT: LIBRARY ── -->
+    <aside class="pane pane-library">
+      <div class="pane-header">
+        <div>
+          <div class="pane-eyebrow">Library</div>
+          <div class="pane-title">Studies</div>
+        </div>
+        <div class="pane-actions">
+          <button class="icon-btn" title="Filter">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18M6 12h12M10 19h4"/></svg>
+          </button>
+          <button class="icon-btn" title="New project" id="btn-new-proj">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="lib-search">
+        <div class="search" style="background:var(--paper);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <span>Filter 42 papers</span>
+        </div>
+      </div>
+
+      <div class="lib-scroll" id="lib-scroll">
+        <div class="lib-section">Pinned <span class="hr"></span><span class="count">2</span></div>
+        <div class="proj" data-open="true">
+          <div class="proj-head"><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg><div class="proj-name">Cardiology RCTs</div><div class="proj-count">18</div></div>
+          <div class="proj-body" id="proj-card"></div>
+        </div>
+        <div class="proj" data-open="false">
+          <div class="proj-head"><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg><div class="proj-name">GLP-1 meta-analysis</div><div class="proj-count">9</div></div>
+          <div class="proj-body"></div>
+        </div>
+
+        <div class="lib-section">Recent <span class="hr"></span><span class="count">3</span></div>
+        <div class="proj" data-open="false">
+          <div class="proj-head"><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg><div class="proj-name">Oncology — CAR-T reviews</div><div class="proj-count">7</div></div>
+          <div class="proj-body"></div>
+        </div>
+        <div class="proj" data-open="false">
+          <div class="proj-head"><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg><div class="proj-name">Neurology — stroke trials</div><div class="proj-count">5</div></div>
+          <div class="proj-body"></div>
+        </div>
+        <div class="proj" data-open="false">
+          <div class="proj-head"><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg><div class="proj-name">Unassigned</div><div class="proj-count">3</div></div>
+          <div class="proj-body"></div>
+        </div>
+
+        <div class="lib-upload">
+          <strong>Drop a PDF here</strong>
+          Or click to upload a paper to the active project.
+          <div class="u-hint">⌘ U · PDF up to 40 MB</div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ── MIDDLE: READER ── -->
+    <section class="pane pane-reader">
+      <div class="reader-toolbar">
+        <div class="crumb">
+          Cardiology RCTs <span class="s">›</span> <span style="color:var(--ink)">Empagliflozin in HFpEF</span>
+        </div>
+        <div class="pane-actions" style="margin-left:auto">
+          <div class="page-box">
+            <button title="Prev page" aria-label="Prev">‹</button>
+            <span class="curr"><span id="pg-n">3</span> / 14</span>
+            <button title="Next page" aria-label="Next">›</button>
+          </div>
+          <div class="zoom">
+            <button title="Zoom out">−</button>
+            <span id="zoom-n">100%</span>
+            <button title="Zoom in">+</button>
+            <div class="tool-sep"></div>
+            <button class="icon-btn" title="Outline">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h16"/></svg>
+            </button>
+            <button class="icon-btn" title="Highlight">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+            </button>
+            <button class="icon-btn" title="Download">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="reader-scroll" id="reader">
+        <article class="sheet" id="sheet">
+          <div class="venue">New England J. of Medicine · 2024 · Vol 390 No 12</div>
+          <h1>Empagliflozin and Cardiovascular Outcomes in Heart Failure with Preserved Ejection Fraction</h1>
+          <div class="authors">M. Anker, S. D. Butler, G. Filippatos, et al. — EMPEROR-Preserved Investigators</div>
+
+          <div class="cols">
+            <h2>Abstract</h2>
+            <p><span class="hi is-active" id="hi-1">Sodium–glucose cotransporter 2 inhibitors reduce the risk of cardiovascular death or hospitalization for heart failure in patients with heart failure and a reduced ejection fraction</span>, but their effects in patients with heart failure and a preserved ejection fraction are uncertain.</p>
+
+            <div class="callout">
+              <strong>Design.</strong> Double-blind, randomized, placebo-controlled trial. 5,988 patients with NYHA class II–IV heart failure and an ejection fraction of more than 40%.
+            </div>
+
+            <p>In this double-blind trial, we randomly assigned <span class="hi">5,988 patients</span> with class II to IV heart failure and an ejection fraction of more than 40% to receive empagliflozin (10 mg once daily) or placebo, in addition to usual therapy.</p>
+
+            <h2>Methods</h2>
+            <p>The primary outcome was a composite of cardiovascular death or hospitalization for heart failure. Secondary outcomes included total hospitalizations for heart failure and the rate of decline in estimated glomerular filtration rate.</p>
+
+            <div class="fig">
+              <div class="bar">
+                <div class="row"><span>Primary</span><div class="fill"><span style="width:64%"></span></div><span style="font-family:var(--mono); font-size:10.5px">−21%</span></div>
+                <div class="row"><span>CV death</span><div class="fill"><span style="width:42%"></span></div><span style="font-family:var(--mono); font-size:10.5px">−9%</span></div>
+                <div class="row"><span>HF hosp.</span><div class="fill"><span style="width:74%"></span></div><span style="font-family:var(--mono); font-size:10.5px">−29%</span></div>
+                <div class="row"><span>eGFR slope</span><div class="fill"><span style="width:56%"></span></div><span style="font-family:var(--mono); font-size:10.5px">+1.4</span></div>
+              </div>
+              <cap>Fig. 2 — Primary and secondary efficacy outcomes</cap>
+            </div>
+
+            <h2>Results</h2>
+            <p>Over a median of 26.2 months, the primary outcome event occurred in <span class="hi">415 of 2,997 patients</span> in the empagliflozin group (13.8%) and in 511 of 2,991 patients (17.1%) in the placebo group (hazard ratio, 0.79; 95% CI 0.69 to 0.90; P&lt;0.001).</p>
+
+            <p>The effect was mainly related to a lower risk of hospitalization for heart failure in the empagliflozin group. Total hospitalizations for heart failure and cardiovascular death did not differ significantly between the groups.</p>
+
+            <h2>Conclusions</h2>
+            <p>Empagliflozin reduced the combined risk of cardiovascular death or hospitalization for heart failure in patients with heart failure and a preserved ejection fraction, regardless of the presence or absence of diabetes.</p>
+
+            <p style="font-size:11.5px; color:#555;"><em>Funded by Boehringer Ingelheim and Eli Lilly. EMPEROR-Preserved ClinicalTrials.gov: NCT03057951.</em></p>
+          </div>
+
+          <div class="pageno">3</div>
+
+          <!-- Suggestion anchor dots (over the paper) -->
+          <div class="suggest-dot" style="top: 118px; right: 54px;" data-sg="2">A</div>
+          <div class="suggest-dot" style="top: 470px; right: 320px;" data-sg="3">B</div>
+        </article>
+      </div>
+    </section>
+
+    <!-- ── RIGHT: RUBRIC ── -->
+    <section class="pane pane-rubric">
+      <div class="tabs" role="tablist">
+        <button class="tab is-active" data-tab="rubric">Rubric <span class="count">6</span></button>
+        <button class="tab" data-tab="evaluate">Evaluate</button>
+        <button class="tab" data-tab="results">Results <span class="count">2</span></button>
+      </div>
+
+      <div class="rubric-scroll">
+
+        <!-- RUBRIC -->
+        <div class="rubric-panel is-active" data-panel="rubric">
+          <div class="card">
+            <div class="card-h">
+              <div class="step">1</div>
+              <div>
+                <div class="card-title">Build rubric</div>
+                <div class="card-sub">Generate evaluation questions grounded in the paper.</div>
+              </div>
+            </div>
+            <div class="field">
+              <label>Rubric type</label>
+              <div class="seg" id="rubric-type">
+                <button class="is-on" data-v="classification">Classification</button>
+                <button data-v="extraction">Extraction</button>
+                <button data-v="bias">Risk of bias</button>
+                <button data-v="custom">Custom</button>
+              </div>
+            </div>
+            <div class="field">
+              <label>Focus <span class="hint">— optional</span></label>
+              <textarea class="textarea" placeholder="Focus on intention-to-treat analysis and primary composite endpoint…"></textarea>
+            </div>
+            <div class="action-row">
+              <button class="btn btn-primary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6l1.4 1.4m10 10 1.4 1.4m0-12.8-1.4 1.4m-10 10L5.6 18.4"/></svg>
+                Generate rubric
+                <span class="kbd">⌘ ↵</span>
+              </button>
+              <button class="btn">Load template</button>
+              <button class="btn btn-ghost">Clear</button>
+            </div>
+          </div>
+
+          <div class="card-h" style="padding: 4px 4px 10px; margin:0">
+            <div class="step">2</div>
+            <div>
+              <div class="card-title">Review questions</div>
+              <div class="card-sub">6 questions · edit, reorder, or add your own</div>
+            </div>
+            <div style="margin-left:auto; display:flex; gap:6px">
+              <button class="btn btn-ghost" title="Expand all" id="expand-all">Expand</button>
+              <button class="btn" id="add-q">+ Add</button>
+            </div>
+          </div>
+
+          <div class="qlist" id="qlist">
+            <!-- question cards injected by JS -->
+          </div>
+        </div>
+
+        <!-- EVALUATE -->
+        <div class="rubric-panel" data-panel="evaluate">
+          <div class="card">
+            <div class="card-h">
+              <div class="step">1</div>
+              <div>
+                <div class="card-title">Choose evaluator</div>
+                <div class="card-sub">The model under test answers each rubric question.</div>
+              </div>
+            </div>
+            <div class="models" id="models">
+              <button class="model is-on p-openai" data-m="gpt-4o">
+                <div class="m-head"><div class="m-mark">AI</div><div class="m-name">GPT-4o</div></div>
+                <div class="m-meta">OpenAI · 128k ctx</div>
+                <div class="m-tokens"><span><span class="sw"></span>$2.50/M in</span><span><span class="sw"></span>$10/M out</span></div>
+              </button>
+              <button class="model p-openai" data-m="gpt-4o-mini">
+                <div class="m-head"><div class="m-mark">AI</div><div class="m-name">GPT-4o mini</div></div>
+                <div class="m-meta">OpenAI · faster</div>
+                <div class="m-tokens"><span><span class="sw"></span>$0.15/M in</span><span><span class="sw"></span>$0.60/M out</span></div>
+              </button>
+              <button class="model p-anthropic" data-m="claude-sonnet-4">
+                <div class="m-head"><div class="m-mark">CL</div><div class="m-name">Claude Sonnet 4</div></div>
+                <div class="m-meta">Anthropic · 200k ctx</div>
+                <div class="m-tokens"><span><span class="sw"></span>$3/M in</span><span><span class="sw"></span>$15/M out</span></div>
+              </button>
+              <button class="model p-google" data-m="gemini-2.5-pro">
+                <div class="m-head"><div class="m-mark">GM</div><div class="m-name">Gemini 2.5 Pro</div></div>
+                <div class="m-meta">Google · 2M ctx</div>
+                <div class="m-tokens"><span><span class="sw"></span>$1.25/M in</span><span><span class="sw"></span>$5/M out</span></div>
+              </button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h">
+              <div class="step">2</div>
+              <div>
+                <div class="card-title">Run evaluation</div>
+                <div class="card-sub">Claude Opus 4 will independently grade the answers.</div>
+              </div>
+            </div>
+
+            <div class="stepper">
+              <div class="step-it done"><span class="s-n">01 · Answering</span><span class="s-l">6 / 6 complete</span><span class="s-m">00:42 elapsed</span></div>
+              <div class="step-it live"><span class="s-n">02 · Grading</span><span class="s-l">Claude judging…</span><span class="s-m">Q4 of 6</span></div>
+              <div class="step-it"><span class="s-n">03 · Report</span><span class="s-l">Waiting</span><span class="s-m">—</span></div>
+            </div>
+
+            <div class="live-log">
+              <div class="ll-h"><span class="pulse"></span> Live · GPT-4o answering &amp; Claude grading</div>
+              <div class="ll-body" id="log"></div>
+            </div>
+
+            <div class="action-row" style="margin-top:12px">
+              <button class="btn btn-accent">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7Z"/></svg>
+                Run evaluation
+              </button>
+              <button class="btn">Cancel</button>
+              <button class="btn btn-ghost">Schedule…</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- RESULTS -->
+        <div class="rubric-panel" data-panel="results">
+          <div class="kpi-row">
+            <div class="kpi">
+              <div class="k">Overall score</div>
+              <div class="v">83<span style="font-size:16px; color:var(--ink-3)"> / 100</span></div>
+              <span class="trend up">▲ 6 pts vs prev</span>
+            </div>
+            <div class="kpi">
+              <div class="k">Correct</div>
+              <div class="v">5<span style="font-size:16px; color:var(--ink-3)"> / 6</span></div>
+              <div class="d">1 partial · 0 incorrect</div>
+            </div>
+            <div class="kpi">
+              <div class="k">Agreement κ</div>
+              <div class="v">0.81</div>
+              <div class="d">Claude vs. human</div>
+            </div>
+          </div>
+
+          <div class="card flush">
+            <div style="padding: 10px 14px; display: flex; align-items:center; gap:10px; border-bottom: 1px solid var(--rule);">
+              <div class="pane-eyebrow">Question breakdown</div>
+              <div style="margin-left:auto; display:flex; gap:6px">
+                <button class="btn btn-ghost">Export CSV</button>
+                <button class="btn btn-ghost">View transcript</button>
+              </div>
+            </div>
+            <div style="padding: 4px 14px 12px" id="result-rows"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<!-- TWEAKS -->
+<button class="tweak-fab" id="tweak-fab">
+  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+  Tweaks
+</button>
+
+<div class="tweaks" id="tweaks">
+  <h4>Tweaks <span class="x" id="tw-x">×</span></h4>
+  <div class="tweak-grp">
+    <label>Theme</label>
+    <div class="seg" id="tw-theme">
+      <button class="is-on" data-v="paper">Paper</button>
+      <button data-v="graphite">Graphite</button>
+      <button data-v="midnight">Midnight</button>
+    </div>
+  </div>
+  <div class="tweak-grp">
+    <label>Density</label>
+    <div class="seg" id="tw-density">
+      <button class="is-on" data-v="comfortable">Comfortable</button>
+      <button data-v="compact">Compact</button>
+    </div>
+  </div>
+  <div class="tweak-grp">
+    <label>Accent hue</label>
+    <div class="hue-row" id="tw-hue">
+      <div class="hue is-on" data-hue="250" style="background: oklch(0.46 0.11 250)"></div>
+      <div class="hue" data-hue="160" style="background: oklch(0.46 0.11 160)"></div>
+      <div class="hue" data-hue="25" style="background: oklch(0.52 0.14 25)"></div>
+      <div class="hue" data-hue="80" style="background: oklch(0.60 0.12 80)"></div>
+      <div class="hue" data-hue="305" style="background: oklch(0.50 0.14 305)"></div>
+    </div>
+  </div>
+  <div class="tweak-grp">
+    <label>Reader pane</label>
+    <div class="seg" id="tw-reader">
+      <button class="is-on" data-v="show">Show PDF</button>
+      <button data-v="hide">Hide PDF</button>
+    </div>
+  </div>
+  <div class="tweak-grp">
+    <label>Suggestions overlay</label>
+    <div class="seg" id="tw-sug">
+      <button class="is-on" data-v="on">On</button>
+      <button data-v="off">Off</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── SAMPLE DATA ───────────────────────────────────────────────────
+const EDITMODE = /*EDITMODE-BEGIN*/{
+  "theme": "paper",
+  "density": "comfortable",
+  "accent_hue": 250,
+  "reader": "show",
+  "suggestions": "on"
+}/*EDITMODE-END*/;
+
+const PAPERS = [
+  { title: "Empagliflozin in HFpEF (EMPEROR-Preserved)", id: "p1", meta: "NEJM · 2024 · RCT · n=5988", tag: "EVAL", tagCls: "eval", state: "eval", active: true },
+  { title: "Dapagliflozin in HFpEF (DELIVER)", id: "p2", meta: "NEJM · 2022 · RCT · n=6263", tag: "RUBRIC", tagCls: "rubric", state: "rubric" },
+  { title: "Spironolactone — TOPCAT post-hoc", id: "p3", meta: "JACC · 2023 · Post-hoc · n=3445" },
+  { title: "Sacubitril–Valsartan in PEF (PARAGON)", id: "p4", meta: "NEJM · 2019 · RCT · n=4796", tag: "RUBRIC", tagCls: "rubric", state: "rubric" },
+  { title: "Finerenone across HF spectrum (FINEARTS)", id: "p5", meta: "NEJM · 2024 · RCT · n=6001" },
+  { title: "Patient-level meta: SGLT2i in HF", id: "p6", meta: "Lancet · 2024 · Meta · 5 trials", tag: "EVAL", tagCls: "eval", state: "eval" },
+];
+
+const QUESTIONS = [
+  { tag: "METHOD", tagCls: "method", text: "Is the primary outcome clearly defined as a composite of cardiovascular death or hospitalization for heart failure?",
+    scale: [
+      { l: 0, t: "Missing", d: "Primary outcome is not defined or is ambiguous." },
+      { l: 1, t: "Partial", d: "Defined but missing one of CV death / HF hospitalization." },
+      { l: 2, t: "Full", d: "Clearly names both components and states they are composite." }
+    ], pages: "p.1–2", type: "Binary-ish", evidence: "Abstract, Methods §2" },
+  { tag: "METHOD", tagCls: "method", text: "Is randomization described with adequate allocation concealment?",
+    scale: [
+      { l: 0, t: "Missing", d: "No mention of randomization method or allocation." },
+      { l: 1, t: "Partial", d: "Randomization stated but concealment not described." },
+      { l: 2, t: "Full", d: "Both randomization method and concealment described." }
+    ], pages: "p.3", type: "3-point", evidence: "Methods §3.1" },
+  { tag: "BIAS", tagCls: "bias", text: "Are outcomes assessed by a blinded adjudication committee independent of treatment assignment?",
+    scale: [
+      { l: 0, t: "Missing", d: "Not mentioned or open-label adjudication." },
+      { l: 1, t: "Partial", d: "Blinded for some outcomes only." },
+      { l: 2, t: "Full", d: "All primary/secondary outcomes blinded to assignment." }
+    ], pages: "p.3–4", type: "3-point", evidence: "Methods §3.3" },
+  { tag: "RESULT", tagCls: "result", text: "What is the magnitude and 95% CI of the hazard ratio for the primary endpoint?",
+    scale: [
+      { l: 0, t: "Missing", d: "No effect size reported." },
+      { l: 1, t: "Partial", d: "Point estimate without interval." },
+      { l: 2, t: "Full", d: "Point estimate with 95% CI and p-value." }
+    ], pages: "p.6", type: "Extraction", evidence: "Table 2" },
+  { tag: "RESULT", tagCls: "result", text: "Is an intention-to-treat analysis used for the primary endpoint?",
+    scale: [
+      { l: 0, t: "Missing", d: "Analysis population not specified." },
+      { l: 1, t: "Partial", d: "Per-protocol primary with ITT sensitivity only." },
+      { l: 2, t: "Full", d: "ITT used for primary, with pre-specified sensitivity analyses." }
+    ], pages: "p.5", type: "Binary-ish", evidence: "Methods §4.2" },
+  { tag: "BIAS", tagCls: "bias", text: "Are industry funding sources and author conflicts of interest disclosed?",
+    scale: [
+      { l: 0, t: "Missing", d: "No disclosure statement." },
+      { l: 1, t: "Partial", d: "Funding declared but not individual COI." },
+      { l: 2, t: "Full", d: "Both funding and individual COI disclosed." }
+    ], pages: "p.12", type: "Binary-ish", evidence: "Disclosures" },
+];
+
+const RESULTS = [
+  { score: "2 / 2", cls: "good", q: "Is the primary outcome clearly defined as a composite of CV death or HF hospitalization?", a: "Yes — defined in the abstract and expanded in Methods §2; both components explicitly named." },
+  { score: "2 / 2", cls: "good", q: "Is randomization described with adequate allocation concealment?", a: "Stratified block randomization via central web-based system with concealed allocation." },
+  { score: "2 / 2", cls: "good", q: "Are outcomes assessed by a blinded adjudication committee?", a: "Independent clinical events committee, blinded to treatment assignment." },
+  { score: "2 / 2", cls: "good", q: "Hazard ratio and 95% CI for the primary endpoint?", a: "HR 0.79; 95% CI 0.69–0.90; P<0.001. Extracted from Table 2." },
+  { score: "1 / 2", cls: "mid",  q: "Is an intention-to-treat analysis used for the primary endpoint?", a: "ITT described in Methods §4.2, but pre-specified sensitivity analyses are not enumerated." },
+  { score: "2 / 2", cls: "good", q: "Are industry funding sources and author COI disclosed?", a: "Funded by Boehringer Ingelheim and Eli Lilly; author-level COI in supplement." },
+];
+
+// ── HELPERS ───────────────────────────────────────────────────────
+const $ = (s, r=document) => r.querySelector(s);
+const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+
+// ── LIBRARY ───────────────────────────────────────────────────────
+function renderLibrary(){
+  const root = $('#proj-card');
+  root.innerHTML = PAPERS.map(p => {
+    const cls = ['paper'];
+    if(p.active) cls.push('is-active');
+    if(p.state === 'rubric') cls.push('has-rubric');
+    if(p.state === 'eval') cls.push('has-eval');
+    return `<div class="${cls.join(' ')}" data-id="${p.id}">
+      <div class="t">${p.title}</div>
+      ${ p.tag ? `<div class="chip ${p.tagCls}">${p.tag}</div>` : ''}
+      <div class="m">${p.meta}</div>
+    </div>`;
+  }).join('');
+  $$('.paper', root).forEach(el => el.addEventListener('click', () => {
+    $$('.paper', root).forEach(e => e.classList.remove('is-active'));
+    el.classList.add('is-active');
+  }));
+}
+$$('.proj-head').forEach(h => h.addEventListener('click', () => {
+  const p = h.parentElement;
+  p.setAttribute('data-open', p.getAttribute('data-open') === 'true' ? 'false' : 'true');
+}));
+
+// ── QUESTIONS ─────────────────────────────────────────────────────
+function renderQuestions(){
+  const root = $('#qlist');
+  root.innerHTML = QUESTIONS.map((q, i) => `
+    <article class="q ${i===0?'is-open is-focus':''}" data-i="${i}">
+      <div class="q-head">
+        <div class="q-num">${String(i+1).padStart(2,'0')}</div>
+        <div class="q-text">${q.text}</div>
+        <div class="q-tag ${q.tagCls}">${q.tag}</div>
+      </div>
+      <div class="q-body">
+        <div class="meta-grid">
+          <div class="cell"><div class="k">Type</div><div class="v">${q.type}</div></div>
+          <div class="cell"><div class="k">Pages</div><div class="v">${q.pages}</div></div>
+          <div class="cell"><div class="k">Evidence</div><div class="v">${q.evidence}</div></div>
+        </div>
+        ${q.scale.map(s => `
+          <div class="q-scale">
+            <span class="lv l${s.l}">${s.l} · ${s.t}</span>
+            <span class="desc">${s.d}</span>
+          </div>`).join('')}
+        <div class="q-actions">
+          <button class="btn btn-ghost">Edit text</button>
+          <button class="btn btn-ghost">Adjust scale</button>
+          <button class="btn btn-ghost">Duplicate</button>
+          <button class="btn btn-ghost" style="color:var(--err)">Remove</button>
+        </div>
+      </div>
+    </article>
+  `).join('');
+  $$('.q-head', root).forEach(h => h.addEventListener('click', () => {
+    h.parentElement.classList.toggle('is-open');
+  }));
+}
+
+// ── TABS ──────────────────────────────────────────────────────────
+$$('.tab').forEach(t => t.addEventListener('click', () => {
+  $$('.tab').forEach(x => x.classList.remove('is-active'));
+  t.classList.add('is-active');
+  const v = t.dataset.tab;
+  $$('.rubric-panel').forEach(p => p.classList.toggle('is-active', p.dataset.panel === v));
+}));
+
+// ── MODELS ────────────────────────────────────────────────────────
+$$('#models .model').forEach(m => m.addEventListener('click', () => {
+  $$('#models .model').forEach(x => x.classList.remove('is-on'));
+  m.classList.add('is-on');
+}));
+
+// ── LIVE LOG (faked) ──────────────────────────────────────────────
+function renderLog(){
+  const lines = [
+    ['[00:01]', 'Loading paper embedding (3,184 tokens)…', 'ok'],
+    ['[00:04]', 'GPT-4o: answering Q1… response captured.', 'ok'],
+    ['[00:08]', 'GPT-4o: answering Q2… response captured.', 'ok'],
+    ['[00:14]', 'GPT-4o: answering Q3… response captured.', 'ok'],
+    ['[00:19]', 'GPT-4o: answering Q4… response captured.', 'ok'],
+    ['[00:26]', 'GPT-4o: answering Q5… response captured.', 'ok'],
+    ['[00:33]', 'GPT-4o: answering Q6… response captured.', 'ok'],
+    ['[00:35]', 'Claude Opus 4: grading Q1 / Q2 / Q3 → 2 · 2 · 2', 'ok'],
+    ['[00:40]', 'Claude Opus 4: grading Q4 → 2', 'ok'],
+    ['[00:42]', 'Claude Opus 4: grading Q5…', 'wait'],
+  ];
+  $('#log').innerHTML = lines.map(([t, msg, cls]) =>
+    `<div><span style="color:var(--ink-4)">${t}</span> <span class="${cls}">${msg}</span></div>`
+  ).join('');
+}
+
+// ── RESULTS ───────────────────────────────────────────────────────
+function renderResults(){
+  $('#result-rows').innerHTML = RESULTS.map((r, i) => `
+    <div class="result-row">
+      <div class="result-num">${String(i+1).padStart(2,'0')}</div>
+      <div class="result-q">${r.q}<span class="a">${r.a}</span></div>
+      <div class="score-pill ${r.cls}">${r.score}</div>
+    </div>
+  `).join('');
+}
+
+// ── TWEAKS ────────────────────────────────────────────────────────
+function applyTweak(key, val, persist=true){
+  const html = document.documentElement;
+  const body = document.body;
+  switch(key){
+    case 'theme':
+      html.classList.remove('theme-paper','theme-graphite','theme-midnight');
+      html.classList.add('theme-'+val);
+      break;
+    case 'density':
+      html.classList.toggle('density-compact', val === 'compact');
+      break;
+    case 'accent_hue':
+      html.style.setProperty('--accent', `oklch(0.46 0.11 ${val})`);
+      html.style.setProperty('--accent-soft', `oklch(0.94 0.03 ${val})`);
+      html.style.setProperty('--accent-ink', `oklch(0.30 0.09 ${val})`);
+      break;
+    case 'reader':
+      body.classList.toggle('hide-pdf', val === 'hide');
+      break;
+    case 'suggestions':
+      $$('.suggest-dot').forEach(d => d.style.display = val === 'off' ? 'none' : '');
+      break;
+  }
+  EDITMODE[key] = val;
+  if(persist) window.parent.postMessage({type:'__edit_mode_set_keys', edits:{[key]: val}}, '*');
+}
+
+function bindTweaks(){
+  const tweaks = $('#tweaks');
+  $('#tw-x').addEventListener('click', () => { tweaks.classList.remove('open'); document.body.classList.add('show-tweak-fab'); });
+  $('#tweak-fab').addEventListener('click', () => { tweaks.classList.add('open'); document.body.classList.remove('show-tweak-fab'); });
+
+  function segBind(selId, key){
+    const seg = $(selId);
+    $$('button', seg).forEach(b => b.addEventListener('click', () => {
+      $$('button', seg).forEach(x => x.classList.remove('is-on'));
+      b.classList.add('is-on');
+      applyTweak(key, b.dataset.v);
+    }));
+  }
+  segBind('#tw-theme', 'theme');
+  segBind('#tw-density', 'density');
+  segBind('#tw-reader', 'reader');
+  segBind('#tw-sug', 'suggestions');
+  $$('#tw-hue .hue').forEach(h => h.addEventListener('click', () => {
+    $$('#tw-hue .hue').forEach(x => x.classList.remove('is-on'));
+    h.classList.add('is-on');
+    applyTweak('accent_hue', Number(h.dataset.hue));
+  }));
+
+  // Apply initial values
+  applyTweak('theme', EDITMODE.theme, false);
+  applyTweak('density', EDITMODE.density, false);
+  applyTweak('accent_hue', EDITMODE.accent_hue, false);
+  applyTweak('reader', EDITMODE.reader, false);
+  applyTweak('suggestions', EDITMODE.suggestions, false);
+
+  // edit-mode host protocol
+  window.addEventListener('message', (e) => {
+    if(!e.data || !e.data.type) return;
+    if(e.data.type === '__activate_edit_mode'){ tweaks.classList.add('open'); }
+    if(e.data.type === '__deactivate_edit_mode'){ tweaks.classList.remove('open'); document.body.classList.remove('show-tweak-fab'); }
+  });
+  window.parent.postMessage({type:'__edit_mode_available'}, '*');
+}
+
+// ── SUGGESTION DOTS (design annotations over the page) ────────────
+const SUGGESTIONS = {
+  2: 'Restyled reader as a centered “sheet” with serif typography — feels like a real paper, not a dashboard pane.',
+  3: 'Inline evidence chart with tabular numerals lets graders anchor answers to the figure at a glance.'
+};
+$$('.suggest-dot').forEach(d => d.addEventListener('click', () => {
+  alert(SUGGESTIONS[d.dataset.sg] || 'Design note');
+}));
+
+// ── BOOT ──────────────────────────────────────────────────────────
+renderLibrary();
+renderQuestions();
+renderLog();
+renderResults();
+bindTweaks();
+</script>
+
+</body>
+</html>

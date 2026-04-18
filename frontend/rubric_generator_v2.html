@@ -1,0 +1,756 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The AI Researcher — Rubric Generator</title>
+
+<!-- Global design tokens + base components (Paper/Graphite/Midnight themes) -->
+<link rel="stylesheet" href="/static/_shared/design.css">
+
+<!-- Page-specific styles: Library list rows + Rubric questions/models/live log -->
+<style>
+  /* ── Library list rows ─────────────────────────────────────────────── */
+  .lib-scroll { overflow: auto; flex: 1; padding-bottom: 16px; }
+  .lib-section {
+    padding: calc(14px * var(--density)) 12px 4px;
+    font-family: var(--mono);
+    font-size: 10px; font-weight: 500;
+    color: var(--ink-3);
+    text-transform: uppercase; letter-spacing: .14em;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .lib-section .hr { flex: 1; height: 1px; background: var(--rule); }
+  .lib-section .count {
+    font-family: var(--mono); color: var(--ink-4); font-weight: 500;
+    font-size: 10px;
+  }
+  .proj { margin: 0 8px 2px; border-radius: var(--radius-sm); }
+  .proj-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px; border-radius: var(--radius-sm);
+    cursor: pointer; color: var(--ink-2);
+  }
+  .proj-head:hover { background: var(--paper-2); }
+  .proj-head .chev {
+    width: 14px; height: 14px; color: var(--ink-4);
+    transition: transform var(--t);
+  }
+  .proj[data-open="true"] .proj-head .chev { transform: rotate(90deg); }
+  .proj-name {
+    font-size: 12.5px; font-weight: 600; color: var(--ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .proj-count {
+    margin-left: auto; font-family: var(--mono);
+    font-size: 10px; color: var(--ink-4);
+    padding: 1px 6px; background: var(--paper-2);
+    border: 1px solid var(--rule); border-radius: 999px;
+  }
+  .proj-body { display: none; padding: 2px 4px 4px; }
+  .proj[data-open="true"] .proj-body { display: block; }
+
+  .paper {
+    position: relative;
+    padding: 8px 10px 8px 24px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    display: grid; grid-template-columns: 1fr auto; gap: 2px 8px;
+    align-items: center;
+  }
+  .paper:hover { background: var(--paper-2); }
+  .paper.is-active { background: var(--accent-soft); color: var(--accent-ink); }
+  .paper::before {
+    content: ""; position: absolute; left: 12px; top: 12px;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--ink-4);
+  }
+  .paper.has-rubric::before { background: var(--accent); }
+  .paper .t {
+    font-size: 12.5px; font-weight: 500; line-height: 1.3;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    grid-column: 1 / 2;
+  }
+  .paper .m {
+    grid-column: 1 / 3;
+    font-family: var(--mono); font-size: 10px; color: var(--ink-4);
+    display: flex; gap: 8px; align-items: center;
+  }
+  .paper .chip {
+    grid-column: 2 / 3; grid-row: 1 / 2;
+  }
+
+  .lib-upload {
+    margin: 8px 12px 14px;
+    padding: 14px;
+    border: 1px dashed var(--rule-2); border-radius: var(--radius);
+    text-align: center;
+    color: var(--ink-3); font-size: 12px;
+    background: var(--paper);
+    cursor: pointer;
+    transition: border-color var(--t), background var(--t);
+  }
+  .lib-upload:hover { border-color: var(--accent); background: var(--paper-2); }
+  .lib-upload strong { color: var(--ink); font-weight: 600; display: block; margin-bottom: 2px; font-size: 12.5px; }
+  .lib-upload .u-hint { font-family: var(--mono); font-size: 10px; color: var(--ink-4); margin-top: 6px; }
+
+  /* ── Middle pane: reader ───────────────────────────────────────────── */
+  .pane-reader { background: var(--paper-2); }
+  .reader-toolbar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--paper);
+    min-height: 44px;
+  }
+  .crumb {
+    font-family: var(--mono); font-size: 10.5px; color: var(--ink-3);
+    display: flex; align-items: center; gap: 6px;
+    min-width: 0; overflow: hidden;
+  }
+  .crumb .t { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .crumb .s { color: var(--ink-4); }
+
+  .reader-scroll {
+    overflow: auto;
+    padding: 24px;
+    flex: 1;
+    display: flex; justify-content: center;
+    background:
+      radial-gradient(1200px 400px at 50% -50px, oklch(0.95 0.012 85 / .6), transparent 60%),
+      var(--paper-2);
+  }
+  :root.theme-midnight .reader-scroll {
+    background:
+      radial-gradient(1200px 400px at 50% -50px, oklch(0.22 0.02 260), transparent 60%),
+      var(--paper-2);
+  }
+  .reader-empty {
+    margin: auto; text-align: center;
+    color: var(--ink-3);
+    font-family: var(--serif);
+    max-width: 360px;
+  }
+  .reader-empty .e {
+    font-family: var(--mono); font-size: 10px; letter-spacing: .2em;
+    text-transform: uppercase; color: var(--ink-4); margin-bottom: 10px;
+  }
+  .reader-empty h2 {
+    font-size: 20px; font-weight: 600; letter-spacing: -.01em;
+    margin: 0 0 8px; color: var(--ink);
+  }
+  .reader-empty p {
+    font-family: var(--sans); font-size: 12.5px; line-height: 1.55; color: var(--ink-3);
+  }
+  .pdf-frame {
+    width: min(100%, 820px);
+    aspect-ratio: 1 / 1.28;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    background: #fff;
+    box-shadow: var(--shadow-3);
+  }
+
+  /* ── Right pane: rubric builder ────────────────────────────────────── */
+  .pane-rubric { background: var(--paper); }
+  .rubric-scroll { overflow: auto; flex: 1; }
+  .rubric-panel { display: none; padding: 16px 18px 60px; }
+  .rubric-panel.is-active { display: block; }
+
+  .action-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  /* Question list */
+  .qlist { display: flex; flex-direction: column; gap: 10px; }
+  .q {
+    border: 1px solid var(--rule); border-radius: var(--radius);
+    background: var(--paper);
+    overflow: hidden;
+    transition: border-color var(--t), box-shadow var(--t);
+  }
+  .q:hover { border-color: var(--rule-2); }
+  .q.is-focus { border-color: var(--accent); box-shadow: 0 0 0 3px oklch(from var(--accent) l c h / .15); }
+
+  .q-head {
+    display: grid; grid-template-columns: 28px 1fr auto; gap: 8px; align-items: center;
+    padding: 10px 12px; cursor: pointer;
+  }
+  .q-num {
+    width: 24px; height: 24px; border-radius: 6px;
+    background: var(--paper-2); border: 1px solid var(--rule);
+    display: grid; place-items: center;
+    font-family: var(--mono); font-size: 10.5px; font-weight: 600; color: var(--ink-2);
+  }
+  .q-text {
+    font-family: var(--serif); font-size: 14px; line-height: 1.4; font-weight: 500;
+    color: var(--ink);
+  }
+  .q-body {
+    border-top: 1px solid var(--rule);
+    background: var(--paper-2);
+    padding: 12px; display: none;
+    font-size: 12px;
+  }
+  .q.is-open .q-body { display: block; }
+  .q-scale {
+    margin-top: 10px;
+    display: grid; grid-template-columns: 96px 1fr; gap: 8px 10px;
+    align-items: start;
+    font-family: var(--sans); font-size: 11.5px;
+  }
+  .q-scale .desc { color: var(--ink-2); line-height: 1.45; }
+
+  .q-actions { margin-top: 12px; display: flex; gap: 6px; flex-wrap: wrap; }
+
+  /* Live log */
+  .live-log {
+    margin-top: 12px;
+    border: 1px solid var(--rule); border-radius: 9px;
+    background: var(--paper-2);
+    overflow: hidden;
+  }
+  .live-log .ll-h {
+    padding: 8px 12px; border-bottom: 1px solid var(--rule);
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 10.5px; color: var(--ink-3);
+  }
+  .live-log .ll-h .pulse {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--ok);
+    box-shadow: 0 0 0 0 oklch(from var(--ok) l c h / .5);
+    animation: pulse 1.6s ease-out infinite;
+  }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 oklch(from var(--ok) l c h / .5); }
+    80%, 100% { box-shadow: 0 0 0 8px oklch(from var(--ok) l c h / 0); }
+  }
+  .live-log .ll-body {
+    padding: 10px 12px;
+    font-family: var(--mono); font-size: 11.5px; color: var(--ink-2);
+    line-height: 1.7;
+    max-height: 160px; overflow: auto;
+  }
+  .live-log .ll-body .ok { color: var(--ok); }
+  .live-log .ll-body .wait { color: var(--ink-4); }
+  .live-log .ll-body .err { color: var(--err); }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ── TOP BAR ─────────────────────────────────────────────────────── -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"></div>
+      <div class="brand-name">The AI Researcher<span class="tag">Rubrics</span></div>
+    </div>
+    <nav class="nav">
+      <a href="/dashboard">Workspace</a>
+      <a href="/rubric-generator" class="is-active">Library</a>
+      <a href="/challenges">Evaluations</a>
+      <a href="/challenges">Challenges</a>
+      <a href="/analytics">Analytics</a>
+    </nav>
+    <div class="topbar-right">
+      <div class="search" role="search" aria-label="Search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <span>Search papers, rubrics, evaluations…</span>
+        <span class="k"><span class="kbd">⌘</span> <span class="kbd">K</span></span>
+      </div>
+      <button class="icon-btn" title="Notifications">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+      </button>
+      <div class="avatar" id="user-avatar" title="">··</div>
+    </div>
+  </header>
+
+  <!-- ── 3-COLUMN LAYOUT ─────────────────────────────────────────────── -->
+  <div class="layout">
+
+    <!-- ── LEFT: LIBRARY ── -->
+    <aside class="pane pane-library">
+      <div class="pane-header">
+        <div>
+          <div class="pane-eyebrow">Library</div>
+          <div class="pane-title">Studies</div>
+        </div>
+        <div class="pane-actions">
+          <button class="icon-btn" title="Upload PDF" onclick="document.getElementById('upload-input').click()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div style="padding: 10px 12px 4px; display: flex; flex-direction: column; gap: 8px;">
+        <div class="search" style="background: var(--paper); width: 100%; min-width: 0;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="lib-filter" class="input" placeholder="Filter papers" style="border: 0; padding: 0; background: transparent; flex: 1; min-width: 0; font-size: 12px;">
+        </div>
+      </div>
+
+      <div class="lib-scroll" id="lib-scroll">
+        <div style="padding: 20px; text-align: center; color: var(--ink-4); font-size: 12px;">Loading…</div>
+      </div>
+
+      <div class="lib-upload" onclick="document.getElementById('upload-input').click()">
+        <strong>＋ Drop PDFs here</strong>
+        or click to upload
+        <div class="u-hint">PDF · 50 MB max</div>
+      </div>
+      <input type="file" id="upload-input" accept="application/pdf" multiple style="display: none">
+    </aside>
+
+    <!-- ── MIDDLE: READER ── -->
+    <section class="pane pane-reader">
+      <div class="reader-toolbar">
+        <div class="crumb">
+          <span class="s">no paper open</span>
+          <span class="t" id="reader-crumb"></span>
+        </div>
+        <div class="pane-actions">
+          <button class="btn btn-ghost" id="btn-open-external" style="display: none;">Open PDF ↗</button>
+        </div>
+      </div>
+      <div class="reader-scroll" id="reader-scroll">
+        <div class="reader-empty">
+          <div class="e">No paper selected</div>
+          <h2>Pick a study on the left to start</h2>
+          <p>Open any paper from the library and build an evaluation rubric on the right — questions, scales, and scoring criteria are generated from the PDF.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── RIGHT: RUBRIC BUILDER ── -->
+    <aside class="pane pane-rubric">
+      <div class="pane-header" style="padding-bottom: 0; border-bottom: 0; min-height: auto;">
+        <div>
+          <div class="pane-eyebrow">Rubric</div>
+          <div class="pane-title">Build evaluation</div>
+        </div>
+      </div>
+      <div class="tabs" role="tablist">
+        <button class="tab is-active" data-tab="build" role="tab">Build <span class="count" id="tab-build-count">0</span></button>
+        <button class="tab" data-tab="evaluate" role="tab">Evaluate</button>
+        <button class="tab" data-tab="results" role="tab">Results <span class="count" id="tab-results-count">0</span></button>
+      </div>
+
+      <div class="rubric-scroll">
+
+        <!-- ── BUILD PANEL ── -->
+        <div class="rubric-panel is-active" data-panel="build">
+          <div class="card">
+            <div class="card-h">
+              <div class="step">1</div>
+              <div>
+                <div class="card-title">Build rubric</div>
+                <div class="card-sub">Generate evaluation questions grounded in the PDF.</div>
+              </div>
+            </div>
+
+            <div class="field">
+              <label>Rubric type</label>
+              <div class="seg" id="seg-kind">
+                <button class="is-on" data-v="classification">Classification</button>
+                <button data-v="extraction">Extraction</button>
+                <button data-v="risk_of_bias">Risk of bias</button>
+                <button data-v="custom">Custom</button>
+              </div>
+            </div>
+
+            <div class="field">
+              <label>Focus <span style="text-transform: none; letter-spacing: 0; color: var(--ink-4);">— optional</span></label>
+              <textarea class="textarea" id="focus" placeholder="e.g. emphasize methodological rigour and primary outcome reporting"></textarea>
+            </div>
+
+            <div class="action-row" style="margin-top: 4px;">
+              <button class="btn btn-accent" id="btn-generate">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v4M3 5h4M19 17v4M17 19h4M11 3l2.5 5L18 9.5 13.5 12 11 17 8.5 12 4 9.5 8.5 8z"/></svg>
+                Generate rubric
+              </button>
+              <button class="btn btn-ghost" id="btn-clear">Clear</button>
+            </div>
+
+            <div id="gen-status" style="margin-top: 10px; font-size: 11.5px; color: var(--ink-4); display: none;"></div>
+          </div>
+
+          <div class="card" id="qlist-card" style="display: none;">
+            <div class="card-h">
+              <div class="step">2</div>
+              <div>
+                <div class="card-title">Review questions</div>
+                <div class="card-sub">Click a question to expand its grading scale.</div>
+              </div>
+            </div>
+            <div class="qlist" id="qlist"></div>
+          </div>
+        </div>
+
+        <!-- ── EVALUATE PANEL ── -->
+        <div class="rubric-panel" data-panel="evaluate">
+          <div class="card">
+            <div class="card-h">
+              <div class="step">3</div>
+              <div>
+                <div class="card-title">Run evaluation</div>
+                <div class="card-sub">Ask a model to answer the rubric, then grade it.</div>
+              </div>
+            </div>
+            <div class="field">
+              <label>Evaluator</label>
+              <div class="seg">
+                <button class="is-on" data-m="gpt-5">GPT-5</button>
+                <button data-m="claude-opus-4-20250514">Claude Opus 4</button>
+                <button data-m="gemini-2.5-pro">Gemini 2.5 Pro</button>
+              </div>
+            </div>
+            <div class="action-row">
+              <button class="btn btn-primary" id="btn-evaluate" disabled>Start evaluation →</button>
+            </div>
+            <p style="margin-top: 12px; font-size: 11.5px; color: var(--ink-4); line-height: 1.55;">
+              Evaluations run through the Benchmark Lab — head to
+              <a href="/challenges" style="color: var(--accent); font-weight: 600; text-decoration: none;">Challenges</a>
+              to configure participant models, credits, and the judge pass.
+            </p>
+          </div>
+        </div>
+
+        <!-- ── RESULTS PANEL ── -->
+        <div class="rubric-panel" data-panel="results">
+          <div class="card">
+            <div class="card-sub">Past results for this paper will show up once you've run at least one evaluation from the
+              <a href="/challenges" style="color: var(--accent); font-weight: 600; text-decoration: none;">Challenges</a>
+              tab.</div>
+          </div>
+        </div>
+
+      </div>
+    </aside>
+
+  </div>
+</div>
+
+<script>
+/* ─────────────────────────────────────────────────────────────────────────
+ * State
+ * ───────────────────────────────────────────────────────────────────────── */
+let currentUser = null;
+let allPapers   = [];    // GET /api/papers
+let allProjects = [];    // GET /api/projects
+let currentPaper = null; // full row of selected paper
+let currentRubric = null; // the last-generated rubric
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Helpers
+ * ───────────────────────────────────────────────────────────────────────── */
+const $  = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+function initials(name) {
+  const n = (name || '').trim();
+  if (!n) return '··';
+  const parts = n.split(/\s+/);
+  return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || n.slice(0, 2).toUpperCase();
+}
+
+function status(msg, kind = 'info') {
+  const el = $('#gen-status');
+  if (!el) return;
+  el.style.display = msg ? '' : 'none';
+  el.style.color   = kind === 'err' ? 'var(--err)' : kind === 'ok' ? 'var(--ok)' : 'var(--ink-4)';
+  el.textContent   = msg || '';
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Auth
+ * ───────────────────────────────────────────────────────────────────────── */
+(async function init() {
+  try {
+    const r = await fetch('/api/auth/me');
+    if (!r.ok) { location.href = '/login'; return; }
+    currentUser = await r.json();
+    if (currentUser.needs_onboarding) { location.href = '/onboarding'; return; }
+  } catch {
+    location.href = '/login'; return;
+  }
+  const av = $('#user-avatar');
+  av.textContent = initials(currentUser.display_name || currentUser.email);
+  av.title       = currentUser.display_name || currentUser.email;
+
+  await Promise.all([loadProjects(), loadPapers()]);
+  renderLibrary();
+})();
+
+async function loadProjects() {
+  try {
+    const r = await fetch('/api/projects');
+    allProjects = r.ok ? await r.json() : [];
+  } catch { allProjects = []; }
+}
+async function loadPapers() {
+  try {
+    const r = await fetch('/api/papers');
+    allPapers = r.ok ? await r.json() : [];
+  } catch { allPapers = []; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Library: project-grouped paper list
+ * ───────────────────────────────────────────────────────────────────────── */
+function paperFilter() {
+  return ($('#lib-filter').value || '').toLowerCase();
+}
+
+function renderLibrary() {
+  const q = paperFilter();
+  const projById = Object.fromEntries(allProjects.map(p => [p.id, p.name]));
+  const buckets = {};  // project_id (or 0 for unassigned) → [papers]
+  for (const p of allPapers) {
+    if (q && !(p.filename || '').toLowerCase().includes(q)) continue;
+    const k = p.project_id || 0;
+    (buckets[k] = buckets[k] || []).push(p);
+  }
+  const host = $('#lib-scroll');
+  if (allPapers.length === 0) {
+    host.innerHTML = '<div style="padding:20px;text-align:center;color:var(--ink-4);font-size:12px;">No papers yet — upload one below.</div>';
+    return;
+  }
+
+  const sections = [];
+  for (const p of allProjects) {
+    const rows = buckets[p.id] || [];
+    if (!rows.length) continue;
+    sections.push(projectBlock(p.name, rows, `proj-${p.id}`));
+  }
+  if (buckets[0] && buckets[0].length) {
+    sections.push(projectBlock('Unassigned', buckets[0], 'proj-unassigned'));
+  }
+  host.innerHTML = sections.length
+    ? sections.join('')
+    : '<div style="padding:20px;text-align:center;color:var(--ink-4);font-size:12px;">No papers match your filter.</div>';
+
+  // wire events
+  $$('.proj-head').forEach(h => h.addEventListener('click', () => {
+    const p = h.parentElement;
+    p.setAttribute('data-open', p.getAttribute('data-open') === 'true' ? 'false' : 'true');
+  }));
+  $$('.paper').forEach(el => el.addEventListener('click', () => {
+    $$('.paper').forEach(x => x.classList.remove('is-active'));
+    el.classList.add('is-active');
+    const id = Number(el.dataset.id);
+    openPaper(allPapers.find(p => p.id === id));
+  }));
+}
+
+function projectBlock(name, rows, domId) {
+  const items = rows.map(p => {
+    const hasRubric = (p.rubric_count || 0) > 0;
+    const chip = hasRubric ? `<div class="chip accent">rubric</div>` : '';
+    const sub  = `${(p.created_at || '').slice(0, 10)}`;
+    return `
+      <div class="paper ${hasRubric ? 'has-rubric' : ''}" data-id="${p.id}">
+        <div class="t">${esc(p.filename)}</div>
+        ${chip}
+        <div class="m">${esc(sub)}${p.rubric_count ? ' · ' + p.rubric_count + ' rubric' + (p.rubric_count === 1 ? '' : 's') : ''}</div>
+      </div>`;
+  }).join('');
+  return `
+    <div class="proj" data-open="true" id="${domId}">
+      <div class="proj-head">
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+        <div class="proj-name">${esc(name)}</div>
+        <div class="proj-count">${rows.length}</div>
+      </div>
+      <div class="proj-body">${items}</div>
+    </div>`;
+}
+
+$('#lib-filter').addEventListener('input', renderLibrary);
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Reader pane
+ * ───────────────────────────────────────────────────────────────────────── */
+function openPaper(p) {
+  if (!p) return;
+  currentPaper = p;
+  $('#reader-crumb').textContent = p.filename;
+  $('.crumb .s').textContent = p.created_at ? p.created_at.slice(0, 10) : '';
+  $('#btn-open-external').style.display = '';
+  $('#btn-open-external').onclick = () => window.open(`/api/papers/${p.id}/pdf`, '_blank');
+
+  $('#reader-scroll').innerHTML =
+    `<iframe class="pdf-frame" src="/api/papers/${p.id}/pdf#view=FitH" loading="lazy" title="${esc(p.filename)}"></iframe>`;
+
+  // Enable evaluate + generate
+  $('#btn-evaluate').disabled = true;  // becomes true after rubric generated
+  // If this paper already has a rubric, load it
+  if ((p.rubric_count || 0) > 0) loadRubric(p.id);
+  else clearRubric();
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Rubric tabs + panels
+ * ───────────────────────────────────────────────────────────────────────── */
+$$('.tab').forEach(t => t.addEventListener('click', () => {
+  $$('.tab').forEach(x => x.classList.remove('is-active'));
+  t.classList.add('is-active');
+  const v = t.dataset.tab;
+  $$('.rubric-panel').forEach(p => p.classList.toggle('is-active', p.dataset.panel === v));
+}));
+
+// Rubric-type seg
+$$('#seg-kind button').forEach(b => b.addEventListener('click', () => {
+  $$('#seg-kind button').forEach(x => x.classList.remove('is-on'));
+  b.classList.add('is-on');
+}));
+
+function selectedKind() {
+  return $('#seg-kind button.is-on').dataset.v || 'classification';
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Generate rubric → POST /api/rubrics/generate
+ * ───────────────────────────────────────────────────────────────────────── */
+$('#btn-generate').addEventListener('click', generateRubric);
+$('#btn-clear').addEventListener('click', clearRubric);
+
+async function generateRubric() {
+  if (!currentPaper) {
+    status('Select a paper on the left first.', 'err');
+    return;
+  }
+  const btn = $('#btn-generate');
+  btn.disabled = true;
+  const original = btn.innerHTML;
+  btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/></svg> Generating…';
+  status('Generating rubric — this usually takes 20-40 seconds.', 'info');
+
+  try {
+    const body = {
+      paper_ids: [currentPaper.id],
+      focus: $('#focus').value.trim() || null,
+      kind: selectedKind(),
+    };
+    const r = await fetch('/api/rubrics/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const rb = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const msg = (rb.detail && (rb.detail.message || rb.detail)) || `HTTP ${r.status}`;
+      status(`Generation failed: ${msg}`, 'err');
+      return;
+    }
+    currentRubric = rb;
+    renderQuestions(rb.questions || []);
+    status(`Generated ${(rb.questions || []).length} questions.`, 'ok');
+    $('#btn-evaluate').disabled = false;
+    // Refresh papers so rubric_count chip updates
+    await loadPapers();
+    renderLibrary();
+  } catch (e) {
+    status(`Network error: ${e.message}`, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = original;
+  }
+}
+
+async function loadRubric(paperId) {
+  try {
+    const r = await fetch(`/api/rubrics?paper_id=${paperId}`);
+    if (!r.ok) return;
+    const list = await r.json();
+    if (!Array.isArray(list) || !list.length) return;
+    // Most recent first
+    const first = list[0];
+    currentRubric = first;
+    renderQuestions(first.questions || []);
+    status(`Loaded saved rubric (${(first.questions || []).length} questions).`, 'info');
+    $('#btn-evaluate').disabled = false;
+  } catch { /* non-fatal */ }
+}
+
+function clearRubric() {
+  currentRubric = null;
+  $('#qlist').innerHTML = '';
+  $('#qlist-card').style.display = 'none';
+  $('#tab-build-count').textContent = '0';
+  $('#btn-evaluate').disabled = true;
+  status('', 'info');
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Question list renderer
+ * ───────────────────────────────────────────────────────────────────────── */
+function renderQuestions(questions) {
+  const card = $('#qlist-card');
+  const host = $('#qlist');
+  if (!questions.length) {
+    card.style.display = 'none';
+    return;
+  }
+  card.style.display = '';
+  $('#tab-build-count').textContent = String(questions.length);
+
+  host.innerHTML = questions.map((q, i) => {
+    const text = q.question || q.text || q.prompt || '';
+    const domain = q.domain || q.category || q.type || '';
+    const scale = Array.isArray(q.scale) ? q.scale
+                 : Array.isArray(q.levels) ? q.levels
+                 : [];
+    return `
+      <article class="q ${i === 0 ? 'is-open is-focus' : ''}" data-i="${i}">
+        <div class="q-head">
+          <div class="q-num">${String(i + 1).padStart(2, '0')}</div>
+          <div class="q-text">${esc(text)}</div>
+          ${domain ? `<div class="chip accent">${esc(domain)}</div>` : ''}
+        </div>
+        <div class="q-body">
+          ${scale.length
+            ? scale.map((s, li) => `
+                <div class="q-scale">
+                  <span class="lv l${li < 1 ? 0 : li < 2 ? 1 : 2}">${esc(s.label || s.level || li)} ${s.points != null ? '· ' + s.points : ''}</span>
+                  <span class="desc">${esc(s.description || s.criterion || s.text || s)}</span>
+                </div>`).join('')
+            : `<div style="color: var(--ink-4); font-family: var(--mono); font-size: 11px;">No grading scale attached.</div>`}
+          <div class="q-actions">
+            <button class="btn btn-ghost">Edit text</button>
+            <button class="btn btn-ghost">Adjust scale</button>
+            <button class="btn btn-ghost" style="color: var(--err)">Remove</button>
+          </div>
+        </div>
+      </article>`;
+  }).join('');
+  $$('.q-head', host).forEach(h => h.addEventListener('click', () => {
+    h.parentElement.classList.toggle('is-open');
+  }));
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Upload → POST /api/papers/upload
+ * ───────────────────────────────────────────────────────────────────────── */
+$('#upload-input').addEventListener('change', async (e) => {
+  const files = Array.from(e.target.files || []);
+  if (!files.length) return;
+  for (const f of files) {
+    const form = new FormData();
+    form.append('file', f);
+    try {
+      const r = await fetch('/api/papers/upload', { method: 'POST', body: form });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        console.warn('upload failed', body);
+      }
+    } catch (err) {
+      console.warn('upload error', err);
+    }
+  }
+  e.target.value = '';
+  await loadPapers();
+  renderLibrary();
+});
+</script>
+
+</body>
+</html>

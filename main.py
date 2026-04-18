@@ -1130,6 +1130,18 @@ def onboarding_page(rubricgen_session: str | None = Cookie(default=None)):
     return FileResponse(str(FRONTEND / "onboarding.html"), media_type="text/html")
 
 
+@app.get("/rubric-generator", include_in_schema=False)
+def rubric_generator_v2_page(rubricgen_session: str | None = Cookie(default=None)):
+    """Redesigned 3-column rubric builder, lifted from Claude Design
+    (`Rubric Generator Redesign.html`). Uses the shared token stylesheet at
+    `/static/_shared/design.css`. The old PDF viewer at `/pdf-viewer` stays
+    live; this is the new canonical experience."""
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return FileResponse(str(FRONTEND / "rubric_generator_v2.html"), media_type="text/html")
+
+
 @app.get("/admin/daily", include_in_schema=False)
 def admin_daily_page(rubricgen_session: str | None = Cookie(default=None)):
     user = _get_user_from_token(rubricgen_session)
