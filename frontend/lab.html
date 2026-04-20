@@ -174,6 +174,10 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 .interface-sub { padding-left: 28px; font-size: 11px; }
 .interface-caret { font-size: 8px; color: var(--muted); transition: transform .15s; }
 .interface-group.open .interface-caret { transform: rotate(90deg); }
+/* The Benchmark Lab — parent heading of all interface links. */
+.benchmark-lab-section { background: linear-gradient(180deg, color-mix(in srgb, var(--blue) 4%, transparent), transparent); }
+.benchmark-lab-header { gap: 7px; color: var(--blue) !important; font-weight: 800; }
+.benchmark-lab-logo { display: inline-flex; align-items: center; justify-content: center; color: var(--blue); width: 18px; height: 18px; }
 .interface-admin { color: var(--purple); font-weight: 600; }
 
 /* Context documents */
@@ -190,8 +194,13 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 
 /* -- Middle pane -- */
 .panel-center { flex: 1; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: #fff; min-width: 0; }
-.agent-label { padding: 10px 18px; border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 700; color: var(--navy); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.agent-label-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+/* Each agent carries an accent color; switchAgent() sets --agent-c on
+   #panel-center so the label, dot, divider pill, and active speed button
+   all pick it up. Falls back to the generic blue when unset. */
+#panel-center { --agent-c: var(--blue); }
+.agent-label { padding: 10px 18px; border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 700; color: var(--agent-c); display: flex; align-items: center; gap: 8px; flex-shrink: 0; background: color-mix(in srgb, var(--agent-c) 6%, transparent); }
+.agent-label-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--agent-c); }
+.agent-label-logo { font-size: 14px; line-height: 1; filter: saturate(1.15); }
 
 /* Chat messages */
 .chat-messages { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
@@ -233,10 +242,12 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 
 /* Speed buttons */
 .speed-buttons { padding: 8px 18px; border-top: 1px solid var(--border); display: flex; gap: 6px; flex-wrap: wrap; flex-shrink: 0; background: #fafbfd; }
-.speed-btn { font-family: inherit; font-size: 10.5px; font-weight: 600; padding: 5px 10px; border-radius: 14px; cursor: pointer; border: 1px solid var(--border); background: #fff; color: var(--text); display: flex; align-items: center; gap: 5px; white-space: nowrap; transition: all .15s; }
+.speed-btn { font-family: inherit; font-size: 10.5px; font-weight: 600; padding: 5px 10px; border-radius: 14px; cursor: pointer; border: 1px solid var(--border); background: #fff; color: var(--text); display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; transition: all .15s; }
 .speed-btn:hover { border-color: var(--sky); color: var(--blue); background: #f0f4ff; }
-.speed-btn.active { background: var(--blue); color: #fff; border-color: var(--blue); }
-.speed-btn-icon { font-size: 13px; }
+/* When active, the button takes on the active agent's color (set on
+   #panel-center by switchAgent via --agent-c). */
+.speed-btn.active { background: var(--agent-c, var(--blue)); color: #fff; border-color: var(--agent-c, var(--blue)); box-shadow: 0 1px 4px color-mix(in srgb, var(--agent-c, var(--blue)) 40%, transparent); }
+.speed-btn-icon { font-size: 13px; line-height: 1; }
 .agent-switch-divider { display: flex; align-items: center; gap: 10px; margin: 14px 0 10px; font-size: 10px; color: var(--muted); }
 .agent-switch-divider::before, .agent-switch-divider::after { content: ''; flex: 1; border-top: 1px dashed var(--border); }
 .agent-switch-divider .asd-pill { display: inline-flex; align-items: center; gap: 5px; background: #f0f4ff; border: 1px solid #d0dbf0; color: var(--blue); font-weight: 600; padding: 3px 10px; border-radius: 12px; white-space: nowrap; font-size: 10px; }
@@ -734,19 +745,6 @@ table.res-table tbody tr:hover { background: #f8fafc; }
       </div>
     </div>
 
-    <!-- ── Methods — built-in agent capability cards + user-authored procedures ── -->
-    <div class="sidebar-section" id="methods-section">
-      <div class="sidebar-header">
-        <span>Methods</span>
-        <button onclick="openMethodEditor()" title="Add a method">+</button>
-      </div>
-      <div class="methods-sub">Agent capabilities</div>
-      <div id="system-methods-list"></div>
-      <div class="methods-sub">My methods</div>
-      <div id="user-methods-list">
-        <div style="padding:8px 14px;color:var(--ink-4);font-size:10.5px;font-family:var(--mono);">none yet</div>
-      </div>
-    </div>
     <div class="sidebar-section">
       <div class="sidebar-header">Projects <button onclick="toggleNewProject()" title="New project">+</button></div>
       <div class="new-project-inline" id="new-project-form">
@@ -758,22 +756,31 @@ table.res-table tbody tr:hover { background: #f8fafc; }
       <div class="sidebar-header">Invitations <span class="invitation-badge" id="invitation-badge"></span></div>
       <div id="invitation-list"></div>
     </div>
-    <div class="sidebar-section">
-      <div class="sidebar-header">Interfaces</div>
+    <!-- ── The Benchmark Lab — all interfaces live under this one heading ── -->
+    <div class="sidebar-section benchmark-lab-section">
+      <div class="sidebar-header benchmark-lab-header">
+        <span class="benchmark-lab-logo" aria-hidden="true">
+          <!-- Stylized flask + sparkline = benchmark/experiment mark -->
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 3h6"/>
+            <path d="M10 3v5L5 19a2 2 0 0 0 1.8 2.9h10.4A2 2 0 0 0 19 19l-5-11V3"/>
+            <path d="M7.5 14h9"/>
+            <circle cx="10.2" cy="17" r=".7" fill="currentColor"/>
+            <circle cx="14.2" cy="18" r=".7" fill="currentColor"/>
+          </svg>
+        </span>
+        <span>The Benchmark Lab</span>
+      </div>
       <a class="interface-link interface-admin" id="sidebar-admin-link" style="display:none" onclick="openTab('Admin','iframe','/admin')">Admin</a>
       <a class="interface-link" onclick="openTab('Dashboard','iframe','/dashboard')">Dashboard</a>
-      <div class="interface-group">
-        <a class="interface-link" onclick="toggleInterfaceGroup(this)">Benchmark Lab <span class="interface-caret">&#9654;</span></a>
-        <div class="interface-group-children">
-          <a class="interface-link interface-sub" onclick="openTab('Challenges','iframe','/challenges')">Challenges</a>
-          <a class="interface-link interface-sub" onclick="openTab('Leaderboard','iframe','/leaderboard')">Leaderboard</a>
-        </div>
-      </div>
+      <a class="interface-link" onclick="openTab('Challenges','iframe','/challenges')">Challenges</a>
+      <a class="interface-link" onclick="openTab('Leaderboard','iframe','/leaderboard')">Leaderboard</a>
       <a class="interface-link" onclick="openTab('Analytics','iframe','/analytics')">Analytics</a>
       <a class="interface-link" onclick="openTab('Library','iframe','/library')">Library</a>
       <a class="interface-link" onclick="openTab('Models','iframe','/models')">Models</a>
       <a class="interface-link" onclick="openFullscreenTab('PDF Viewer','/pdf-viewer')">PDF Viewer</a>
       <a class="interface-link" onclick="openFullscreenTab('Annotator','/annotator')">Annotator</a>
+      <a class="interface-link" onclick="openMethodsTab()">Methods</a>
       <a class="interface-link" onclick="openTab('Developers','iframe','/developers')">Developers</a>
     </div>
   </div>
@@ -781,16 +788,16 @@ table.res-table tbody tr:hover { background: #f8fafc; }
   <button class="sidebar-expand-btn" id="sidebar-expand-btn" onclick="expandSidebar()" title="Show sidebar">&raquo;</button>
 
   <!-- MIDDLE PANE: Agent + Chat -->
-  <div class="panel-center" id="panel-center">
+  <div class="panel-center" id="panel-center" data-agent="research_chat">
     <div class="agent-label">
-      <span class="agent-label-dot"></span>
-      <span id="agent-label-text">Research Chat</span>
+      <span class="agent-label-logo" id="agent-label-logo" aria-hidden="true">&#128172;</span>
+      <span id="agent-label-text">The Research Assistant</span>
     </div>
 
     <div class="chat-messages" id="chat-messages">
       <div class="chat-empty" id="chat-empty">
-        <strong>Research Chat</strong><br><br>
-        Ask anything about clinical research — methodology, study design, evidence appraisal, or general questions. Use the speed buttons below to switch to a specialized agent.<br><br>
+        <strong>The Research Assistant</strong><br><br>
+        Ask anything about clinical research — methodology, study design, evidence appraisal, or general questions. Use the role buttons below to bring a specialist onto the conversation — switching role keeps the same thread, it does not start a new chat.<br><br>
         Try: <em>"What's the best study design for comparing two surgical techniques?"</em>
       </div>
     </div>
@@ -805,15 +812,34 @@ table.res-table tbody tr:hover { background: #f8fafc; }
       <button class="send-btn" id="send-btn" onclick="sendMessage()">Send</button>
     </div>
 
-    <div class="speed-buttons">
-      <button class="speed-btn active" onclick="switchAgent('research_chat')" data-agent="research_chat">Research Chat</button>
-      <button class="speed-btn" onclick="switchAgent('search_strategist')" data-agent="search_strategist">Search Strategist</button>
-      <button class="speed-btn" onclick="switchAgent('statistician')" data-agent="statistician">Statistician</button>
-      <button class="speed-btn" onclick="switchAgent('study_appraiser')" data-agent="study_appraiser">Study Appraiser</button>
-      <button class="speed-btn" onclick="switchAgent('hypothesis_generator')" data-agent="hypothesis_generator">Hypothesis Generator</button>
-      <button class="speed-btn" onclick="switchAgent('literature_reviewer')" data-agent="literature_reviewer">Literature Reviewer</button>
-      <button class="speed-btn" onclick="switchAgent('study_builder')" data-agent="study_builder">Study Builder</button>
-      <button class="speed-btn" onclick="switchAgent('protocol_evaluator')" data-agent="protocol_evaluator">Protocol Evaluator</button>
+    <!-- Role speed-buttons. Clicking brings a specialist into the SAME chat
+         (does not start a new thread). Each role has its own logo + accent
+         color that theme the center pane while active. -->
+    <div class="speed-buttons" id="speed-buttons">
+      <button class="speed-btn active" onclick="switchAgent('research_chat')" data-agent="research_chat">
+        <span class="speed-btn-icon">&#128172;</span>The Research Assistant
+      </button>
+      <button class="speed-btn" onclick="switchAgent('search_strategist')" data-agent="search_strategist">
+        <span class="speed-btn-icon">&#128269;</span>The Search Strategist
+      </button>
+      <button class="speed-btn" onclick="switchAgent('statistician')" data-agent="statistician">
+        <span class="speed-btn-icon">&#128200;</span>The Statistician
+      </button>
+      <button class="speed-btn" onclick="switchAgent('study_appraiser')" data-agent="study_appraiser">
+        <span class="speed-btn-icon">&#128269;</span>The Evidence Appraiser
+      </button>
+      <button class="speed-btn" onclick="switchAgent('hypothesis_generator')" data-agent="hypothesis_generator">
+        <span class="speed-btn-icon">&#128161;</span>The Hypothesis Generator
+      </button>
+      <button class="speed-btn" onclick="switchAgent('literature_reviewer')" data-agent="literature_reviewer">
+        <span class="speed-btn-icon">&#128214;</span>The Literature Reviewer
+      </button>
+      <button class="speed-btn" onclick="switchAgent('study_builder')" data-agent="study_builder">
+        <span class="speed-btn-icon">&#128736;</span>The Study Builder
+      </button>
+      <button class="speed-btn" onclick="switchAgent('protocol_evaluator')" data-agent="protocol_evaluator">
+        <span class="speed-btn-icon">&#9989;</span>The Protocol Evaluator
+      </button>
     </div>
   </div>
 
@@ -1051,6 +1077,59 @@ async function saveBriefing() {
 }
 
 // ─── Methods ──────────────────────────────────────────────────────────
+// Methods now lives as a dedicated right-pane tab (not a bulky sidebar
+// section). openMethodsTab() lazily creates the tab and rebinds the two
+// list hosts ('system-methods-list', 'user-methods-list') that the
+// existing render functions target.
+function openMethodsTab() {
+  const label = 'Methods';
+  const existing = document.querySelector('.tab-item[data-tab-label="' + label + '"]');
+  if (existing) { switchTab(existing.dataset.tabId); return; }
+
+  tabCounter++;
+  const tabId = 'tab-' + tabCounter;
+
+  const tabBtn = document.createElement('button');
+  tabBtn.className = 'tab-item';
+  tabBtn.dataset.tabId = tabId;
+  tabBtn.dataset.tabLabel = label;
+  tabBtn.onclick = function() { switchTab(tabId); };
+  tabBtn.innerHTML = escapeHtml(label) +
+    ' <span class="tab-close" onclick="event.stopPropagation();closeTab(\'' + tabId + '\')">&times;</span>';
+  document.getElementById('tab-bar').appendChild(tabBtn);
+
+  const pane = document.createElement('div');
+  pane.className = 'tab-pane';
+  pane.dataset.tabId = tabId;
+  pane.innerHTML =
+    '<div class="methods-tab-wrap" style="padding:16px 20px;overflow:auto;height:100%;">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">' +
+        '<div style="font-size:15px;font-weight:800;color:var(--ink);letter-spacing:-0.01em;">Methods</div>' +
+        '<button class="chip" style="cursor:pointer;" onclick="openMethodEditor()" title="Add a method">+ New method</button>' +
+      '</div>' +
+      '<div style="font-size:11.5px;color:var(--ink-3);line-height:1.5;margin-bottom:14px;">' +
+        'Methods are appended to every agent\'s system prompt for this user. ' +
+        'Agent capabilities below are read-only descriptions of what each built-in ' +
+        'specialist does; My methods are your own procedure cards (toggle to include).' +
+      '</div>' +
+      '<div class="methods-sub" style="margin-top:4px;">Agent capabilities</div>' +
+      '<div id="system-methods-list"></div>' +
+      '<div class="methods-sub" style="margin-top:18px;">My methods</div>' +
+      '<div id="user-methods-list">' +
+        '<div style="padding:8px 2px;color:var(--ink-4);font-size:10.5px;font-family:var(--mono);">none yet</div>' +
+      '</div>' +
+    '</div>';
+  document.getElementById('tab-content').appendChild(pane);
+  switchTab(tabId);
+
+  // Re-render into the freshly-created hosts.
+  renderSystemMethods();
+  renderUserMethods();
+  // Also refresh from the server in case anything changed elsewhere.
+  loadMethods();
+  loadSystemMethods();
+}
+
 async function loadMethods() {
   try {
     const r = await fetch('/api/methods');
@@ -1211,58 +1290,69 @@ let searchPage = 1;
 let searchTotalPages = 1;
 let searchTotalResults = 0;
 
+// Each agent carries its own "identity" — a role-title label, an icon glyph
+// used as a logo, and an accent color that themes the center pane's label,
+// speed-button active state, and agent-switch divider pill. Switching agent
+// does NOT start a new chat — it only swaps persona on the current thread.
 const AGENT_CONFIG = {
   research_chat: {
-    label: 'Research Chat',
+    label: 'The Research Assistant',
     icon: '&#128172;',
+    color: '#5b5fbe',
     placeholder: 'Ask a research question...',
-    empty: '<strong>Research Chat</strong><br><br>Ask anything about clinical research \u2014 methodology, study design, evidence appraisal, or general questions. Use the speed buttons below to switch to a specialized agent.<br><br>Try: <em>"What\'s the best study design for comparing two surgical techniques?"</em>',
+    empty: '<strong>The Research Assistant</strong><br><br>Ask anything about clinical research \u2014 methodology, study design, evidence appraisal, or general questions. Bring a specialist onto the conversation by clicking a role below; the thread stays the same.<br><br>Try: <em>"What\'s the best study design for comparing two surgical techniques?"</em>',
     tabs: [],
     exports: ['docx', 'latex']
   },
   search_strategist: {
-    label: 'AI Search Strategist',
+    label: 'The Search Strategist',
     icon: '&#128269;',
+    color: '#0e7c86',
     placeholder: 'Describe your research question...',
-    empty: '<strong>AI Search Strategist</strong><br><br>Describe your research question and I\'ll help you build a comprehensive search strategy with PICO extraction, MeSH terms, and database-specific queries.<br><br>Try: <em>"I\'m looking for RCTs comparing ACE inhibitors to ARBs for hypertension in elderly patients"</em>',
+    empty: '<strong>The Search Strategist</strong><br><br>Describe your research question and I\'ll help you build a comprehensive search strategy with PICO extraction, MeSH terms, and database-specific queries.<br><br>Try: <em>"I\'m looking for RCTs comparing ACE inhibitors to ARBs for hypertension in elderly patients"</em>',
     tabs: ['query_builder', 'results'],
     exports: ['docx', 'latex', 'csv']
   },
   statistician: {
-    label: 'AI Statistician',
+    label: 'The Statistician',
     icon: '&#128200;',
+    color: '#c05621',
     placeholder: 'Ask a statistics question or describe your data...',
-    empty: '<strong>AI Statistician</strong><br><br>I can help with statistical analysis, study design, power calculations, and data interpretation.<br><br>Try: <em>"What sample size do I need for a two-arm RCT with 80% power to detect a 15% difference?"</em>',
+    empty: '<strong>The Statistician</strong><br><br>I can help with statistical analysis, study design, power calculations, and data interpretation.<br><br>Try: <em>"What sample size do I need for a two-arm RCT with 80% power to detect a 15% difference?"</em>',
     tabs: ['analysis_workspace'],
     exports: ['docx', 'latex', 'xlsx', 'csv', 'python', 'r']
   },
   study_appraiser: {
-    label: 'Study Appraiser',
-    icon: '&#128203;',
+    label: 'The Evidence Appraiser',
+    icon: '&#128269;',
+    color: '#7c3aed',
     placeholder: 'Paste a study abstract or ask about study quality...',
-    empty: '<strong>Study Appraiser</strong><br><br>I evaluate the quality and rigor of research studies using frameworks like GRADE, Cochrane RoB, and CASP.<br><br>Try: <em>"Appraise this RCT: [paste abstract]"</em>',
+    empty: '<strong>The Evidence Appraiser</strong><br><br>I evaluate the quality and rigor of research studies using frameworks like GRADE, Cochrane RoB, and CASP.<br><br>Try: <em>"Appraise this RCT: [paste abstract]"</em>',
     tabs: ['appraisal_report'],
     exports: ['docx', 'latex']
   },
   hypothesis_generator: {
-    label: 'Hypothesis Generator',
+    label: 'The Hypothesis Generator',
     icon: '&#128161;',
+    color: '#b45309',
     placeholder: 'Describe your research area or observations...',
-    empty: '<strong>Hypothesis Generator</strong><br><br>I help generate and refine research hypotheses based on existing evidence, gaps in the literature, and mechanistic reasoning.<br><br>Try: <em>"What hypotheses could explain the link between gut microbiome and depression?"</em>',
+    empty: '<strong>The Hypothesis Generator</strong><br><br>I help generate and refine research hypotheses based on existing evidence, gaps in the literature, and mechanistic reasoning.<br><br>Try: <em>"What hypotheses could explain the link between gut microbiome and depression?"</em>',
     tabs: ['hypothesis_board'],
     exports: ['docx', 'latex']
   },
   literature_reviewer: {
-    label: 'Literature Reviewer',
+    label: 'The Literature Reviewer',
     icon: '&#128214;',
+    color: '#1d4ed8',
     placeholder: 'Describe the topic for your literature review...',
-    empty: '<strong>Literature Reviewer</strong><br><br>I help structure and synthesize literature reviews, identify themes, and organize findings.<br><br>Try: <em>"Help me review the literature on CRISPR applications in sickle cell disease"</em>',
+    empty: '<strong>The Literature Reviewer</strong><br><br>I help structure and synthesize literature reviews, identify themes, and organize findings.<br><br>Try: <em>"Help me review the literature on CRISPR applications in sickle cell disease"</em>',
     tabs: ['review_outline'],
     exports: ['docx', 'latex']
   },
   study_builder: {
     label: 'The Study Builder',
     icon: '&#128736;',
+    color: '#166534',
     placeholder: 'Describe the study you want to design...',
     empty: '<strong>The Study Builder</strong><br><br>I help you design clinical studies from concept to protocol-ready specifications, including endpoints, sample size, randomization, and regulatory considerations.<br><br>Try: <em>"Design a phase III RCT comparing a novel anticoagulant to warfarin for atrial fibrillation"</em>',
     tabs: ['protocol_draft'],
@@ -1271,6 +1361,7 @@ const AGENT_CONFIG = {
   protocol_evaluator: {
     label: 'The Protocol Evaluator',
     icon: '&#9989;',
+    color: '#9d174d',
     placeholder: 'Paste a study protocol or describe it...',
     empty: '<strong>The Protocol Evaluator</strong><br><br>I critically evaluate study protocols for scientific rigor, feasibility, regulatory compliance, and ethical considerations using SPIRIT 2013, ICH-GCP, and other frameworks.<br><br>Try: <em>"Evaluate this protocol: [paste protocol summary]"</em>',
     tabs: ['evaluation_report'],
@@ -1386,17 +1477,31 @@ function switchAgent(agentType) {
     btn.classList.toggle('active', btn.dataset.agent === agentType);
   });
 
-  // Update agent label + placeholder
+  // Update agent label + placeholder + per-agent color + logo
   var cfg = AGENT_CONFIG[agentType];
   document.getElementById('agent-label-text').textContent = cfg.label;
   document.getElementById('chat-input').placeholder = cfg.placeholder;
+  var logoEl = document.getElementById('agent-label-logo');
+  if (logoEl) logoEl.innerHTML = cfg.icon || '';
+  var panelCenter = document.getElementById('panel-center');
+  if (panelCenter) {
+    panelCenter.dataset.agent = agentType;
+    panelCenter.style.setProperty('--agent-c', cfg.color || 'var(--blue)');
+  }
 
   // Insert a visual agent-switch divider into the current chat (only if there's an active conversation)
   var container = document.getElementById('chat-messages');
   if (currentSessionId && !container.querySelector('.chat-empty')) {
     var divider = document.createElement('div');
     divider.className = 'agent-switch-divider';
-    divider.innerHTML = '<span class="asd-pill">' + cfg.label + '</span>';
+    // Inline-theme the pill to the agent's color so the handoff is scannable
+    // at a glance when scrolling through a mixed-role conversation.
+    var pillStyle = cfg.color
+      ? ('color:' + cfg.color + ';border-color:' + cfg.color + ';background:' + cfg.color + '14;')
+      : '';
+    divider.innerHTML = '<span class="asd-pill" style="' + pillStyle + '">' +
+      (cfg.icon ? '<span style="margin-right:4px">' + cfg.icon + '</span>' : '') +
+      cfg.label + '</span>';
     container.appendChild(divider);
     scrollToBottom();
   } else if (!currentSessionId) {
@@ -2112,6 +2217,13 @@ async function switchSession(id) {
     var cfg = AGENT_CONFIG[sessAgent];
     document.getElementById('agent-label-text').textContent = cfg.label;
     document.getElementById('chat-input').placeholder = cfg.placeholder;
+    var _lg = document.getElementById('agent-label-logo');
+    if (_lg) _lg.innerHTML = cfg.icon || '';
+    var _pc = document.getElementById('panel-center');
+    if (_pc) {
+      _pc.dataset.agent = sessAgent;
+      _pc.style.setProperty('--agent-c', cfg.color || 'var(--blue)');
+    }
     closeAllAgentTabs();
     openAgentTabs(sessAgent);
   }
@@ -3347,16 +3459,25 @@ async function exportAs(format) {
 async function init() {
   await checkAuth();
 
-  // Restore agent type BEFORE sidebar render so UI is consistent
+  // Restore agent type BEFORE sidebar render so UI is consistent.
+  // Also theme the panel (color + logo) so the baseline state matches the
+  // active agent rather than the generic blue default.
   var savedAgent = sessionStorage.getItem('lab_agent_type');
   if (savedAgent && AGENT_CONFIG[savedAgent]) {
     currentAgentType = savedAgent;
-    document.querySelectorAll('.speed-btn').forEach(function(btn) {
-      btn.classList.toggle('active', btn.dataset.agent === savedAgent);
-    });
-    var cfg = AGENT_CONFIG[savedAgent];
-    document.getElementById('agent-label-text').textContent = cfg.label;
-    document.getElementById('chat-input').placeholder = cfg.placeholder;
+  }
+  var cfg = AGENT_CONFIG[currentAgentType];
+  document.querySelectorAll('.speed-btn').forEach(function(btn) {
+    btn.classList.toggle('active', btn.dataset.agent === currentAgentType);
+  });
+  document.getElementById('agent-label-text').textContent = cfg.label;
+  document.getElementById('chat-input').placeholder = cfg.placeholder;
+  var _logoEl = document.getElementById('agent-label-logo');
+  if (_logoEl) _logoEl.innerHTML = cfg.icon || '';
+  var _panel = document.getElementById('panel-center');
+  if (_panel) {
+    _panel.dataset.agent = currentAgentType;
+    _panel.style.setProperty('--agent-c', cfg.color || 'var(--blue)');
   }
 
   await renderSidebar();
