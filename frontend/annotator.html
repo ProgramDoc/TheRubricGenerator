@@ -131,7 +131,10 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
 }
 #new-proj-btn:hover { background: rgba(255,255,255,.15); color: #fff; }
 
-#project-list { flex: 1; overflow-y: auto; }
+/* min-height:0 overrides the default flex-child min-height:auto, which
+   otherwise locks this at its content size and pushes #upload-zone and
+   #batch-bar below the visible area when the project list is long. */
+#project-list { flex: 1 1 0; min-height: 0; overflow-y: auto; }
 
 /* Project folder */
 .project-folder { border-bottom: 1px solid rgba(255,255,255,.04); }
