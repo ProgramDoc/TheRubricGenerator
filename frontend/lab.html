@@ -269,6 +269,167 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 /* Inline image in user message */
 .msg.user .msg-bubble img { max-width: 100%; border-radius: 6px; margin: 6px 0; }
 
+/* ── Sources / Briefing / Methods sidebar chrome ─────────────────────── */
+.doc-item .doc-toggle {
+  margin: 0 4px 0 0;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.sources-count {
+  font-family: var(--mono); font-size: 9.5px; font-weight: 600;
+  padding: 1px 7px; border-radius: 999px;
+  background: var(--accent-soft); color: var(--accent-ink);
+  letter-spacing: .04em;
+}
+.briefing-eyebrow {
+  padding: 0 14px;
+  font-family: var(--mono); font-size: 9px; font-weight: 500;
+  color: var(--ink-4); letter-spacing: .14em;
+}
+.briefing-preview {
+  margin: 4px 10px 10px;
+  padding: 8px 10px;
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  font-size: 11.5px; line-height: 1.5;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: border-color .12s, background .12s;
+}
+.briefing-preview:hover { border-color: var(--accent); background: var(--paper); }
+
+.methods-sub {
+  padding: 8px 14px 4px;
+  font-family: var(--mono); font-size: 9px; font-weight: 500;
+  color: var(--ink-4); letter-spacing: .14em; text-transform: uppercase;
+}
+.method-card {
+  margin: 4px 10px;
+  padding: 8px 10px;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  font-size: 11px;
+}
+.method-card.system {
+  background: var(--paper-2);
+  border-style: dashed;
+  cursor: help;
+}
+.method-card.user.is-inactive { opacity: .55; }
+.method-card-head {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 2px;
+}
+.method-card-title {
+  flex: 1;
+  font-size: 11.5px; font-weight: 600; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.method-card .method-version {
+  font-family: var(--mono); font-size: 9px;
+  color: var(--ink-4); margin-left: 6px; font-weight: 500;
+}
+.method-card-desc {
+  font-size: 10.5px; color: var(--ink-3); line-height: 1.5;
+  margin-top: 2px;
+}
+.method-card-when {
+  font-family: var(--mono); font-size: 9.5px;
+  color: var(--ink-4); margin-top: 4px;
+}
+.method-card-actions {
+  display: flex; gap: 10px; margin-top: 6px;
+  font-family: var(--mono); font-size: 10px;
+}
+.method-card-actions button {
+  background: transparent; border: 0; padding: 0;
+  font: inherit; color: var(--accent); cursor: pointer;
+}
+.method-card-actions button:hover { text-decoration: underline; }
+.method-toggle { display: inline-flex; cursor: pointer; }
+.method-toggle input { accent-color: var(--accent); cursor: pointer; }
+
+/* ── Modal overlay (Briefing + Method editors) ───────────────────────── */
+.modal-overlay {
+  display: none;
+  position: fixed; inset: 0;
+  background: oklch(0.22 0.02 260 / .35);
+  z-index: 200;
+  align-items: center; justify-content: center;
+  padding: 20px;
+}
+.modal-overlay.open { display: flex; }
+.modal-card {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 40px);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.modal-head {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--rule);
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 12px;
+}
+.modal-eyebrow {
+  font-family: var(--mono); font-size: 10px; font-weight: 500;
+  color: var(--ink-3); letter-spacing: .14em;
+  margin-bottom: 2px;
+}
+.modal-title {
+  font-family: var(--serif); font-size: 17px; font-weight: 600;
+  color: var(--ink); letter-spacing: -.01em;
+}
+.modal-close {
+  background: none; border: 0; cursor: pointer;
+  color: var(--ink-3); font-size: 15px;
+  padding: 4px 8px;
+}
+.modal-close:hover { color: var(--ink); }
+.modal-body { padding: 16px 18px; overflow-y: auto; flex: 1; }
+.modal-body .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.modal-body .field label {
+  font-family: var(--mono); font-size: 10px; font-weight: 500;
+  color: var(--ink-3); text-transform: uppercase; letter-spacing: .12em;
+}
+.modal-body .field .input, .modal-body .field .textarea {
+  font-family: var(--sans); font-size: 13px; color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--rule); border-radius: var(--radius-sm);
+  padding: 7px 10px; outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+.modal-body .field .input:focus, .modal-body .field .textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px oklch(from var(--accent) l c h / .18);
+}
+.modal-foot {
+  padding: 12px 18px;
+  border-top: 1px solid var(--rule);
+  background: var(--paper-2);
+  display: flex; justify-content: flex-end; gap: 8px;
+}
+.modal-foot .btn {
+  font-family: var(--sans); font-size: 12.5px; font-weight: 600;
+  padding: 8px 16px; border-radius: var(--radius-sm);
+  cursor: pointer; border: 1px solid var(--rule);
+  background: var(--paper); color: var(--ink);
+}
+.modal-foot .btn-ghost { background: transparent; border-color: transparent; color: var(--ink-3); }
+.modal-foot .btn-ghost:hover { background: var(--paper-3); color: var(--ink); }
+.modal-foot .btn-primary {
+  background: var(--ink); color: var(--paper); border-color: var(--ink);
+}
+.modal-foot .btn-primary:hover { background: oklch(from var(--ink) calc(l - .04) c h); }
+.modal-foot .btn-primary:disabled { opacity: .6; cursor: not-allowed; }
+
 /* -- Right pane -- */
 .panel-right { width: 50%; display: flex; flex-direction: column; background: var(--bg); }
 
@@ -551,10 +712,40 @@ table.res-table tbody tr:hover { background: #f8fafc; }
       </div>
       <div id="unsorted-sessions"></div>
     </div>
-    <div class="sidebar-section">
-      <div class="sidebar-header">Context <button onclick="document.getElementById('doc-upload-input').click()" title="Upload document">+</button></div>
+    <div class="sidebar-section" id="sources-section">
+      <div class="sidebar-header">
+        <span style="display:flex;align-items:center;gap:6px;flex:1;">Sources<span id="sources-active-count" class="sources-count" style="display:none"></span></span>
+        <button onclick="document.getElementById('doc-upload-input').click()" title="Upload file — check the box to include it in chat">+</button>
+      </div>
       <input type="file" id="doc-upload-input" style="display:none" multiple accept=".pdf,.doc,.docx,.csv,.xlsx,.png,.jpg,.jpeg,.gif,.webp" onchange="uploadToContext(this.files)">
       <div id="context-docs"></div>
+      <a id="sources-clear" onclick="clearActiveSources()" style="display:none; padding:4px 14px; font-size:10.5px; color:var(--ink-3); cursor:pointer; font-family:var(--mono);">clear active</a>
+    </div>
+
+    <!-- ── Briefing — free-form instructions prepended to every system prompt ── -->
+    <div class="sidebar-section" id="briefing-section">
+      <div class="sidebar-header">
+        <span>Briefing</span>
+        <button onclick="openBriefingEditor()" title="Edit briefing">✎</button>
+      </div>
+      <div class="briefing-eyebrow">SHARED WITH EVERY AGENT</div>
+      <div id="briefing-preview" class="briefing-preview" onclick="openBriefingEditor()">
+        <em style="color:var(--ink-4)">No briefing set — click to add one.</em>
+      </div>
+    </div>
+
+    <!-- ── Methods — built-in agent capability cards + user-authored procedures ── -->
+    <div class="sidebar-section" id="methods-section">
+      <div class="sidebar-header">
+        <span>Methods</span>
+        <button onclick="openMethodEditor()" title="Add a method">+</button>
+      </div>
+      <div class="methods-sub">Agent capabilities</div>
+      <div id="system-methods-list"></div>
+      <div class="methods-sub">My methods</div>
+      <div id="user-methods-list">
+        <div style="padding:8px 14px;color:var(--ink-4);font-size:10.5px;font-family:var(--mono);">none yet</div>
+      </div>
     </div>
     <div class="sidebar-section">
       <div class="sidebar-header">Projects <button onclick="toggleNewProject()" title="New project">+</button></div>
@@ -673,6 +864,70 @@ table.res-table tbody tr:hover { background: #f8fafc; }
 <!-- Context menu -->
 <div class="ctx-menu" id="ctx-menu" style="display:none"></div>
 
+<!-- ── Briefing modal ─────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="briefing-modal" onclick="if(event.target===this)closeBriefingEditor()">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div>
+        <div class="modal-eyebrow">BRIEFING</div>
+        <div class="modal-title">Your agent briefing</div>
+      </div>
+      <button class="modal-close" onclick="closeBriefingEditor()" title="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="color:var(--ink-3);font-size:12.5px;line-height:1.55;margin-bottom:12px;">
+        Free-form instructions prepended to every agent's system prompt.
+        Think house style, working preferences, or domain focus —
+        anything the agents should always know.
+      </p>
+      <textarea id="briefing-textarea" class="textarea" placeholder="e.g. Respond in British English. Cite every claim with a page number. Default to NICE guidelines unless the user specifies otherwise." style="min-height: 220px; width: 100%; font-family: var(--sans); line-height: 1.55;" oninput="updateBriefingCount()"></textarea>
+      <div style="display:flex;justify-content:space-between;margin-top:6px;font-family:var(--mono);font-size:10.5px;">
+        <span id="briefing-error" style="color:var(--err);"></span>
+        <span id="briefing-count" style="color:var(--ink-4);">0 / 4000</span>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeBriefingEditor()">Cancel</button>
+      <button class="btn btn-primary" id="briefing-save" onclick="saveBriefing()">Save briefing</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Method modal ───────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="method-modal" onclick="if(event.target===this)closeMethodEditor()">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div>
+        <div class="modal-eyebrow">METHOD</div>
+        <div class="modal-title" id="method-modal-title">New method</div>
+      </div>
+      <button class="modal-close" onclick="closeMethodEditor()" title="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label>Name</label>
+        <input id="method-name" class="input" placeholder="e.g. Outcome framing" maxlength="120">
+      </div>
+      <div class="field">
+        <label>When to use</label>
+        <input id="method-when" class="input" placeholder="e.g. drafting discussion sections" maxlength="400">
+      </div>
+      <div class="field">
+        <label>Instructions</label>
+        <textarea id="method-instr" class="textarea" placeholder="The instructions that get added to the agent's system prompt when this method is active." style="min-height: 180px; font-family: var(--sans); line-height: 1.55;" oninput="updateMethodInstrCount()"></textarea>
+        <div style="display:flex;justify-content:space-between;margin-top:4px;font-family:var(--mono);font-size:10.5px;">
+          <span id="method-error" style="color:var(--err);"></span>
+          <span id="method-instr-count" style="color:var(--ink-4);">0 / 8000</span>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeMethodEditor()">Cancel</button>
+      <button class="btn btn-primary" id="method-save" onclick="saveMethod()">Save method</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ==============================
    STATE
@@ -687,6 +942,266 @@ let openFolders = JSON.parse(localStorage.getItem('lab_open_folders') || '{}');
 let tabCounter = 0;
 let activeTabId = '_empty';
 let pendingAttachments = []; // {file, previewUrl, name}
+
+// ─── Sources / Briefing / Methods state ─────────────────────────────────
+// Sources: doc ids with their sidebar checkbox ticked. Merged into
+//   document_ids on every chat send so the files reach the LLM as
+//   Anthropic document blocks.
+// Briefing: the user's saved free-form instructions block.
+// Methods: user-authored procedure cards (active flag toggles inclusion).
+// System-methods: read-only capability cards for each built-in agent.
+const ACTIVE_SOURCES = new Set();
+let BRIEFING_TEXT = '';
+let USER_METHODS = [];
+let SYSTEM_METHODS = [];
+
+function renderActiveSourcesCount() {
+  const n = ACTIVE_SOURCES.size;
+  const badge = document.getElementById('sources-active-count');
+  const clear = document.getElementById('sources-clear');
+  if (!badge) return;
+  if (n > 0) {
+    badge.textContent = n + ' active';
+    badge.style.display = '';
+    clear.style.display = '';
+  } else {
+    badge.style.display = 'none';
+    clear.style.display = 'none';
+  }
+}
+
+function clearActiveSources() {
+  ACTIVE_SOURCES.clear();
+  document.querySelectorAll('.doc-toggle').forEach(cb => { cb.checked = false; });
+  renderActiveSourcesCount();
+}
+
+// ─── Briefing ─────────────────────────────────────────────────────────
+async function loadBriefing() {
+  try {
+    const r = await fetch('/api/briefing');
+    if (!r.ok) return;
+    const b = await r.json();
+    BRIEFING_TEXT = b.text || '';
+    renderBriefingPreview();
+  } catch (e) { /* non-fatal */ }
+}
+
+function renderBriefingPreview() {
+  const el = document.getElementById('briefing-preview');
+  if (!el) return;
+  if (!BRIEFING_TEXT) {
+    el.innerHTML = '<em style="color:var(--ink-4)">No briefing set — click to add one.</em>';
+    return;
+  }
+  const preview = BRIEFING_TEXT.length > 80
+    ? BRIEFING_TEXT.slice(0, 80) + '…'
+    : BRIEFING_TEXT;
+  el.textContent = preview;
+}
+
+function openBriefingEditor() {
+  const modal = document.getElementById('briefing-modal');
+  if (!modal) return;
+  const ta = document.getElementById('briefing-textarea');
+  ta.value = BRIEFING_TEXT || '';
+  updateBriefingCount();
+  modal.classList.add('open');
+  setTimeout(() => ta.focus(), 20);
+}
+
+function closeBriefingEditor() {
+  document.getElementById('briefing-modal').classList.remove('open');
+  document.getElementById('briefing-error').textContent = '';
+}
+
+function updateBriefingCount() {
+  const ta = document.getElementById('briefing-textarea');
+  const n  = ta.value.length;
+  const c  = document.getElementById('briefing-count');
+  c.textContent = n + ' / 4000';
+  c.style.color = n > 4000 ? 'var(--err)' : 'var(--ink-4)';
+}
+
+async function saveBriefing() {
+  const ta = document.getElementById('briefing-textarea');
+  const err = document.getElementById('briefing-error');
+  const btn = document.getElementById('briefing-save');
+  err.textContent = '';
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/briefing', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text: ta.value}),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      err.textContent = (body.detail && (body.detail.message || body.detail)) || 'Save failed';
+      return;
+    }
+    BRIEFING_TEXT = body.text || '';
+    renderBriefingPreview();
+    closeBriefingEditor();
+  } catch (e) {
+    err.textContent = 'Network error: ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ─── Methods ──────────────────────────────────────────────────────────
+async function loadMethods() {
+  try {
+    const r = await fetch('/api/methods');
+    if (!r.ok) return;
+    USER_METHODS = await r.json();
+    renderUserMethods();
+  } catch (e) { /* non-fatal */ }
+}
+
+async function loadSystemMethods() {
+  try {
+    const r = await fetch('/api/methods/system');
+    if (!r.ok) return;
+    SYSTEM_METHODS = await r.json();
+    renderSystemMethods();
+  } catch (e) { /* non-fatal */ }
+}
+
+function renderSystemMethods() {
+  const host = document.getElementById('system-methods-list');
+  if (!host) return;
+  if (!SYSTEM_METHODS.length) { host.innerHTML = ''; return; }
+  host.innerHTML = SYSTEM_METHODS.map(m => `
+    <div class="method-card system" title="${escapeHtml(m.when_to_use)}">
+      <div class="method-card-title">${escapeHtml(m.display_name)}<span class="method-version">v${m.version}</span></div>
+      <div class="method-card-desc">${escapeHtml(m.description)}</div>
+    </div>`).join('');
+}
+
+function renderUserMethods() {
+  const host = document.getElementById('user-methods-list');
+  if (!host) return;
+  if (!USER_METHODS.length) {
+    host.innerHTML = '<div style="padding:8px 14px;color:var(--ink-4);font-size:10.5px;font-family:var(--mono);">none yet</div>';
+    return;
+  }
+  host.innerHTML = USER_METHODS.map(m => `
+    <div class="method-card user ${m.active ? 'is-active' : 'is-inactive'}">
+      <div class="method-card-head">
+        <span class="method-card-title">${escapeHtml(m.name)}</span>
+        <label class="method-toggle" title="Include in system prompt">
+          <input type="checkbox" ${m.active ? 'checked' : ''} onchange="toggleUserMethod(${m.id}, this.checked)">
+        </label>
+      </div>
+      ${m.when_to_use ? `<div class="method-card-when">When: ${escapeHtml(m.when_to_use)}</div>` : ''}
+      <div class="method-card-actions">
+        <button onclick="openMethodEditor(${m.id})">Edit</button>
+        <button onclick="deleteUserMethod(${m.id})" style="color:var(--err)">Delete</button>
+      </div>
+    </div>`).join('');
+}
+
+async function toggleUserMethod(id, active) {
+  try {
+    const r = await fetch('/api/methods/' + id, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({active}),
+    });
+    if (r.ok) {
+      const m = USER_METHODS.find(x => x.id === id);
+      if (m) { m.active = active ? 1 : 0; }
+      renderUserMethods();
+    }
+  } catch (e) { /* non-fatal */ }
+}
+
+async function deleteUserMethod(id) {
+  if (!confirm('Delete this method?')) return;
+  try {
+    const r = await fetch('/api/methods/' + id, {method: 'DELETE'});
+    if (r.ok) {
+      USER_METHODS = USER_METHODS.filter(x => x.id !== id);
+      renderUserMethods();
+    }
+  } catch (e) { /* non-fatal */ }
+}
+
+let _editingMethodId = null;
+function openMethodEditor(id) {
+  _editingMethodId = (typeof id === 'number') ? id : null;
+  const modal = document.getElementById('method-modal');
+  const nameI = document.getElementById('method-name');
+  const whenI = document.getElementById('method-when');
+  const instI = document.getElementById('method-instr');
+  const title = document.getElementById('method-modal-title');
+  const err   = document.getElementById('method-error');
+  err.textContent = '';
+  if (_editingMethodId) {
+    const m = USER_METHODS.find(x => x.id === _editingMethodId);
+    if (m) { nameI.value = m.name; whenI.value = m.when_to_use; instI.value = m.instructions; }
+    title.textContent = 'Edit method';
+  } else {
+    nameI.value = ''; whenI.value = ''; instI.value = '';
+    title.textContent = 'New method';
+  }
+  updateMethodInstrCount();
+  modal.classList.add('open');
+  setTimeout(() => nameI.focus(), 20);
+}
+
+function closeMethodEditor() {
+  document.getElementById('method-modal').classList.remove('open');
+}
+
+function updateMethodInstrCount() {
+  const ta = document.getElementById('method-instr');
+  const n  = ta.value.length;
+  const c  = document.getElementById('method-instr-count');
+  c.textContent = n + ' / 8000';
+  c.style.color = n > 8000 ? 'var(--err)' : 'var(--ink-4)';
+}
+
+async function saveMethod() {
+  const name = document.getElementById('method-name').value.trim();
+  const when = document.getElementById('method-when').value.trim();
+  const inst = document.getElementById('method-instr').value.trim();
+  const err  = document.getElementById('method-error');
+  const btn  = document.getElementById('method-save');
+  err.textContent = '';
+  if (!name) { err.textContent = 'Name required'; return; }
+  if (!inst) { err.textContent = 'Instructions required'; return; }
+  btn.disabled = true;
+  try {
+    let r;
+    if (_editingMethodId) {
+      r = await fetch('/api/methods/' + _editingMethodId, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name, when_to_use: when, instructions: inst}),
+      });
+    } else {
+      r = await fetch('/api/methods', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name, when_to_use: when, instructions: inst}),
+      });
+    }
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      err.textContent = (body.detail && (body.detail.message || body.detail)) || 'Save failed';
+      return;
+    }
+    await loadMethods();
+    closeMethodEditor();
+  } catch (e) {
+    err.textContent = 'Network error: ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
 
 // Search-strategist specific state
 let queryVersions = [];
@@ -1000,12 +1515,40 @@ function makeDocItem(d) {
     div.classList.add('dragging');
   };
   div.ondragend = function() { div.classList.remove('dragging'); };
-  div.innerHTML =
-    '<span class="doc-name">' + escapeHtml(d.filename) + '</span>' +
-    '<span class="doc-size">' + formatFileSize(d.file_size) + '</span>' +
-    '<span class="doc-actions">' +
-      '<button onclick="event.stopPropagation();showDocCtx(event,' + d.id + ')" title="More">...</button>' +
-    '</span>';
+
+  // Checkbox toggles this source into/out of ACTIVE_SOURCES — the set that
+  // gets merged into document_ids on every chat send.
+  var cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.className = 'doc-toggle';
+  cb.title = 'Include in chat';
+  cb.checked = ACTIVE_SOURCES.has(d.id);
+  cb.onclick = function(e) { e.stopPropagation(); };
+  cb.onchange = function() {
+    if (cb.checked) ACTIVE_SOURCES.add(d.id); else ACTIVE_SOURCES.delete(d.id);
+    renderActiveSourcesCount();
+  };
+  div.appendChild(cb);
+
+  var name = document.createElement('span');
+  name.className = 'doc-name';
+  name.textContent = d.filename;
+  div.appendChild(name);
+
+  var size = document.createElement('span');
+  size.className = 'doc-size';
+  size.textContent = formatFileSize(d.file_size);
+  div.appendChild(size);
+
+  var actions = document.createElement('span');
+  actions.className = 'doc-actions';
+  actions.innerHTML = '<button title="More">...</button>';
+  actions.querySelector('button').onclick = function(e) {
+    e.stopPropagation();
+    showDocCtx(e, d.id);
+  };
+  div.appendChild(actions);
+
   return div;
 }
 
@@ -1943,6 +2486,11 @@ async function sendMessage() {
       }
     }
 
+    // Merge two sources of document IDs:
+    //  - uploadedIds: files the user dropped into this specific message
+    //  - ACTIVE_SOURCES: checkboxes the user ticked in the Sources sidebar
+    // Dedupe so a file that's both inlined + checked isn't sent twice.
+    var mergedIds = Array.from(new Set([].concat(uploadedIds, Array.from(ACTIVE_SOURCES))));
     var r = await fetch('/api/lab/chat', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -1950,7 +2498,7 @@ async function sendMessage() {
         session_id: currentSessionId,
         agent_type: currentAgentType,
         message: text || ('User attached files: ' + sentAttachments.map(function(a){return a.name}).join(', ')),
-        document_ids: uploadedIds.length ? uploadedIds : undefined
+        document_ids: mergedIds.length ? mergedIds : undefined
       }),
     });
     document.getElementById('typing').classList.remove('show');
@@ -2813,6 +3361,9 @@ async function init() {
 
   await renderSidebar();
   _refreshSearchCache(); // populate search index (non-blocking)
+
+  // Sources / Briefing / Methods — load in parallel, non-blocking.
+  Promise.allSettled([loadBriefing(), loadMethods(), loadSystemMethods()]);
 
   // Restore sidebar collapsed state
   if (sessionStorage.getItem('sidebar_collapsed') === '1') {

@@ -561,10 +561,149 @@ CREATE TABLE IF NOT EXISTS agent_skills (
     times_used      INTEGER NOT NULL DEFAULT 0,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     active          INTEGER NOT NULL DEFAULT 0,
+    display_name    TEXT,
+    description     TEXT,
+    when_to_use     TEXT,
     UNIQUE(agent_type, version)
 );
 CREATE INDEX IF NOT EXISTS idx_agent_skills_active ON agent_skills(agent_type, active);
 """
+
+
+# ─────────────────────────────────────────────
+# User-facing capability metadata for each agent type
+# ─────────────────────────────────────────────
+# The `agent_skills.prompt_text` column is the authoritative system prompt and
+# NEVER leaves the server (that's the autoresearch-improved IP). These three
+# columns are separate — they describe the agent to a human reader and are the
+# only skill fields the /api/methods/system endpoint returns. Keep the
+# descriptions short; the frontend shows them as capability cards.
+#
+# Generator + Judge are benchmark-internal; they still get populated so admins
+# can inspect them but /api/methods/system filters them out.
+SKILL_METADATA: dict[str, dict[str, str]] = {
+    "generator": {
+        "display_name": "Rubric Generator",
+        "description":
+            "Reads a batch of papers and produces an evaluation rubric — questions, "
+            "grading scales, and scoring criteria grounded in the PDFs.",
+        "when_to_use":
+            "Building a benchmark rubric from one or more papers, before scoring models "
+            "against it. Benchmark-internal.",
+    },
+    "judge": {
+        "display_name": "Rubric Judge",
+        "description":
+            "Scores a model's answers against a generated rubric. Tracks agreement, "
+            "partial credit, and domain-specific correctness.",
+        "when_to_use":
+            "Evaluating model outputs after a benchmark run. Benchmark-internal.",
+    },
+    "research_chat": {
+        "display_name": "Research Chat",
+        "description":
+            "General-purpose clinical research assistant. Handles methodology questions, "
+            "evidence appraisal, and open-ended research conversations.",
+        "when_to_use":
+            "Default agent for brainstorming, quick answers, or when you're not sure "
+            "which specialist fits the question.",
+    },
+    "search_strategist": {
+        "display_name": "Search Strategist",
+        "description":
+            "Turns research questions into rigorous PubMed / Cochrane / Embase queries. "
+            "Extracts PICO, picks MeSH terms, and drafts Boolean strategies.",
+        "when_to_use":
+            "Designing a literature-search strategy, refining a database query, or "
+            "planning a systematic review's search layer.",
+    },
+    "statistician": {
+        "display_name": "Statistician",
+        "description":
+            "Designs statistical analysis plans, critiques study statistics, and drafts "
+            "analysis code (R / Python) for clinical datasets.",
+        "when_to_use":
+            "Writing a statistical analysis plan, troubleshooting study stats, or "
+            "generating reproducible analysis scripts.",
+    },
+    "study_appraiser": {
+        "display_name": "Study Appraiser",
+        "description":
+            "Critically appraises study design and risk of bias using validated frameworks "
+            "(RoB 2, ROBINS-I, Newcastle-Ottawa, QUADAS-2).",
+        "when_to_use":
+            "Assessing internal validity of a trial or observational study for a systematic "
+            "review or evidence synthesis.",
+    },
+    "hypothesis_generator": {
+        "display_name": "Hypothesis Generator",
+        "description":
+            "Proposes novel, testable clinical hypotheses from gaps in the literature. "
+            "Includes a novelty assessment and suggested study design.",
+        "when_to_use":
+            "Generating new research directions after reviewing the evidence, or when "
+            "drafting grant specific aims.",
+    },
+    "literature_reviewer": {
+        "display_name": "Literature Reviewer",
+        "description":
+            "Produces thematic narrative syntheses with proper citations and conflict "
+            "detection across multiple studies.",
+        "when_to_use":
+            "Drafting a literature-review section or a synthesis of existing evidence on "
+            "a focused question.",
+    },
+    "study_builder": {
+        "display_name": "Study Builder",
+        "description":
+            "Drafts protocol sections (population, intervention, outcomes, analysis) and "
+            "explains the trade-offs behind each design decision.",
+        "when_to_use":
+            "Building a study protocol section-by-section, or comparing design options "
+            "before committing.",
+    },
+    "protocol_evaluator": {
+        "display_name": "Protocol Evaluator",
+        "description":
+            "Evaluates a draft protocol against SPIRIT 2013 and regulatory guidance. "
+            "Flags missing elements and scientific weaknesses.",
+        "when_to_use":
+            "Reviewing a finished (or near-finished) protocol before submission or "
+            "before a scientific-review committee meeting.",
+    },
+}
+
+# Agents the user should see in the Methods sidebar card list. Generator + Judge
+# are internal to the benchmark loop and are excluded from the user-facing view.
+USER_FACING_AGENT_TYPES: tuple[str, ...] = (
+    "research_chat", "search_strategist", "statistician", "study_appraiser",
+    "hypothesis_generator", "literature_reviewer", "study_builder", "protocol_evaluator",
+)
+
+
+def migrate_agent_skills_metadata(conn) -> None:
+    """Phase-1a migration: add display_name / description / when_to_use columns
+    to agent_skills and backfill them from SKILL_METADATA. Idempotent — skips
+    existing columns and only writes rows where metadata is NULL.
+    """
+    from backend.db import column_exists
+
+    for col in ("display_name", "description", "when_to_use"):
+        if not column_exists(conn, "agent_skills", col):
+            conn.execute(f"ALTER TABLE agent_skills ADD COLUMN {col} TEXT")
+
+    # Backfill — only touch rows where metadata is missing, so admin edits to
+    # live rows aren't clobbered on boot.
+    for agent_type, meta in SKILL_METADATA.items():
+        conn.execute(
+            """UPDATE agent_skills
+                  SET display_name = COALESCE(display_name, ?),
+                      description  = COALESCE(description,  ?),
+                      when_to_use  = COALESCE(when_to_use,  ?)
+                WHERE agent_type = ?""",
+            (meta["display_name"], meta["description"], meta["when_to_use"], agent_type),
+        )
+    conn.commit()
 
 
 def migrate_agent_skills_check(conn) -> None:
@@ -661,6 +800,52 @@ def seed_v1_skills(conn: sqlite3.Connection) -> None:
                 logger.error("seed_v1_skills INSERT failed for %s: %s", agent_type, e)
                 conn.rollback()
     conn.commit()
+
+
+def list_system_methods(conn: sqlite3.Connection) -> list[dict]:
+    """User-facing read-only view of every built-in agent's capability.
+
+    Returns ONLY the metadata columns (display_name / description / when_to_use)
+    plus public version + avg_performance. NEVER returns prompt_text — that's
+    the authoritative, autoresearch-improved IP and must not leak. The
+    /api/methods/system endpoint depends on this invariant.
+    """
+    q = (
+        "SELECT agent_type, version, avg_performance, display_name, description, when_to_use "
+        "FROM agent_skills WHERE active=1 AND agent_type IN ({})"
+        .format(",".join("?" * len(USER_FACING_AGENT_TYPES)))
+    )
+    rows = conn.execute(q, USER_FACING_AGENT_TYPES).fetchall()
+    # Fall back to v1 if no active row is flagged (some historical seeds never set active=1)
+    seen = {r["agent_type"] for r in rows}
+    for agent_type in USER_FACING_AGENT_TYPES:
+        if agent_type in seen:
+            continue
+        r = conn.execute(
+            "SELECT agent_type, version, avg_performance, display_name, description, when_to_use "
+            "FROM agent_skills WHERE agent_type=? ORDER BY version DESC LIMIT 1",
+            (agent_type,),
+        ).fetchone()
+        if r:
+            rows = list(rows) + [r]
+
+    # Preserve the USER_FACING_AGENT_TYPES order so the card layout is stable
+    # across reloads regardless of row_factory ordering.
+    order = {t: i for i, t in enumerate(USER_FACING_AGENT_TYPES)}
+    rows = sorted(rows, key=lambda r: order.get(r["agent_type"], 99))
+
+    # Copy row → plain dict so callers can't accidentally see other columns.
+    return [
+        {
+            "agent_type":      r["agent_type"],
+            "version":         r["version"],
+            "avg_performance": r["avg_performance"] or 0.0,
+            "display_name":    r["display_name"] or r["agent_type"].replace("_", " ").title(),
+            "description":     r["description"] or "",
+            "when_to_use":     r["when_to_use"] or "",
+        }
+        for r in rows
+    ]
 
 
 def get_active_skill(conn: sqlite3.Connection, agent_type: str) -> dict:

@@ -33,8 +33,11 @@ from backend.helpers import (
     call_gemini as _call_gemini,
     call_openai as _call_openai,
 )
+from backend.user_tools import USER_TOOLS_TABLES_SQL
+from backend import user_tools as user_tools_mod
 from backend.skills import (
     SKILLS_TABLE_SQL, seed_v1_skills, migrate_agent_skills_check,
+    migrate_agent_skills_metadata, list_system_methods,
     get_active_skill, list_skill_versions,
 )
 from backend import challenges as bench
@@ -398,6 +401,11 @@ def init_db() -> None:
     _migrate_search_sessions_columns(conn)
     migrate_agent_skills_check(conn)
     seed_v1_skills(conn)
+    # Sources / Briefing / Methods — user-authored tools that layer on top of
+    # every Lab chat. Schema is purely additive; behavior lights up when the
+    # Phase-1c prompt composer + Phase-2 frontend ship.
+    conn.executescript(USER_TOOLS_TABLES_SQL)
+    migrate_agent_skills_metadata(conn)
     seed_credit_packs(conn)
     seed_plans(conn)
     _migrate_storage_mb_column(conn)
@@ -5175,6 +5183,132 @@ async def api_lab_upload_document(
     finally:
         conn.close()
     return doc
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Sources / Briefing / Methods — user-authored tools layered on every Lab chat
+# ═══════════════════════════════════════════════════════════════════════════
+# Sources live in the existing lab_documents table + endpoints below.
+# Briefing + user-authored Methods + system-agent method cards are defined here.
+
+class BriefingPayload(BaseModel):
+    text: str = ""
+
+
+class MethodCreatePayload(BaseModel):
+    name: str
+    when_to_use: str = ""
+    instructions: str
+
+
+class MethodUpdatePayload(BaseModel):
+    name: str | None = None
+    when_to_use: str | None = None
+    instructions: str | None = None
+    active: bool | None = None
+
+
+@app.get("/api/briefing")
+def api_briefing_get(rubricgen_session: str | None = Cookie(default=None)):
+    """Return the caller's briefing — the free-form instructions block that
+    gets prepended onto every Lab agent's system prompt."""
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
+    conn = get_db()
+    try:
+        return user_tools_mod.get_briefing(conn, user["id"])
+    finally:
+        conn.close()
+
+
+@app.put("/api/briefing")
+def api_briefing_put(body: BriefingPayload,
+                     rubricgen_session: str | None = Cookie(default=None)):
+    """Upsert the caller's briefing. 413 if it exceeds the 4000-char cap."""
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
+    conn = get_db()
+    try:
+        return user_tools_mod.upsert_briefing(conn, user["id"], body.text or "")
+    finally:
+        conn.close()
+
+
+@app.get("/api/methods")
+def api_methods_list(rubricgen_session: str | None = Cookie(default=None)):
+    """List every user-authored method for the caller (active + inactive)."""
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
+    conn = get_db()
+    try:
+        return user_tools_mod.list_methods(conn, user["id"])
+    finally:
+        conn.close()
+
+
+@app.post("/api/methods", status_code=201)
+def api_methods_create(body: MethodCreatePayload,
+                       rubricgen_session: str | None = Cookie(default=None)):
+    """Create a user-authored method card (name / when-to-use / instructions)."""
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
+    conn = get_db()
+    try:
+        return user_tools_mod.create_method(
+            conn, user["id"], body.name, body.when_to_use, body.instructions
+        )
+    finally:
+        conn.close()
+
+
+@app.patch("/api/methods/{method_id}")
+def api_methods_update(method_id: int, body: MethodUpdatePayload,
+                       rubricgen_session: str | None = Cookie(default=None)):
+    """Partial update. Pass `active=False` to disable a method without deleting it."""
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
+    conn = get_db()
+    try:
+        return user_tools_mod.update_method(
+            conn, user["id"], method_id,
+            name=body.name, when_to_use=body.when_to_use,
+            instructions=body.instructions, active=body.active,
+        )
+    finally:
+        conn.close()
+
+
+@app.delete("/api/methods/{method_id}")
+def api_methods_delete(method_id: int,
+                       rubricgen_session: str | None = Cookie(default=None)):
+    """Permanently remove a user-authored method."""
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
+    conn = get_db()
+    try:
+        user_tools_mod.delete_method(conn, user["id"], method_id)
+        return {"status": "deleted"}
+    finally:
+        conn.close()
+
+
+@app.get("/api/methods/system")
+def api_methods_system(rubricgen_session: str | None = Cookie(default=None)):
+    """Read-only capability cards for each built-in Lab agent.
+
+    IMPORTANT — this is the user-facing surface on top of the autoresearch-
+    improved prompts. It returns ONLY metadata (display_name / description /
+    when_to_use / version / avg_performance). The authoritative prompt_text
+    NEVER leaves the server. If you add fields here, double-check they're not
+    prompt-bearing.
+    """
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "general")
+    conn = get_db()
+    try:
+        return list_system_methods(conn)
+    finally:
+        conn.close()
 
 
 @app.get("/api/lab/documents")

@@ -385,15 +385,32 @@ def _attach_documents_to_messages(messages: list[dict], doc_contents: list[dict]
     return messages
 
 
+def _system_prompt_for(conn, user_id: int, agent_type: str) -> str:
+    """Compose the final system prompt for this turn.
+
+    Takes the autoresearch-improved agent prompt from `agent_skills` and
+    prepends the user's Briefing + active Methods overlay (from
+    `backend/user_tools.py:compose_overlay`). The overlay is empty when the
+    user has set no briefing and has no active methods, in which case the
+    agent sees exactly its baseline skill prompt.
+    """
+    from . import user_tools as _ut
+    skill = get_active_skill(conn, agent_type)
+    overlay = _ut.compose_overlay(conn, user_id)
+    if not overlay:
+        return skill["prompt_text"]
+    return skill["prompt_text"] + "\n\n" + overlay
+
+
 def _chat_search_strategist(conn, session_id: int, user_id: int,
                              user_message: str,
                              doc_contents: list[dict] | None = None) -> dict:
     """Handle search strategist using skill-based prompt."""
-    skill = get_active_skill(conn, "search_strategist")
+    system_prompt = _system_prompt_for(conn, user_id, "search_strategist")
     messages = _build_chat_messages(conn, session_id)
     if doc_contents:
         messages = _attach_documents_to_messages(messages, doc_contents)
-    raw = call_anthropic(messages, skill["prompt_text"], max_tokens=4096)
+    raw = call_anthropic(messages, system_prompt, max_tokens=4096)
     parsed = _parse_ai_response(raw)
 
     # Update PICO if present
@@ -430,11 +447,11 @@ def _chat_lab_agent(conn, session_id: int, user_id: int,
                     user_message: str, agent_type: str,
                     doc_contents: list[dict] | None = None) -> dict:
     """Handle statistician, appraiser, hypothesis, and literature agents."""
-    skill = get_active_skill(conn, agent_type)
+    system_prompt = _system_prompt_for(conn, user_id, agent_type)
     messages = _build_chat_messages(conn, session_id)
     if doc_contents:
         messages = _attach_documents_to_messages(messages, doc_contents)
-    raw = call_anthropic(messages, skill["prompt_text"], max_tokens=8192)
+    raw = call_anthropic(messages, system_prompt, max_tokens=8192)
     parsed = _parse_ai_response(raw)
 
     metadata = {}
