@@ -26,6 +26,11 @@
     --border: var(--rule);
     --text:   var(--ink);
     --muted:  var(--ink-3);
+
+    /* Resizable right-pane width — baseline splits the post-sidebar area
+       roughly 50/50 between the PDF viewer and the form panel. JS updates
+       this on drag and persists the px value in localStorage. */
+    --form-w: calc((100vw - 230px - 6px) / 2);
   }
   html, body { font-family: var(--sans) !important; background: var(--paper-2) !important; color: var(--ink) !important; }
   .topbar {
@@ -289,9 +294,28 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
 }
 #link-btn:hover { background: #6d28d9; }
 
+/* ── DRAGGABLE DIVIDER ── */
+/* Sits between #pdf-panel and #form-panel; drag adjusts --form-w. */
+.pane-resizer {
+  width: 6px; flex-shrink: 0; cursor: col-resize;
+  background: var(--border); border-left: 1px solid var(--border);
+  transition: background .12s;
+  position: relative; z-index: 10;
+}
+.pane-resizer:hover,
+.pane-resizer.is-dragging { background: var(--sky); }
+/* Wider invisible hit-area for easier grabbing */
+.pane-resizer::before {
+  content: ''; position: absolute; inset: 0 -4px; cursor: col-resize;
+}
+/* While dragging, globally disable text selection + force col-resize cursor */
+body.pane-resizing { cursor: col-resize !important; user-select: none !important; }
+body.pane-resizing * { cursor: col-resize !important; user-select: none !important; }
+
 /* ── RIGHT: FORM PANEL (tabbed) ── */
 #form-panel {
-  width: var(--panel-w); flex-shrink: 0; display: flex; flex-direction: column;
+  width: var(--form-w); flex-shrink: 0; display: flex; flex-direction: column;
+  min-width: 280px; max-width: calc(100vw - 230px - 300px - 6px);
   background: var(--card); border-left: 1px solid var(--border); overflow: hidden;
 }
 #form-scroll { flex: 1; overflow-y: auto; padding: 16px; }
@@ -913,6 +937,10 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
 <!-- Floating elements -->
 <div id="active-field-banner">📎 Click a field to link selected text</div>
 <button id="link-btn" onclick="linkSelection()">📎 Link to: <span id="link-btn-field"></span></button>
+
+<!-- ── DRAGGABLE DIVIDER (PDF viewer ↔ form panel) ─────────────────────── -->
+<div id="pane-resizer" class="pane-resizer" role="separator" aria-orientation="vertical"
+     aria-label="Resize PDF viewer" title="Drag to resize"></div>
 
 <!-- ── FORM PANEL (tabbed right pane) ───────────────────────────────────── -->
 <div id="form-panel">
@@ -4027,6 +4055,85 @@ document.getElementById('file-input').addEventListener('change', function () {
       showRpTab(saved);
     }
   } catch(e) {}
+})();
+
+/* ─────────────────────────────────────────────────────────────────
+   Draggable divider between #pdf-panel and #form-panel.
+   Baseline splits the post-sidebar area 50/50; drag updates the
+   --form-w CSS variable on :root and persists the px value in
+   localStorage so it sticks across page loads.
+   ───────────────────────────────────────────────────────────────── */
+(function initPaneResizer() {
+  const resizer = document.getElementById('pane-resizer');
+  if (!resizer) return;
+  const SIDEBAR_W = 230;     // #sidebar width (fixed)
+  const RESIZER_W = 6;       // .pane-resizer width
+  const MIN_PDF_W = 300;     // keep PDF viewer usable
+  const MIN_FORM_W = 280;    // keep form tabs readable
+  const STORAGE_KEY = 'annotator_form_w_px';
+
+  function clampW(px) {
+    const maxForm = Math.max(MIN_FORM_W, window.innerWidth - SIDEBAR_W - RESIZER_W - MIN_PDF_W);
+    return Math.min(maxForm, Math.max(MIN_FORM_W, px));
+  }
+  function setFormW(px) {
+    const clamped = clampW(px);
+    document.documentElement.style.setProperty('--form-w', clamped + 'px');
+    return clamped;
+  }
+
+  // Restore saved width, if any and still valid for this viewport.
+  try {
+    const saved = parseInt(localStorage.getItem(STORAGE_KEY) || '', 10);
+    if (Number.isFinite(saved) && saved > 0) setFormW(saved);
+  } catch (e) {}
+
+  let dragging = false;
+  function onMouseMove(e) {
+    if (!dragging) return;
+    // --form-w = viewport.right - cursor.x (minus half the resizer so the
+    // centerline tracks under the cursor).
+    const targetW = window.innerWidth - e.clientX - (RESIZER_W / 2);
+    setFormW(targetW);
+    e.preventDefault();
+  }
+  function onMouseUp() {
+    if (!dragging) return;
+    dragging = false;
+    resizer.classList.remove('is-dragging');
+    document.body.classList.remove('pane-resizing');
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup', onMouseUp);
+    // Persist the final px width (read what we actually landed on).
+    try {
+      const current = getComputedStyle(document.getElementById('form-panel')).width;
+      const px = parseFloat(current);
+      if (Number.isFinite(px) && px > 0) {
+        localStorage.setItem(STORAGE_KEY, String(Math.round(px)));
+      }
+    } catch (e) {}
+  }
+  resizer.addEventListener('mousedown', function(e) {
+    dragging = true;
+    resizer.classList.add('is-dragging');
+    document.body.classList.add('pane-resizing');
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    e.preventDefault();
+  });
+
+  // Double-click resets to the 50/50 baseline.
+  resizer.addEventListener('dblclick', function() {
+    const baseline = (window.innerWidth - SIDEBAR_W - RESIZER_W) / 2;
+    setFormW(baseline);
+    try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+  });
+
+  // Re-clamp on viewport resize so one side can't disappear.
+  window.addEventListener('resize', function() {
+    const current = parseFloat(getComputedStyle(document.getElementById('form-panel')).width);
+    if (Number.isFinite(current)) setFormW(current);
+  });
 })();
 </script>
 </body>
