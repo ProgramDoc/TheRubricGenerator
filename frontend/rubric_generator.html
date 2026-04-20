@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>The AI Researcher — PDF Viewer</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<link rel="stylesheet" href="/static/_shared/design.css">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
 
@@ -114,17 +115,33 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
 .batch-count { background: var(--purple); color: #fff; border-radius: 10px; padding: 1px 7px; font-size: 9px; }
 #clear-batch-btn { margin-left: auto; background: none; border: none; color: #a78bfa; cursor: pointer; font-size: 10px; font-family: inherit; }
 
-/* ── PDF VIEWER ── */
-#pdf-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; background: #2c2c2c; }
-#pdf-toolbar { height: 36px; background: #1a1a1a; display: flex; align-items: center; padding: 0 10px; gap: 6px; flex-shrink: 0; }
-#pdf-toolbar button { background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12); color: #ccc; cursor: pointer; border-radius: 3px; padding: 2px 8px; font-size: 11px; }
-#pdf-toolbar button:hover { background: rgba(255,255,255,.14); }
-#pdf-toolbar input[type=number] { width: 44px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.15); color: #fff; border-radius: 3px; padding: 2px 5px; font-size: 11px; text-align: center; font-family: 'IBM Plex Mono', monospace; }
-#pdf-toolbar span { color: rgba(255,255,255,.4); font-size: 11px; font-family: 'IBM Plex Mono', monospace; }
+/* ── PDF VIEWER ──────────────────────────────────────────────────────
+   Paper-theme chrome. Surfaces draw from the shared design-css tokens
+   so the PDF viewer matches the rest of the app and the annotator. */
+#pdf-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; background: var(--paper-2, #f6f3ed); }
+#pdf-toolbar {
+  height: 42px; background: var(--paper, #fbf8f2); display: flex; align-items: center;
+  padding: 0 14px; gap: 8px; flex-shrink: 0;
+  border-bottom: 1px solid var(--rule, #e2dccf);
+}
+#pdf-toolbar button {
+  background: transparent; border: 1px solid var(--rule, #e2dccf);
+  color: var(--ink-2, #30302f); cursor: pointer; border-radius: 6px;
+  padding: 4px 9px; font-size: 12px; font-family: inherit;
+  transition: background .12s, border-color .12s, color .12s;
+}
+#pdf-toolbar button:hover { background: var(--paper-2, #f6f3ed); border-color: var(--rule-2, #cfc9bb); color: var(--ink, #1a1a1a); }
+#pdf-toolbar input[type=number] {
+  width: 48px; background: var(--paper-2, #f6f3ed); border: 1px solid var(--rule, #e2dccf);
+  color: var(--ink, #1a1a1a); border-radius: 6px; padding: 3px 6px; font-size: 12px;
+  text-align: center; font-family: var(--mono, 'IBM Plex Mono', monospace);
+}
+#pdf-toolbar span { color: var(--ink-3, #6a6a68); font-size: 11.5px; font-family: var(--mono, 'IBM Plex Mono', monospace); }
 .tb-spacer { flex: 1; }
-#pdf-scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; align-items: center; padding: 16px; gap: 12px; }
-#no-paper { color: rgba(255,255,255,.25); font-size: 13px; margin: auto; text-align: center; line-height: 1.8; }
+#pdf-scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; align-items: center; padding: 28px 20px; gap: 20px; background: var(--paper-2, #f6f3ed); }
+#no-paper { color: var(--ink-3, #6a6a68); font-size: 13px; margin: auto; text-align: center; line-height: 1.8; font-family: var(--sans, 'IBM Plex Sans', sans-serif); }
 #no-paper .hint { font-size: 28px; margin-bottom: 12px; }
+.page-wrapper { box-shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 8px 24px rgba(15, 23, 42, .08); background: #fff; border-radius: 2px; }
 
 /* ── RIGHT PANEL ── */
 #right-panel {

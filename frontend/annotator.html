@@ -819,6 +819,83 @@ body.pane-resizing * { cursor: col-resize !important; user-select: none !importa
   .project-filter-select:hover { background-color: var(--paper-3) !important; border-color: var(--rule-2) !important; }
   .project-filter-select option { background: var(--paper) !important; color: var(--ink) !important; }
 
+  /* ── Paper-theme PDF viewer chrome ──────────────────────────────────
+     The PDF panel and its toolbar were styled for a dark IDE look
+     (#2a2a2a / #1a1a1a). Repaint to the Paper aesthetic so it matches
+     the rest of the app: cream surface, subtle page shadow, ink text,
+     serif breadcrumb vibe. */
+  #pdf-panel { background: var(--paper-2) !important; }
+  #pdf-toolbar {
+    height: 42px !important;
+    background: var(--paper) !important;
+    border-bottom: 1px solid var(--rule) !important;
+    padding: 0 14px !important;
+    gap: 8px !important;
+  }
+  #pdf-toolbar button {
+    background: transparent !important; color: var(--ink-2) !important;
+    border: 1px solid var(--rule) !important; border-radius: 6px !important;
+    padding: 4px 9px !important; font-size: 12px !important;
+    font-family: var(--sans) !important;
+    transition: background .12s, border-color .12s, color .12s;
+  }
+  #pdf-toolbar button:hover {
+    background: var(--paper-2) !important;
+    border-color: var(--rule-2) !important;
+    color: var(--ink) !important;
+  }
+  #pdf-toolbar input[type=number] {
+    background: var(--paper-2) !important;
+    border: 1px solid var(--rule) !important;
+    color: var(--ink) !important;
+    border-radius: 6px !important;
+    font-family: var(--mono) !important;
+  }
+  #page-info { color: var(--ink-3) !important; font-family: var(--mono) !important; font-size: 11.5px !important; }
+  #zoom-display { color: var(--ink-3) !important; font-family: var(--mono) !important; font-size: 11.5px !important; min-width: 46px; text-align: center; }
+  #pdf-scroll { background: var(--paper-2) !important; padding: 28px 20px !important; gap: 20px !important; }
+  .page-wrapper {
+    box-shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 8px 24px rgba(15, 23, 42, .08) !important;
+    border-radius: 2px;
+    background: #fff;
+  }
+  /* Prettier selection over the PDF canvas — matches the Paper accent. */
+  .textLayer ::selection { background: oklch(from var(--accent) l c h / .30) !important; }
+  .textLayer .highlight { background: oklch(85% 0.13 85 / .45) !important; border-radius: 2px; }
+
+  /* ── Right-pane typography polish ─────────────────────────────────
+     Section headers use mono small-caps as eyebrows, field labels and
+     tab labels gain the Paper accent. Keeps the data density while
+     adopting the serif+mono visual language of the mockup. */
+  #form-panel { background: var(--paper) !important; }
+  .rp-tab-bar {
+    background: var(--paper) !important;
+    border-bottom: 1px solid var(--rule) !important;
+  }
+  .rp-tab {
+    font-family: var(--mono) !important; letter-spacing: .08em !important;
+    color: var(--ink-3) !important; font-size: 10.5px !important;
+  }
+  .rp-tab:hover { color: var(--ink) !important; }
+  .rp-tab.active { color: var(--ink) !important; border-bottom-color: var(--accent) !important; background: var(--paper) !important; }
+  .form-section-header {
+    background: transparent !important;
+    color: var(--ink-3) !important;
+    font-family: var(--mono) !important;
+    letter-spacing: .12em !important;
+    border-left: none !important;
+    padding: 4px 0 !important;
+    border-bottom: 1px solid var(--rule) !important;
+    margin-bottom: 12px !important;
+    border-radius: 0 !important;
+  }
+  .field-label {
+    color: var(--ink-2) !important;
+    font-family: var(--sans) !important;
+    font-weight: 600 !important;
+    font-size: 11.5px !important;
+  }
+
 </style>
 </head>
 <body>
