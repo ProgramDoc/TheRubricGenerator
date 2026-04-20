@@ -786,6 +786,38 @@ body.pane-resizing * { cursor: col-resize !important; user-select: none !importa
     font-family: var(--mono) !important;
     letter-spacing: .12em !important;
   }
+  /* Leftover dark-theme text that used to sit on navy now sits on paper.
+     Repaint so these elements are actually readable. */
+  #sidebar #paper-count { color: var(--ink-4) !important; }
+  #sidebar-header span { color: var(--ink-2); }
+  #upload-zone {
+    border-color: var(--rule-2) !important;
+    background: var(--paper-2);
+  }
+  #upload-zone:hover { border-color: var(--accent) !important; background: var(--paper-3); }
+  #upload-zone p { color: var(--ink-3) !important; }
+  #upload-zone p strong { color: var(--ink) !important; }
+  .paper-item .pi-name { color: var(--ink) !important; }
+  .paper-item .pi-meta { color: var(--ink-3) !important; }
+  .paper-item:hover { background: var(--paper-2) !important; }
+  .paper-item.active { background: oklch(from var(--accent) l c h / .14) !important; }
+  .project-header:hover { background: var(--paper-2) !important; }
+  .project-name-text { color: var(--ink-2) !important; }
+  .project-name-text.unassigned { color: var(--ink-4) !important; }
+  .project-count { color: var(--ink-4) !important; }
+  .project-arrow { color: var(--ink-4) !important; }
+  .proj-act-btn { color: var(--ink-3) !important; }
+  .proj-act-btn:hover { color: var(--ink) !important; background: var(--paper-3) !important; }
+  /* Project-filter select — the navy-sidebar tuning we pushed earlier is
+     wrong for the paper background. Repaint. */
+  .project-filter-select {
+    background: var(--paper-2) !important;
+    border-color: var(--rule) !important;
+    color: var(--ink) !important;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'><path d='M1 3.5L5 7.5L9 3.5' stroke='%233f3f46' stroke-width='1.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>") !important;
+  }
+  .project-filter-select:hover { background-color: var(--paper-3) !important; border-color: var(--rule-2) !important; }
+  .project-filter-select option { background: var(--paper) !important; color: var(--ink) !important; }
 
 </style>
 </head>
