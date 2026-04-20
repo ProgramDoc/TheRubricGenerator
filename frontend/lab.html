@@ -178,6 +178,16 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 .benchmark-lab-section { background: linear-gradient(180deg, color-mix(in srgb, var(--blue) 4%, transparent), transparent); }
 .benchmark-lab-header { gap: 7px; color: var(--blue) !important; font-weight: 800; }
 .benchmark-lab-logo { display: inline-flex; align-items: center; justify-content: center; color: var(--blue); width: 18px; height: 18px; }
+
+/* Compact Methods entry — a single sidebar row that opens the full
+   interface in a right-pane tab when clicked. Keeps the user's mental
+   model of "Methods lives here" without taking much vertical space. */
+.methods-compact-section .methods-compact-header { cursor: pointer; padding-top: 9px; padding-bottom: 9px; }
+.methods-compact-section .methods-compact-header:hover { background: #f0f4ff; color: var(--blue); }
+.methods-compact-section .methods-compact-header:hover > span:first-child { color: var(--blue); }
+.methods-compact-meta { display: inline-flex; align-items: center; gap: 6px; }
+.methods-compact-count { font-family: var(--mono); font-size: 10px; color: var(--ink-4); background: color-mix(in srgb, var(--blue) 8%, transparent); padding: 1px 6px; border-radius: 8px; min-width: 16px; text-align: center; }
+.methods-compact-count:empty { display: none; }
 .interface-admin { color: var(--purple); font-weight: 600; }
 
 /* Context documents */
@@ -745,6 +755,16 @@ table.res-table tbody tr:hover { background: #f8fafc; }
       </div>
     </div>
 
+    <!-- ── Methods — compact entry. Click opens the full interface. ── -->
+    <div class="sidebar-section methods-compact-section">
+      <div class="sidebar-header methods-compact-header" onclick="openMethodsTab()" title="Open the Methods interface">
+        <span>Methods</span>
+        <span class="methods-compact-meta">
+          <span id="methods-compact-count" class="methods-compact-count"></span>
+          <button onclick="event.stopPropagation();openMethodEditor()" title="Add a method">+</button>
+        </span>
+      </div>
+    </div>
     <div class="sidebar-section">
       <div class="sidebar-header">Projects <button onclick="toggleNewProject()" title="New project">+</button></div>
       <div class="new-project-inline" id="new-project-form">
@@ -1136,6 +1156,7 @@ async function loadMethods() {
     if (!r.ok) return;
     USER_METHODS = await r.json();
     renderUserMethods();
+    updateMethodsCompactCount();
   } catch (e) { /* non-fatal */ }
 }
 
@@ -1145,7 +1166,18 @@ async function loadSystemMethods() {
     if (!r.ok) return;
     SYSTEM_METHODS = await r.json();
     renderSystemMethods();
+    updateMethodsCompactCount();
   } catch (e) { /* non-fatal */ }
+}
+
+// Shows the number of *active* user methods next to the sidebar row, so
+// at-a-glance the user knows if any methods are in flight.
+function updateMethodsCompactCount() {
+  const el = document.getElementById('methods-compact-count');
+  if (!el) return;
+  const activeUser = USER_METHODS.filter(m => m.active).length;
+  el.textContent = activeUser ? String(activeUser) : '';
+  el.title = activeUser + ' active user method' + (activeUser === 1 ? '' : 's');
 }
 
 function renderSystemMethods() {
@@ -1193,6 +1225,7 @@ async function toggleUserMethod(id, active) {
       const m = USER_METHODS.find(x => x.id === id);
       if (m) { m.active = active ? 1 : 0; }
       renderUserMethods();
+      updateMethodsCompactCount();
     }
   } catch (e) { /* non-fatal */ }
 }
@@ -1204,6 +1237,7 @@ async function deleteUserMethod(id) {
     if (r.ok) {
       USER_METHODS = USER_METHODS.filter(x => x.id !== id);
       renderUserMethods();
+      updateMethodsCompactCount();
     }
   } catch (e) { /* non-fatal */ }
 }
