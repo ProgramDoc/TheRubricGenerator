@@ -185,15 +185,8 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
 .benchmark-lab-header { gap: 7px; color: var(--blue) !important; font-weight: 800; }
 .benchmark-lab-logo { display: inline-flex; align-items: center; justify-content: center; color: var(--blue); width: 18px; height: 18px; }
 
-/* Compact Methods entry — a single sidebar row that opens the full
-   interface in a right-pane tab when clicked. Keeps the user's mental
-   model of "Methods lives here" without taking much vertical space. */
-.methods-compact-section .methods-compact-header { cursor: pointer; padding-top: 9px; padding-bottom: 9px; }
-.methods-compact-section .methods-compact-header:hover { background: #f0f4ff; color: var(--blue); }
-.methods-compact-section .methods-compact-header:hover > span:first-child { color: var(--blue); }
-.methods-compact-meta { display: inline-flex; align-items: center; gap: 6px; }
-.methods-compact-count { font-family: var(--mono); font-size: 10px; color: var(--ink-4); background: color-mix(in srgb, var(--blue) 8%, transparent); padding: 1px 6px; border-radius: 8px; min-width: 16px; text-align: center; }
-.methods-compact-count:empty { display: none; }
+/* Methods sidebar preview row reuses Briefing's .briefing-preview styling
+   so the two look like a matched pair (both feed the system prompt). */
 .interface-admin { color: var(--purple); font-weight: 600; }
 
 /* Context documents */
@@ -772,14 +765,16 @@ table.res-table tbody tr:hover { background: #f8fafc; }
       </div>
     </div>
 
-    <!-- ── Methods — compact entry. Click opens the full interface. ── -->
-    <div class="sidebar-section methods-compact-section">
-      <div class="sidebar-header methods-compact-header" onclick="openMethodsTab()" title="Open the Methods interface">
+    <!-- ── Methods — Briefing-style summary row. Click the preview to open
+         the full interface in the right pane; + adds a new user method. ── -->
+    <div class="sidebar-section" id="methods-section">
+      <div class="sidebar-header">
         <span>Methods</span>
-        <span class="methods-compact-meta">
-          <span id="methods-compact-count" class="methods-compact-count"></span>
-          <button onclick="event.stopPropagation();openMethodEditor()" title="Add a method">+</button>
-        </span>
+        <button onclick="openMethodEditor()" title="Add a method">+</button>
+      </div>
+      <div class="briefing-eyebrow">APPENDED TO EVERY AGENT</div>
+      <div id="methods-preview" class="briefing-preview" onclick="openMethodsTab()" title="Open the Methods interface">
+        <em style="color:var(--ink-4)">Loading methods…</em>
       </div>
     </div>
     <div class="sidebar-section" id="invitations-section" style="display:none">
@@ -809,7 +804,6 @@ table.res-table tbody tr:hover { background: #f8fafc; }
       <a class="interface-link" onclick="openTab('Models','iframe','/models')">Models</a>
       <a class="interface-link" onclick="openFullscreenTab('PDF Viewer','/pdf-viewer')">PDF Viewer</a>
       <a class="interface-link" onclick="openFullscreenTab('Annotator','/annotator')">Annotator</a>
-      <a class="interface-link" onclick="openMethodsTab()">Methods</a>
     </div>
   </div>
 
@@ -1178,15 +1172,46 @@ async function loadSystemMethods() {
   } catch (e) { /* non-fatal */ }
 }
 
-// Shows the number of *active* user methods next to the sidebar row, so
-// at-a-glance the user knows if any methods are in flight.
-function updateMethodsCompactCount() {
-  const el = document.getElementById('methods-compact-count');
+// Renders a small Briefing-style preview in the sidebar — lists active
+// user-method names (truncated with "+N more" if too many) plus a faint
+// tail indicating how many built-in agent capability cards exist. Click
+// opens the full Methods interface in the right pane.
+function renderMethodsPreview() {
+  const el = document.getElementById('methods-preview');
   if (!el) return;
-  const activeUser = USER_METHODS.filter(m => m.active).length;
-  el.textContent = activeUser ? String(activeUser) : '';
-  el.title = activeUser + ' active user method' + (activeUser === 1 ? '' : 's');
+  const active = USER_METHODS.filter(m => m.active);
+  const systemCount = SYSTEM_METHODS.length;
+
+  if (!active.length && !systemCount) {
+    el.innerHTML = '<em style="color:var(--ink-4)">No methods yet — click to add one.</em>';
+    return;
+  }
+  if (!active.length) {
+    el.innerHTML =
+      '<span style="color:var(--ink-3);">' + systemCount +
+      ' agent capabilit' + (systemCount === 1 ? 'y' : 'ies') +
+      '</span>' +
+      '<div style="color:var(--ink-4);font-size:10.5px;margin-top:3px;">No active user methods.</div>';
+    return;
+  }
+  const MAX = 2;
+  const head = active.slice(0, MAX).map(m =>
+    '<span class="chip" style="background:color-mix(in srgb,var(--blue) 10%, transparent);color:var(--blue);padding:1px 7px;border-radius:8px;font-size:10.5px;margin-right:4px;display:inline-block;">' +
+    escapeHtml(m.name) + '</span>'
+  ).join('');
+  const overflow = active.length - MAX;
+  const tail = overflow > 0
+    ? '<span style="color:var(--ink-4);font-size:10.5px;">+' + overflow + ' more</span>'
+    : '';
+  const sysLine = systemCount
+    ? '<div style="color:var(--ink-4);font-size:10.5px;margin-top:4px;">' + systemCount +
+      ' agent capabilit' + (systemCount === 1 ? 'y' : 'ies') + ' listed.</div>'
+    : '';
+  el.innerHTML = '<div style="line-height:1.5;">' + head + tail + '</div>' + sysLine;
 }
+// Back-compat alias so existing call sites (load/toggle/delete paths)
+// don't need to change.
+function updateMethodsCompactCount() { renderMethodsPreview(); }
 
 function renderSystemMethods() {
   const host = document.getElementById('system-methods-list');
