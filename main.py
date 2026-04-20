@@ -6239,6 +6239,35 @@ def api_annotator_runs_csv(rid: int,
     )
 
 
+@app.delete("/api/annotator/runs/{rid}")
+def api_annotator_runs_delete(rid: int,
+                              rubricgen_session: str | None = Cookie(default=None),
+                              x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Delete a past custom-extraction run. Only removes the run row — the
+    source schema and the papers themselves are untouched. No credits are
+    refunded by deletion (credits are already either consumed or refunded
+    at run time based on status)."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT id FROM annotator_custom_runs WHERE id=? AND user_id=?",
+            (rid, user["id"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "run not found")
+        with conn:
+            conn.execute(
+                "DELETE FROM annotator_custom_runs WHERE id=? AND user_id=?",
+                (rid, user["id"]),
+            )
+            conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "deleted_id": rid}
+
+
 @app.get("/api/annotator/export.csv")
 def api_annotator_export_csv(paper_id: int | None = None,
                              project_id: int | None = None,

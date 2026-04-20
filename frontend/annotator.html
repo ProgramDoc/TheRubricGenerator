@@ -1210,11 +1210,22 @@ body.pane-resizing * { cursor: col-resize !important; user-select: none !importa
   <!-- ── TAB: Results (custom-run outputs) ─────────────────────────────── -->
   <div class="rp-pane" id="tab-pane-results">
     <div class="rp-scroll">
+      <!-- Navigation row: back to the Form view (main annotator) -->
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+        <button class="tb-btn" onclick="showRpTab('form')"
+                title="Return to the main annotator view"
+                style="font-size:11px;padding:5px 10px;">← Back to annotator</button>
+        <span style="font-size:10px;color:var(--muted);font-family:'IBM Plex Mono',monospace;letter-spacing:.04em;text-transform:uppercase;">Past runs</span>
+      </div>
+      <!-- Run picker + per-run actions -->
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:10px;">
         <select id="runs-select" onchange="loadRun(this.value)" style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:3px;font-family:inherit;font-size:11px;background:#fff;outline:none;">
           <option value="">Select a run…</option>
         </select>
         <button class="tb-btn" id="run-csv-btn" onclick="exportRunCsv()" disabled style="font-size:11px;padding:5px 10px;">⬇ CSV</button>
+        <button class="tb-btn" id="run-delete-btn" onclick="deleteCurrentRun()" disabled
+                title="Delete the selected run (schema and papers stay)"
+                style="font-size:11px;padding:5px 10px;background:rgba(220,38,38,.08);border-color:rgba(220,38,38,.35);color:#b91c1c;">✕ Delete</button>
         <button class="tb-btn" onclick="loadRuns()" title="Refresh" style="font-size:11px;padding:5px 8px;">↻</button>
       </div>
       <div id="run-detail" style="font-size:11px;color:var(--muted);">Select a run to see extracted values across papers.</div>
@@ -3966,6 +3977,8 @@ async function loadRun(runId) {
     document.getElementById('run-detail').textContent = 'Select a run to see extracted values across papers.';
     document.getElementById('run-table-host').innerHTML = '';
     document.getElementById('run-csv-btn').disabled = true;
+    const delBtn = document.getElementById('run-delete-btn');
+    if (delBtn) delBtn.disabled = true;
     return;
   }
   try {
@@ -3975,7 +3988,34 @@ async function loadRun(runId) {
     _currentRunId = runId;
     renderRunTable();
     document.getElementById('run-csv-btn').disabled = false;
+    const delBtn = document.getElementById('run-delete-btn');
+    if (delBtn) delBtn.disabled = false;
   } catch(e) {}
+}
+
+async function deleteCurrentRun() {
+  if (!_currentRunId) return;
+  const sel = document.getElementById('runs-select');
+  const label = sel ? (sel.options[sel.selectedIndex]?.textContent || ('run #' + _currentRunId)) : ('run #' + _currentRunId);
+  if (!confirm('Delete this run?\n\n' + label + '\n\nThe schema and papers are kept. This cannot be undone.')) return;
+  try {
+    const r = await fetch('/api/annotator/runs/' + _currentRunId, { method: 'DELETE' });
+    if (!r.ok) {
+      let msg = 'Delete failed.';
+      try { const j = await r.json(); if (j && j.detail) msg += ' ' + j.detail; } catch (e) {}
+      alert(msg);
+      return;
+    }
+    _currentRunId = null; _currentRunDetail = null;
+    document.getElementById('run-detail').textContent = 'Select a run to see extracted values across papers.';
+    document.getElementById('run-table-host').innerHTML = '';
+    document.getElementById('run-csv-btn').disabled = true;
+    const delBtn = document.getElementById('run-delete-btn');
+    if (delBtn) delBtn.disabled = true;
+    await loadRuns();
+  } catch (e) {
+    alert('Delete failed: ' + (e && e.message ? e.message : e));
+  }
 }
 
 function renderRunTable() {
