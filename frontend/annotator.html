@@ -895,6 +895,47 @@ body.pane-resizing * { cursor: col-resize !important; user-select: none !importa
     font-weight: 600 !important;
     font-size: 11.5px !important;
   }
+  /* Wrap each form-section in a soft card with subtle hairline rule +
+     layered shadow, matching the mockup's "card on cream" pattern.
+     Purely visual — field IDs, inputs, spans, and their handlers are
+     unchanged. */
+  #form-scroll { background: var(--paper-2) !important; padding: 18px !important; }
+  .form-section {
+    background: var(--paper) !important;
+    border: 1px solid var(--rule) !important;
+    border-radius: 10px;
+    padding: 14px 16px 12px;
+    margin-bottom: 14px !important;
+    box-shadow: 0 1px 2px rgba(15,23,42,.03);
+  }
+  .form-section .form-section-header {
+    margin: -14px -16px 10px !important;
+    padding: 10px 16px !important;
+    border-bottom: 1px solid var(--rule) !important;
+    border-radius: 10px 10px 0 0 !important;
+    background: var(--paper-2) !important;
+  }
+  .field-row input[type=text],
+  .field-row textarea,
+  .field-row select {
+    background: var(--paper) !important;
+    border-color: var(--rule) !important;
+    color: var(--ink) !important;
+    border-radius: 6px !important;
+    font-family: var(--sans) !important;
+  }
+  .field-row input[type=text]:hover,
+  .field-row textarea:hover,
+  .field-row select:hover { border-color: var(--rule-2) !important; }
+  .field-row input[type=text]:focus,
+  .field-row textarea:focus,
+  .field-row select:focus {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 3px oklch(from var(--accent) l c h / .15) !important;
+    background: var(--paper) !important;
+  }
+  /* Export/Save buttons in the topbar share the new polished chip look. */
+  .tb-btn { border-radius: 6px !important; }
 
 </style>
 </head>
