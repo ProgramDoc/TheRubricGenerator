@@ -134,29 +134,32 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
 /* Project filter — dark-navy sidebar means the select label text needs
    strong contrast. The previous near-transparent background + light
    grey text was legible to one in three users at best. Bumping both. */
+/* Paper-theme select from the start (sidebar is cream now — no navy
+   baseline to override). Explicit background-size locks the caret SVG
+   at 10×10 so nothing can re-interpret the size and tile it. */
 .project-filter-select {
-  background: rgba(255,255,255,.14);
-  border: 1px solid rgba(255,255,255,.22);
-  color: #fff;
-  border-radius: 4px;
-  padding: 5px 26px 5px 8px;
+  background-color: var(--paper-2);
+  border: 1px solid var(--rule);
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 5px 26px 5px 10px;
   font-size: 11.5px;
   font-weight: 500;
-  font-family: inherit;
+  font-family: var(--sans);
   outline: none;
   cursor: pointer;
   width: 100%;
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
-  /* Down caret rendered as an SVG data URI so it paints in any UA */
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'><path d='M1 3.5L5 7.5L9 3.5' stroke='white' stroke-width='1.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'><path d='M1 3.5L5 7.5L9 3.5' stroke='%233f3f46' stroke-width='1.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
   background-repeat: no-repeat;
   background-position: right 8px center;
+  background-size: 10px 10px;
 }
-.project-filter-select:hover { background-color: rgba(255,255,255,.2); border-color: rgba(255,255,255,.32); }
-.project-filter-select:focus { border-color: var(--sky); }
-.project-filter-select option { background: #1e2d42; color: #fff; }
+.project-filter-select:hover { background-color: var(--paper-3); border-color: var(--rule-2); }
+.project-filter-select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px oklch(from var(--accent) l c h / .15); }
+.project-filter-select option { background: var(--paper); color: var(--ink); }
 
 /* min-height:0 overrides the default flex-child min-height:auto, which
    otherwise locks this at its content size and pushes #upload-zone and
@@ -808,21 +811,8 @@ body.pane-resizing * { cursor: col-resize !important; user-select: none !importa
   .project-arrow { color: var(--ink-4) !important; }
   .proj-act-btn { color: var(--ink-3) !important; }
   .proj-act-btn:hover { color: var(--ink) !important; background: var(--paper-3) !important; }
-  /* Project-filter select — the navy-sidebar tuning we pushed earlier is
-     wrong for the paper background. Repaint. */
-  .project-filter-select {
-    /* background shorthand would reset repeat/position longhands — set
-       only background-color so the base rule's no-repeat + position
-       keep working with the caret SVG below. */
-    background-color: var(--paper-2) !important;
-    border-color: var(--rule) !important;
-    color: var(--ink) !important;
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'><path d='M1 3.5L5 7.5L9 3.5' stroke='%233f3f46' stroke-width='1.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>") !important;
-    background-repeat: no-repeat !important;
-    background-position: right 8px center !important;
-  }
-  .project-filter-select:hover { background-color: var(--paper-3) !important; border-color: var(--rule-2) !important; }
-  .project-filter-select option { background: var(--paper) !important; color: var(--ink) !important; }
+  /* (.project-filter-select styling moved into the base rule above —
+     the sidebar is always Paper now, no navy baseline to override.) */
 
   /* ── Paper-theme PDF viewer chrome ──────────────────────────────────
      The PDF panel and its toolbar were styled for a dark IDE look
