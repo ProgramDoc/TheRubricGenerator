@@ -6,17 +6,18 @@
 
 ---
 
-## Current State (April 16, 2026)
+## Current State (April 20, 2026)
 
 ### Codebase Summary
 
 | Component | Files | Lines |
 |-----------|-------|-------|
-| `main.py` | 1 | ~5,900 |
-| `backend/` modules | 25 | ~11,200 |
-| `frontend/` pages | 20 | ~16,600 |
+| `main.py` | 1 | ~6,890 |
+| `backend/` modules | 27 | ~13,100 |
+| `frontend/` pages | 22 | ~21,650 |
+| `frontend/_shared/design.css` | 1 | ~420 |
 | `tests/` | 3 | ~670 |
-| **Total** | **49** | **~34,370** |
+| **Total** | **54** | **~42,730** |
 
 ### What's Live
 
@@ -68,6 +69,15 @@
 - **Annotator analytics dashboard:** Right-pane Analytics tab with four Chart.js views (field completion rates, categorical distributions, min/median/max numeric summaries, reviewer-action breakdown) scoped to current paper / project / batch / all
 - **Paper storage on S3:** Paper uploads now route through `backend/paper_files.py` → `backend/storage.py` (S3 when `AWS_S3_BUCKET` is set, local `uploads/` otherwise). `papers.storage_path` records the durable location; legacy `disk_filename` is kept as a fallback for pre-migration rows. Survives Render's ephemeral-disk wipes
 - **Lab Conversations section:** Now capped at 180px with internal scroll; click the header to expand to 60vh. State persists in localStorage so other sections (Context, Projects, Invitations, Interfaces) stay in view
+- **Enterprise seat model (behind `ENTERPRISE_MODE` flag):** Legacy individual Free/Pro/Enterprise plans replaced by an enterprise-only seat model. Seats: Admin ($450/mo, 500 credits), Engineer ($250/mo, 300 credits), General ($100/mo, 100 credits). One Stripe subscription per org with three SubscriptionItems — quantity = purchased seat pool. `require_active_seat(user, min_seat)` middleware (141 call sites) is a no-op while the flag is off, then enforces `402 no_active_seat` / `403 insufficient_seat` on cutover. Owner/admin/engineer/general role hierarchy with 7-day past_due grace window
+- **Enterprise pages:** `/onboarding` (join-by-code or start-enterprise) and `/enterprise/{id}` (seat pool management, members table, cost card). `/billing` plan grid gone; banner routes to `/enterprise/{id}` or `/onboarding` depending on seat state
+- **Paper design system:** Global OKLCH-based Paper theme (`frontend/_shared/design.css`) with Geist + Source Serif 4 + JetBrains Mono typography. All pages migrated to shared tokens (`--paper`, `--ink`, `--rule`, `--accent`, `--radius-sm/md/lg`, `--shadow-1/2/3`, `--topbar-h`). Consistent brand-mark / topbar-right markup across every page
+- **Lab Sources/Briefing/Methods:** Three per-user, cross-project features replacing the old "Context" section. **Sources**: uploaded files with selection checkboxes; only checked files' `document_ids` reach the chat API (previously all uploads were sent or none). **Briefing**: free-form text (4 000-char cap) prepended to every agent's system prompt. **Methods**: user-authored procedure cards (name + when-to-use + instructions + active toggle) appended to the system prompt, plus read-only `agent_skills` capability cards surfaced without exposing `prompt_text`. Research-native naming avoids Claude/Anthropic's Files/Instructions/Skills terms
+- **The Benchmark Lab sidebar heading:** Lab sidebar's "Interfaces" section renamed to "The Benchmark Lab" with an inline flask+sparkline SVG logo. Flattened sub-group so every interface (Dashboard, Challenges, Leaderboard, Analytics, Models, PDF Viewer, Annotator, Admin) is a direct child. Library + Developers moved out to the topbar nav. Projects moved above Conversations in the left pane
+- **Lab agent roles with logo + color:** "Research Chat" → "The Research Assistant"; every agent gets a "The X" role name (The Statistician, The Evidence Appraiser, The Hypothesis Generator, The Literature Reviewer, etc.). Each agent carries its own accent color and icon. `switchAgent()` sets `--agent-c` on `#panel-center`; the label, label dot, active speed button, and agent-switch divider pill all pick it up. Switching a role stays in the same thread — no new chat
+- **Annotator draggable divider:** 6 px `.pane-resizer` between `#pdf-panel` and `#form-panel`; `--form-w` CSS variable baselines the post-sidebar split 50/50. Drag updates live, mouseup persists px to localStorage, double-click resets. Min widths 300 px (PDF) / 280 px (form) so neither pane collapses
+- **Annotator results pane: delete runs + back button:** `DELETE /api/annotator/runs/{rid}` (engineer seat, schema + papers preserved). "← Back to annotator" button at the top of the Results pane returns to the Form tab. Red "✕ Delete" button with confirmation next to the CSV export
+- **PDF viewer + annotator Paper-themed chrome:** The PDF viewer at `/pdf-viewer` (served from `rubric_generator.html`) and the annotator's `#pdf-panel` swap dark-IDE greys (#2a2a2a / #1a1a1a) for the cream `--paper-2` + hairline `--rule` borders. Toolbar buttons become pill-outlined chips, page shadow softened to a small-crisp + diffused pair, text-layer highlight + selection adopt the Paper accent. Annotator form sections render as soft cards on cream (1 px rule, 10 px radius, subtle shadow). Pure visual — no field IDs, inputs, spans, or handlers changed
 
 ---
 
@@ -293,6 +303,84 @@ Paper uploads now route through durable storage so PDFs survive Render redeploys
 - **DELETE `/api/papers/{pid}`** now calls `delete_paper_file()` to clean up the S3 object (and any legacy local copy) before removing the row
 - **Tests**: new `test_upload_records_storage_path` and `test_pdf_read_survives_wiped_papers_dir` — the second simulates a Render disk wipe by redirecting `PAPERS_DIR` to an empty tmp dir and confirming `/api/papers/{id}/pdf` still serves from storage
 
+### Enterprise Seat Model (April 16–17, 2026)
+
+Legacy individual plans (Free / Pro / Enterprise) are being replaced by an enterprise-only, seat-based model. Shipped across 5 commits (phases 1a–4b) behind the `ENTERPRISE_MODE` env flag (default `"0"` — inert).
+
+- **`backend/enterprise.py`** (NEW, ~690 lines) — `SEAT_TYPES` catalog, Stripe Checkout + Subscription provisioning, consolidated state API, seat-qty adjust with proration handling, webhook reconciliation
+- **Seat catalog** (source of truth in `backend/enterprise.py:SEAT_TYPES`):
+  - Admin — $450/mo + 500 credit floor, rank 3 (full org control)
+  - Engineer — $250/mo + 300 credit floor, rank 2 (create/run challenges, rubrics, lab, annotator)
+  - General — $100/mo + 100 credit floor, rank 1 (annotator + view)
+- **Stripe shape**: one `Subscription` per org, three `SubscriptionItem`s (one per seat type) with `quantity` = purchased pool size. Stripe is canonical; `enterprise_subscriptions` mirrors state via webhook. Monthly bundled credits grant on `invoice.paid` via `_grant_monthly_credits`
+- **Role migration (phase 1b)**: `org_members.role` vocab moved `{viewer, contributor, admin}` → `{general, engineer, admin}` (viewer→general, contributor→engineer, admin→admin). `organizations.migrate_to_seat_vocab(conn)` runs idempotently on both PG and SQLite. New `is_owner` column backfilled from `organizations.created_by`
+- **Access gating**: `main.py:require_active_seat(user, min_seat, org_id)` sits next to `require_user`. When `ENTERPRISE_MODE=0` it's a no-op returning `{bypass:True, pre_flag:True}` so it's safe to sprinkle throughout. When flipped: platform admins bypass, unseated users get `402 {error:'no_active_seat', redirect:'/onboarding'}`, held seat ranked below `min_seat` gets `403 {error:'insufficient_seat', required, held}`. `past_due` subs honored for 7 days past `current_period_end`
+- **Endpoint gating audit (phase 3b)**: 141 `require_active_seat(user, min_seat=…)` calls added across `main.py` — `general` for reads / light actions, `engineer` for paper upload / challenge create / rubric generator / lab run / annotator classify+prefill+schema-run / model register / project create / search execute / compete submit, `admin` for model-member and org-member CRUD. Legacy `check_pdf_limit` / `check_storage_limit` calls wrapped in `if not enterprise_mod.ENTERPRISE_MODE:` so they stay active while flag is off, skip when it flips. Compete routes (`/api/compete/*`) are intentionally not seat-gated — models are not users
+- **Endpoints** (all in `main.py`, handlers in `backend/enterprise.py`):
+  - `POST /api/enterprise` — create org + Stripe Checkout (caller becomes owner+admin seat)
+  - `GET /api/enterprise/{org_id}` — consolidated state (org, sub, seats, credits)
+  - `PATCH /api/enterprise/{org_id}/seats` — owner-only, adjusts subscription item qty
+  - `POST /api/enterprise/{org_id}/members` — admin; 409 `pool_full`
+  - `PATCH /api/enterprise/{org_id}/members/{user_id}` — admin; 409 `pool_full`, 403 if owner
+  - `DELETE /api/enterprise/{org_id}/members/{user_id}` — admin; 403 if owner
+  - `POST /api/enterprise/{org_id}/sync` — reconcile from Stripe after a webhook drop
+- **Frontend**: `/onboarding` (`frontend/onboarding.html`, ~450 lines) for unseated users — join with invite code or start an enterprise; `/enterprise/{id}` (`frontend/enterprise.html`, ~480 lines) for owners + admin-seat users — seat pool management, members table, cost card. `frontend/billing.html` plan grid replaced with an enterprise banner that routes to `/enterprise/{id}` or `/onboarding` depending on seat state. `frontend/login.html:postAuthRedirect()` routes to `/onboarding` when `me.needs_onboarding` is true
+- **Setup script**: `scripts/setup_enterprise_stripe.py` provisions Products + Prices in Stripe and prints the env vars to paste
+- **Legacy cancel script**: `scripts/cancel_legacy_subscriptions.py` — dry-run first; marks every active Pro/Enterprise individual sub as `cancel_at_period_end=True`. Leaves accounts + data intact
+- **New env vars**: `STRIPE_PRICE_SEAT_ADMIN`, `STRIPE_PRICE_SEAT_ENGINEER`, `STRIPE_PRICE_SEAT_GENERAL`, `ENTERPRISE_MODE`
+
+### Design System & Paper Theme Rollout (April 17–18, 2026)
+
+Global OKLCH-based design system replacing the per-page ad-hoc styling that had accumulated over the prior 18 HTML files.
+
+- **`frontend/_shared/design.css`** (NEW, ~420 lines) — shared token layer:
+  - Color: `--paper`, `--paper-2`, `--paper-3`, `--ink`, `--ink-2`, `--ink-3`, `--ink-4`, `--rule`, `--rule-2`, `--accent`, `--ok`, `--warn`, `--err` (+ soft variants)
+  - Type: `--sans` (Geist), `--serif` (Source Serif 4), `--mono` (JetBrains Mono)
+  - Space + radius + shadow scales, `--topbar-h`, motion tokens
+- **Redesigned `/rubric-generator`** as the design reference — serif headings, mono eyebrows, paper cards with hairline rules
+- **Migrations** (one commit per page cluster so each is easy to bisect/revert):
+  1. `dashboard`, `login`, `onboarding`
+  2. `billing`, `enterprise`, `org`
+  3. `challenges`, `leaderboard`, `analytics`, `models`, `admin`, `daily`, `challenge_viewer`
+  4. `annotator`, `lab` + remaining shim pages (`library`, `developers`, `reset_password`, `public_tests`, `search`, `annotate`, `rubric_generator_v2`)
+- **Chrome polish pass**: topbar markup standardized to `<header class="topbar">` + `.brand-mark` + `.brand-name` + `.tag` + `.topbar-right` across every page. Fixed a broken `<header>` that was never closed on every shim-migrated page (topbar floated above content)
+- **Annotator + Lab polish**: batch-4 pass recoloring in-page surfaces (sidebar, PDF toolbar, right pane) from dark-theme-era greys to Paper tokens. Repaints applied:
+  - `#sidebar` from navy to `--paper` with ink text for paper-count, paper items, project filter
+  - `#upload-zone` text + border (was rgba white on navy → now ink on paper)
+  - `.project-filter-select` rebuilt Paper-first, single clean rule, explicit `background-size: 10 px 10 px` so the caret SVG never tiles
+  - `#pdf-panel` + `#pdf-toolbar` + `#pdf-scroll` swap #2a2a2a / #1a1a1a for `--paper-2` + hairline rule; toolbar buttons become outlined pill chips; `.page-wrapper` gets a layered shadow (small crisp + large diffused)
+
+### Lab Redesign — Sources / Briefing / Methods + Benchmark Lab (April 18–19, 2026)
+
+Restructure of the Lab sidebar and center pane around the research-team metaphor.
+
+- **`backend/user_tools.py`** (NEW, ~230 lines) — per-user cross-project features that reach the LLM on every chat turn:
+  - `user_briefing` table (user_id PK, text, `updated_at`) — free-form 4 000-char block, prepended to every agent's system prompt
+  - `user_methods` table (id, user_id, name, when_to_use, instructions, active, timestamps) — structured procedure cards toggleable per session
+  - `compose_overlay(conn, user_id)` → `"# User briefing\n{text}\n\n# Active methods\n## {name}\nWhen to use: …\n{instructions}"` or empty string — consumed by both `_chat_search_strategist` and `_chat_lab_agent` via `backend/lab.py:_system_prompt_for`
+- **`backend/skills.py` metadata layer**: `SKILL_METADATA` dict with `display_name` / `description` / `when_to_use` for all 10 agent types. `migrate_agent_skills_metadata(conn)` adds columns + backfills idempotently. `list_system_methods(conn)` returns only metadata (never `prompt_text`); `USER_FACING_AGENT_TYPES` excludes benchmark-internal generator + judge
+- **Sources (replaces "Context")**: `lab_documents` rows now render with selection checkboxes driving `ACTIVE_SOURCES` Set. Chat send merges uploaded-file ids with active-source ids so only checked files travel as `document_ids`. Previously all uploads were sent or nothing
+- **Briefing**: sidebar preview card with mono eyebrow "SHARED WITH EVERY AGENT"; click to open the Briefing modal with 4 000-char counter; saved via `PUT /api/briefing`
+- **Methods**: sidebar preview card (same shape as Briefing) with mono eyebrow "APPENDED TO EVERY AGENT". Preview shows up to two active-method chips with "+N more" overflow + "N agent capabilities listed." footer. Clicking opens `openMethodsTab()` — a lazy right-pane tab rendering the full system + user methods UI (add / edit / toggle / delete). "+" in the sidebar header opens the new-method modal directly
+- **Seven new endpoints** (all seat-gated, never credit-charged):
+  - `GET`, `PUT /api/briefing`
+  - `GET`, `POST /api/methods`
+  - `PATCH`, `DELETE /api/methods/{id}`
+  - `GET /api/methods/system`
+- **Sidebar restructure**: "Interfaces" section renamed to **The Benchmark Lab** with inline flask+sparkline SVG logo. Old `Benchmark Lab` sub-group flattened — every interface now a direct child (Admin / Dashboard / Challenges / Leaderboard / Analytics / Models / PDF Viewer / Annotator). Projects moved above Conversations. Library + Developers moved out to the topbar nav (`.topbar-nav`) so they're one click from any state and don't clutter the benchmark-lab list
+- **Agent roles with logo + color**: "Research Chat" → **The Research Assistant**; every agent renamed to a "The X" role title (The Search Strategist, The Statistician, The Evidence Appraiser, The Hypothesis Generator, The Literature Reviewer, The Study Builder, The Protocol Evaluator). Each agent carries its own `color` + `icon` in `AGENT_CONFIG`. `switchAgent()` sets `--agent-c` on `#panel-center`; the label, label dot, active speed button, and agent-switch divider pill all pick it up. Switching a role inserts a divider in the current thread — does NOT start a new chat. Initial load + `switchSession()` apply the theme too
+
+### Annotator Polish Sprint (April 18–20, 2026)
+
+Visual and UX gaps surfaced once the Paper theme rolled across the annotator.
+
+- **Draggable divider between PDF and form pane**: 6 px `.pane-resizer` element between `#pdf-panel` and `#form-panel`. `--form-w` CSS variable baselines the post-sidebar area 50/50 (`calc((100vw - 230px - 6px) / 2)`). JS drag handler updates live on mousemove, persists px to localStorage (`annotator_form_w_px`) on mouseup, double-click resets to baseline. Min widths 300 px (PDF) / 280 px (form) so neither side can collapse; window-resize re-clamps
+- **Results tab: delete runs + back button**: `DELETE /api/annotator/runs/{rid}` endpoint (engineer seat, 404 if not owned, deletes the run row only — schema + papers preserved). Top of the Results pane now carries a "← Back to annotator" button returning to the Form tab, plus a red "✕ Delete" button (disabled until a run is selected) that confirms before firing. Eyebrow label "Past runs" above the runs dropdown
+- **Upload PDF zone visibility**: classic flexbox gotcha — `#project-list` had `flex:1` but inherited the default `min-height: auto`, so it refused to shrink below its content height and pushed `#upload-zone` off the bottom of the sidebar when the paper list was long or `#batch-bar` toggled visible. Set `min-height: 0` + explicit `flex-basis: 0` so it shrinks into available space, keeping Upload PDF docked
+- **Project-filter dropdown legibility**: `.project-filter-select` was originally rgba-white text on near-transparent white — unreadable on both the navy and the repainted paper sidebar. Rebuilt as a single Paper-first rule: `var(--paper-2)` background, ink text, `var(--rule)` border, inline SVG caret stroked in ink, explicit `background-size: 10 px 10 px` so the 10×10 SVG can't tile across the row
+- **Paper-theme form cards** (visual only — zero behaviour change): each `.form-section` renders as a soft card on cream — white `--paper` fill, 1 px `--rule` border, 10 px radius, faint shadow. `.form-section-header` inside a card fills the card's head region (negative margin + matching radius + bottom rule) so eyebrows read as card titles. Field inputs / textareas / selects adopt paper surfaces, `--rule` borders, and an accent-tinted focus ring. `.rp-tab` bar goes mono small-caps with an accent-colored active underline
+- **PDF chrome**: `#pdf-panel` + `#pdf-scroll` use `--paper-2` instead of `#2a2a2a`; `#pdf-toolbar` uses `--paper` with a `--rule` bottom border and pill-style outlined buttons with ink text; `.page-wrapper` gets a layered shadow (small crisp + larger diffused) on a white fill so pages float on the cream. `.textLayer` highlight + selection adopt the Paper accent
+
 ### Annotator Custom Extraction & Analytics (April 16, 2026)
 
 Two long-requested features behind a right-pane tab bar in the annotator.
@@ -493,37 +581,49 @@ User syncs to local machine via Obsidian Sync/iCloud/rsync/git.
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `main.py` | ~5,040 | App entry, routes, auth (cookie + API key), config, all API endpoints |
+| `main.py` | ~6,890 | App entry, routes, auth (cookie + API key), config, all API endpoints, seat gating |
+| `backend/annotator.py` | ~1,440 | OGAI Annotator: tables, field catalog, classify/prefill/custom-run prompts, large-PDF pipeline, analytics |
 | `backend/challenges.py` | ~1,090 | Challenge orchestration, scoring, points, daily composition, org leaderboard |
+| `backend/skills.py` | ~915 | Agent skill versioning, 10 agent type prompts, skill metadata + user-facing types, seed function |
 | `backend/self_improve.py` | ~900 | Autoresearch-style experiment loop, program.md templates for 10 agent types |
 | `backend/search.py` | ~840 | Literature search: AI chat, PubMed/Europe PMC, import, export, session management |
-| `backend/skills.py` | ~725 | Agent skill versioning, 10 agent type prompts, seed function |
-| `backend/obsidian.py` | ~720 | Markdown vault writer (challenge notes, agent skill files, history) |
+| `backend/obsidian.py` | ~725 | Markdown vault writer (challenge notes, agent skill files, history) |
+| `backend/enterprise.py` | ~690 | Seat catalog, Stripe subscription, per-org seat pool, webhook dispatch, consolidated state |
 | `backend/templates.py` | ~680 | Rubric templates, community library, living stats, ground truth |
-| `backend/membership.py` | ~515 | Membership plans, Stripe subscriptions, PDF limits, storage limits |
+| `backend/organizations.py` | ~545 | Organization CRUD, membership, role vocab migration (general/engineer/admin), invite/domain-join |
+| `backend/lab.py` | ~530 | Lab session CRUD, chat orchestrator (wired through `_system_prompt_for` overlay), document management |
+| `backend/membership.py` | ~515 | Legacy membership plans, Stripe subscriptions (PDF/storage limits — deprecated under ENTERPRISE_MODE) |
 | `backend/analytics.py` | ~510 | Analytics queries, CSV/PDF export, email notifications, rate limiter |
 | `backend/billing.py` | ~490 | Stripe credit system, checkout, webhooks, org billing |
-| `backend/lab.py` | ~440 | Lab session CRUD, chat orchestrator, document management |
-| `backend/organizations.py` | ~435 | Organization CRUD, membership, roles, invite/domain-join |
 | `backend/models_registry.py` | ~375 | Model CRUD, team management, API key generation, org models |
-| `backend/pubmed.py` | ~315 | PubMed/PMC/iCite client, 14 seed themes |
+| `backend/pubmed.py` | ~335 | PubMed/PMC/iCite client, 14 seed themes |
 | `backend/scheduler.py` | ~270 | Daily scheduler (7am PST Mon-Fri) |
 | `backend/agreements.py` | ~240 | Legal agreement text + acceptance tracking |
 | `backend/exports.py` | ~230 | Export converters (Word, LaTeX, Excel, CSV, Python, R) |
+| `backend/user_tools.py` | ~230 | Per-user briefing + methods (global overlay on every agent's system prompt) |
 | `backend/code_runner.py` | ~225 | Sandboxed Python/R code execution |
 | `backend/db.py` | ~220 | Database compatibility layer (PostgreSQL + SQLite fallback) |
-| `backend/helpers.py` | ~163 | LLM callers (Anthropic, Gemini, OpenAI-compatible) |
-| `backend/storage.py` | ~152 | S3/local file storage abstraction |
-| `backend/annotator.py` | ~970 | OGAI Annotator: tables, field catalog, classify/prefill/custom-run prompts, analytics helpers |
-| `backend/paper_files.py` | ~85 | Paper-file read/write/delete helper (S3 via storage.py + legacy disk fallback) |
-| `frontend/annotator.html` | ~3,900 | Annotator UI: 3-pane layout, PDF.js viewer, tabbed right pane (Form / Custom / Results / Analytics), batch bar, span linking |
 | `backend/promo.py` | ~180 | Promo codes, 48h auto-approve |
+| `backend/helpers.py` | ~190 | LLM callers (Anthropic, Gemini, OpenAI-compatible), vendor-free error translation |
+| `backend/storage.py` | ~155 | S3/local file storage abstraction |
+| `backend/paper_files.py` | ~100 | Paper-file read/write/delete helper (S3 via storage.py + legacy disk fallback) |
 | `backend/agents/participants.py` | ~142 | Frontier + custom model runner |
-| `backend/agents/lab_agents.py` | ~130 | Lab agent runners (6 new agent types) |
+| `backend/agents/lab_agents.py` | ~130 | Lab agent runners (6 agent types) |
 | `backend/agents/generator.py` | ~83 | Rubric Generator Agent (daily composition support) |
 | `backend/agents/judge.py` | ~50 | Judge Agent + shadow regrade |
+| `frontend/annotator.html` | ~4,355 | Annotator UI: 3-pane layout with draggable divider, PDF.js viewer, tabbed right pane (Form / Custom / Results / Analytics), batch bar, span linking, Paper-theme card forms |
+| `frontend/lab.html` | ~3,605 | Lab UI: sidebar (Projects / Conversations / Sources / Briefing / Methods / The Benchmark Lab) + center chat (role-themed) + right tabbed workspace |
+| `frontend/rubric_generator.html` | ~1,430 | Rubric generator / PDF viewer (served at `/pdf-viewer`) — Paper-themed chrome |
+| `frontend/search.html` | ~1,370 | Literature search UI (chat, query builder, sortable/filterable results) |
+| `frontend/analytics.html` | ~1,175 | Unified analytics page (Benchmark / Annotator / Admin tabs) |
+| `frontend/challenges.html` | ~715 | Challenges index + creation |
+| `frontend/models.html` | ~715 | Model registry UI |
+| `frontend/enterprise.html` | ~480 | Enterprise dashboard: seat pool management, members, cost card |
+| `frontend/onboarding.html` | ~450 | Unseated-user landing: join by invite code or start an enterprise |
+| `frontend/_shared/design.css` | ~420 | Shared design tokens (Paper theme OKLCH palette + type + space/radius/shadow scales) |
 | `tests/conftest.py` | ~120 | Test fixtures (in-memory DB, test users, challenges) |
 | `tests/test_compete_api.py` | ~200 | Competition API unit tests (16 cases) |
+| `tests/test_annotator.py` | ~350 | Annotator unit tests (24 cases) |
 
 ---
 
@@ -563,7 +663,11 @@ User syncs to local machine via Obsidian Sync/iCloud/rsync/git.
 | `SUBMISSION_WINDOW_HOURS` | No | `24` | Hours external models have to submit |
 | `SKILL_EXPERIMENT_BUDGET` | No | `5` | Experiments per improvement cycle |
 | `SKILL_IMPROVEMENT_ENABLED` | No | `true` | Enable self-improvement loop |
+| `ENTERPRISE_MODE` | No | `0` | When `1`, `require_active_seat()` enforces seat gating and legacy PDF/storage limit checks become no-ops. Leave at `0` until post-cutover |
+| `STRIPE_PRICE_SEAT_ADMIN` | For enterprise | — | Stripe Price id for the $450/mo Admin seat (set after running `scripts/setup_enterprise_stripe.py`) |
+| `STRIPE_PRICE_SEAT_ENGINEER` | For enterprise | — | Stripe Price id for the $250/mo Engineer seat |
+| `STRIPE_PRICE_SEAT_GENERAL` | For enterprise | — | Stripe Price id for the $100/mo General seat |
 
 ---
 
-**Last updated:** April 16, 2026
+**Last updated:** April 20, 2026
