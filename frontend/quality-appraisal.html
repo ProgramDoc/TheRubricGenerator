@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>The AI Researcher — Quality Appraisal AI</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <link rel="stylesheet" href="/static/_shared/design.css">
 <style>
 :root {
@@ -253,6 +254,190 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
 }
 #toast.open { display: block; }
 #toast.err { background: var(--err); }
+
+/* ── Results grid: make cells clickable ─── */
+.rg-table td.cell-clickable { cursor: pointer; }
+.rg-table td.cell-clickable:hover { background: var(--accent-soft) !important; }
+.rg-table th.col-hint { cursor: help; }
+.rg-table th .col-sub {
+  display: block; font-size: 9px; color: var(--muted); font-weight: 500;
+  text-transform: none; letter-spacing: normal; margin-top: 2px; line-height: 1.2;
+}
+.detail-btn {
+  display: inline-block; margin-top: 6px; padding: 3px 8px; font-size: 10.5px;
+  font-weight: 600; border-radius: 4px; border: 1px solid var(--border);
+  background: var(--paper); color: var(--accent); cursor: pointer;
+}
+.detail-btn:hover { background: var(--accent-soft); border-color: var(--accent); }
+
+/* ── Detail modal ─── */
+#qa-detail-modal {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5);
+  z-index: 2500; flex-direction: column;
+}
+#qa-detail-modal.open { display: flex; }
+.qa-detail-head {
+  background: var(--paper); border-bottom: 1px solid var(--border);
+  padding: 12px 20px; display: flex; align-items: center; gap: 16px;
+}
+.qa-detail-head h2 {
+  margin: 0; font-family: var(--serif); font-size: 16px; font-weight: 600;
+  max-width: 540px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.qa-detail-head .sub {
+  font-size: 11px; color: var(--muted);
+  max-width: 480px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.qa-detail-head .spacer { flex: 1; }
+.qa-detail-body { flex: 1; display: flex; overflow: hidden; }
+#qa-pdf-pane {
+  width: 55%; border-right: 1px solid var(--border); background: var(--paper-2);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+#qa-pdf-pane.hidden { display: none; }
+#qa-pdf-toolbar {
+  padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--paper);
+  display: flex; align-items: center; gap: 8px; font-size: 11px;
+}
+#qa-pdf-toolbar button {
+  padding: 3px 8px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border);
+  background: var(--paper); color: var(--text); cursor: pointer;
+}
+#qa-pdf-toolbar button:hover { background: var(--paper-3); }
+#qa-pdf-toolbar .pdf-status { color: var(--muted); margin-left: auto; }
+#qa-pdf-host { flex: 1; overflow: auto; padding: 14px; background: var(--paper-3); }
+#qa-pdf-host .page-wrapper {
+  position: relative; margin: 0 auto 14px; background: #fff;
+  box-shadow: 0 2px 8px rgba(0,0,0,.12); width: fit-content;
+}
+#qa-pdf-host canvas { display: block; }
+#qa-pdf-host .textLayer {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  overflow: hidden; opacity: 0.2; line-height: 1;
+}
+#qa-pdf-host .textLayer > span {
+  color: transparent; position: absolute; white-space: pre; cursor: text;
+  transform-origin: 0% 0%;
+}
+#qa-pdf-host .textLayer > span.qa-hl-flash {
+  color: #000 !important; background: #fff3a0; border-radius: 2px;
+  animation: qa-flash 3.5s ease-out;
+}
+@keyframes qa-flash {
+  0%   { background: #ffe066; box-shadow: 0 0 0 3px #ffe066; }
+  20%  { background: #fff3a0; box-shadow: 0 0 0 2px #fff3a0; }
+  100% { background: transparent; box-shadow: 0 0 0 0 transparent; }
+}
+
+#qa-detail-pane {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--paper);
+}
+#qa-detail-subnav {
+  display: flex; gap: 2px; padding: 0 16px; border-bottom: 1px solid var(--border);
+  background: var(--paper); position: sticky; top: 0; z-index: 2;
+}
+#qa-detail-subnav button {
+  padding: 10px 12px; font-size: 11.5px; font-weight: 600; background: none; border: 0;
+  color: var(--muted); border-bottom: 2px solid transparent; cursor: pointer;
+  font-family: inherit;
+}
+#qa-detail-subnav button:hover { color: var(--text); }
+#qa-detail-subnav button.active { color: var(--text); border-bottom-color: var(--accent); }
+#qa-detail-content { flex: 1; overflow-y: auto; padding: 18px 22px; }
+#qa-detail-content h3 {
+  margin: 22px 0 8px; font-family: var(--serif); font-size: 15px; color: var(--accent);
+  font-weight: 600; border-bottom: 1px solid var(--border); padding-bottom: 4px;
+}
+#qa-detail-content h3:first-child { margin-top: 0; }
+#qa-detail-content h4 {
+  margin: 14px 0 6px; font-size: 13px; font-weight: 700; color: var(--text);
+  display: flex; align-items: center; gap: 8px;
+}
+.qa-ans {
+  display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10.5px;
+  font-weight: 700; font-family: var(--mono); margin-right: 6px;
+}
+.qa-ans-y, .qa-ans-py { background: oklch(0.94 0.04 150); color: var(--ok); }
+.qa-ans-n, .qa-ans-pn { background: oklch(0.94 0.05 25); color: var(--err); }
+.qa-ans-ni { background: var(--paper-3); color: var(--muted); }
+.qa-signal {
+  padding: 8px 10px; border-top: 1px dashed var(--rule);
+}
+.qa-signal:first-child { border-top: 0; }
+.qa-signal .qid { font-family: var(--mono); font-weight: 700; color: var(--accent); margin-right: 6px; }
+.qa-signal .qtxt { font-weight: 600; font-size: 12px; display: inline; }
+.qa-signal .qrat {
+  display: block; margin-top: 4px; font-size: 11.5px; color: var(--ink-2);
+  padding: 4px 8px; border-left: 3px solid var(--rule-2); background: var(--paper-2);
+  border-radius: 0 4px 4px 0;
+}
+.qa-signal .qrat.qa-clickable {
+  cursor: pointer; border-left-color: var(--accent);
+}
+.qa-signal .qrat.qa-clickable:hover {
+  background: var(--accent-soft); text-decoration: underline;
+}
+.qa-signal .qrat::before { content: '📄 '; opacity: 0.6; }
+
+.qa-domain {
+  border: 1px solid var(--border); border-radius: 8px; background: var(--paper-2);
+  margin-bottom: 12px; overflow: hidden;
+}
+.qa-domain summary {
+  padding: 10px 14px; cursor: pointer; font-weight: 700; font-size: 13px;
+  display: flex; align-items: center; gap: 10px; list-style: none;
+}
+.qa-domain summary::before {
+  content: '▸'; color: var(--muted); transition: transform 0.15s;
+}
+.qa-domain[open] summary::before { transform: rotate(90deg); }
+.qa-domain summary::-webkit-details-marker { display: none; }
+.qa-domain .qa-domain-body { padding: 4px 14px 12px; background: var(--paper); }
+.qa-domain .qa-dir { font-size: 10.5px; color: var(--muted); margin-left: auto; }
+
+.qa-consort-group h4 { color: var(--accent); font-size: 12px; margin: 16px 0 6px; }
+.qa-consort-item {
+  display: grid; grid-template-columns: 40px 80px 1fr; gap: 8px; padding: 6px 0;
+  border-top: 1px dashed var(--rule); font-size: 11.5px;
+}
+.qa-consort-item:first-child { border-top: 0; }
+.qa-consort-item .id { font-family: var(--mono); font-weight: 700; color: var(--accent); }
+.qa-consort-item .adh {
+  display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px;
+  font-weight: 700; text-align: center; white-space: nowrap;
+}
+.qa-consort-item .adh-yes { background: oklch(0.94 0.04 150); color: var(--ok); }
+.qa-consort-item .adh-no  { background: oklch(0.94 0.05 25); color: var(--err); }
+.qa-consort-item .adh-na  { background: var(--paper-3); color: var(--muted); font-style: italic; }
+.qa-consort-item .qrat {
+  display: block; margin-top: 4px; font-size: 11px; color: var(--ink-2);
+  padding: 3px 8px; border-left: 3px solid var(--rule-2); background: var(--paper-2);
+}
+.qa-consort-item .qrat.qa-clickable { cursor: pointer; border-left-color: var(--accent); }
+.qa-consort-item .qrat.qa-clickable:hover { background: var(--accent-soft); text-decoration: underline; }
+.qa-consort-item .qrat::before { content: '📄 '; opacity: 0.6; }
+
+.qa-grade-grid {
+  display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; align-items: center;
+  padding: 16px; background: var(--paper-2); border-radius: 8px; margin-bottom: 10px;
+}
+.qa-grade-grid .cell {
+  text-align: center; padding: 12px; background: var(--paper);
+  border: 1px solid var(--border); border-radius: 6px;
+}
+.qa-grade-grid .cell .lbl {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted);
+  font-weight: 700;
+}
+.qa-grade-grid .cell .val {
+  font-family: var(--serif); font-size: 20px; font-weight: 600; margin-top: 4px;
+}
+.qa-grade-grid .arrow { font-size: 22px; color: var(--muted); }
+
+@media (max-width: 900px) {
+  .qa-detail-body { flex-direction: column; }
+  #qa-pdf-pane { width: 100%; height: 50vh; border-right: 0; border-bottom: 1px solid var(--border); }
+}
 </style>
 </head>
 <body>
@@ -370,6 +555,44 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
   </div>
 </div>
 
+<!-- ── DETAIL MODAL (per-paper drill-in) ─────────────────────────────── -->
+<div id="qa-detail-modal" onclick="if(event.target===this)closeDetailModal()">
+  <div class="qa-detail-head">
+    <div style="min-width:0;">
+      <h2 id="qa-detail-title">Detail</h2>
+      <div class="sub" id="qa-detail-sub"></div>
+    </div>
+    <div class="spacer"></div>
+    <button class="tb-btn" id="qa-pdf-toggle" onclick="togglePdfPane()" style="background:var(--paper-2);border-color:var(--border);color:var(--text);">Hide PDF</button>
+    <button class="tb-btn" onclick="closeDetailModal()" style="background:var(--paper-2);border-color:var(--border);color:var(--text);">× Close</button>
+  </div>
+  <div class="qa-detail-body">
+    <div id="qa-pdf-pane">
+      <div id="qa-pdf-toolbar">
+        <button onclick="changeDetailPage(-1)" title="Previous page">←</button>
+        <span id="qa-pdf-page" style="font-family:var(--mono);">—</span>
+        <button onclick="changeDetailPage(1)" title="Next page">→</button>
+        <span style="width:12px;"></span>
+        <button onclick="changeDetailZoom(-0.15)" title="Zoom out">−</button>
+        <span id="qa-pdf-zoom" style="font-family:var(--mono);">100%</span>
+        <button onclick="changeDetailZoom(0.15)" title="Zoom in">+</button>
+        <span class="pdf-status" id="qa-pdf-status">loading…</span>
+      </div>
+      <div id="qa-pdf-host"></div>
+    </div>
+    <div id="qa-detail-pane">
+      <nav id="qa-detail-subnav">
+        <button data-section="summary"  onclick="scrollDetailTo('summary')">Summary</button>
+        <button data-section="rob"      onclick="scrollDetailTo('rob')">RoB 2</button>
+        <button data-section="consort"  onclick="scrollDetailTo('consort')">CONSORT</button>
+        <button data-section="grade"    onclick="scrollDetailTo('grade')">GRADE</button>
+        <button data-section="fields"   onclick="scrollDetailTo('fields')">Extracted fields</button>
+      </nav>
+      <div id="qa-detail-content">Loading…</div>
+    </div>
+  </div>
+</div>
+
 <!-- ── DEVELOPER MODAL ────────────────────────────────────────────────── -->
 <div id="dev-modal" class="modal-backdrop" onclick="if(event.target===this)closeDevModal()">
   <div class="modal modal-wide" style="max-height:92vh;">
@@ -395,6 +618,20 @@ let currentRun = null;         // { id, status, results: [], ... }
 let pollTimer = null;
 let lastEventId = 0;
 const PER_PAPER_COST = 30;
+
+/* ── Detail-view state ──────────────────────────────────────────────── */
+const ROB2_DOMAIN_META = [
+  { id: 1, short: 'D1: Randomization',       full: 'Bias arising from the randomization process' },
+  { id: 2, short: 'D2: Deviations',          full: 'Bias due to deviations from intended interventions (effect of assignment)' },
+  { id: 3, short: 'D3: Missing data',        full: 'Bias due to missing outcome data' },
+  { id: 4, short: 'D4: Outcome measurement', full: 'Bias in measurement of the outcome' },
+  { id: 5, short: 'D5: Reported result',     full: 'Bias in selection of the reported result' },
+];
+let _detailResult = null;      // the result row currently open in the detail modal
+let _detailPdfDoc = null;      // PDF.js document for the currently-open paper
+let _detailPdfPaperId = null;  // paper id whose PDF is currently rendered
+let _detailPdfZoom = 1.0;
+let _detailPdfCurrentPage = 1;
 
 function filteredPapers() {
   if (projectFilter === '') return papers;
@@ -759,7 +996,12 @@ function renderResults() {
     '<th>Updated GRADE</th>',
     '<th>GRADE explanation</th>',
   ];
-  robDomainIds.forEach(did => headerCols.push(`<th>RoB Domain ${did}</th>`));
+  robDomainIds.forEach(did => {
+    const meta = ROB2_DOMAIN_META.find(m => String(m.id) === String(did));
+    const short = meta ? meta.short : ('RoB Domain ' + did);
+    const full = meta ? meta.full : '';
+    headerCols.push(`<th class="col-hint" title="${escHtml(full)}">${escHtml(short)}<span class="col-sub">${escHtml(full)}</span></th>`);
+  });
   headerCols.push('<th>Primary outcome</th>');
 
   const rows = results.map(r => {
@@ -796,7 +1038,7 @@ function renderResults() {
         ? Object.keys(d.signals).sort().map(sid =>
             `<span class="chip">${escHtml(sid)}=${escHtml(d.signals[sid])}</span>`).join(' ')
         : '';
-      return `<td>
+      return `<td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'rob-d${escHtml(did)}')">
         <span class="rob-badge ${jCls}">${escHtml(j)}</span>
         <div style="margin-top:4px;">${signalsHtml}</div>
       </td>`;
@@ -806,20 +1048,21 @@ function renderResults() {
       <td class="col-study">
         <div class="study-title">${escHtml(title)}</div>
         <div class="study-meta">${escHtml(authors)}${authors ? ' &middot; ' : ''}${escHtml(journal)}${journal ? ' &middot; ' : ''}${escHtml(year)}</div>
+        <button class="detail-btn" onclick="openDetailModal(${r.paper_id}, 'summary')" title="Open detailed review">📋 Detail</button>
       </td>
-      <td>
+      <td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'summary')">
         <div><strong>${escHtml(r.study_type || '')}</strong></div>
         <div style="font-size:10px;color:var(--muted);">${escHtml(classification.subcategory || '')}</div>
         <div style="margin-top:4px;">${modChips || '<span class="chip">no modifiers</span>'}</div>
       </td>
-      <td><span class="rob-badge ${robCls}">${escHtml(r.rob_overall || '—')}</span>
+      <td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'rob')"><span class="rob-badge ${robCls}">${escHtml(r.rob_overall || '—')}</span>
           ${r.rob_direction && r.rob_direction !== 'NA'
             ? `<div style="font-size:10px;margin-top:3px;color:var(--muted);">dir: ${escHtml(r.rob_direction)}</div>`
             : ''}</td>
-      <td>${consort}</td>
-      <td><span class="${gradeCls(r.initial_grade)}">${escHtml(r.initial_grade || '—')}</span></td>
-      <td><span class="${gradeCls(r.updated_grade)}">${escHtml(r.updated_grade || '—')}</span></td>
-      <td style="max-width:240px;font-size:10.5px;color:var(--muted);">${escHtml(r.grade_explanation || '')}</td>
+      <td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'consort')">${consort}</td>
+      <td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'grade')"><span class="${gradeCls(r.initial_grade)}">${escHtml(r.initial_grade || '—')}</span></td>
+      <td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'grade')"><span class="${gradeCls(r.updated_grade)}">${escHtml(r.updated_grade || '—')}</span></td>
+      <td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'grade')" style="max-width:240px;font-size:10.5px;color:var(--muted);">${escHtml(r.grade_explanation || '')}</td>
       ${domainCells}
       <td style="max-width:220px;font-size:10.5px;">${escHtml(r.primary_outcome || '')}</td>
     </tr>`;
@@ -836,6 +1079,447 @@ function exportCsv() {
 function exportXlsx() {
   if (!currentRun) return;
   window.open('/api/quality-appraisal/runs/' + currentRun.id + '.xlsx', '_blank');
+}
+
+/* ── Detail modal (per-paper drill-in) ───────────────────────────────── */
+function _normalizeQuote(s) {
+  return String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+function _resultByPaperId(paperId) {
+  const results = (currentRun && currentRun.results) || [];
+  return results.find(r => Number(r.paper_id) === Number(paperId)) || null;
+}
+
+async function openDetailModal(paperId, anchor) {
+  const r = _resultByPaperId(paperId);
+  if (!r) { toast('Result not found — refresh the page.', true); return; }
+  if (r.status !== 'ok') {
+    toast('This paper has no detailed results (' + r.status + ').', true);
+    return;
+  }
+  _detailResult = r;
+  // Header
+  const fields = r.extracted_fields || {};
+  const title = fields.citation_title || r.filename || ('Paper #' + r.paper_id);
+  const authors = fields.citation_authors || '';
+  const journal = fields.citation_journal || '';
+  const year = fields.citation_year || '';
+  document.getElementById('qa-detail-title').textContent = title;
+  document.getElementById('qa-detail-title').title = title;
+  const subBits = [authors, journal, year, r.study_type, 'RoB ' + (r.rob_overall || '—'),
+                   'GRADE ' + (r.initial_grade || '—') + ' → ' + (r.updated_grade || '—')];
+  document.getElementById('qa-detail-sub').textContent = subBits.filter(Boolean).join(' · ');
+  // Render panel
+  renderDetailPanel(r, anchor);
+  // Show modal
+  document.getElementById('qa-detail-modal').classList.add('open');
+  document.body.style.overflow = 'hidden';
+  // Load PDF
+  loadDetailPdf(r.paper_id);
+}
+
+function closeDetailModal() {
+  document.getElementById('qa-detail-modal').classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+function togglePdfPane() {
+  const pane = document.getElementById('qa-pdf-pane');
+  const btn = document.getElementById('qa-pdf-toggle');
+  const hidden = pane.classList.toggle('hidden');
+  btn.textContent = hidden ? 'Show PDF' : 'Hide PDF';
+}
+
+function _activateSubnav(section) {
+  document.querySelectorAll('#qa-detail-subnav button').forEach(b => {
+    b.classList.toggle('active', b.dataset.section === section);
+  });
+}
+
+function scrollDetailTo(section) {
+  const content = document.getElementById('qa-detail-content');
+  const target = content.querySelector('#qa-sec-' + section);
+  if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  _activateSubnav(section);
+}
+
+function renderDetailPanel(r, anchor) {
+  const fields = r.extracted_fields || {};
+  const classification = r.classification || {};
+  const robDomains = r.rob_domains || {};
+  const guideline = r.guideline || {};
+  const guidelineItems = guideline.items || {};
+
+  // ── Summary section ─────────────────────────
+  const modChips = [
+    ['clinical_trial_phase', 'Phase'],
+    ['industry_sponsored',   'Sponsor'],
+    ['adaptive_design',      'Adaptive'],
+    ['pragmatic_vs_explanatory', 'Trial type'],
+    ['trial_framework',      'Framework'],
+  ].map(([k, lbl]) => fields[k]
+    ? `<span class="chip mod" title="${escHtml(lbl)}">${escHtml(fields[k])}</span>` : '').filter(Boolean).join(' ');
+
+  const robCls = r.rob_overall === 'Low' ? 'rob-low' : (r.rob_overall === 'High' ? 'rob-high' : 'rob-some');
+
+  let summaryHtml = `<section id="qa-sec-summary"><h3>Summary</h3>
+    <div style="display:grid;grid-template-columns:140px 1fr;gap:6px 12px;font-size:12px;">
+      <div style="color:var(--muted);font-weight:600;">Classification</div>
+      <div><strong>${escHtml(r.study_type || '—')}</strong>
+        ${classification.subcategory ? ' &middot; <span style="color:var(--muted);">' + escHtml(classification.subcategory) + '</span>' : ''}
+        ${modChips ? '<div style="margin-top:4px;">' + modChips + '</div>' : ''}</div>
+      <div style="color:var(--muted);font-weight:600;">Primary outcome</div>
+      <div>${escHtml(r.primary_outcome || '—')}</div>
+      <div style="color:var(--muted);font-weight:600;">Overall RoB</div>
+      <div><span class="rob-badge ${robCls}">${escHtml(r.rob_overall || '—')}</span>${r.rob_direction && r.rob_direction !== 'NA' ? ' <span style="color:var(--muted);font-size:11px;">(direction: ' + escHtml(r.rob_direction) + ')</span>' : ''}</div>
+      <div style="color:var(--muted);font-weight:600;">CONSORT adherence</div>
+      <div>${(guideline.adhered != null && guideline.applicable != null) ? escHtml(guideline.adhered) + ' / ' + escHtml(guideline.applicable) + (guideline.proportion != null ? ' <span style="color:var(--muted);">(' + (guideline.proportion * 100).toFixed(0) + '%)</span>' : '') : '—'}</div>
+      <div style="color:var(--muted);font-weight:600;">GRADE</div>
+      <div><span class="${gradeClsOf(r.initial_grade)}">${escHtml(r.initial_grade || '—')}</span> → <span class="${gradeClsOf(r.updated_grade)}">${escHtml(r.updated_grade || '—')}</span></div>
+    </div>
+  </section>`;
+
+  // ── RoB 2 section ────────────────────────
+  const domainIds = Object.keys(robDomains).sort();
+  const robHtml = `<section id="qa-sec-rob"><h3>Risk of Bias (RoB 2)</h3>
+    ${domainIds.length === 0 ? '<div style="color:var(--muted);">No RoB data.</div>' : domainIds.map(did => {
+      const d = robDomains[did] || {};
+      const meta = ROB2_DOMAIN_META.find(m => String(m.id) === String(did)) || {};
+      const j = d.judgement || '—';
+      const jCls = j === 'Low' ? 'rob-low' : (j === 'High' ? 'rob-high' : (j === 'Some concerns' ? 'rob-some' : ''));
+      const signals = d.signals || {};
+      const rationales = d.rationales || {};
+      const sigKeys = Object.keys(signals).sort();
+      const body = sigKeys.length === 0
+        ? '<div style="color:var(--muted);padding:8px 0;">No signaling-question data.</div>'
+        : sigKeys.map(sid => {
+          const ans = signals[sid] || '';
+          const rat = rationales[sid] || '';
+          const ansCls = 'qa-ans qa-ans-' + (ans || 'ni').toLowerCase();
+          const ratCls = rat ? 'qrat qa-clickable' : 'qrat';
+          const ratAttr = rat ? ` onclick="jumpToQuote(${JSON.stringify(rat)})" title="Click to locate this passage in the PDF"` : '';
+          return `<div class="qa-signal">
+            <span class="qid">${escHtml(sid)}</span>
+            <span class="qtxt">${escHtml(signalTextFor(sid, did))}</span>
+            <div style="margin-top:4px;"><span class="${ansCls}">${escHtml(ans || 'NI')}</span></div>
+            ${rat ? `<span class="${ratCls}"${ratAttr}>${escHtml(rat)}</span>` : ''}
+          </div>`;
+        }).join('');
+      const dir = (d.direction && d.direction !== 'NA') ? `<span class="qa-dir">direction: ${escHtml(d.direction)}</span>` : '';
+      const opened = anchor === ('rob-d' + did) ? ' open' : '';
+      return `<details class="qa-domain" id="qa-sec-rob-d${escHtml(did)}"${opened}>
+        <summary><span class="rob-badge ${jCls}">${escHtml(j)}</span>
+          <span>${escHtml(meta.short || ('Domain ' + did))}: ${escHtml(meta.full || d.name || '')}</span>
+          ${dir}
+        </summary>
+        <div class="qa-domain-body">${body}</div>
+      </details>`;
+    }).join('')}
+  </section>`;
+
+  // ── CONSORT section ──────────────────────
+  const consortIds = Object.keys(guidelineItems);
+  // Group by section for readability
+  const groups = {};
+  consortIds.forEach(id => {
+    const it = guidelineItems[id] || {};
+    const sec = it.section || 'Other';
+    (groups[sec] = groups[sec] || []).push({ id, ...it });
+  });
+  // Natural-order id sort within each group (1a, 1b, 2, 3, ...)
+  const idSort = (a, b) => {
+    const na = parseInt(a.id, 10), nb = parseInt(b.id, 10);
+    if (na !== nb) return na - nb;
+    return a.id.localeCompare(b.id);
+  };
+  const consortHtml = `<section id="qa-sec-consort"><h3>CONSORT 2025 checklist
+    <span style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:8px;">
+      ${(guideline.adhered != null) ? escHtml(guideline.adhered) + ' / ' + escHtml(guideline.applicable) + ' applicable' : ''}
+    </span></h3>
+    ${consortIds.length === 0 ? '<div style="color:var(--muted);">No CONSORT data.</div>' :
+      Object.keys(groups).map(sec => `<div class="qa-consort-group">
+        <h4>${escHtml(sec)}</h4>
+        ${groups[sec].sort(idSort).map(it => {
+          let adhCls = 'adh-na', adhText = 'N/A';
+          if (it.adhered === true)  { adhCls = 'adh-yes'; adhText = '✓'; }
+          else if (it.adhered === false) { adhCls = 'adh-no'; adhText = '✗'; }
+          const ev = it.evidence || '';
+          const evClickable = it.adhered !== null && ev;
+          const evCls = evClickable ? 'qrat qa-clickable' : 'qrat';
+          const evAttr = evClickable ? ` onclick="jumpToQuote(${JSON.stringify(ev)})" title="Click to locate in the PDF"` : '';
+          return `<div class="qa-consort-item">
+            <span class="id">${escHtml(it.id)}</span>
+            <span class="adh ${adhCls}">${escHtml(adhText)}</span>
+            <div>
+              <div style="font-weight:600;">${escHtml(it.topic || '')}</div>
+              <div style="color:var(--muted);font-size:10.5px;">${escHtml(it.description || '')}</div>
+              ${ev ? `<span class="${evCls}"${evAttr}>${escHtml(ev)}</span>` : ''}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>`).join('')}
+  </section>`;
+
+  // ── GRADE section ────────────────────────
+  const highDomainCount = domainIds.filter(id => (robDomains[id] || {}).judgement === 'High').length;
+  const someDomainCount = domainIds.filter(id => (robDomains[id] || {}).judgement === 'Some concerns').length;
+  const gradeHtml = `<section id="qa-sec-grade"><h3>GRADE certainty</h3>
+    <div class="qa-grade-grid">
+      <div class="cell"><div class="lbl">Initial</div><div class="val ${gradeClsOf(r.initial_grade)}">${escHtml(r.initial_grade || '—')}</div><div style="font-size:10px;color:var(--muted);margin-top:3px;">From study type (RCT)</div></div>
+      <div class="arrow">→</div>
+      <div class="cell"><div class="lbl">Updated</div><div class="val ${gradeClsOf(r.updated_grade)}">${escHtml(r.updated_grade || '—')}</div><div style="font-size:10px;color:var(--muted);margin-top:3px;">After RoB downgrade</div></div>
+    </div>
+    <div style="padding:10px 12px;background:var(--paper-2);border-radius:6px;font-size:12px;">
+      <strong>Explanation:</strong> ${escHtml(r.grade_explanation || 'No explanation available.')}
+    </div>
+    <h4 style="margin-top:14px;">Domain breakdown driving the downgrade</h4>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;font-size:11.5px;">
+      ${domainIds.map(did => {
+        const d = robDomains[did] || {};
+        const meta = ROB2_DOMAIN_META.find(m => String(m.id) === String(did)) || {};
+        const j = d.judgement || '—';
+        const jCls = j === 'Low' ? 'rob-low' : (j === 'High' ? 'rob-high' : (j === 'Some concerns' ? 'rob-some' : ''));
+        return `<div style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--paper);">
+          <div style="font-weight:700;font-size:11px;">${escHtml(meta.short || ('D' + did))}</div>
+          <div style="margin-top:4px;"><span class="rob-badge ${jCls}">${escHtml(j)}</span></div>
+        </div>`;
+      }).join('')}
+    </div>
+    <div style="margin-top:10px;font-size:11px;color:var(--muted);">
+      High-risk domains: <strong>${highDomainCount}</strong> &middot; Some-concerns domains: <strong>${someDomainCount}</strong>.
+      Per GradePro guidance, single-study GRADE downgrades by 1 level for "Some concerns" or any High domain, and 2 levels when ≥2 domains are High. Other GRADE domains (inconsistency, indirectness, imprecision, publication bias) require a body of evidence and are not applied here.
+    </div>
+  </section>`;
+
+  // ── Extracted fields (collapsed) ────────
+  const fieldEntries = Object.keys(fields).filter(k => fields[k]).sort();
+  const fieldsHtml = `<section id="qa-sec-fields"><h3>Extracted fields</h3>
+    <details><summary style="cursor:pointer;font-size:12px;color:var(--muted);">Show ${fieldEntries.length} field(s)</summary>
+      <div style="display:grid;grid-template-columns:200px 1fr;gap:4px 10px;font-size:11.5px;margin-top:8px;">
+        ${fieldEntries.map(k => `<div style="color:var(--muted);font-family:var(--mono);font-size:10.5px;">${escHtml(k)}</div><div>${escHtml(fields[k])}</div>`).join('')}
+      </div>
+    </details>
+  </section>`;
+
+  document.getElementById('qa-detail-content').innerHTML =
+    summaryHtml + robHtml + consortHtml + gradeHtml + fieldsHtml;
+
+  // Scroll to the anchor if provided
+  setTimeout(() => {
+    if (!anchor || anchor === 'summary') scrollDetailTo('summary');
+    else if (anchor.startsWith('rob-d')) {
+      const el = document.getElementById('qa-sec-' + anchor);
+      if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); _activateSubnav('rob'); }
+      else scrollDetailTo('rob');
+    }
+    else scrollDetailTo(anchor);
+  }, 50);
+}
+
+function gradeClsOf(g) { return 'grade-' + (g || '').toLowerCase().replace(' ', ''); }
+
+// Look up signaling-question text by signal id + domain id from the prompts catalog (lazy-cached).
+let _signalTextCache = null;
+async function _loadSignalTextCache() {
+  if (_signalTextCache) return _signalTextCache;
+  try {
+    const r = await fetch('/api/quality-appraisal/prompts');
+    if (r.ok) {
+      const cat = await r.json();
+      const map = {};
+      ((cat.rob_tools && cat.rob_tools.rob2 && cat.rob_tools.rob2.domains) || []).forEach(d => {
+        (d.signals || []).forEach(s => { map[String(d.id) + ':' + s.id] = s.text; });
+      });
+      _signalTextCache = map;
+    } else {
+      _signalTextCache = {};
+    }
+  } catch { _signalTextCache = {}; }
+  return _signalTextCache;
+}
+function signalTextFor(sid, did) {
+  const k = String(did) + ':' + sid;
+  return (_signalTextCache && _signalTextCache[k]) || '';
+}
+// Warm the cache on page load
+_loadSignalTextCache().then(() => {
+  // If the detail modal is already open when cache resolves, re-render so the
+  // signaling-question text shows up.
+  if (_detailResult && document.getElementById('qa-detail-modal').classList.contains('open')) {
+    renderDetailPanel(_detailResult, null);
+  }
+});
+
+/* ── PDF rendering inside the detail modal ───────────────────────────── */
+async function loadDetailPdf(paperId) {
+  const host = document.getElementById('qa-pdf-host');
+  const status = document.getElementById('qa-pdf-status');
+  if (_detailPdfPaperId === paperId && _detailPdfDoc) {
+    status.textContent = _detailPdfDoc.numPages + ' page(s)';
+    return;
+  }
+  // Clear the previous PDF
+  host.innerHTML = '';
+  _detailPdfDoc = null;
+  _detailPdfPaperId = paperId;
+  _detailPdfZoom = 1.0;
+  _detailPdfCurrentPage = 1;
+  status.textContent = 'loading…';
+  try {
+    if (typeof pdfjsLib === 'undefined') {
+      status.textContent = 'PDF viewer unavailable';
+      return;
+    }
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    const doc = await pdfjsLib.getDocument('/api/papers/' + paperId + '/pdf').promise;
+    if (_detailPdfPaperId !== paperId) return;  // Modal was switched; abort.
+    _detailPdfDoc = doc;
+    status.textContent = doc.numPages + ' page(s)';
+    document.getElementById('qa-pdf-page').textContent = '1 / ' + doc.numPages;
+    await renderDetailAllPages();
+  } catch (e) {
+    status.textContent = 'PDF load failed';
+    host.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:12px;">Could not load the PDF: ' +
+      escHtml((e && e.message) || String(e)) + '</div>';
+  }
+}
+
+async function renderDetailAllPages() {
+  const doc = _detailPdfDoc;
+  const host = document.getElementById('qa-pdf-host');
+  if (!doc) return;
+  host.innerHTML = '';
+  for (let p = 1; p <= doc.numPages; p++) {
+    await renderDetailPage(p);
+  }
+}
+
+async function renderDetailPage(pageNum) {
+  const doc = _detailPdfDoc;
+  const host = document.getElementById('qa-pdf-host');
+  const page = await doc.getPage(pageNum);
+  const viewport = page.getViewport({ scale: _detailPdfZoom * 1.4 });
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'page-wrapper';
+  wrapper.dataset.page = String(pageNum);
+  wrapper.style.width = viewport.width + 'px';
+  wrapper.style.height = viewport.height + 'px';
+
+  const canvas = document.createElement('canvas');
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  wrapper.appendChild(canvas);
+
+  const textLayer = document.createElement('div');
+  textLayer.className = 'textLayer';
+  textLayer.style.width = viewport.width + 'px';
+  textLayer.style.height = viewport.height + 'px';
+  wrapper.appendChild(textLayer);
+
+  host.appendChild(wrapper);
+
+  const ctx = canvas.getContext('2d');
+  await page.render({ canvasContext: ctx, viewport }).promise;
+  const textContent = await page.getTextContent();
+  await pdfjsLib.renderTextLayer({
+    textContent, container: textLayer, viewport, textDivs: [],
+  }).promise;
+}
+
+function changeDetailPage(delta) {
+  if (!_detailPdfDoc) return;
+  const total = _detailPdfDoc.numPages;
+  const next = Math.min(total, Math.max(1, _detailPdfCurrentPage + delta));
+  _detailPdfCurrentPage = next;
+  const w = document.querySelector('#qa-pdf-host .page-wrapper[data-page="' + next + '"]');
+  if (w) w.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  document.getElementById('qa-pdf-page').textContent = next + ' / ' + total;
+}
+
+async function changeDetailZoom(delta) {
+  if (!_detailPdfDoc) return;
+  _detailPdfZoom = Math.min(2.5, Math.max(0.5, _detailPdfZoom + delta));
+  document.getElementById('qa-pdf-zoom').textContent = Math.round(_detailPdfZoom * 100) + '%';
+  await renderDetailAllPages();
+}
+
+/* ── Quote → highlight in PDF text layer ─────────────────────────────── */
+function jumpToQuote(quote) {
+  if (!_detailPdfDoc) {
+    toast('PDF is still loading…');
+    return;
+  }
+  const needle = _normalizeQuote(quote).slice(0, 80);
+  if (!needle) return;
+  const pages = document.querySelectorAll('#qa-pdf-host .page-wrapper');
+  for (const page of pages) {
+    const spans = [...page.querySelectorAll('.textLayer > span')];
+    if (!spans.length) continue;
+    const text = _normalizeQuote(spans.map(s => s.textContent).join(' '));
+    const idx = text.indexOf(needle);
+    if (idx >= 0) { _flashSpansAt(page, spans, idx, needle.length); return; }
+  }
+  // Fallback: word-ngram fuzzy match.
+  const hit = _findBestNgram(pages, needle);
+  if (hit) { _flashSpansAt(hit.page, hit.spans, hit.idx, hit.len); return; }
+  toast("Couldn't locate that passage in the PDF — quote may be paraphrased.");
+}
+
+function _flashSpansAt(pageEl, spans, startIdx, length) {
+  // Walk spans accumulating a char cursor (+1 per span for the joining space).
+  let cursor = 0;
+  const first = { span: null, before: 0 };
+  const covered = [];
+  for (const s of spans) {
+    const len = (s.textContent || '').length;
+    const spanEnd = cursor + len;
+    if (first.span === null && spanEnd > startIdx) {
+      first.span = s;
+      first.before = startIdx - cursor;
+    }
+    if (first.span !== null) {
+      covered.push(s);
+      if (cursor >= startIdx + length) break;
+    }
+    cursor = spanEnd + 1;
+  }
+  if (!first.span) return;
+  // Scroll the target page into view inside the PDF host scroller, then the span.
+  pageEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  setTimeout(() => {
+    first.span.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, 200);
+  covered.forEach(s => {
+    s.classList.remove('qa-hl-flash');  // restart animation if already present
+    // Force reflow so the removal registers before re-adding.
+    void s.offsetWidth;
+    s.classList.add('qa-hl-flash');
+  });
+  // Update the page indicator
+  document.getElementById('qa-pdf-page').textContent = pageEl.dataset.page + ' / ' + (_detailPdfDoc.numPages || '?');
+  _detailPdfCurrentPage = Number(pageEl.dataset.page);
+}
+
+function _findBestNgram(pages, needle) {
+  const needleWords = needle.split(/\s+/).filter(w => w.length > 3);
+  if (needleWords.length < 3) return null;
+  // Try decreasing n-gram sizes until we hit something.
+  const sizes = [Math.min(6, needleWords.length), 4, 3];
+  for (const n of sizes) {
+    for (let i = 0; i <= needleWords.length - n; i++) {
+      const frag = needleWords.slice(i, i + n).join(' ');
+      for (const page of pages) {
+        const spans = [...page.querySelectorAll('.textLayer > span')];
+        if (!spans.length) continue;
+        const text = _normalizeQuote(spans.map(s => s.textContent).join(' '));
+        const idx = text.indexOf(frag);
+        if (idx >= 0) return { page, spans, idx, len: frag.length };
+      }
+    }
+  }
+  return null;
 }
 
 /* ── Developer modal ─────────────────────────────────────────────────── */
