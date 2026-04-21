@@ -811,10 +811,15 @@ body.pane-resizing * { cursor: col-resize !important; user-select: none !importa
   /* Project-filter select — the navy-sidebar tuning we pushed earlier is
      wrong for the paper background. Repaint. */
   .project-filter-select {
-    background: var(--paper-2) !important;
+    /* background shorthand would reset repeat/position longhands — set
+       only background-color so the base rule's no-repeat + position
+       keep working with the caret SVG below. */
+    background-color: var(--paper-2) !important;
     border-color: var(--rule) !important;
     color: var(--ink) !important;
     background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'><path d='M1 3.5L5 7.5L9 3.5' stroke='%233f3f46' stroke-width='1.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>") !important;
+    background-repeat: no-repeat !important;
+    background-position: right 8px center !important;
   }
   .project-filter-select:hover { background-color: var(--paper-3) !important; border-color: var(--rule-2) !important; }
   .project-filter-select option { background: var(--paper) !important; color: var(--ink) !important; }
