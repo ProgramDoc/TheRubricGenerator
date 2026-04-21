@@ -6709,12 +6709,14 @@ def api_qa_runs_list(rubricgen_session: str | None = Cookie(default=None),
     conn = get_db()
     try:
         rows = conn.execute(
-            """SELECT id, project_id, paper_count, status,
-                      credit_cost, credits_refunded, error_message,
-                      created_at, completed_at
-                 FROM quality_appraisal_runs
-                WHERE user_id=? AND deleted_at IS NULL
-                ORDER BY created_at DESC LIMIT 50""",
+            """SELECT r.id, r.project_id, r.paper_count, r.status,
+                      r.credit_cost, r.credits_refunded, r.error_message,
+                      r.created_at, r.completed_at,
+                      p.name AS project_name
+                 FROM quality_appraisal_runs r
+            LEFT JOIN projects p ON p.id = r.project_id
+                WHERE r.user_id=? AND r.deleted_at IS NULL
+                ORDER BY r.created_at DESC LIMIT 50""",
             (user["id"],),
         ).fetchall()
     finally:
@@ -6724,10 +6726,13 @@ def api_qa_runs_list(rubricgen_session: str | None = Cookie(default=None),
 
 def _load_qa_run(conn, run_id: int, user_id: int, is_admin: bool) -> dict:
     row = conn.execute(
-        """SELECT id, user_id, project_id, paper_ids_json, paper_count, status,
-                  credit_cost, credits_refunded, error_message,
-                  created_at, completed_at, deleted_at
-             FROM quality_appraisal_runs WHERE id=?""",
+        """SELECT r.id, r.user_id, r.project_id, r.paper_ids_json, r.paper_count,
+                  r.status, r.credit_cost, r.credits_refunded, r.error_message,
+                  r.created_at, r.completed_at, r.deleted_at,
+                  p.name AS project_name
+             FROM quality_appraisal_runs r
+        LEFT JOIN projects p ON p.id = r.project_id
+            WHERE r.id=?""",
         (run_id,),
     ).fetchone()
     if not row:

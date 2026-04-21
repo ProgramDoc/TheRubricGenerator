@@ -51,19 +51,32 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
   display: flex; flex-direction: column; overflow: hidden;
 }
 #sidebar-header {
-  padding: 10px 12px; border-bottom: 1px solid var(--border);
+  padding: 10px 12px 6px; border-bottom: 1px solid var(--border);
   font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--muted); letter-spacing: .05em;
+  display: flex; flex-direction: column; gap: 6px;
 }
+#project-filter {
+  width: 100%; padding: 5px 8px; border-radius: 5px; border: 1px solid var(--rule-2);
+  background: var(--paper); color: var(--text); font-family: inherit; font-size: 11.5px;
+  font-weight: 600; cursor: pointer; text-transform: none; letter-spacing: normal;
+}
+#project-filter:hover { border-color: var(--accent); }
 #paper-list { flex: 1; overflow-y: auto; padding: 4px 0; }
 .paper-item {
   display: flex; align-items: center; gap: 8px; padding: 7px 12px; cursor: pointer;
   border-left: 3px solid transparent; font-size: 12px;
 }
 .paper-item:hover { background: var(--paper-2); }
+.paper-item:hover .paper-del { visibility: visible; }
 .paper-item.selected { background: var(--accent-soft); border-left-color: var(--accent); }
 .paper-item input[type=checkbox] { margin: 0; }
 .paper-item .pname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .paper-item .pmeta { font-size: 10px; color: var(--muted); font-family: var(--mono); }
+.paper-del {
+  visibility: hidden; background: none; border: 0; color: var(--muted); cursor: pointer;
+  font-size: 14px; padding: 0 4px; border-radius: 3px;
+}
+.paper-del:hover { color: var(--err); background: rgba(220,38,38,.1); }
 #upload-zone {
   margin: 8px 12px 10px; padding: 14px; border: 2px dashed var(--rule-2); border-radius: 8px;
   text-align: center; font-size: 11px; color: var(--muted); cursor: pointer;
@@ -72,13 +85,15 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
 #file-input { display: none; }
 #select-bar {
   padding: 8px 12px; font-size: 11px; border-top: 1px solid var(--border);
-  background: var(--paper-2); display: flex; gap: 6px; align-items: center;
+  background: var(--paper-2); display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
 }
 #select-bar button {
   font-size: 10.5px; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--border);
   background: var(--paper); cursor: pointer; color: var(--text);
 }
 #select-bar button:hover { background: var(--paper-3); }
+#select-bar button.danger { color: var(--err); border-color: rgba(220,38,38,.35); }
+#select-bar button.danger:hover { background: rgba(220,38,38,.08); }
 #select-count { font-weight: 700; color: var(--accent); margin-left: auto; }
 
 /* ── Main area ─── */
@@ -268,13 +283,23 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
 <div id="layout">
   <!-- ── SIDEBAR ────────────────────────────────────────────────────── -->
   <div id="sidebar">
-    <div id="sidebar-header">Papers <span id="paper-count" style="font-family:var(--mono);color:var(--muted);float:right;font-weight:500;"></span></div>
+    <div id="sidebar-header">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span>Papers</span>
+        <span id="paper-count" style="font-family:var(--mono);color:var(--muted);font-weight:500;"></span>
+      </div>
+      <select id="project-filter" onchange="onProjectFilterChange()">
+        <option value="">All papers</option>
+        <option value="0">— Unassigned —</option>
+      </select>
+    </div>
     <div id="paper-list">
       <div class="empty-state" style="padding:30px 14px;font-size:11.5px;">Loading…</div>
     </div>
     <div id="select-bar">
       <button onclick="selectAllPapers()">All</button>
       <button onclick="selectNonePapers()">None</button>
+      <button onclick="deleteSelectedPapers()" class="danger" id="delete-selected-btn" style="display:none;">&times; Delete</button>
       <span id="select-count">0</span>
     </div>
     <div id="upload-zone" onclick="document.getElementById('file-input').click()"
@@ -331,6 +356,12 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
         <li>Compute initial + updated GRADE certainty</li>
       </ul>
       <p style="margin:0 0 4px;font-size:12px;color:var(--muted);">Papers that aren't a supported study type are skipped with a full credit refund. v1 supports RCTs; other study types return "not yet supported".</p>
+      <div style="margin:10px 0;">
+        <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px;">Tag run with project (optional)</label>
+        <select id="run-project" style="width:100%;padding:6px 8px;border-radius:5px;border:1px solid var(--rule-2);background:var(--paper);color:var(--text);font-family:inherit;font-size:12px;">
+          <option value="">— No project —</option>
+        </select>
+      </div>
       <div class="cost-box">
         Estimated cost <span class="big"><span id="run-cost">0</span> credits</span>
         <span style="font-weight:400;font-size:11px;opacity:.85;">
@@ -360,13 +391,22 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
 <script>
 /* ── STATE ───────────────────────────────────────────────────────────── */
 let me = null;
-let papers = [];
+let papers = [];               // full paper list from /api/annotator/papers
+let projects = [];             // [{id, name, role, ...}] from /api/projects
+let projectFilter = '';        // '' = all, '0' = unassigned, or project id as string
 let selectedPaperIds = new Set();
 let allRuns = [];
-let currentRun = null;       // { id, status, results: [], ... }
+let currentRun = null;         // { id, status, results: [], ... }
 let pollTimer = null;
 let lastEventId = 0;
 const PER_PAPER_COST = 30;
+
+function filteredPapers() {
+  if (projectFilter === '') return papers;
+  if (projectFilter === '0') return papers.filter(p => !p.project_id);
+  const n = Number(projectFilter);
+  return papers.filter(p => p.project_id === n);
+}
 
 /* ── Auth / init ─────────────────────────────────────────────────────── */
 (async function init() {
@@ -376,9 +416,38 @@ const PER_PAPER_COST = 30;
     me = await r.json();
     document.getElementById('user-display').textContent = me.display_name + ' (' + me.email + ')';
   } catch { window.location.href = '/login'; return; }
-  await loadPapers();
-  await loadRuns();
+  await Promise.all([loadProjects(), loadPapers(), loadRuns()]);
 })();
+
+async function loadProjects() {
+  try {
+    const r = await fetch('/api/projects');
+    if (!r.ok) throw new Error(await r.text());
+    projects = await r.json();
+  } catch { projects = []; }
+  renderProjectSelects();
+}
+
+function renderProjectSelects() {
+  const filter = document.getElementById('project-filter');
+  const runSel = document.getElementById('run-project');
+  const baseFilter = '<option value="">All papers</option><option value="0">— Unassigned —</option>';
+  const baseRun = '<option value="">— No project —</option>';
+  const opts = projects.map(p =>
+    `<option value="${p.id}">${escHtml(p.name)}${p.role && p.role !== 'admin' ? ' (' + escHtml(p.role) + ')' : ''}</option>`
+  ).join('');
+  filter.innerHTML = baseFilter + opts;
+  filter.value = projectFilter;
+  runSel.innerHTML = baseRun + opts;
+}
+
+function onProjectFilterChange() {
+  projectFilter = document.getElementById('project-filter').value;
+  // Drop any selections that are no longer visible under the new filter
+  const visibleIds = new Set(filteredPapers().map(p => p.id));
+  [...selectedPaperIds].forEach(id => { if (!visibleIds.has(id)) selectedPaperIds.delete(id); });
+  renderPapers();
+}
 
 function logout() {
   fetch('/api/auth/logout', { method: 'POST' }).finally(() => window.location.href = '/login');
@@ -408,22 +477,36 @@ async function loadPapers() {
   renderPapers();
 }
 
+function projectNameFor(pid) {
+  const p = projects.find(pr => pr.id === pid);
+  return p ? p.name : null;
+}
+
 function renderPapers() {
   const host = document.getElementById('paper-list');
-  document.getElementById('paper-count').textContent = papers.length + ' file(s)';
-  if (!papers.length) {
-    host.innerHTML = '<div class="empty-state" style="padding:30px 14px;font-size:11.5px;">No papers yet.<br>Upload a PDF below.</div>';
+  const shown = filteredPapers();
+  const countLabel = projectFilter === ''
+    ? `${papers.length} file(s)`
+    : `${shown.length} / ${papers.length}`;
+  document.getElementById('paper-count').textContent = countLabel;
+  if (!shown.length) {
+    const msg = !papers.length
+      ? 'No papers yet.<br>Upload a PDF below.'
+      : 'No papers in this project.';
+    host.innerHTML = `<div class="empty-state" style="padding:30px 14px;font-size:11.5px;">${msg}</div>`;
     updateSelectBar();
     return;
   }
-  host.innerHTML = papers.map(p => {
+  host.innerHTML = shown.map(p => {
     const sel = selectedPaperIds.has(p.id) ? 'checked' : '';
+    const projLabel = p.project_id ? (projectNameFor(p.project_id) || ('project ' + p.project_id)) : '';
     return `<label class="paper-item ${selectedPaperIds.has(p.id) ? 'selected' : ''}">
       <input type="checkbox" ${sel} onchange="togglePaper(${p.id}, this.checked)">
       <div style="flex:1;min-width:0;">
         <div class="pname">${escHtml(p.filename)}</div>
-        <div class="pmeta">${escHtml(p.id)}${p.project_id ? ' &middot; proj ' + p.project_id : ''}</div>
+        <div class="pmeta">#${escHtml(p.id)}${projLabel ? ' &middot; ' + escHtml(projLabel) : ''}</div>
       </div>
+      <button class="paper-del" title="Delete this paper" onclick="deletePaper(event, ${p.id}, ${JSON.stringify(p.filename)})">&times;</button>
     </label>`;
   }).join('');
   updateSelectBar();
@@ -433,12 +516,47 @@ function togglePaper(id, checked) {
   if (checked) selectedPaperIds.add(id); else selectedPaperIds.delete(id);
   renderPapers();
 }
-function selectAllPapers() { selectedPaperIds = new Set(papers.map(p => p.id)); renderPapers(); }
+function selectAllPapers() {
+  selectedPaperIds = new Set(filteredPapers().map(p => p.id));
+  renderPapers();
+}
 function selectNonePapers() { selectedPaperIds.clear(); renderPapers(); }
 function updateSelectBar() {
   const n = selectedPaperIds.size;
   document.getElementById('select-count').textContent = n + ' selected';
   document.getElementById('run-btn').disabled = n === 0;
+  document.getElementById('delete-selected-btn').style.display = n > 0 ? '' : 'none';
+}
+
+async function deletePaper(ev, id, filename) {
+  if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+  if (!confirm('Delete "' + filename + '"? This cannot be undone.')) return;
+  try {
+    const r = await fetch('/api/papers/' + id, { method: 'DELETE' });
+    if (!r.ok) throw new Error(await r.text());
+    selectedPaperIds.delete(id);
+    await loadPapers();
+    toast('Deleted ' + filename);
+  } catch (e) { toast('Delete failed: ' + e.message, true); }
+}
+
+async function deleteSelectedPapers() {
+  const ids = [...selectedPaperIds];
+  if (!ids.length) return;
+  if (!confirm('Delete ' + ids.length + ' paper(s)? This cannot be undone.')) return;
+  let failed = 0;
+  for (const id of ids) {
+    try {
+      const r = await fetch('/api/papers/' + id, { method: 'DELETE' });
+      if (!r.ok) failed++;
+    } catch { failed++; }
+  }
+  selectedPaperIds.clear();
+  await loadPapers();
+  toast(failed
+    ? 'Deleted ' + (ids.length - failed) + ' / ' + ids.length + ' paper(s); ' + failed + ' failed.'
+    : 'Deleted ' + ids.length + ' paper(s).',
+    failed > 0);
 }
 
 /* ── Upload ──────────────────────────────────────────────────────────── */
@@ -489,11 +607,15 @@ function renderRuns() {
   }
   host.innerHTML = `<table class="runs-table">
     <thead><tr>
-      <th>Run</th><th>Papers</th><th>Status</th><th>Cost</th><th>Refunded</th><th>Created</th><th></th>
+      <th>Run</th><th>Project</th><th>Papers</th><th>Status</th><th>Cost</th><th>Refunded</th><th>Created</th><th></th>
     </tr></thead><tbody>${allRuns.map(r => {
       const statusCls = 'status-' + (r.status || 'pending');
+      const projLabel = r.project_name
+        ? `<span class="chip mod">${escHtml(r.project_name)}</span>`
+        : '<span style="color:var(--muted);">—</span>';
       return `<tr>
         <td><strong>#${r.id}</strong></td>
+        <td>${projLabel}</td>
         <td>${r.paper_count}</td>
         <td><span class="status-pill ${statusCls}">${escHtml(r.status)}</span></td>
         <td>${r.credit_cost || 0}</td>
@@ -521,6 +643,10 @@ function openRunModal() {
   document.getElementById('run-count').textContent = n;
   document.getElementById('run-cost').textContent = n * PER_PAPER_COST;
   document.getElementById('per-paper-cost').textContent = PER_PAPER_COST;
+  // Preselect the current sidebar-filter project, if one is set
+  const runProj = document.getElementById('run-project');
+  if (projectFilter && projectFilter !== '0') runProj.value = projectFilter;
+  else runProj.value = '';
   document.getElementById('run-modal').classList.add('open');
 }
 function closeRunModal() { document.getElementById('run-modal').classList.remove('open'); }
@@ -530,11 +656,14 @@ async function submitRun() {
   btn.disabled = true;
   btn.textContent = 'Starting…';
   const paper_ids = Array.from(selectedPaperIds);
+  const runProj = document.getElementById('run-project').value;
+  const payload = { paper_ids };
+  if (runProj) payload.project_id = Number(runProj);
   try {
     const r = await fetch('/api/quality-appraisal/runs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ paper_ids }),
+      body: JSON.stringify(payload),
     });
     if (!r.ok) {
       const errText = await r.text();
@@ -609,10 +738,13 @@ function appendEvents(events) {
 
 function renderResults() {
   const meta = document.getElementById('results-meta');
+  const projChip = currentRun && currentRun.project_name
+    ? ` &middot; project <span class="chip mod">${escHtml(currentRun.project_name)}</span>`
+    : '';
   meta.innerHTML = currentRun
     ? `<strong>Run #${currentRun.id}</strong> — ${currentRun.paper_count} paper(s) &middot;
        status <span class="status-pill status-${currentRun.status}">${escHtml(currentRun.status)}</span>
-       &middot; cost ${currentRun.credit_cost} &middot; refunded ${currentRun.credits_refunded}`
+       &middot; cost ${currentRun.credit_cost} &middot; refunded ${currentRun.credits_refunded}${projChip}`
     : '';
 
   const host = document.getElementById('results-host');
