@@ -355,19 +355,14 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
         <li>Run the reporting-guideline checklist (v1: <strong>CONSORT 2025</strong> for RCTs)</li>
         <li>Compute initial + updated GRADE certainty</li>
       </ul>
-      <p style="margin:0 0 4px;font-size:12px;color:var(--muted);">Papers that aren't a supported study type are skipped with a full credit refund. v1 supports RCTs; other study types return "not yet supported".</p>
+      <p style="margin:0 0 10px;font-size:12px;color:var(--muted);">Papers that aren't a supported study type are skipped. v1 supports RCTs; other study types return "not yet supported".</p>
       <div style="margin:10px 0;">
         <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px;">Tag run with project (optional)</label>
         <select id="run-project" style="width:100%;padding:6px 8px;border-radius:5px;border:1px solid var(--rule-2);background:var(--paper);color:var(--text);font-family:inherit;font-size:12px;">
           <option value="">— No project —</option>
         </select>
       </div>
-      <div class="cost-box">
-        Estimated cost <span class="big"><span id="run-cost">0</span> credits</span>
-        <span style="font-weight:400;font-size:11px;opacity:.85;">
-          = <span id="run-count">0</span> paper(s) &times; <span id="per-paper-cost">30</span> credits
-        </span>
-      </div>
+      <div style="margin-top:12px;font-size:12px;color:var(--muted);"><span id="run-count">0</span> paper(s) selected.</div>
     </div>
     <div class="modal-foot">
       <button class="tb-btn primary" onclick="submitRun()" id="submit-run-btn">Start appraisal</button>
@@ -607,7 +602,7 @@ function renderRuns() {
   }
   host.innerHTML = `<table class="runs-table">
     <thead><tr>
-      <th>Run</th><th>Project</th><th>Papers</th><th>Status</th><th>Cost</th><th>Refunded</th><th>Created</th><th></th>
+      <th>Run</th><th>Project</th><th>Papers</th><th>Status</th><th>Created</th><th></th>
     </tr></thead><tbody>${allRuns.map(r => {
       const statusCls = 'status-' + (r.status || 'pending');
       const projLabel = r.project_name
@@ -618,8 +613,6 @@ function renderRuns() {
         <td>${projLabel}</td>
         <td>${r.paper_count}</td>
         <td><span class="status-pill ${statusCls}">${escHtml(r.status)}</span></td>
-        <td>${r.credit_cost || 0}</td>
-        <td>${r.credits_refunded || 0}</td>
         <td style="font-size:10.5px;color:var(--muted);">${escHtml(r.created_at || '')}</td>
         <td><button class="tb-btn" style="background:var(--paper-2);border-color:var(--border);color:var(--text);" onclick="openRunResults(${r.id})">Open</button>
             <button class="tb-btn" style="background:var(--paper-2);border-color:var(--border);color:var(--err);" onclick="deleteRun(${r.id})">&times;</button></td>
@@ -641,8 +634,6 @@ function openRunModal() {
   const n = selectedPaperIds.size;
   if (!n) return;
   document.getElementById('run-count').textContent = n;
-  document.getElementById('run-cost').textContent = n * PER_PAPER_COST;
-  document.getElementById('per-paper-cost').textContent = PER_PAPER_COST;
   // Preselect the current sidebar-filter project, if one is set
   const runProj = document.getElementById('run-project');
   if (projectFilter && projectFilter !== '0') runProj.value = projectFilter;
@@ -743,8 +734,7 @@ function renderResults() {
     : '';
   meta.innerHTML = currentRun
     ? `<strong>Run #${currentRun.id}</strong> — ${currentRun.paper_count} paper(s) &middot;
-       status <span class="status-pill status-${currentRun.status}">${escHtml(currentRun.status)}</span>
-       &middot; cost ${currentRun.credit_cost} &middot; refunded ${currentRun.credits_refunded}${projChip}`
+       status <span class="status-pill status-${currentRun.status}">${escHtml(currentRun.status)}</span>${projChip}`
     : '';
 
   const host = document.getElementById('results-host');
@@ -876,7 +866,6 @@ function renderDevCatalog(cat) {
     <ol style="padding-left:20px;font-size:12px;">${(overview.pipeline_steps || []).map(s => '<li>' + escHtml(s) + '</li>').join('')}</ol>
     <details><summary>Study-type registry</summary><pre>${escHtml(JSON.stringify(cat.registry, null, 2))}</pre></details>
     <details><summary>Primary-outcome picker (code)</summary><pre>${escHtml((cat.primary_outcome_picker || {}).code || '')}</pre></details>
-    <div style="font-size:11px;color:var(--muted);margin-top:6px;">Cost per paper: <strong>${cat.credit_cost_per_paper}</strong> credits.</div>
   </div>`;
 
   if (rob2) {
