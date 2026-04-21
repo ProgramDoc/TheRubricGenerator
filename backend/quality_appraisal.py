@@ -595,12 +595,12 @@ def prompt_catalog() -> dict[str, Any]:
                 "guideline + GRADE."
             ),
             "pipeline_steps": [
-                "1. Classify study design (reuses OGAI Annotator)",
-                "2. Extract universal + type-specific + modifier fields",
-                "3. Auto-pick the primary outcome",
-                "4. Run the registered risk-of-bias tool (per-domain LLM calls + pure-Python decision trees)",
-                "5. Run the registered reporting-guideline checklist (single LLM call over all items)",
-                "6. Compute initial GRADE (from study type) and updated GRADE (downgrade for RoB)",
+                "Classify study design (reuses OGAI Annotator)",
+                "Extract universal + type-specific + modifier fields",
+                "Auto-pick the primary outcome",
+                "Run the registered risk-of-bias tool (per-domain LLM calls + pure-Python decision trees)",
+                "Run the registered reporting-guideline checklist (single LLM call over all items)",
+                "Compute initial GRADE (from study type) and updated GRADE (downgrade for RoB)",
             ],
         },
         "registry": STUDY_TYPE_REGISTRY,
