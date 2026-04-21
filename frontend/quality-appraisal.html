@@ -181,6 +181,15 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
 .cell-error { color: var(--err); font-style: italic; font-size: 10px; }
 .cell-skipped { color: var(--muted); font-style: italic; font-size: 10px; }
 
+.reupload-btn {
+  display: inline-block; margin-top: 4px; padding: 3px 8px;
+  font-size: 10px; font-weight: 600; border-radius: 4px;
+  border: 1px solid var(--err); color: var(--err); background: transparent;
+  cursor: pointer; font-style: normal;
+}
+.reupload-btn:hover { background: var(--err); color: white; }
+.reupload-btn:disabled { opacity: 0.5; cursor: wait; }
+
 .export-bar { margin-top: 12px; display: flex; gap: 8px; }
 .export-bar button {
   font-size: 11px; padding: 6px 12px; border-radius: 5px; border: 1px solid var(--border);
@@ -313,14 +322,16 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
 #qa-pdf-host canvas { display: block; }
 #qa-pdf-host .textLayer {
   position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-  overflow: hidden; opacity: 0.2; line-height: 1;
+  overflow: hidden; line-height: 1;
 }
 #qa-pdf-host .textLayer > span {
   color: transparent; position: absolute; white-space: pre; cursor: text;
   transform-origin: 0% 0%;
 }
+#qa-pdf-host .textLayer > span::selection { background: rgba(0, 100, 255, 0.3); }
 #qa-pdf-host .textLayer > span.qa-hl-flash {
   color: #000 !important; background: #fff3a0; border-radius: 2px;
+  box-shadow: 0 0 0 2px #fff3a0;
   animation: qa-flash 3.5s ease-out;
 }
 @keyframes qa-flash {
@@ -812,6 +823,35 @@ async function uploadFiles(files) {
   toast('Upload complete');
 }
 
+async function reuploadPaper(paperId, btn) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.pdf,application/pdf';
+  input.onchange = async () => {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    btn.disabled = true;
+    const orig = btn.textContent;
+    btn.textContent = 'Uploading…';
+    try {
+      const form = new FormData();
+      form.append('file', f);
+      const r = await fetch('/api/papers/' + paperId + '/file', { method: 'PUT', body: form });
+      if (!r.ok) {
+        toast('Re-upload failed: ' + (await r.text()).slice(0, 140), true);
+        btn.disabled = false; btn.textContent = orig;
+        return;
+      }
+      toast('PDF re-uploaded. Start a new Quality Appraisal run to process this paper.');
+      if (typeof loadPapers === 'function') await loadPapers();
+    } catch (e) {
+      toast('Re-upload error: ' + e.message, true);
+      btn.disabled = false; btn.textContent = orig;
+    }
+  };
+  input.click();
+}
+
 /* ── Tabs ────────────────────────────────────────────────────────────── */
 function switchTab(tab) {
   document.querySelectorAll('.main-tab').forEach(el => {
@@ -1008,8 +1048,12 @@ function renderResults() {
     const fields = r.extracted_fields || {};
     const classification = r.classification || {};
     if (r.status !== 'ok') {
+      const isMissingFile = (r.error_message || '').includes('PDF file not found');
+      const reuploadBtn = isMissingFile
+        ? `<button class="reupload-btn" onclick="reuploadPaper(${r.paper_id}, this)">↑ Re-upload PDF</button>`
+        : '';
       const studyCell = `<td class="col-study"><div class="study-title">${escHtml(r.filename || ('#' + r.paper_id))}</div>
-        <div class="cell-${r.status === 'skipped' ? 'skipped' : 'error'}">${escHtml(r.error_message || r.status)}</div></td>`;
+        <div class="cell-${r.status === 'skipped' ? 'skipped' : 'error'}">${escHtml(r.error_message || r.status)}</div>${reuploadBtn}</td>`;
       const spanCols = headerCols.length - 1;
       return `<tr>${studyCell}<td colspan="${spanCols}" class="cell-${r.status === 'skipped' ? 'skipped' : 'error'}">${escHtml(r.status)}</td></tr>`;
     }
@@ -1486,11 +1530,7 @@ function _flashSpansAt(pageEl, spans, startIdx, length) {
     cursor = spanEnd + 1;
   }
   if (!first.span) return;
-  // Scroll the target page into view inside the PDF host scroller, then the span.
-  pageEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  setTimeout(() => {
-    first.span.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, 200);
+  first.span.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
   covered.forEach(s => {
     s.classList.remove('qa-hl-flash');  // restart animation if already present
     // Force reflow so the removal registers before re-adding.

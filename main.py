@@ -3622,6 +3622,60 @@ async def upload_paper(
         conn.close()
 
 
+@app.put("/api/papers/{pid}/file")
+async def replace_paper_file(
+    pid: int,
+    file: UploadFile = File(...),
+    rubricgen_session: str | None = Cookie(default=None),
+):
+    user = require_user(rubricgen_session)
+    require_active_seat(user, "engineer")
+    content = await file.read()
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(413, "File too large. Maximum size is 50 MB.")
+    if not (file.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(400, "Only .pdf files are accepted.")
+
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT id, filename, disk_filename, storage_path "
+            "FROM papers WHERE id=? AND user_id=?",
+            (pid, user["id"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Paper not found.")
+
+        try:
+            new_storage_path = paper_files_mod.write_paper_file(content, file.filename)
+        except Exception as e:
+            logger.exception("Re-upload: write_paper_file crashed for paper %s", pid)
+            raise HTTPException(502, f"Re-upload failed while writing to storage: {e}")
+
+        sha256 = hashlib.sha256(content).hexdigest()
+        disk_name = f"{sha256}.pdf"
+        with conn:
+            conn.execute(
+                "UPDATE papers SET filename=?, disk_filename=?, storage_path=?, sha256=? "
+                "WHERE id=? AND user_id=?",
+                (file.filename, disk_name, new_storage_path, sha256, pid, user["id"]),
+            )
+            conn.commit()
+
+        try:
+            paper_files_mod.delete_paper_file(row, PAPERS_DIR)
+        except Exception:
+            logger.warning("Re-upload: old file cleanup failed for paper %s", pid, exc_info=True)
+
+        return {
+            "id": pid,
+            "filename": file.filename,
+            "storage": "s3" if new_storage_path.startswith("s3://") else "local",
+        }
+    finally:
+        conn.close()
+
+
 @app.patch("/api/papers/{pid}/assign")
 def assign_paper(pid: int, body: PaperAssign, rubricgen_session: str | None = Cookie(default=None)):
     user = require_user(rubricgen_session)
