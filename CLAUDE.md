@@ -26,6 +26,9 @@
 | Read/write paper PDF bytes | `backend/paper_files.py` (handles `storage_path` + legacy `disk_filename` fallback) |
 | Modify the annotator | `backend/annotator.py` (tables, field catalog, prompts, analytics) + `frontend/annotator.html` (3-pane UI + tabbed right pane) |
 | Add an annotator field group / type-specific / modifier constant | `backend/annotator.py` — `FIELD_GROUPS`, `TYPE_FIELD_IDS`, `DESIGN_MODIFIER_COLS`, `NUMERIC_FIELDS`, `CATEGORICAL_FIELDS` |
+| Modify Quality Appraisal AI | `backend/quality_appraisal.py` (registry, orchestrator, GRADE, DDL) + `backend/rob_tools/*.py` (RoB tools) + `backend/reporting_guidelines/*.py` (checklists) + `frontend/quality-appraisal.html` |
+| Add a new risk-of-bias tool (ROBINS-I, QUADAS-2, AMSTAR-2, …) | New `backend/rob_tools/<tool>.py` exposing `run(pdf_bytes, fields, classification, primary_outcome, progress)` and `prompt_catalog()`, then register in `backend/quality_appraisal.py:STUDY_TYPE_REGISTRY` + `_TOOL_RUNNERS` |
+| Add a new reporting guideline (STROBE, PRISMA, STARD, …) | New `backend/reporting_guidelines/<guide>.py` exposing `run(pdf_bytes, fields, classification)` and `prompt_catalog()`, then register in `backend/quality_appraisal.py:_GUIDELINE_RUNNERS` |
 | Add a new lab agent | `backend/agents/lab_agents.py` + `backend/skills.py` (prompt) + `backend/lab.py` (routing) |
 | Modify lab chat/sessions | `backend/lab.py` |
 | Modify exports | `backend/exports.py` |
@@ -222,6 +225,32 @@ Classification tasks (`classify_study_design`) and the schema-proposal task (`pa
 Upfront: a 32 MB byte-size guard (`_PDF_UPLOAD_BYTE_LIMIT`) short-circuits before we even base64-encode, since Anthropic's PDF beta rejects anything larger. All error paths raise `HTTPException` with actionable vendor-free messages, and the existing `_refund_annotator` / `refund_credits` handlers auto-refund the credit charge.
 
 **Persistence:** localStorage draft (not sessionStorage, so it survives tab close) + backend save on `input` (1.5 s debounce) + `keepalive: true` fetch on `beforeunload` / `pagehide` / `visibilitychange → hidden` / `logout()`. `loadExistingAnnotation` prefers the local draft over the backend copy, so unsent edits come back even if the network save failed.
+
+## Quality Appraisal AI
+
+Lives at `/quality-appraisal` ([route in main.py](main.py), UI in [frontend/quality-appraisal.html](frontend/quality-appraisal.html), backend in [backend/quality_appraisal.py](backend/quality_appraisal.py) + [backend/rob_tools/](backend/rob_tools/) + [backend/reporting_guidelines/](backend/reporting_guidelines/)). Reuses the annotator's `classify_study_design`, `prefill_fields`, `_call_with_pdf` (3-stage oversize fallback), `load_paper_pdf`, credits, and `require_active_seat` — no parallel user/paper system.
+
+**Pipeline per paper** (≈ 8 LLM calls, **30 credits**):
+1. Classify study design via annotator.
+2. Extract universal + type-specific + modifier fields via annotator.
+3. Auto-pick primary outcome from `primary_outcome_definition` → `primary_outcome_measurement` → `population_outcomes`.
+4. Per-domain LLM calls for the registered RoB tool — **pure-Python decision trees** map Y/PY/PN/N/NI signal answers to Low / Some concerns / High judgements. Trees live in code (not prompts) so the developer view can show the exact logic via `inspect.getsource`.
+5. Single-call adherence check against the registered reporting guideline.
+6. Compute initial GRADE (from registry) + updated GRADE after RoB. Downgrades only for RoB in v1 (other GRADE domains need a body of evidence, not a single study).
+
+**Extensibility contract** — [backend/quality_appraisal.py:STUDY_TYPE_REGISTRY](backend/quality_appraisal.py) is the single source of truth mapping `{study_type → (rob_tool, reporting_guideline, initial_grade)}`. v1 supports **Randomized Controlled Trial → RoB 2 (2019) + CONSORT 2025 + High initial GRADE**. Registry keys MUST match `annotator.TYPE_FIELD_IDS` keys — the test `TestDispatch::test_registry_keys_match_annotator_types` enforces this. Unsupported study types return `None` → the paper is marked `skipped`, credits refund. Adding a new study type: add a registry entry + new module in `backend/rob_tools/` (for the tool) and/or `backend/reporting_guidelines/` (for the guideline), each exposing `run(...)` and `prompt_catalog()`, then register the callable in `_TOOL_RUNNERS` / `_GUIDELINE_RUNNERS`.
+
+**Credit gate + refund**: pre-charge via `_annotator_ai_gate`; refund per-paper on error/skip via `billing.refund_credits` — same idiom as custom annotator runs. Admin bypasses.
+
+**Background execution**: inline for ≤3 papers, daemon thread for larger batches via [backend/quality_appraisal.py:run_batch_async](backend/quality_appraisal.py). Progress is logged to `quality_appraisal_events` and polled every 5s by the frontend (`GET /runs/{id}/events?after=<last_id>` returns incremental events).
+
+**Developer view** (🔧 icon in topbar, visible to every signed-in user) — `GET /api/quality-appraisal/prompts` returns the full prompt templates, signaling questions, and `inspect.getsource` output for every decision tree + GRADE logic. Transparency by default: reviewers can see exactly how a judgement was produced.
+
+**DB tables** (initialised from `QUALITY_APPRAISAL_TABLES_SQL`): `quality_appraisal_runs`, `quality_appraisal_results`, `quality_appraisal_events`. All date columns use `created_at` / `completed_at` (no `timestamp` column per the SQLite compat-wrapper gotcha). Runs are soft-deleted via `deleted_at`.
+
+**Endpoints** (seat tiers match the annotator's): `GET /api/quality-appraisal/supported-types` (general), `GET /api/quality-appraisal/prompts` (general, the dev view), `POST /api/quality-appraisal/runs` (engineer), `GET /api/quality-appraisal/runs` (general), `GET /api/quality-appraisal/runs/{id}` (general), `GET /api/quality-appraisal/runs/{id}/events?after=<id>` (general, incremental poll), `GET /api/quality-appraisal/runs/{id}.csv|.xlsx` (general), `DELETE /api/quality-appraisal/runs/{id}` (general, soft delete).
+
+**Out of scope for v1**: non-RCT study types (registry stubs in place), ROBINS-I / AMSTAR-2 / QUADAS-2 and other tools, STROBE / PRISMA / STARD and other guidelines, editing / overriding AI judgements in the UI, full GRADE assessment across inconsistency/indirectness/imprecision/publication bias, per-outcome user selection (we auto-pick primary), cluster/crossover/stepped-wedge RCT variants (cribsheet is parallel-trial only).
 
 ## Environment Variables
 

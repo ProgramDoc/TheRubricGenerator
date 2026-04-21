@@ -61,6 +61,8 @@ from backend import membership as member_mod
 from backend.annotator import ANNOTATOR_TABLES_SQL
 from backend import annotator as annotator_mod
 from backend import paper_files as paper_files_mod
+from backend.quality_appraisal import QUALITY_APPRAISAL_TABLES_SQL
+from backend import quality_appraisal as qa_mod
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rubricgen")
@@ -381,6 +383,8 @@ def init_db() -> None:
         conn.executescript(MEMBERSHIP_TABLES_SQL)
         # OGAI Annotator: per-paper annotation + span tables
         conn.executescript(ANNOTATOR_TABLES_SQL)
+        # Quality Appraisal AI: risk-of-bias + reporting-guideline + GRADE per paper
+        conn.executescript(QUALITY_APPRAISAL_TABLES_SQL)
         # Project invitations (for unregistered users)
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS project_invitations (
@@ -1056,6 +1060,15 @@ def annotator_page(rubricgen_session: str | None = Cookie(default=None)):
     if not user:
         return RedirectResponse("/login", status_code=302)
     return FileResponse(str(FRONTEND / "annotator.html"), media_type="text/html")
+
+
+@app.get("/quality-appraisal", include_in_schema=False)
+def quality_appraisal_page(rubricgen_session: str | None = Cookie(default=None)):
+    """Quality Appraisal AI — risk-of-bias + reporting-guideline + GRADE per paper."""
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return FileResponse(str(FRONTEND / "quality-appraisal.html"), media_type="text/html")
 
 
 @app.get("/challenges", include_in_schema=False)
@@ -6593,6 +6606,308 @@ def api_import_ground_truth(body: GroundTruthImportPayload, request: Request,
         return {"imported": count}
     finally:
         conn.close()
+
+
+# ─────────────────────────────────────────────
+# Quality Appraisal AI — risk-of-bias + reporting-guideline + GRADE
+# ─────────────────────────────────────────────
+
+class QualityAppraisalRunPayload(BaseModel):
+    paper_ids: list[int]
+    project_id: int | None = None
+
+
+@app.get("/api/quality-appraisal/supported-types")
+def api_qa_supported_types(rubricgen_session: str | None = Cookie(default=None),
+                           x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """List study types the Quality Appraisal AI currently supports."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    return [{"study_type": st, **cfg}
+            for st, cfg in qa_mod.STUDY_TYPE_REGISTRY.items()]
+
+
+@app.get("/api/quality-appraisal/prompts")
+def api_qa_prompts(rubricgen_session: str | None = Cookie(default=None),
+                   x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Developer view: all prompts + scoring code used by Quality Appraisal AI.
+
+    Visible to every signed-in user. This is intentional — a research-facing
+    tool benefits from letting reviewers see exactly how an AI judgement is
+    produced.
+    """
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    return qa_mod.prompt_catalog()
+
+
+@app.post("/api/quality-appraisal/runs")
+def api_qa_run_create(body: QualityAppraisalRunPayload,
+                      rubricgen_session: str | None = Cookie(default=None),
+                      x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Start a Quality Appraisal run over the given paper IDs.
+
+    - Charges ``len(paper_ids) * CREDIT_COST_QA_PER_PAPER`` upfront; admins bypass.
+    - Per-paper refund on any error / unsupported-type skip.
+    - Inline for ≤3 papers (visible progress), background thread for larger batches.
+    """
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    paper_ids = [int(p) for p in (body.paper_ids or [])]
+    if not paper_ids:
+        raise HTTPException(400, "paper_ids must be a non-empty list")
+    if len(paper_ids) > 100:
+        raise HTTPException(400, "at most 100 papers per run")
+
+    is_admin = user.get("role") == "admin"
+    conn = get_db()
+    try:
+        # Ownership check
+        placeholders = ",".join("?" * len(paper_ids))
+        owned = conn.execute(
+            f"SELECT id FROM papers WHERE user_id=? AND id IN ({placeholders})",
+            (user["id"], *paper_ids),
+        ).fetchall()
+        owned_ids = [r["id"] for r in owned]
+        missing = [p for p in paper_ids if p not in owned_ids]
+        if missing:
+            raise HTTPException(400, f"unknown or unowned paper ids: {missing}")
+
+        total_cost = len(paper_ids) * qa_mod.CREDIT_COST_QA_PER_PAPER
+        _annotator_ai_gate(conn, user, total_cost,
+                           f"Quality Appraisal run ({len(paper_ids)} papers)")
+
+        with conn:
+            cur = conn.execute(
+                """INSERT INTO quality_appraisal_runs
+                        (user_id, project_id, paper_ids_json, paper_count,
+                         credit_cost, status)
+                   VALUES (?, ?, ?, ?, ?, 'pending') RETURNING id""",
+                (user["id"], body.project_id,
+                 json.dumps(paper_ids), len(paper_ids), total_cost),
+            )
+            run_id = cur.lastrowid
+            conn.commit()
+    finally:
+        conn.close()
+
+    if len(paper_ids) <= 3:
+        qa_mod.run_batch(get_db, PAPERS_DIR, user["id"], is_admin,
+                         run_id, paper_ids)
+        return {"run_id": run_id, "status": "complete"}
+    qa_mod.run_batch_async(get_db, PAPERS_DIR, user["id"], is_admin,
+                           run_id, paper_ids)
+    return {"run_id": run_id, "status": "running"}
+
+
+@app.get("/api/quality-appraisal/runs")
+def api_qa_runs_list(rubricgen_session: str | None = Cookie(default=None),
+                     x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """List the user's recent Quality Appraisal runs (last 50, non-deleted)."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """SELECT id, project_id, paper_count, status,
+                      credit_cost, credits_refunded, error_message,
+                      created_at, completed_at
+                 FROM quality_appraisal_runs
+                WHERE user_id=? AND deleted_at IS NULL
+                ORDER BY created_at DESC LIMIT 50""",
+            (user["id"],),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
+def _load_qa_run(conn, run_id: int, user_id: int, is_admin: bool) -> dict:
+    row = conn.execute(
+        """SELECT id, user_id, project_id, paper_ids_json, paper_count, status,
+                  credit_cost, credits_refunded, error_message,
+                  created_at, completed_at, deleted_at
+             FROM quality_appraisal_runs WHERE id=?""",
+        (run_id,),
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "run not found")
+    if row["user_id"] != user_id and not is_admin:
+        raise HTTPException(403, "access denied")
+    if row["deleted_at"]:
+        raise HTTPException(404, "run not found")
+    return dict(row)
+
+
+@app.get("/api/quality-appraisal/runs/{run_id}")
+def api_qa_run_get(run_id: int,
+                   rubricgen_session: str | None = Cookie(default=None),
+                   x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Full run detail: per-paper results with classification, RoB domains, CONSORT, GRADE."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    is_admin = user.get("role") == "admin"
+    conn = get_db()
+    try:
+        run = _load_qa_run(conn, run_id, user["id"], is_admin)
+        rows = conn.execute(
+            """SELECT id, paper_id, status, error_message, filename,
+                      study_type, rob_tool, reporting_guideline, primary_outcome,
+                      classification_json, extracted_fields_json,
+                      rob_domains_json, rob_overall, rob_direction,
+                      guideline_json, guideline_proportion,
+                      guideline_adhered, guideline_applicable,
+                      initial_grade, updated_grade, grade_explanation,
+                      created_at
+                 FROM quality_appraisal_results
+                WHERE run_id=?
+                ORDER BY id ASC""",
+            (run_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    results = []
+    for r in rows:
+        d = dict(r)
+        for jkey in ("classification_json", "extracted_fields_json",
+                     "rob_domains_json", "guideline_json"):
+            try:
+                d[jkey.replace("_json", "")] = json.loads(d.pop(jkey) or "{}")
+            except Exception:
+                d[jkey.replace("_json", "")] = {}
+        results.append(d)
+    try:
+        run["paper_ids"] = json.loads(run.pop("paper_ids_json") or "[]")
+    except Exception:
+        run["paper_ids"] = []
+    run["results"] = results
+    return run
+
+
+@app.get("/api/quality-appraisal/runs/{run_id}/events")
+def api_qa_run_events(run_id: int, after: int = 0,
+                      rubricgen_session: str | None = Cookie(default=None),
+                      x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Progress events newer than ``after`` (for incremental polling)."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    is_admin = user.get("role") == "admin"
+    conn = get_db()
+    try:
+        _load_qa_run(conn, run_id, user["id"], is_admin)
+        rows = conn.execute(
+            """SELECT id, event_type, message, detail_json, created_at
+                 FROM quality_appraisal_events
+                WHERE run_id=? AND id > ?
+                ORDER BY id ASC LIMIT 500""",
+            (run_id, int(after)),
+        ).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        detail = None
+        try:
+            detail = json.loads(r["detail_json"] or "") if r["detail_json"] else None
+        except Exception:
+            detail = None
+        out.append({"id": r["id"], "event_type": r["event_type"],
+                    "message": r["message"], "detail": detail,
+                    "created_at": r["created_at"]})
+    return out
+
+
+@app.delete("/api/quality-appraisal/runs/{run_id}")
+def api_qa_run_delete(run_id: int,
+                      rubricgen_session: str | None = Cookie(default=None),
+                      x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Soft-delete a run (hidden from the user's list)."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    is_admin = user.get("role") == "admin"
+    conn = get_db()
+    try:
+        _load_qa_run(conn, run_id, user["id"], is_admin)
+        with conn:
+            conn.execute(
+                "UPDATE quality_appraisal_runs SET deleted_at=CURRENT_TIMESTAMP WHERE id=?",
+                (run_id,),
+            )
+            conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+def _qa_flatten_for_export(run_detail: dict) -> list[dict]:
+    """Build a list of flat dicts for CSV / XLSX export."""
+    rows = []
+    for r in run_detail.get("results", []):
+        rows.append(qa_mod.flatten_result_row({
+            "paper_id": r.get("paper_id"),
+            "filename": r.get("filename"),
+            "status": r.get("status"),
+            "error_message": r.get("error_message"),
+            "study_type": r.get("study_type"),
+            "rob_tool": r.get("rob_tool"),
+            "reporting_guideline": r.get("reporting_guideline"),
+            "primary_outcome": r.get("primary_outcome"),
+            "classification": r.get("classification") or {},
+            "extracted_fields": r.get("extracted_fields") or {},
+            "rob_domains": r.get("rob_domains") or {},
+            "rob_overall": r.get("rob_overall"),
+            "rob_direction": r.get("rob_direction"),
+            "guideline": r.get("guideline") or {},
+            "guideline_proportion": r.get("guideline_proportion"),
+            "guideline_adhered": r.get("guideline_adhered"),
+            "guideline_applicable": r.get("guideline_applicable"),
+            "initial_grade": r.get("initial_grade"),
+            "updated_grade": r.get("updated_grade"),
+            "grade_explanation": r.get("grade_explanation"),
+        }))
+    return rows
+
+
+@app.get("/api/quality-appraisal/runs/{run_id}.csv")
+def api_qa_run_csv(run_id: int,
+                   rubricgen_session: str | None = Cookie(default=None),
+                   x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """CSV export of a run's results table."""
+    import csv
+    import io
+    detail = api_qa_run_get(run_id, rubricgen_session, x_api_key)
+    rows = _qa_flatten_for_export(detail)
+    if not rows:
+        raise HTTPException(404, "no results to export")
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+    writer.writeheader()
+    for r in rows:
+        writer.writerow({k: (v if v is not None else "") for k, v in r.items()})
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="quality_appraisal_{run_id}.csv"'},
+    )
+
+
+@app.get("/api/quality-appraisal/runs/{run_id}.xlsx")
+def api_qa_run_xlsx(run_id: int,
+                    rubricgen_session: str | None = Cookie(default=None),
+                    x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """XLSX export via backend.exports.export_xlsx."""
+    from backend import exports as exports_mod
+    detail = api_qa_run_get(run_id, rubricgen_session, x_api_key)
+    rows = _qa_flatten_for_export(detail)
+    if not rows:
+        raise HTTPException(404, "no results to export")
+    xlsx_bytes = exports_mod.export_xlsx(rows, title="Quality Appraisal")
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="quality_appraisal_{run_id}.xlsx"'},
+    )
 
 
 @app.get("/api/ground-truth")

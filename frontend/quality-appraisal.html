@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The AI Researcher — Quality Appraisal AI</title>
+<link rel="stylesheet" href="/static/_shared/design.css">
+<style>
+:root {
+  --navy:   oklch(0.22 0.025 260);
+  --blue:   var(--accent);
+  --sky:    var(--accent);
+  --green:  var(--ok);
+  --red:    var(--err);
+  --amber:  var(--warn);
+  --purple: oklch(0.46 0.12 300);
+  --bg:     var(--paper-2);
+  --card:   var(--paper);
+  --border: var(--rule);
+  --text:   var(--ink);
+  --muted:  var(--ink-3);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { font-family: var(--sans); background: var(--bg); color: var(--text); font-size: 13px; line-height: 1.5; }
+
+/* ── Topbar ─── */
+#topbar {
+  display: flex; align-items: center; gap: 10px; padding: 8px 16px;
+  background: var(--navy); color: #fff; border-bottom: 1px solid rgba(0,0,0,.25);
+  min-height: 44px;
+}
+.brand { font-family: var(--serif); font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.brand span { color: oklch(0.76 0.08 250); font-style: italic; }
+.tb-sep { width: 1px; height: 20px; background: rgba(255,255,255,.15); }
+.tb-btn {
+  font-size: 11px; font-weight: 600; padding: 5px 10px; border-radius: 6px;
+  background: rgba(255,255,255,.08); color: #e2e8f0; border: 1px solid rgba(255,255,255,.15);
+  cursor: pointer; font-family: inherit;
+}
+.tb-btn:hover { background: rgba(255,255,255,.16); }
+.tb-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tb-btn.primary:hover { filter: brightness(1.08); }
+.tb-btn:disabled { opacity: .4; cursor: not-allowed; }
+.in-iframe #topbar .tb-chrome { display: none !important; }
+
+/* ── Layout ─── */
+#layout { display: grid; grid-template-columns: 280px 1fr; height: calc(100vh - 44px); }
+#sidebar {
+  background: var(--paper); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+#sidebar-header {
+  padding: 10px 12px; border-bottom: 1px solid var(--border);
+  font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--muted); letter-spacing: .05em;
+}
+#paper-list { flex: 1; overflow-y: auto; padding: 4px 0; }
+.paper-item {
+  display: flex; align-items: center; gap: 8px; padding: 7px 12px; cursor: pointer;
+  border-left: 3px solid transparent; font-size: 12px;
+}
+.paper-item:hover { background: var(--paper-2); }
+.paper-item.selected { background: var(--accent-soft); border-left-color: var(--accent); }
+.paper-item input[type=checkbox] { margin: 0; }
+.paper-item .pname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.paper-item .pmeta { font-size: 10px; color: var(--muted); font-family: var(--mono); }
+#upload-zone {
+  margin: 8px 12px 10px; padding: 14px; border: 2px dashed var(--rule-2); border-radius: 8px;
+  text-align: center; font-size: 11px; color: var(--muted); cursor: pointer;
+}
+#upload-zone:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+#file-input { display: none; }
+#select-bar {
+  padding: 8px 12px; font-size: 11px; border-top: 1px solid var(--border);
+  background: var(--paper-2); display: flex; gap: 6px; align-items: center;
+}
+#select-bar button {
+  font-size: 10.5px; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--border);
+  background: var(--paper); cursor: pointer; color: var(--text);
+}
+#select-bar button:hover { background: var(--paper-3); }
+#select-count { font-weight: 700; color: var(--accent); margin-left: auto; }
+
+/* ── Main area ─── */
+#main { display: flex; flex-direction: column; overflow: hidden; }
+#main-header {
+  padding: 14px 20px 10px; border-bottom: 1px solid var(--border); background: var(--paper);
+  display: flex; align-items: center; gap: 12px;
+}
+#main-header h1 { margin: 0; font-family: var(--serif); font-size: 18px; font-weight: 600; }
+#main-header .sub { font-size: 11px; color: var(--muted); }
+#main-tabs { display: flex; gap: 0; padding: 0 20px; border-bottom: 1px solid var(--border); background: var(--paper); }
+.main-tab {
+  padding: 10px 14px; font-size: 12px; font-weight: 600; cursor: pointer;
+  border-bottom: 2px solid transparent; color: var(--muted);
+}
+.main-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.main-tab:hover { color: var(--text); }
+#main-body { flex: 1; overflow: auto; padding: 16px 20px; }
+
+/* ── Runs list ─── */
+.runs-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; background: var(--paper); border-radius: 8px; overflow: hidden; }
+.runs-table th {
+  background: var(--paper-2); text-align: left; padding: 8px 12px; font-weight: 700;
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+.runs-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.runs-table tr:hover td { background: var(--paper-2); }
+.status-pill {
+  display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 700;
+}
+.status-running { background: var(--accent-soft); color: var(--accent); }
+.status-complete { background: oklch(0.94 0.04 150); color: var(--ok); }
+.status-failed { background: oklch(0.94 0.04 25); color: var(--err); }
+.status-pending { background: var(--paper-3); color: var(--muted); }
+
+.empty-state { text-align: center; padding: 60px 20px; color: var(--muted); font-size: 13px; }
+.empty-state h3 { font-family: var(--serif); color: var(--text); margin: 0 0 6px; font-weight: 600; }
+
+/* ── Results grid ─── */
+.rg-wrap {
+  border: 1px solid var(--border); border-radius: 8px; background: var(--paper); overflow: auto;
+  max-height: calc(100vh - 220px);
+}
+.rg-table { border-collapse: separate; border-spacing: 0; font-size: 11.5px; min-width: 100%; }
+.rg-table th, .rg-table td {
+  padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left;
+  vertical-align: top; white-space: normal; min-width: 110px;
+}
+.rg-table th {
+  background: var(--paper-2); font-weight: 700; font-size: 10px; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--muted); position: sticky; top: 0; z-index: 2;
+  border-bottom: 2px solid var(--border);
+}
+.rg-table th.col-study, .rg-table td.col-study {
+  position: sticky; left: 0; background: var(--paper); z-index: 3;
+  border-right: 1px solid var(--border); min-width: 240px; max-width: 320px;
+}
+.rg-table th.col-study { background: var(--paper-2); z-index: 4; }
+.rg-table tr:hover td { background: var(--paper-2); }
+.rg-table tr:hover td.col-study { background: var(--paper-3); }
+.study-title { font-weight: 600; color: var(--text); display: block; margin-bottom: 3px; }
+.study-meta { font-size: 10px; color: var(--muted); line-height: 1.4; }
+
+.chip {
+  display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;
+  background: var(--paper-3); color: var(--muted); margin-right: 3px; margin-bottom: 2px;
+}
+.chip.mod { background: var(--accent-soft); color: var(--accent); }
+
+.rob-badge {
+  display: inline-block; padding: 3px 9px; border-radius: 999px;
+  font-size: 11px; font-weight: 700; letter-spacing: .02em;
+}
+.rob-low { background: oklch(0.94 0.04 150); color: var(--ok); }
+.rob-some { background: oklch(0.94 0.06 80); color: oklch(0.48 0.12 70); }
+.rob-high { background: oklch(0.94 0.05 25); color: var(--err); }
+
+.grade-high { color: var(--ok); font-weight: 700; }
+.grade-moderate { color: oklch(0.50 0.10 80); font-weight: 700; }
+.grade-low { color: var(--err); font-weight: 700; }
+.grade-verylow { color: var(--err); font-weight: 800; }
+
+.cell-error { color: var(--err); font-style: italic; font-size: 10px; }
+.cell-skipped { color: var(--muted); font-style: italic; font-size: 10px; }
+
+.export-bar { margin-top: 12px; display: flex; gap: 8px; }
+.export-bar button {
+  font-size: 11px; padding: 6px 12px; border-radius: 5px; border: 1px solid var(--border);
+  background: var(--paper); color: var(--text); cursor: pointer; font-weight: 600;
+}
+.export-bar button:hover { background: var(--paper-2); border-color: var(--accent); color: var(--accent); }
+
+/* ── Progress panel ─── */
+#progress-panel {
+  margin-top: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--paper); font-family: var(--mono); font-size: 11px;
+  max-height: 220px; overflow-y: auto;
+}
+.ev { padding: 3px 0; border-bottom: 1px dashed var(--rule); display: flex; gap: 10px; }
+.ev-time { color: var(--muted); flex-shrink: 0; }
+.ev-type-info { color: var(--text); }
+.ev-type-progress { color: var(--accent); }
+.ev-type-warn { color: oklch(0.50 0.12 70); }
+.ev-type-error { color: var(--err); }
+
+/* ── Modals ─── */
+.modal-backdrop {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 2000;
+  align-items: center; justify-content: center;
+}
+.modal-backdrop.open { display: flex; }
+.modal {
+  background: var(--paper); border-radius: 10px; width: 540px; max-width: 92vw; max-height: 88vh;
+  display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,.4);
+}
+.modal-wide { width: 880px; }
+.modal-head {
+  padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex;
+  justify-content: space-between; align-items: center;
+}
+.modal-head h2 { margin: 0; font-family: var(--serif); font-size: 16px; font-weight: 600; }
+.modal-body { padding: 16px 18px; overflow-y: auto; }
+.modal-foot { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+
+.cost-box {
+  padding: 10px 12px; margin: 10px 0; background: var(--accent-soft); border-radius: 6px;
+  font-size: 12px; color: var(--accent); font-weight: 600;
+}
+.cost-box .big { font-size: 18px; display: block; margin-top: 2px; font-family: var(--mono); }
+
+/* ── Developer modal ─── */
+.dev-section {
+  margin-bottom: 18px; padding: 14px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--paper-2);
+}
+.dev-section h3 {
+  margin: 0 0 8px; font-family: var(--serif); font-size: 14px; color: var(--accent);
+}
+.dev-section details { margin: 8px 0; }
+.dev-section summary {
+  cursor: pointer; font-size: 12px; font-weight: 600; padding: 4px 0;
+}
+.dev-section pre {
+  background: var(--paper); border: 1px solid var(--border); border-radius: 6px;
+  padding: 10px; font-size: 10.5px; overflow-x: auto; font-family: var(--mono);
+  white-space: pre-wrap; margin: 6px 0;
+  max-height: 280px; overflow-y: auto;
+}
+.dev-section .item-row { display: flex; gap: 10px; padding: 4px 0; font-size: 11px; border-bottom: 1px dashed var(--rule); }
+.dev-section .item-row .id { font-family: var(--mono); font-weight: 700; min-width: 40px; color: var(--accent); }
+
+#toast {
+  position: fixed; top: 58px; right: 18px; padding: 10px 14px; border-radius: 8px;
+  background: var(--navy); color: #fff; font-size: 12px; z-index: 3000;
+  display: none; max-width: 320px;
+}
+#toast.open { display: block; }
+#toast.err { background: var(--err); }
+</style>
+</head>
+<body>
+<script>if(window.self!==window.top)document.documentElement.classList.add('in-iframe')</script>
+
+<!-- ── TOP BAR ────────────────────────────────────────────────────────── -->
+<div id="topbar">
+  <a href="/" class="tb-chrome" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.6);text-decoration:none;margin-right:6px;padding:4px 8px;border:1px solid rgba(255,255,255,.2);border-radius:5px">&larr; Lab</a>
+  <div class="brand tb-chrome">The AI <span>Researcher</span></div>
+  <nav class="tb-chrome" style="display:flex;gap:2px;align-items:center;">
+    <a href="/dashboard" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:4px 8px;border-radius:4px">Dashboard</a>
+    <a href="/challenges" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:4px 8px;border-radius:4px">Challenges</a>
+    <a href="/pdf-viewer" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:4px 8px;border-radius:4px">PDF Viewer</a>
+    <a href="/annotator" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:4px 8px;border-radius:4px">Annotator</a>
+    <a href="/quality-appraisal" style="font-size:11px;font-weight:600;color:#fff;background:rgba(255,255,255,.08);text-decoration:none;padding:4px 8px;border-radius:4px">Quality Appraisal</a>
+    <a href="/analytics" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:4px 8px;border-radius:4px">Analytics</a>
+    <a href="/library" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:4px 8px;border-radius:4px">Library</a>
+  </nav>
+  <div class="tb-sep tb-chrome"></div>
+  <span id="user-display" class="tb-chrome" style="font-size:11px;color:rgba(255,255,255,.55);font-family:var(--mono);"></span>
+  <div style="flex:1"></div>
+  <button class="tb-btn" id="run-btn" onclick="openRunModal()" disabled title="Select papers to enable">&#9776; Run appraisal</button>
+  <button class="tb-btn" onclick="openDevModal()" title="Developer view — prompts &amp; scoring rules">&#128295; Developer</button>
+  <div class="tb-sep tb-chrome"></div>
+  <button class="tb-btn tb-chrome" onclick="logout()" style="color:#f87171;border-color:rgba(248,113,113,.3);">Sign out</button>
+</div>
+
+<div id="layout">
+  <!-- ── SIDEBAR ────────────────────────────────────────────────────── -->
+  <div id="sidebar">
+    <div id="sidebar-header">Papers <span id="paper-count" style="font-family:var(--mono);color:var(--muted);float:right;font-weight:500;"></span></div>
+    <div id="paper-list">
+      <div class="empty-state" style="padding:30px 14px;font-size:11.5px;">Loading…</div>
+    </div>
+    <div id="select-bar">
+      <button onclick="selectAllPapers()">All</button>
+      <button onclick="selectNonePapers()">None</button>
+      <span id="select-count">0</span>
+    </div>
+    <div id="upload-zone" onclick="document.getElementById('file-input').click()"
+         ondragover="event.preventDefault()" ondrop="handleDrop(event)">
+      <strong>Upload PDF</strong><br>click or drag &amp; drop
+    </div>
+    <input type="file" id="file-input" accept=".pdf" multiple>
+  </div>
+
+  <!-- ── MAIN ───────────────────────────────────────────────────────── -->
+  <div id="main">
+    <div id="main-header">
+      <div>
+        <h1>Quality Appraisal AI</h1>
+        <div class="sub">Risk of bias &middot; reporting-guideline adherence &middot; GRADE certainty &mdash; one row per paper.</div>
+      </div>
+    </div>
+    <div id="main-tabs">
+      <div class="main-tab active" data-tab="runs" onclick="switchTab('runs')">Runs</div>
+      <div class="main-tab" data-tab="results" onclick="switchTab('results')">Results</div>
+    </div>
+    <div id="main-body">
+      <div id="tab-runs">
+        <div id="runs-host"><div class="empty-state">No runs yet. Select papers and click <strong>&#9776; Run appraisal</strong>.</div></div>
+      </div>
+      <div id="tab-results" style="display:none;">
+        <div id="results-meta" style="margin-bottom:10px;font-size:12px;color:var(--muted);"></div>
+        <div class="rg-wrap" id="results-host"><div class="empty-state">Open a run from the Runs tab.</div></div>
+        <div class="export-bar" id="export-bar" style="display:none;">
+          <button onclick="exportCsv()">&#8681; Export CSV</button>
+          <button onclick="exportXlsx()">&#8681; Export XLSX</button>
+        </div>
+        <div id="progress-panel" style="display:none;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── RUN MODAL ──────────────────────────────────────────────────────── -->
+<div id="run-modal" class="modal-backdrop" onclick="if(event.target===this)closeRunModal()">
+  <div class="modal">
+    <div class="modal-head">
+      <h2>Run Quality Appraisal</h2>
+      <button class="tb-btn" onclick="closeRunModal()" style="background:var(--paper-2);border-color:var(--border);color:var(--text);">Cancel</button>
+    </div>
+    <div class="modal-body">
+      <p style="margin:0 0 10px;">Each selected paper is appraised with the validated tool matching its study classification.</p>
+      <ul style="margin:0 0 10px 20px;padding:0;font-size:12px;">
+        <li>Classify study design (using OGAI Annotator)</li>
+        <li>Extract structured fields (universal + type-specific + design modifiers)</li>
+        <li>Auto-pick the paper's primary outcome</li>
+        <li>Run the registered risk-of-bias tool (v1: <strong>RoB 2</strong> for RCTs)</li>
+        <li>Run the reporting-guideline checklist (v1: <strong>CONSORT 2025</strong> for RCTs)</li>
+        <li>Compute initial + updated GRADE certainty</li>
+      </ul>
+      <p style="margin:0 0 4px;font-size:12px;color:var(--muted);">Papers that aren't a supported study type are skipped with a full credit refund. v1 supports RCTs; other study types return "not yet supported".</p>
+      <div class="cost-box">
+        Estimated cost <span class="big"><span id="run-cost">0</span> credits</span>
+        <span style="font-weight:400;font-size:11px;opacity:.85;">
+          = <span id="run-count">0</span> paper(s) &times; <span id="per-paper-cost">30</span> credits
+        </span>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="tb-btn primary" onclick="submitRun()" id="submit-run-btn">Start appraisal</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── DEVELOPER MODAL ────────────────────────────────────────────────── -->
+<div id="dev-modal" class="modal-backdrop" onclick="if(event.target===this)closeDevModal()">
+  <div class="modal modal-wide" style="max-height:92vh;">
+    <div class="modal-head">
+      <h2>Developer view</h2>
+      <button class="tb-btn" onclick="closeDevModal()" style="background:var(--paper-2);border-color:var(--border);color:var(--text);">Close</button>
+    </div>
+    <div class="modal-body" id="dev-body">Loading…</div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+/* ── STATE ───────────────────────────────────────────────────────────── */
+let me = null;
+let papers = [];
+let selectedPaperIds = new Set();
+let allRuns = [];
+let currentRun = null;       // { id, status, results: [], ... }
+let pollTimer = null;
+let lastEventId = 0;
+const PER_PAPER_COST = 30;
+
+/* ── Auth / init ─────────────────────────────────────────────────────── */
+(async function init() {
+  try {
+    const r = await fetch('/api/auth/me');
+    if (!r.ok) { window.location.href = '/login'; return; }
+    me = await r.json();
+    document.getElementById('user-display').textContent = me.display_name + ' (' + me.email + ')';
+  } catch { window.location.href = '/login'; return; }
+  await loadPapers();
+  await loadRuns();
+})();
+
+function logout() {
+  fetch('/api/auth/logout', { method: 'POST' }).finally(() => window.location.href = '/login');
+}
+
+/* ── Toast ───────────────────────────────────────────────────────────── */
+function toast(msg, isErr) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'open' + (isErr ? ' err' : '');
+  setTimeout(() => { el.className = ''; }, isErr ? 6000 : 3000);
+}
+function escHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+/* ── Papers sidebar ──────────────────────────────────────────────────── */
+async function loadPapers() {
+  try {
+    const r = await fetch('/api/annotator/papers');
+    if (!r.ok) throw new Error(await r.text());
+    papers = await r.json();
+  } catch (e) {
+    papers = [];
+  }
+  renderPapers();
+}
+
+function renderPapers() {
+  const host = document.getElementById('paper-list');
+  document.getElementById('paper-count').textContent = papers.length + ' file(s)';
+  if (!papers.length) {
+    host.innerHTML = '<div class="empty-state" style="padding:30px 14px;font-size:11.5px;">No papers yet.<br>Upload a PDF below.</div>';
+    updateSelectBar();
+    return;
+  }
+  host.innerHTML = papers.map(p => {
+    const sel = selectedPaperIds.has(p.id) ? 'checked' : '';
+    return `<label class="paper-item ${selectedPaperIds.has(p.id) ? 'selected' : ''}">
+      <input type="checkbox" ${sel} onchange="togglePaper(${p.id}, this.checked)">
+      <div style="flex:1;min-width:0;">
+        <div class="pname">${escHtml(p.filename)}</div>
+        <div class="pmeta">${escHtml(p.id)}${p.project_id ? ' &middot; proj ' + p.project_id : ''}</div>
+      </div>
+    </label>`;
+  }).join('');
+  updateSelectBar();
+}
+
+function togglePaper(id, checked) {
+  if (checked) selectedPaperIds.add(id); else selectedPaperIds.delete(id);
+  renderPapers();
+}
+function selectAllPapers() { selectedPaperIds = new Set(papers.map(p => p.id)); renderPapers(); }
+function selectNonePapers() { selectedPaperIds.clear(); renderPapers(); }
+function updateSelectBar() {
+  const n = selectedPaperIds.size;
+  document.getElementById('select-count').textContent = n + ' selected';
+  document.getElementById('run-btn').disabled = n === 0;
+}
+
+/* ── Upload ──────────────────────────────────────────────────────────── */
+document.getElementById('file-input').addEventListener('change', function() {
+  uploadFiles(this.files);
+});
+function handleDrop(e) { e.preventDefault(); uploadFiles(e.dataTransfer.files); }
+
+async function uploadFiles(files) {
+  if (!files || !files.length) return;
+  for (const f of files) {
+    if (!f.name.toLowerCase().endsWith('.pdf')) { toast('Only .pdf files are accepted', true); continue; }
+    const form = new FormData();
+    form.append('file', f);
+    try {
+      const r = await fetch('/api/papers/upload', { method: 'POST', body: form });
+      if (!r.ok) { toast('Upload failed: ' + (await r.text()).slice(0, 120), true); continue; }
+    } catch (e) { toast('Upload error: ' + e.message, true); }
+  }
+  await loadPapers();
+  toast('Upload complete');
+}
+
+/* ── Tabs ────────────────────────────────────────────────────────────── */
+function switchTab(tab) {
+  document.querySelectorAll('.main-tab').forEach(el => {
+    el.classList.toggle('active', el.dataset.tab === tab);
+  });
+  document.getElementById('tab-runs').style.display = tab === 'runs' ? '' : 'none';
+  document.getElementById('tab-results').style.display = tab === 'results' ? '' : 'none';
+}
+
+/* ── Runs list ───────────────────────────────────────────────────────── */
+async function loadRuns() {
+  try {
+    const r = await fetch('/api/quality-appraisal/runs');
+    if (!r.ok) throw new Error(await r.text());
+    allRuns = await r.json();
+  } catch { allRuns = []; }
+  renderRuns();
+}
+
+function renderRuns() {
+  const host = document.getElementById('runs-host');
+  if (!allRuns.length) {
+    host.innerHTML = '<div class="empty-state"><h3>No runs yet</h3>Select papers in the sidebar and click <strong>&#9776; Run appraisal</strong>.</div>';
+    return;
+  }
+  host.innerHTML = `<table class="runs-table">
+    <thead><tr>
+      <th>Run</th><th>Papers</th><th>Status</th><th>Cost</th><th>Refunded</th><th>Created</th><th></th>
+    </tr></thead><tbody>${allRuns.map(r => {
+      const statusCls = 'status-' + (r.status || 'pending');
+      return `<tr>
+        <td><strong>#${r.id}</strong></td>
+        <td>${r.paper_count}</td>
+        <td><span class="status-pill ${statusCls}">${escHtml(r.status)}</span></td>
+        <td>${r.credit_cost || 0}</td>
+        <td>${r.credits_refunded || 0}</td>
+        <td style="font-size:10.5px;color:var(--muted);">${escHtml(r.created_at || '')}</td>
+        <td><button class="tb-btn" style="background:var(--paper-2);border-color:var(--border);color:var(--text);" onclick="openRunResults(${r.id})">Open</button>
+            <button class="tb-btn" style="background:var(--paper-2);border-color:var(--border);color:var(--err);" onclick="deleteRun(${r.id})">&times;</button></td>
+      </tr>`;
+    }).join('')}</tbody></table>`;
+}
+
+async function deleteRun(runId) {
+  if (!confirm('Delete this run?')) return;
+  try {
+    const r = await fetch('/api/quality-appraisal/runs/' + runId, { method: 'DELETE' });
+    if (!r.ok) throw new Error(await r.text());
+    await loadRuns();
+  } catch (e) { toast('Delete failed: ' + e.message, true); }
+}
+
+/* ── Run modal ───────────────────────────────────────────────────────── */
+function openRunModal() {
+  const n = selectedPaperIds.size;
+  if (!n) return;
+  document.getElementById('run-count').textContent = n;
+  document.getElementById('run-cost').textContent = n * PER_PAPER_COST;
+  document.getElementById('per-paper-cost').textContent = PER_PAPER_COST;
+  document.getElementById('run-modal').classList.add('open');
+}
+function closeRunModal() { document.getElementById('run-modal').classList.remove('open'); }
+
+async function submitRun() {
+  const btn = document.getElementById('submit-run-btn');
+  btn.disabled = true;
+  btn.textContent = 'Starting…';
+  const paper_ids = Array.from(selectedPaperIds);
+  try {
+    const r = await fetch('/api/quality-appraisal/runs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paper_ids }),
+    });
+    if (!r.ok) {
+      const errText = await r.text();
+      try { const j = JSON.parse(errText); toast('Run failed: ' + (j.detail?.detail || j.detail || errText).toString().slice(0, 160), true); }
+      catch { toast('Run failed: ' + errText.slice(0, 160), true); }
+      btn.disabled = false; btn.textContent = 'Start appraisal';
+      return;
+    }
+    const j = await r.json();
+    closeRunModal();
+    btn.disabled = false; btn.textContent = 'Start appraisal';
+    toast('Appraisal started (run #' + j.run_id + ')');
+    await loadRuns();
+    openRunResults(j.run_id);
+  } catch (e) {
+    toast('Run error: ' + e.message, true);
+    btn.disabled = false; btn.textContent = 'Start appraisal';
+  }
+}
+
+/* ── Results ─────────────────────────────────────────────────────────── */
+async function openRunResults(runId) {
+  switchTab('results');
+  lastEventId = 0;
+  document.getElementById('progress-panel').innerHTML = '';
+  document.getElementById('progress-panel').style.display = '';
+  document.getElementById('export-bar').style.display = 'none';
+  await refreshRun(runId);
+  if (currentRun && (currentRun.status === 'running' || currentRun.status === 'pending')) {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(() => refreshRun(runId), 5000);
+  } else {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+}
+
+async function refreshRun(runId) {
+  try {
+    const [rR, eR] = await Promise.all([
+      fetch('/api/quality-appraisal/runs/' + runId),
+      fetch('/api/quality-appraisal/runs/' + runId + '/events?after=' + lastEventId),
+    ]);
+    if (!rR.ok) throw new Error(await rR.text());
+    currentRun = await rR.json();
+    const events = eR.ok ? await eR.json() : [];
+    appendEvents(events);
+    renderResults();
+    if (currentRun.status !== 'running' && currentRun.status !== 'pending') {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      document.getElementById('export-bar').style.display = '';
+      await loadRuns();
+    }
+  } catch (e) {
+    toast('Refresh failed: ' + e.message, true);
+  }
+}
+
+function appendEvents(events) {
+  if (!events || !events.length) return;
+  const host = document.getElementById('progress-panel');
+  events.forEach(ev => {
+    lastEventId = Math.max(lastEventId, ev.id);
+    const line = document.createElement('div');
+    line.className = 'ev';
+    line.innerHTML =
+      '<span class="ev-time">' + escHtml((ev.created_at || '').replace('T', ' ').slice(5, 19)) + '</span>' +
+      '<span class="ev-type-' + escHtml(ev.event_type) + '">' + escHtml(ev.message) + '</span>';
+    host.appendChild(line);
+  });
+  host.scrollTop = host.scrollHeight;
+}
+
+function renderResults() {
+  const meta = document.getElementById('results-meta');
+  meta.innerHTML = currentRun
+    ? `<strong>Run #${currentRun.id}</strong> — ${currentRun.paper_count} paper(s) &middot;
+       status <span class="status-pill status-${currentRun.status}">${escHtml(currentRun.status)}</span>
+       &middot; cost ${currentRun.credit_cost} &middot; refunded ${currentRun.credits_refunded}`
+    : '';
+
+  const host = document.getElementById('results-host');
+  const results = (currentRun && currentRun.results) || [];
+  if (!results.length) {
+    host.innerHTML = '<div class="empty-state">Waiting for results…</div>';
+    return;
+  }
+
+  // Build the column list from the first successful result's RoB domains
+  const firstOk = results.find(r => r.status === 'ok');
+  const robDomainIds = firstOk && firstOk.rob_domains
+    ? Object.keys(firstOk.rob_domains).sort()
+    : ['1', '2', '3', '4', '5'];
+
+  const headerCols = [
+    '<th class="col-study">Study</th>',
+    '<th>Classification</th>',
+    '<th>Risk of bias</th>',
+    '<th>CONSORT adherence</th>',
+    '<th>Initial GRADE</th>',
+    '<th>Updated GRADE</th>',
+    '<th>GRADE explanation</th>',
+  ];
+  robDomainIds.forEach(did => headerCols.push(`<th>RoB Domain ${did}</th>`));
+  headerCols.push('<th>Primary outcome</th>');
+
+  const rows = results.map(r => {
+    const fields = r.extracted_fields || {};
+    const classification = r.classification || {};
+    if (r.status !== 'ok') {
+      const studyCell = `<td class="col-study"><div class="study-title">${escHtml(r.filename || ('#' + r.paper_id))}</div>
+        <div class="cell-${r.status === 'skipped' ? 'skipped' : 'error'}">${escHtml(r.error_message || r.status)}</div></td>`;
+      const spanCols = headerCols.length - 1;
+      return `<tr>${studyCell}<td colspan="${spanCols}" class="cell-${r.status === 'skipped' ? 'skipped' : 'error'}">${escHtml(r.status)}</td></tr>`;
+    }
+    const title = fields.citation_title || r.filename || ('Paper #' + r.paper_id);
+    const authors = fields.citation_authors || '';
+    const journal = fields.citation_journal || '';
+    const year = fields.citation_year || '';
+    const modChips = ['clinical_trial_phase', 'industry_sponsored', 'adaptive_design', 'pragmatic_vs_explanatory']
+      .map(k => fields[k] ? `<span class="chip mod">${escHtml(fields[k])}</span>` : '').join('');
+
+    const robCls = r.rob_overall === 'Low' ? 'rob-low' : (r.rob_overall === 'High' ? 'rob-high' : 'rob-some');
+    const consort = (r.guideline_adhered != null && r.guideline_applicable != null)
+      ? `${r.guideline_adhered} / ${r.guideline_applicable}` +
+        (r.guideline_proportion != null
+          ? ` <span style="color:var(--muted);font-size:10px;">(${(r.guideline_proportion * 100).toFixed(0)}%)</span>`
+          : '')
+      : '—';
+
+    const gradeCls = g => 'grade-' + (g || '').toLowerCase().replace(' ', '');
+
+    const domainCells = robDomainIds.map(did => {
+      const d = (r.rob_domains || {})[did] || {};
+      const j = d.judgement || '';
+      const jCls = j === 'Low' ? 'rob-low' : (j === 'High' ? 'rob-high' : (j === 'Some concerns' ? 'rob-some' : ''));
+      const signalsHtml = d.signals
+        ? Object.keys(d.signals).sort().map(sid =>
+            `<span class="chip">${escHtml(sid)}=${escHtml(d.signals[sid])}</span>`).join(' ')
+        : '';
+      return `<td>
+        <span class="rob-badge ${jCls}">${escHtml(j)}</span>
+        <div style="margin-top:4px;">${signalsHtml}</div>
+      </td>`;
+    }).join('');
+
+    return `<tr>
+      <td class="col-study">
+        <div class="study-title">${escHtml(title)}</div>
+        <div class="study-meta">${escHtml(authors)}${authors ? ' &middot; ' : ''}${escHtml(journal)}${journal ? ' &middot; ' : ''}${escHtml(year)}</div>
+      </td>
+      <td>
+        <div><strong>${escHtml(r.study_type || '')}</strong></div>
+        <div style="font-size:10px;color:var(--muted);">${escHtml(classification.subcategory || '')}</div>
+        <div style="margin-top:4px;">${modChips || '<span class="chip">no modifiers</span>'}</div>
+      </td>
+      <td><span class="rob-badge ${robCls}">${escHtml(r.rob_overall || '—')}</span>
+          ${r.rob_direction && r.rob_direction !== 'NA'
+            ? `<div style="font-size:10px;margin-top:3px;color:var(--muted);">dir: ${escHtml(r.rob_direction)}</div>`
+            : ''}</td>
+      <td>${consort}</td>
+      <td><span class="${gradeCls(r.initial_grade)}">${escHtml(r.initial_grade || '—')}</span></td>
+      <td><span class="${gradeCls(r.updated_grade)}">${escHtml(r.updated_grade || '—')}</span></td>
+      <td style="max-width:240px;font-size:10.5px;color:var(--muted);">${escHtml(r.grade_explanation || '')}</td>
+      ${domainCells}
+      <td style="max-width:220px;font-size:10.5px;">${escHtml(r.primary_outcome || '')}</td>
+    </tr>`;
+  }).join('');
+
+  host.innerHTML = `<table class="rg-table"><thead><tr>${headerCols.join('')}</tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+/* ── Export ──────────────────────────────────────────────────────────── */
+function exportCsv() {
+  if (!currentRun) return;
+  window.open('/api/quality-appraisal/runs/' + currentRun.id + '.csv', '_blank');
+}
+function exportXlsx() {
+  if (!currentRun) return;
+  window.open('/api/quality-appraisal/runs/' + currentRun.id + '.xlsx', '_blank');
+}
+
+/* ── Developer modal ─────────────────────────────────────────────────── */
+async function openDevModal() {
+  document.getElementById('dev-modal').classList.add('open');
+  const body = document.getElementById('dev-body');
+  body.innerHTML = 'Loading…';
+  try {
+    const r = await fetch('/api/quality-appraisal/prompts');
+    if (!r.ok) throw new Error(await r.text());
+    const cat = await r.json();
+    body.innerHTML = renderDevCatalog(cat);
+  } catch (e) {
+    body.innerHTML = '<div class="cell-error">Could not load developer catalog: ' + escHtml(e.message) + '</div>';
+  }
+}
+function closeDevModal() { document.getElementById('dev-modal').classList.remove('open'); }
+
+function renderDevCatalog(cat) {
+  const rob2 = cat.rob_tools && cat.rob_tools.rob2;
+  const consort = cat.reporting_guidelines && cat.reporting_guidelines.consort2025;
+  const grade = cat.grade || {};
+  const overview = cat.overview || {};
+
+  let out = `<div class="dev-section">
+    <h3>1. How a paper is appraised</h3>
+    <p style="font-size:12px;">${escHtml(overview.description || '')}</p>
+    <ol style="padding-left:20px;font-size:12px;">${(overview.pipeline_steps || []).map(s => '<li>' + escHtml(s) + '</li>').join('')}</ol>
+    <details><summary>Study-type registry</summary><pre>${escHtml(JSON.stringify(cat.registry, null, 2))}</pre></details>
+    <details><summary>Primary-outcome picker (code)</summary><pre>${escHtml((cat.primary_outcome_picker || {}).code || '')}</pre></details>
+    <div style="font-size:11px;color:var(--muted);margin-top:6px;">Cost per paper: <strong>${cat.credit_cost_per_paper}</strong> credits.</div>
+  </div>`;
+
+  if (rob2) {
+    out += `<div class="dev-section"><h3>2. Risk-of-bias tool — ${escHtml(rob2.tool)}</h3>
+      <details><summary>System prompt</summary><pre>${escHtml(rob2.system_prompt)}</pre></details>
+      <details><summary>Overall aggregation algorithm (code)</summary><pre>${escHtml(rob2.overall_algorithm_code)}</pre></details>`;
+    (rob2.domains || []).forEach(d => {
+      out += `<details><summary>Domain ${escHtml(d.id)} — ${escHtml(d.name)}</summary>
+        <div style="font-size:11.5px;color:var(--muted);margin:6px 0;">Relevant fields: ${(d.relevant_fields || []).map(f => '<span class="chip">' + escHtml(f) + '</span>').join(' ')}</div>
+        <strong>Signaling questions:</strong>
+        ${(d.signals || []).map(s => `<div class="item-row"><span class="id">${escHtml(s.id)}</span>
+          <div><div style="font-weight:600;">${escHtml(s.text)}</div>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:2px;">${escHtml(s.elaboration)}</div></div></div>`).join('')}
+        <details><summary>Prompt template</summary><pre>${escHtml(d.prompt_template)}</pre></details>
+        <details><summary>Decision-tree code</summary><pre>${escHtml(d.decision_tree_code)}</pre></details>
+      </details>`;
+    });
+    out += `</div>`;
+  }
+
+  if (consort) {
+    out += `<div class="dev-section"><h3>3. Reporting guideline — ${escHtml(consort.guideline)}</h3>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:6px;">${escHtml(consort.citation)}</div>
+      <details><summary>System prompt</summary><pre>${escHtml(consort.system_prompt)}</pre></details>
+      <details><summary>Full prompt template</summary><pre>${escHtml(consort.prompt_template)}</pre></details>
+      <details><summary>Scoring code</summary><pre>${escHtml(consort.scoring_code)}</pre></details>
+      <details open><summary>Checklist items (${(consort.items || []).length})</summary>
+        ${(consort.items || []).map(it => `<div class="item-row"><span class="id">${escHtml(it.id)}</span>
+          <div><div style="font-weight:600;">${escHtml(it.section)} &middot; ${escHtml(it.topic)}</div>
+          <div style="font-size:10.5px;color:var(--muted);">${escHtml(it.description)}</div></div></div>`).join('')}
+      </details>
+    </div>`;
+  }
+
+  out += `<div class="dev-section"><h3>4. GRADE logic</h3>
+    <p style="font-size:12px;">${escHtml(grade.description || '')}</p>
+    <div style="font-size:11.5px;">Levels: ${(grade.levels || []).map(l => '<span class="chip">' + escHtml(l) + '</span>').join(' ')}</div>
+    <details open><summary>Code</summary><pre>${escHtml(grade.logic_code || '')}</pre></details>
+  </div>`;
+
+  return out;
+}
+</script>
+</body>
+</html>
