@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The AI Researcher — Grade Review Queue</title>
+<link rel="stylesheet" href="/static/_shared/design.css">
+<style>
+  :root {
+    --navy:   oklch(0.22 0.025 260);
+    --blue:   var(--accent);
+    --sky:    var(--accent);
+    --green:  var(--ok);
+    --red:    var(--err);
+    --amber:  var(--warn);
+    --purple: oklch(0.46 0.12 300);
+    --bg:     var(--paper-2);
+    --card:   var(--paper);
+    --border: var(--rule);
+    --text:   var(--ink);
+    --muted:  var(--ink-3);
+  }
+  html, body { font-family: var(--sans) !important; background: var(--paper-2) !important; color: var(--ink) !important; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    font-family: 'IBM Plex Sans', sans-serif;
+    background: var(--bg); color: var(--text); font-size: 13px;
+    min-height: 100vh;
+  }
+
+  .topbar {
+    background: var(--paper) !important;
+    color: var(--ink) !important;
+    border-bottom: 1px solid var(--rule) !important;
+    height: var(--topbar-h) !important;
+    padding: 0 16px !important;
+    gap: 14px !important;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .topbar .brand { font-size: 15px; font-weight: 700; letter-spacing: -.3px; }
+  .topbar .brand span { color: var(--accent); }
+  .topbar .badge {
+    display: inline-block; margin-left: 10px; padding: 2px 8px;
+    background: var(--warn-soft); color: var(--warn);
+    border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  }
+  .topbar nav { display: flex; gap: 2px; align-items: center; }
+  .topbar nav a {
+    font-size: 12px; font-weight: 600; color: var(--ink-2);
+    padding: 6px 10px; border-radius: 6px; text-decoration: none;
+  }
+  .topbar nav a:hover, .topbar nav a.active {
+    background: var(--paper-2); color: var(--ink);
+  }
+  .topbar .signout-btn {
+    color: var(--ink-2); border: 1px solid var(--rule);
+    background: transparent; padding: 6px 12px; border-radius: 6px;
+    font-size: 12px; font-weight: 600; cursor: pointer;
+  }
+  .topbar .signout-btn:hover { background: var(--paper-2); }
+
+  .container {
+    max-width: 1600px; margin: 0 auto; padding: 20px;
+    display: grid; grid-template-columns: 420px 1fr; gap: 20px;
+    min-height: calc(100vh - var(--topbar-h) - 40px);
+  }
+
+  .page-title {
+    font-size: 20px; font-weight: 700; color: var(--ink);
+    margin-bottom: 4px; letter-spacing: -.3px;
+  }
+  .page-subtitle { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+
+  /* ─── Queue list ─── */
+  .queue-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; overflow: hidden;
+    display: flex; flex-direction: column; max-height: calc(100vh - 140px);
+  }
+  .queue-header {
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--paper-2);
+  }
+  .queue-header h2 {
+    font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--ink-2);
+  }
+  .queue-header .count {
+    font-family: var(--mono); font-size: 11px; color: var(--muted);
+  }
+  .queue-list { flex: 1; overflow-y: auto; }
+  .queue-item {
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    cursor: pointer; transition: background .1s;
+  }
+  .queue-item:hover { background: var(--paper-2); }
+  .queue-item.active { background: color-mix(in srgb, var(--accent) 10%, var(--paper)); border-left: 3px solid var(--accent); padding-left: 13px; }
+  .queue-item .qi-top {
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 10px; margin-bottom: 4px;
+  }
+  .queue-item .qi-title {
+    font-weight: 600; font-size: 13px; color: var(--ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .queue-item .qi-id {
+    font-family: var(--mono); font-size: 10px; color: var(--muted);
+    flex-shrink: 0;
+  }
+  .queue-item .qi-meta {
+    font-size: 11px; color: var(--muted);
+    display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px;
+  }
+  .queue-item .qi-scores {
+    display: flex; gap: 6px; font-family: var(--mono); font-size: 11px;
+  }
+  .qi-score-chip {
+    padding: 1px 6px; border-radius: 4px;
+    background: var(--paper-2); border: 1px solid var(--rule);
+    color: var(--ink-2);
+  }
+  .qi-score-chip.s-primary { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .qi-score-chip.s-shadow  { background: color-mix(in srgb, var(--purple, #8b5cf6) 12%, transparent); }
+  .qi-score-chip.s-third   { background: color-mix(in srgb, var(--ok) 12%, transparent); }
+
+  /* ─── Detail panel ─── */
+  .detail-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .detail-empty {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 13px; padding: 60px;
+  }
+  .detail-scroll {
+    flex: 1; overflow-y: auto; padding: 20px 24px;
+  }
+  .detail-header {
+    padding: 16px 24px; border-bottom: 1px solid var(--border);
+    background: var(--paper-2);
+  }
+  .detail-header .dh-top {
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 12px; margin-bottom: 4px;
+  }
+  .detail-header h1 {
+    font-size: 15px; font-weight: 700; color: var(--ink);
+  }
+  .detail-header .dh-meta {
+    font-size: 11px; color: var(--muted);
+    display: flex; gap: 14px; flex-wrap: wrap; margin-top: 6px;
+  }
+  .detail-header .dh-meta span { display: inline-flex; gap: 4px; }
+  .detail-header .dh-meta code {
+    font-family: var(--mono); background: var(--paper); padding: 1px 5px;
+    border-radius: 3px; border: 1px solid var(--rule);
+  }
+
+  .section { margin-bottom: 24px; }
+  .section h3 {
+    font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 8px;
+  }
+  .block {
+    background: var(--paper-2); border: 1px solid var(--rule);
+    border-radius: 6px; padding: 12px 14px;
+    font-size: 13px; line-height: 1.55; color: var(--ink);
+    white-space: pre-wrap; word-wrap: break-word;
+  }
+  .block.scroll { max-height: 240px; overflow-y: auto; }
+
+  /* ─── Three-judge grid ─── */
+  .judges-grid {
+    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;
+  }
+  .judge-card {
+    background: var(--paper); border: 2px solid var(--rule);
+    border-radius: 6px; padding: 12px 14px;
+    display: flex; flex-direction: column;
+  }
+  .judge-card.j-primary { border-color: color-mix(in srgb, var(--accent) 50%, var(--rule)); }
+  .judge-card.j-shadow  { border-color: color-mix(in srgb, var(--purple, #8b5cf6) 50%, var(--rule)); }
+  .judge-card.j-third   { border-color: color-mix(in srgb, var(--ok) 50%, var(--rule)); }
+  .judge-card .jc-top {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--rule);
+  }
+  .judge-card .jc-name {
+    font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--ink-2);
+  }
+  .judge-card .jc-score {
+    font-family: var(--mono); font-size: 16px; font-weight: 700; color: var(--ink);
+  }
+  .judge-card .jc-vendor {
+    font-size: 10px; color: var(--muted); margin-top: -4px; margin-bottom: 8px;
+  }
+  .judge-card .jc-reasoning {
+    font-size: 12px; line-height: 1.5; color: var(--ink-2);
+    white-space: pre-wrap; max-height: 320px; overflow-y: auto;
+  }
+
+  /* ─── Resolve form ─── */
+  .resolve-card {
+    background: var(--paper-2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 16px 18px;
+  }
+  .resolve-row {
+    display: flex; gap: 14px; align-items: center; margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .resolve-row label {
+    font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .score-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .score-chip {
+    padding: 6px 12px; border: 1px solid var(--rule); border-radius: 999px;
+    background: var(--paper); font-family: var(--mono); font-size: 12px;
+    cursor: pointer; transition: all .1s;
+  }
+  .score-chip:hover { border-color: var(--accent); }
+  .score-chip.active {
+    background: var(--accent); color: white; border-color: var(--accent);
+  }
+  .score-input-wrap {
+    display: flex; align-items: center; gap: 6px;
+  }
+  .score-input-wrap input {
+    width: 70px; padding: 6px 10px; border: 1px solid var(--rule);
+    border-radius: 6px; font-family: var(--mono); font-size: 13px;
+  }
+  .score-input-wrap .max-hint {
+    font-family: var(--mono); font-size: 12px; color: var(--muted);
+  }
+  .reviewer-note {
+    width: 100%; min-height: 80px; padding: 10px 12px;
+    border: 1px solid var(--rule); border-radius: 6px;
+    font-family: inherit; font-size: 13px; resize: vertical;
+  }
+  .btn-resolve {
+    background: var(--ok); color: white; border: none;
+    padding: 10px 20px; border-radius: 6px;
+    font-size: 13px; font-weight: 700; cursor: pointer;
+    transition: opacity .1s;
+  }
+  .btn-resolve:hover:not(:disabled) { opacity: .9; }
+  .btn-resolve:disabled { opacity: .5; cursor: not-allowed; }
+
+  .loading, .empty {
+    padding: 40px; text-align: center; color: var(--muted); font-size: 12px;
+  }
+  .toast {
+    position: fixed; bottom: 20px; right: 20px;
+    background: var(--ink); color: var(--paper);
+    padding: 12px 20px; border-radius: 8px; font-size: 13px;
+    box-shadow: var(--shadow-3);
+    opacity: 0; transform: translateY(10px);
+    transition: all .2s;
+    z-index: 100;
+  }
+  .toast.visible { opacity: 1; transform: translateY(0); }
+  .toast.err { background: var(--err); }
+
+  @media (max-width: 1000px) {
+    .container { grid-template-columns: 1fr; }
+    .queue-card { max-height: 50vh; }
+    .judges-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">The AI <span>Researcher</span> <span class="badge">Review</span></div>
+  <nav>
+    <a href="/">Lab</a>
+    <a href="/dashboard">Dashboard</a>
+    <a href="/challenges">Challenges</a>
+    <a href="/leaderboard">Leaderboard</a>
+    <a href="/analytics">Analytics</a>
+    <a href="/annotator">Annotator</a>
+    <a href="/admin">Admin</a>
+    <a href="/review" class="active">Review</a>
+    <button class="signout-btn" onclick="logout()">Sign Out</button>
+  </nav>
+</div>
+
+<div class="container">
+  <!-- ─── Queue list ─── -->
+  <aside class="queue-card">
+    <div class="queue-header">
+      <h2>Pending Reviews</h2>
+      <span class="count" id="queue-count">—</span>
+    </div>
+    <div class="queue-list" id="queue-list">
+      <div class="loading">Loading queue…</div>
+    </div>
+  </aside>
+
+  <!-- ─── Detail panel ─── -->
+  <main class="detail-card">
+    <div class="detail-empty" id="detail-empty">
+      Select a pending review from the queue to see the three judge grades and resolve the disagreement.
+    </div>
+    <div class="detail-header" id="detail-header" style="display:none"></div>
+    <div class="detail-scroll" id="detail-scroll" style="display:none"></div>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const state = {
+  reviews: [],
+  selectedId: null,
+  selectedReview: null,
+  finalScore: null,
+};
+
+async function logout() {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  window.location.href = '/login';
+}
+
+function toast(msg, isErr) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.toggle('err', !!isErr);
+  el.classList.add('visible');
+  setTimeout(() => el.classList.remove('visible'), 2600);
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    });
+  } catch (_) { return iso; }
+}
+
+function fmtScore(s) {
+  if (s === null || s === undefined) return '—';
+  return Number.isInteger(s) ? String(s) : (+s).toFixed(2);
+}
+
+async function loadQueue() {
+  const listEl = document.getElementById('queue-list');
+  listEl.innerHTML = '<div class="loading">Loading queue…</div>';
+  try {
+    const r = await fetch('/api/reviews/pending');
+    if (!r.ok) throw new Error('Failed to load queue (HTTP ' + r.status + ')');
+    state.reviews = await r.json();
+    renderQueue();
+  } catch (e) {
+    listEl.innerHTML = '<div class="empty">' + (e.message || 'Error loading queue') + '</div>';
+  }
+}
+
+function renderQueue() {
+  const listEl = document.getElementById('queue-list');
+  const countEl = document.getElementById('queue-count');
+  countEl.textContent = state.reviews.length + ' pending';
+
+  if (!state.reviews.length) {
+    listEl.innerHTML = '<div class="empty">No pending reviews. All three-way splits are resolved. 🎉</div>';
+    return;
+  }
+
+  listEl.innerHTML = state.reviews.map(r => {
+    const isActive = r.id === state.selectedId ? ' active' : '';
+    const title = r.challenge_title || ('Challenge #' + r.challenge_id);
+    return `
+      <div class="queue-item${isActive}" data-id="${r.id}" onclick="selectReview(${r.id})">
+        <div class="qi-top">
+          <div class="qi-title">${escapeHtml(title)}</div>
+          <div class="qi-id">#${r.id}</div>
+        </div>
+        <div class="qi-meta">
+          <span>${escapeHtml(r.model_id || '—')}</span>
+          <span>•</span>
+          <span>Q: ${escapeHtml(r.question_id || '—')}</span>
+          <span>•</span>
+          <span>${fmtDate(r.created_at)}</span>
+        </div>
+        <div class="qi-scores">
+          <span class="qi-score-chip s-primary">P ${fmtScore(r.primary_score)}</span>
+          <span class="qi-score-chip s-shadow">S ${fmtScore(r.shadow_score)}</span>
+          <span class="qi-score-chip s-third">T ${fmtScore(r.third_score)}</span>
+          <span class="qi-score-chip">/ ${fmtScore(r.max_points)}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function escapeHtml(s) {
+  if (s === null || s === undefined) return '';
+  return String(s)
+    .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+}
+
+async function selectReview(id) {
+  state.selectedId = id;
+  renderQueue();
+  document.getElementById('detail-empty').style.display = 'none';
+  document.getElementById('detail-header').style.display = '';
+  document.getElementById('detail-scroll').style.display = '';
+  document.getElementById('detail-header').innerHTML = '';
+  document.getElementById('detail-scroll').innerHTML = '<div class="loading">Loading review…</div>';
+  try {
+    const r = await fetch('/api/reviews/' + id);
+    if (!r.ok) throw new Error('Failed to load review (HTTP ' + r.status + ')');
+    state.selectedReview = await r.json();
+    state.finalScore = state.selectedReview.primary_score;  // default guess
+    renderDetail();
+  } catch (e) {
+    document.getElementById('detail-scroll').innerHTML =
+      '<div class="empty">' + (e.message || 'Error') + '</div>';
+  }
+}
+
+function renderDetail() {
+  const r = state.selectedReview;
+  if (!r) return;
+
+  const headerEl = document.getElementById('detail-header');
+  headerEl.innerHTML = `
+    <div class="dh-top">
+      <h1>${escapeHtml(r.challenge_title || ('Challenge #' + r.challenge_id))}</h1>
+      <div style="font-family:var(--mono);font-size:11px;color:var(--muted)">Review #${r.id}</div>
+    </div>
+    <div class="dh-meta">
+      <span>Model: <code>${escapeHtml(r.model_id || '—')}</code></span>
+      <span>Question: <code>${escapeHtml(r.question_id || '—')}</code></span>
+      <span>Max: <code>${fmtScore(r.max_points)}</code></span>
+      <span>Created: ${fmtDate(r.created_at)}</span>
+    </div>
+  `;
+
+  const scrollEl = document.getElementById('detail-scroll');
+  const maxPts = Number(r.max_points || 1);
+  const scores = {
+    primary: r.primary_score,
+    shadow:  r.shadow_score,
+    third:   r.third_score,
+  };
+
+  scrollEl.innerHTML = `
+    <div class="section">
+      <h3>Question</h3>
+      <div class="block">${escapeHtml(r.question_text || '—')}</div>
+    </div>
+
+    <div class="section">
+      <h3>Ideal Answer</h3>
+      <div class="block scroll">${escapeHtml(r.ideal_answer || '—')}</div>
+    </div>
+
+    <div class="section">
+      <h3>Scoring Criteria</h3>
+      <div class="block">${escapeHtml(r.scoring_criteria || '—')}</div>
+    </div>
+
+    <div class="section">
+      <h3>Model's Answer</h3>
+      <div class="block scroll">${escapeHtml(r.model_answer || '—')}</div>
+    </div>
+
+    <div class="section">
+      <h3>Three Judges Disagreed</h3>
+      <div class="judges-grid">
+        <div class="judge-card j-primary">
+          <div class="jc-top">
+            <div class="jc-name">Primary</div>
+            <div class="jc-score">${fmtScore(r.primary_score)}/${fmtScore(maxPts)}</div>
+          </div>
+          <div class="jc-vendor">Anthropic</div>
+          <div class="jc-reasoning">${escapeHtml(r.primary_reasoning || '(no reasoning)')}</div>
+        </div>
+        <div class="judge-card j-shadow">
+          <div class="jc-top">
+            <div class="jc-name">Shadow</div>
+            <div class="jc-score">${fmtScore(r.shadow_score)}/${fmtScore(maxPts)}</div>
+          </div>
+          <div class="jc-vendor">Anthropic (regrade)</div>
+          <div class="jc-reasoning">${escapeHtml(r.shadow_reasoning || '(no reasoning)')}</div>
+        </div>
+        <div class="judge-card j-third">
+          <div class="jc-top">
+            <div class="jc-name">Third</div>
+            <div class="jc-score">${fmtScore(r.third_score)}/${fmtScore(maxPts)}</div>
+          </div>
+          <div class="jc-vendor">Gemini (cross-vendor)</div>
+          <div class="jc-reasoning">${escapeHtml(r.third_reasoning || '(no reasoning)')}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Your Decision</h3>
+      <div class="resolve-card">
+        <div class="resolve-row">
+          <label>Final score:</label>
+          <div class="score-chips" id="score-chips">
+            <button class="score-chip" data-val="${scores.primary}" onclick="pickScore(${scores.primary})">Primary · ${fmtScore(scores.primary)}</button>
+            <button class="score-chip" data-val="${scores.shadow}"  onclick="pickScore(${scores.shadow})">Shadow · ${fmtScore(scores.shadow)}</button>
+            <button class="score-chip" data-val="${scores.third}"   onclick="pickScore(${scores.third})">Third · ${fmtScore(scores.third)}</button>
+          </div>
+          <div class="score-input-wrap">
+            <label style="margin-right:4px">or custom:</label>
+            <input type="number" id="final-score" step="0.25" min="0" max="${maxPts}"
+                   value="${state.finalScore ?? ''}"
+                   oninput="onScoreInput(event)">
+            <span class="max-hint">/ ${fmtScore(maxPts)}</span>
+          </div>
+        </div>
+        <div class="resolve-row" style="align-items:flex-start;flex-direction:column;gap:6px">
+          <label>Reviewer note (optional):</label>
+          <textarea id="reviewer-note" class="reviewer-note"
+                    placeholder="Why this score? e.g. 'Primary judge missed that the model cited the wrong study.'"></textarea>
+        </div>
+        <div class="resolve-row" style="justify-content:flex-end;margin-bottom:0">
+          <button class="btn-resolve" id="btn-resolve" onclick="resolveReview()">
+            Resolve review
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  syncActiveChip();
+}
+
+function pickScore(val) {
+  state.finalScore = Number(val);
+  document.getElementById('final-score').value = state.finalScore;
+  syncActiveChip();
+}
+
+function onScoreInput(e) {
+  const v = parseFloat(e.target.value);
+  state.finalScore = isNaN(v) ? null : v;
+  syncActiveChip();
+}
+
+function syncActiveChip() {
+  const chips = document.querySelectorAll('#score-chips .score-chip');
+  chips.forEach(c => {
+    const v = Number(c.dataset.val);
+    c.classList.toggle('active', state.finalScore !== null && v === state.finalScore);
+  });
+}
+
+async function resolveReview() {
+  if (!state.selectedReview) return;
+  const btn = document.getElementById('btn-resolve');
+  const maxPts = Number(state.selectedReview.max_points || 1);
+  const score = state.finalScore;
+  if (score === null || isNaN(score)) {
+    toast('Pick or enter a final score.', true);
+    return;
+  }
+  if (score < 0 || score > maxPts) {
+    toast(`Score must be between 0 and ${maxPts}.`, true);
+    return;
+  }
+  const note = document.getElementById('reviewer-note').value || '';
+  btn.disabled = true;
+  btn.textContent = 'Resolving…';
+  try {
+    const r = await fetch(`/api/reviews/${state.selectedReview.id}/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ final_score: score, reviewer_note: note }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.detail || ('HTTP ' + r.status));
+    }
+    toast('Review resolved. Leaderboard refreshed.');
+    // Remove from local queue + clear selection
+    state.reviews = state.reviews.filter(x => x.id !== state.selectedReview.id);
+    state.selectedId = null;
+    state.selectedReview = null;
+    state.finalScore = null;
+    document.getElementById('detail-empty').style.display = '';
+    document.getElementById('detail-header').style.display = 'none';
+    document.getElementById('detail-scroll').style.display = 'none';
+    renderQueue();
+  } catch (e) {
+    toast(e.message || 'Failed to resolve', true);
+    btn.disabled = false;
+    btn.textContent = 'Resolve review';
+  }
+}
+
+// ─── Init ───
+loadQueue();
+// Light polling: refresh the queue every 60s in case a new challenge just
+// flagged a review. Doesn't disturb the currently-open detail view.
+setInterval(loadQueue, 60000);
+</script>
+</body>
+</html>
