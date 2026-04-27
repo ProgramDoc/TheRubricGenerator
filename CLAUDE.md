@@ -15,10 +15,13 @@
 | Add a column to existing table | `main.py:_migrate_challenge_columns_v2()` — use `column_exists()` from `backend/db.py` + ALTER TABLE |
 | Change database connection | `backend/db.py` — compatibility wrapper (PostgreSQL when `DATABASE_URL` set, SQLite fallback otherwise) |
 | Add a new frontend page | Create `frontend/{page}.html` (self-contained HTML+CSS+JS), add page route in `main.py`, add nav link to ALL other HTML files |
-| Modify the rubric generator | `backend/agents/generator.py` |
-| Modify the judge | `backend/agents/judge.py` |
+| Modify the rubric generator | `backend/agents/generator.py` (system prompt in `backend/skills.py:GENERATOR_SKILL_V1`); batching + retry orchestration in `backend/challenges.py:run_challenge` |
+| Modify the judge / adjudication | `backend/agents/judge.py` (judge 1, OpenAI judge 2) + `backend/agents/adjudicator.py` (Gemini judge 3 + majority vote) + `backend/review.py` (3-way-split review queue + UI in `frontend/review.html`) |
 | Modify challenge scoring | `backend/challenges.py` (scoring functions + `run_challenge()`) |
-| Call an LLM | `backend/helpers.py` — `call_anthropic()`, `call_gemini()`, `call_openai_compatible()` |
+| Call an LLM | `backend/helpers.py` — `call_anthropic()` (now supports `thinking_budget=` for extended thinking), `call_gemini()`, `call_openai_compatible()` |
+| Personal PDF library | `frontend/library.html` (cards + filter rail) + `GET /api/library/papers` in `main.py` (aggregates membership / annotation status / rubric+eval+challenge+run counts). Community library moved to `/community-library` |
+| Multi-project paper membership | `paper_projects` junction table (defined in `main.py:init_db`, idempotent backfill from legacy `papers.project_id` on startup). Endpoints: `GET /api/papers/{pid}/projects`, `POST/DELETE /api/papers/{pid}/projects/{project_id}`. `papers.project_id` kept as a "primary" pointer for back-compat |
+| Paper provenance | `papers.source` column (`'upload' \| 'lab' \| 'search' \| 'pubmed' \| 'imported'`). Lab uploads dual-write to `papers` (with sha256 dedup); idempotent `lab_documents` → `papers` backfill via `lab_documents.papers_id` cursor |
 | Modify billing/credits | `backend/billing.py` |
 | **Modify enterprise seats** | `backend/enterprise.py` — seat catalog, Stripe subscription, per-org seat pool, webhook dispatch |
 | Modify membership/storage limits (legacy, being deprecated) | `backend/membership.py` — scheduled for deletion in the flag-flip commit |
@@ -41,44 +44,61 @@
 ## Architecture at a Glance
 
 ```
-main.py (5040 lines)
-  ├── Database init + migrations (lines 120-560)
-  ├── Auth: cookie sessions + X-API-Key header (lines 650-690)
-  ├── Page routes: GET /, /lab, /challenges, /search, etc. (lines 730-880)
-  ├── API endpoints grouped by resource (~lines 880-5040)
+main.py (~8,600 lines)
+  ├── Database init + migrations (lines 120-700)
+  ├── Auth: cookie sessions + X-API-Key header
+  ├── Page routes: GET /, /lab, /challenges, /search, /library, /community-library, /annotator, /quality-appraisal, /review, etc.
+  ├── API endpoints grouped by resource
   └── Static files mount: /static → frontend/
 
 backend/
   ├── db.py             — Database compatibility layer (PostgreSQL + SQLite fallback)
-  ├── helpers.py        — LLM callers (Anthropic, Gemini, OpenAI-compatible), JSON parsing
-  ├── challenges.py     — Challenge orchestration, scoring, points, leaderboard, event logging
+  ├── helpers.py        — LLM callers (Anthropic with optional thinking_budget, Gemini, OpenAI-compatible), JSON parsing
+  ├── challenges.py     — Challenge orchestration, scoring, points, leaderboard, event logging.
+  │                       run_challenge() batches >3 PDFs (size 3), retries each batch up to 3×
+  │                       on transient failures, splits domain_composition proportionally per batch.
   ├── agents/
-  │   ├── generator.py  — Rubric generation from PDFs (batched for >3 papers)
-  │   ├── judge.py      — Answer grading + shadow regrade
+  │   ├── generator.py  — Rubric generation from PDFs (system prompt in skills.py)
+  │   ├── judge.py      — Judge 1 (Anthropic). Now also defines run_second_judge (OpenAI w/ Claude fallback).
+  │   ├── adjudicator.py — Judge 3 (Gemini) + majority-of-3 vote + 3-way-split detection
   │   ├── participants.py — Run competing models against rubric
-  │   └── lab_agents.py — Lab agent runners (6 new agent types)
+  │   └── lab_agents.py — Lab agent runners
+  ├── review.py         — Grade-review queue (3-way splits go here for human resolution)
   ├── lab.py            — Lab session CRUD, chat orchestrator, document management
   ├── storage.py        — S3/local file storage abstraction
   ├── paper_files.py    — Paper-file read/write/delete (uses storage.py + legacy fallback)
-  ├── annotator.py      — OGAI Annotator: tables, field catalog, AI prompts, analytics
+  ├── annotator.py      — OGAI Annotator: tables, field catalog, AI prompts, analytics,
+  │                       log_run_event() helper for per-batch progress streaming
   ├── exports.py        — Export converters (Word, LaTeX, Excel, CSV, Python, R)
   ├── code_runner.py    — Sandboxed Python/R code execution
   ├── pubmed.py         — PubMed E-utilities, iCite citations, PMC PDF download
-  ├── scheduler.py      — Daily challenge automation (7am PST Mon-Fri)
-  ├── search.py         — AI search chatbot, PubMed/Europe PMC, import/export
+  ├── scheduler.py      — Daily challenge automation (7am PST Mon-Fri); stamps source='pubmed'
+  ├── search.py         — AI search chatbot, PubMed/Europe PMC, import/export; stamps source='search'
   ├── billing.py        — Stripe credits, cost estimation, refunds
-  ├── membership.py     — Free/Pro/Enterprise plans, PDF limits, storage limits
+  ├── membership.py     — Free/Pro/Enterprise plans (legacy, deprecated under ENTERPRISE_MODE)
+  ├── enterprise.py     — Enterprise seat catalog, Stripe subscription, per-org seat pool
   ├── organizations.py  — Multi-tenant orgs with roles
   ├── templates.py      — Rubric templates, community library
   ├── analytics.py      — Performance breakdown, CSV/PDF export (challenge benchmarks)
   ├── skills.py         — Agent skill versioning (10 agent types)
   ├── self_improve.py   — Autoresearch experiment loop
   ├── obsidian.py       — Markdown vault writer
+  ├── quality_appraisal.py — RoB + reporting-guideline + GRADE pipeline (registry, orchestrator)
+  ├── rob_tools/
+  │   ├── rob2.py       — RoB 2 (RCTs)
+  │   └── robins_i.py   — ROBINS-I (cohort, case-control, non-randomized trial, etc.)
+  ├── reporting_guidelines/
+  │   ├── consort.py    — CONSORT 2025 (RCTs)
+  │   └── strobe.py     — STROBE 2007 (observational designs)
   ├── agreements.py     — Legal text
   └── promo.py          — Promo codes
 
-frontend/ — 20 self-contained HTML files (inline CSS + JS, no build step)
-tests/    — pytest suite (Competition API + Annotator; 40 cases)
+frontend/ — ~26 self-contained HTML files (inline CSS + JS, no build step).
+            Notable additions: library.html (personal PDF library),
+            community-library.html (formerly library.html, moved on /community-library),
+            review.html (3-judge adjudication review queue UI).
+tests/    — pytest suite — 181 cases across Competition API, Annotator, Quality Appraisal,
+            Adjudication. Run with `pytest tests/ -v` (Python 3.12+).
 ```
 
 ## Critical Patterns
@@ -199,16 +219,33 @@ Lives at `/annotator` (route in `main.py`, UI in `frontend/annotator.html`, back
 
 `NUMERIC_FIELDS` + `CATEGORICAL_FIELDS` drive chart selection in the Analytics tab.
 
-**Data model:** `annotations` (per paper+reviewer, optimistic-concurrency `version` column, `updated_at` not `timestamp`), `annotation_spans` (text→field linkages), plus `annotator_custom_schemas` + `annotator_custom_runs` for the custom-extraction feature. All initialised from `ANNOTATOR_TABLES_SQL` in `backend/annotator.py`, executed by `main.py:init_db()`.
+**Data model:** `annotations` (per paper+reviewer, optimistic-concurrency `version` column, `updated_at` not `timestamp`), `annotation_spans` (text→field linkages), `annotator_custom_schemas` (per-user named schemas), `annotator_custom_runs` (the **batch container** for every Classify / Prefill / Custom run — see below), `annotator_run_events` (per-paper progress events, polled by the UI), and `annotator_actions` (per-paper action audit log). All initialised from `ANNOTATOR_TABLES_SQL` in `backend/annotator.py`, executed by `main.py:init_db()`.
+
+**Batch container model** (every classify/prefill/custom batch creates one row): `annotator_custom_runs` carries `id, user_id, name (REQUIRED, unique-per-user, ≤120 chars), project_id, did_classify, did_prefill, schema_id, schema_snapshot_json, paper_ids_json, results_json, status, created_at, completed_at, name`. The frontend `runBatch()` flow:
+1. `POST /api/annotator/runs` with `{name, project_id, paper_ids, did_classify, did_prefill, schema_id?}` — creates the container; **400** on missing name, **409** on duplicate per-user. Frontend ABORTS the batch loudly if this fails (no silent runs).
+2. `PATCH /api/annotator/runs/{rid}/papers` after each per-paper classify or prefill — merges per-paper output into `results_json.papers[pid].fields`.
+3. The optional `POST /api/annotator/schemas/{sid}/run` accepts `run_id=` to reuse the same container (the worker's `_mark` MERGES into existing `results_json` rather than overwriting).
+4. `POST /api/annotator/runs/{rid}/finalize` — marks complete + emits a `run_complete` progress event.
+5. `PATCH /api/annotator/runs/{rid}` — moves an existing run between projects (or renames it). Body: `{project_id, project_id_set: true, name?}`. The `project_id_set` flag distinguishes "explicitly clear to null" from "leave unchanged."
 
 **Right-pane tab bar:** `Form` / `✨ Custom` / `Results` / `Analytics ↗`. Form uses `display: none` when inactive so span linking keeps working. Active tab persists in `localStorage` under `annotator_active_tab` (allowed values: `form` / `chat` / `results`). The `Analytics ↗` button is NOT a pane — it navigates to `/analytics#annotator`. All annotator analytics live in the unified analytics page ([frontend/analytics.html](frontend/analytics.html)) which has tabs for Benchmark / Annotator / Admin analytics; hash routing (`#annotator`, `#admin`) selects the initial tab.
+
+**Results tab — pivoted batch summary view:** when a batch row is selected, `renderRunTable()` builds (top to bottom) a summary card (name + project pill + op chips + status + ok/err/skip counts) → study-type stacked bar (when `did_classify`) → field summary card grid (one per `field_aggregates` entry; numeric / categorical / text rendering varies) → the existing per-paper `rt-table`. Each field card opens a **field-detail modal** (value-frequency bars or numeric stats; click a row to load that paper into the Form tab); each paper row has a 📋 button that opens a **paper-detail modal** (every extracted field as label/value rows, plus an "Open in Form tab" button). Aggregates are computed server-side by `_compute_run_aggregates(snapshot, results, did_classify)` in `main.py` — kind classifier: numeric (≥80% parse as float) / categorical (≤8 unique AND ≤60-char max) / text (everything else); summaries include median+min+max for numeric, top+top_pct+value_counts for categorical, n_unique+sample_values for text.
+
+**Batch run-list:** the runs are listed (chronological, latest-first, capped at 100) as a flat scrolling list with name, status badge, paper count, project pill, op chips, and timestamp. Each row has a `+ Save to project…` `<select>` for moving the run between projects. The list also has a filter input that searches name / project / status / schema name client-side.
+
+**Browser notifications + active-runs pill:** the topbar gains a purple "▶ N runs in progress" pill when there are live containers (visible across page refresh — `pickupInFlightRuns()` re-attaches pollers on load). Clicking the pill opens a modal with a per-run live event log. When a `run_complete` event arrives and the tab isn't focused, `fireBatchNotification(ev)` shows a desktop notification — permission is asked lazily on the first batch start (`ensureNotificationPermission()`).
+
+**Per-paper progress events** stream from `_run_custom_extraction` via `_log_run_event_safe(run_id, event_type, message, **detail)` (calls `backend/annotator.py:log_run_event`). Event types: `run_started` / `paper_started` / `extracting` / `paper_done` / `paper_error` / `paper_skipped` / `run_complete` / `paper_thinking`. Frontend polls `GET /api/annotator/runs/{rid}/events?after=<id>` every 3s via `streamRunEvents()`.
+
+**Multi-project paper membership** — papers belong to many projects via `paper_projects` (`paper_id, project_id, added_at`). The legacy `papers.project_id` is kept as a "primary" pointer for back-compat; the junction is the source of truth for sidebar filtering and the Library page. `assignPaperToProject()` mirrors writes into the junction. Sidebar paper items render project chips with ✕ to remove + a native `<select class="proj-add-select">` "+ Add to project…" dropdown (chosen over a button-with-popover after repeated discoverability complaints — native widgets are unmissable). Empty state shows an "unassigned" pill.
 
 **AI calls (all credit-gated, admin bypass, auto-refund on failure):**
 - Classify study design: 3 credits — `POST /api/annotator/papers/{id}/classify`
 - Prefill fields: 8 credits — `POST /api/annotator/papers/{id}/prefill` (accepts `groups`, `type_fields`, `modifier_fields`)
 - Parse custom schema from upload/text: 2 credits — `POST /api/annotator/schemas/parse` (accepts PDF, DOCX — converted to markdown via `python-docx` — CSV, TXT, MD, or raw text)
 - Refine custom schema: 1 credit — `POST /api/annotator/schemas/refine`
-- Custom batch run: 8 credits × paper — `POST /api/annotator/schemas/{id}/run` (≤10 papers in-request, larger = background thread)
+- Custom batch run: 8 credits × paper — `POST /api/annotator/schemas/{id}/run` (≤10 papers in-request, larger = background thread). With `thinking_enabled: true`, cost bumps ~50% per paper and Claude's extended thinking is captured per-paper into `paper_thinking` events (rendered as collapsible blocks in the batch modal).
 
 **Unified extraction entry point:** the Custom tab's "▶ Run extraction (batch)" button and the topbar "☰ Batch" button both open the same batch modal. That modal has three optional steps: (1) classify study design, (2) prefill Form-tab fields, (3) run a saved custom schema. Opening from the Custom tab preselects the currently-loaded schema in the modal's "Custom schema" dropdown; opening from the topbar leaves it empty. There is no separate "run this custom schema alone" code path — custom runs always happen via `runBatch()` in [frontend/annotator.html](frontend/annotator.html).
 
@@ -225,6 +262,37 @@ Classification tasks (`classify_study_design`) and the schema-proposal task (`pa
 Upfront: a 32 MB byte-size guard (`_PDF_UPLOAD_BYTE_LIMIT`) short-circuits before we even base64-encode, since Anthropic's PDF beta rejects anything larger. All error paths raise `HTTPException` with actionable vendor-free messages, and the existing `_refund_annotator` / `refund_credits` handlers auto-refund the credit charge.
 
 **Persistence:** localStorage draft (not sessionStorage, so it survives tab close) + backend save on `input` (1.5 s debounce) + `keepalive: true` fetch on `beforeunload` / `pagehide` / `visibilitychange → hidden` / `logout()`. `loadExistingAnnotation` prefers the local draft over the backend copy, so unsent edits come back even if the network save failed.
+
+## Personal Library
+
+Lives at `/library` ([route in main.py](main.py), UI in [frontend/library.html](frontend/library.html)). The community library was renamed to `/community-library` (file moved to `community-library.html`) — `/library` is now the user's personal PDF browser.
+
+**Layout:** left filter rail (search, project, annotation status, source) + responsive card grid. Each card shows filename, upload date, source badge, project chips, annotation status, and a 4-stat strip (rubrics, evaluations, challenges, custom runs). Cards are clickable → opens `/annotator?paper_id=N` (annotator picks up the param and auto-loads the paper). The toolbar exposes select-multi → "Add to project…" / "Delete" bulk actions.
+
+**Data**: `GET /api/library/papers?project=&source=&status=&q=&limit=` aggregates membership, annotation status, rubric/eval/challenge/custom-run counts in a single call. Uses correlated subqueries — fine for personal libraries up to a few thousand papers. Source filter values: `upload | lab | search | pubmed | imported`. The `papers.source` column is stamped at INSERT time by every uploader (annotator upload → 'upload', search import → 'search', PubMed scheduler → 'pubmed', Lab upload → 'lab'). Lab uploads dual-write to `papers` so the same PDF appears in both `lab_documents` and the unified Library.
+
+**Source backfill** — `init_db()` runs an idempotent backfill that copies any `lab_documents` rows missing a `papers_id` cursor into `papers` (with synthetic sha256 `lab:{user_id}:{lab_doc_id}` since `lab_documents` never stored a hash). The `lab_documents.papers_id` column is the migration cursor — once set, the row is considered migrated and skipped on subsequent startups.
+
+## 3-Judge Adjudication Pipeline
+
+Single-judge grading was the original design; production hit too many borderline cases where Claude's score was contested. The adjudication pipeline replaces it with a sequential 3-judge majority vote that escalates only on disagreement.
+
+**Pipeline** (escalates lazily — no extra LLM calls when judges already agree):
+1. **Judge 1 (Anthropic)** — `backend/agents/judge.py:run_judge_agent`. Always runs.
+2. **Judge 2 (OpenAI)** — `backend/agents/judge.py:run_second_judge`. Runs only on per-question disagreement; falls back to a second Claude call if `OPENAI_API_KEY` is missing. The `shadow_regrade` name is preserved as a thin alias for un-migrated call sites.
+3. **Judge 3 (Gemini)** — `backend/agents/adjudicator.py:run_third_judge`. Runs only when judges 1 and 2 still disagree on a question.
+4. **Majority vote** — `adjudicator.majority_vote(j1, j2, j3)` picks the score that two of three agree on, per question.
+5. **3-way split** — when no two judges agree on a question's score, the adjudicator emits a `needs_review` payload and `backend/review.py:enqueue_review` drops the question into the review queue for human resolution.
+
+**Review queue** ([backend/review.py](backend/review.py) + [frontend/review.html](frontend/review.html)) — moderators see the question, rubric criteria, and all three judge grades side-by-side; pick the winning score (or override entirely with a manual annotation), and resolution is logged in the audit trail. Tests in [tests/test_adjudication.py](tests/test_adjudication.py) cover the pure-Python parts (majority logic, 3-way-split detection, needs_review payload shape) without hitting any LLM.
+
+## Rubric Generator (April 26 hardening)
+
+Three small but production-meaningful changes shipped in the rubric generator orchestration:
+
+- **Default model** ([backend/helpers.py:20](backend/helpers.py)) bumped from `claude-sonnet-4-20250514` to `claude-sonnet-4-6`. Override per-environment via `ANTHROPIC_MODEL`. For premium generator quality, set `ANTHROPIC_MODEL=claude-opus-4-7` on the relevant Render service — `call_anthropic(model=)` already supports per-call overrides if you want to keep judge cheap.
+- **Retry loop on the batched generator** ([backend/challenges.py](backend/challenges.py): `_generator_with_retry`) — wraps each `run_generator_agent()` call in 3 attempts with 1s/2s backoff. Skips retry on permanent errors (400, 401, 403, 413). Both the single-call and batched paths use it now, so a transient 5xx or JSON parse blip no longer kills the whole challenge.
+- **Domain composition split per batch** ([backend/challenges.py](backend/challenges.py): `_split_composition_for_batches`) — when a >3-PDF challenge gets batched, the daily composition / domain composition is now divided proportionally per batch using **largest-remainder allocation**, so per-key totals are exact across the batches (no rounding drift). Replaces the previous behavior where composition was silently dropped in batched mode.
 
 ## Quality Appraisal AI
 

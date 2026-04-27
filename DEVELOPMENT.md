@@ -6,18 +6,18 @@
 
 ---
 
-## Current State (April 20, 2026)
+## Current State (April 27, 2026)
 
 ### Codebase Summary
 
 | Component | Files | Lines |
 |-----------|-------|-------|
-| `main.py` | 1 | ~6,890 |
-| `backend/` modules | 27 | ~13,100 |
-| `frontend/` pages | 22 | ~21,650 |
+| `main.py` | 1 | ~8,600 |
+| `backend/` modules | 39 | ~15,800 |
+| `frontend/` pages | 26 | ~24,500 |
 | `frontend/_shared/design.css` | 1 | ~420 |
-| `tests/` | 3 | ~670 |
-| **Total** | **54** | **~42,730** |
+| `tests/` | 6 | ~1,900 |
+| **Total** | **73** | **~51,200** |
 
 ### What's Live
 
@@ -78,6 +78,16 @@
 - **Annotator draggable divider:** 6 px `.pane-resizer` between `#pdf-panel` and `#form-panel`; `--form-w` CSS variable baselines the post-sidebar split 50/50. Drag updates live, mouseup persists px to localStorage, double-click resets. Min widths 300 px (PDF) / 280 px (form) so neither pane collapses
 - **Annotator results pane: delete runs + back button:** `DELETE /api/annotator/runs/{rid}` (engineer seat, schema + papers preserved). "← Back to annotator" button at the top of the Results pane returns to the Form tab. Red "✕ Delete" button with confirmation next to the CSV export
 - **PDF viewer + annotator Paper-themed chrome:** The PDF viewer at `/pdf-viewer` (served from `rubric_generator.html`) and the annotator's `#pdf-panel` swap dark-IDE greys (#2a2a2a / #1a1a1a) for the cream `--paper-2` + hairline `--rule` borders. Toolbar buttons become pill-outlined chips, page shadow softened to a small-crisp + diffused pair, text-layer highlight + selection adopt the Paper accent. Annotator form sections render as soft cards on cream (1 px rule, 10 px radius, subtle shadow). Pure visual — no field IDs, inputs, spans, or handlers changed
+- **Personal PDF library** (`/library`): card grid + left filter rail (search / project / annotation status / source). Click a card → opens `/annotator?paper_id=N`. Bulk add-to-project + delete from the toolbar. The community library moved to `/community-library` (file renamed `community-library.html`). Backed by `GET /api/library/papers?project=&source=&status=&q=&limit=` which aggregates per-paper rubric / eval / challenge / custom-run counts in one call
+- **Multi-project paper membership** (`paper_projects` junction table): a paper can belong to many projects. `papers.project_id` kept as a "primary" pointer for legacy queries; junction is the source of truth for filtering and the Library page. Idempotent backfill on every startup. Per-paper `+ Add to project…` native `<select>` in the annotator sidebar (chosen over a button-with-popover after repeated discoverability complaints)
+- **Paper provenance** (`papers.source` column = `upload | lab | search | pubmed | imported`): every uploader stamps the right source. Lab uploads now dual-write to `papers` (with sha256 dedup), and a one-time backfill populates `papers` from existing `lab_documents` rows via a `lab_documents.papers_id` cursor
+- **Annotator batch-container model** — every Classify / Prefill / Custom batch creates one `annotator_custom_runs` row, regardless of mode. Frontend `runBatch()` POSTs to `/api/annotator/runs` first (REQUIRED + per-user-unique name; **400** missing, **409** duplicate; aborts loudly on failure so no silent runs), PATCHes per-paper output to `/api/annotator/runs/{rid}/papers`, optionally calls `/schemas/{sid}/run` with `run_id=` to merge custom-schema output into the same row, and POSTs `/finalize` at the end. PATCH `/api/annotator/runs/{rid}` moves a run between projects after the fact
+- **Pivoted batch summary view in Results tab:** when a run is selected, the pane renders a summary card → study-type stacked bar (when `did_classify`) → field summary card grid (numeric / categorical / text rendering, computed by `_compute_run_aggregates`) → per-paper table. Field cards open a cross-paper field-detail modal (value-frequency bars or numeric stats); per-paper rows open a paper-detail modal listing every extracted field. Replaces the flat per-paper×per-field grid that scaled poorly past ~5 papers
+- **Per-paper batch progress + active-runs pill + browser notifications:** `annotator_run_events` table + `log_run_event` helper; `_run_custom_extraction` emits `run_started / paper_started / extracting / paper_done / paper_error / paper_skipped / run_complete / paper_thinking`. Frontend polls `GET /api/annotator/runs/{rid}/events?after=<id>` every 3s. A purple "▶ N runs in progress" pill in the topbar opens a per-run live log modal; survives page refresh via `pickupInFlightRuns()`. Desktop notification on `run_complete` when the tab isn't focused (permission asked lazily on first batch start)
+- **Chain-of-thought reasoning per paper:** `call_anthropic(thinking_budget=N)` enables Claude extended thinking and returns `(answer, thinking)`. Plumbed through `_call_with_pdf` → `extract_custom_fields`. `CustomSchemaRunPayload.thinking_enabled: bool` toggles it (~50% credit bump per paper); thinking text is captured in `paper_thinking` events and rendered as collapsible blocks in the batch modal. Chunked-text fallback returns empty thinking (multi-chunk reasoning would be misleading to merge)
+- **3-judge adjudication pipeline:** Replaces the single-judge + shadow-regrade flow. Judge 1 (Anthropic) → Judge 2 (OpenAI w/ Claude fallback) → Judge 3 (Gemini), with majority-of-3 vote per question. 3-way splits drop into a human review queue (`backend/review.py` + `frontend/review.html`). The `shadow_regrade` name is preserved as a thin alias for un-migrated call sites
+- **Quality Appraisal — non-randomized study designs:** Extends the v1 RCT-only pipeline to also handle Cohort, Case-Control, Non-Randomized Trial, Cross-Sectional (Analytical), and Case-Crossover designs. Each maps to ROBINS-I (2016) + STROBE 2007 + Low initial GRADE. New tools: `backend/rob_tools/robins_i.py` (7 domains, 5-level Low/Moderate/Serious/Critical/No information judgement) and `backend/reporting_guidelines/strobe.py` (22-item checklist). Mixed-tool runs render the column set from the first successful row's tool; non-matching domain cells show `—`
+- **Rubric Generator hardening (April 26):** Default model bumped to `claude-sonnet-4-6` (env-overridable). 3-attempt retry with 1s/2s backoff on the batched generator (`_generator_with_retry`) — skips retry on permanent errors (400, 401, 403, 413). Domain composition split per batch via largest-remainder allocation (`_split_composition_for_batches`) so per-key totals are exact across batches
 
 ---
 
@@ -380,6 +390,76 @@ Visual and UX gaps surfaced once the Paper theme rolled across the annotator.
 - **Project-filter dropdown legibility**: `.project-filter-select` was originally rgba-white text on near-transparent white — unreadable on both the navy and the repainted paper sidebar. Rebuilt as a single Paper-first rule: `var(--paper-2)` background, ink text, `var(--rule)` border, inline SVG caret stroked in ink, explicit `background-size: 10 px 10 px` so the 10×10 SVG can't tile across the row
 - **Paper-theme form cards** (visual only — zero behaviour change): each `.form-section` renders as a soft card on cream — white `--paper` fill, 1 px `--rule` border, 10 px radius, faint shadow. `.form-section-header` inside a card fills the card's head region (negative margin + matching radius + bottom rule) so eyebrows read as card titles. Field inputs / textareas / selects adopt paper surfaces, `--rule` borders, and an accent-tinted focus ring. `.rp-tab` bar goes mono small-caps with an accent-colored active underline
 - **PDF chrome**: `#pdf-panel` + `#pdf-scroll` use `--paper-2` instead of `#2a2a2a`; `#pdf-toolbar` uses `--paper` with a `--rule` bottom border and pill-style outlined buttons with ink text; `.page-wrapper` gets a layered shadow (small crisp + larger diffused) on a white fill so pages float on the cream. `.textLayer` highlight + selection adopt the Paper accent
+
+### Annotator Foundation, Library, Adjudication, RG Hardening (April 26–27, 2026)
+
+A multi-day push that turned the annotator's Results pane into a real summary surface, unified PDF storage into a personal Library, replaced the single-judge model with a 3-judge majority-vote pipeline, and stabilized the rubric generator's batched orchestration.
+
+**Rubric Generator hardening** (`backend/helpers.py`, `backend/challenges.py`):
+- Default `ANTHROPIC_MODEL` bumped from `claude-sonnet-4-20250514` to `claude-sonnet-4-6`. Per-call `model=` override still works in `call_anthropic`.
+- `_generator_with_retry` wraps each batched call in 3 attempts with 1s/2s backoff. Skips retry on permanent errors (400 / 401 / 403 / 413). Both single-call and batched paths use it.
+- `_split_composition_for_batches` — largest-remainder allocation for `daily_composition` / `domain_composition` across batches (exact per-key totals). Restores per-batch composition propagation that was previously dropped in `>3`-PDF mode.
+
+**Personal Library** (`/library`, `frontend/library.html` ~530 LOC + `GET /api/library/papers` in `main.py`):
+- New page: card grid + left filter rail (search, project, annotation status, source). Click a card → opens `/annotator?paper_id=N` (annotator picks up the param).
+- Toolbar bulk actions: select-multi → "Add to project…" or "Delete."
+- Aggregation endpoint returns membership, annotation status, rubric/eval/challenge/custom-run counts in one call. Filters: `project=ID|unassigned`, `source=upload|lab|search|pubmed|imported`, `status=annotated|in_progress|unannotated`, `q=substring`.
+- Old community library moved to `/community-library` (file renamed `community-library.html`).
+
+**Multi-project paper membership** (`paper_projects` junction in `main.py:init_db`):
+- `(paper_id, project_id, added_at)` table. Idempotent backfill from legacy `papers.project_id` on every startup.
+- Endpoints: `GET /api/papers/{pid}/projects`, `POST /api/papers/{pid}/projects/{project_id}` (idempotent add), `DELETE /api/papers/{pid}/projects/{project_id}` (with smart primary-promotion).
+- `papers.project_id` kept as a "primary" pointer for back-compat; legacy `assign_paper` mirrors writes into the junction. Added a `POST /api/papers/{pid}/assign` alias so the legacy frontend bug (POST instead of PATCH) stops silently failing.
+- Annotator sidebar replaces the hidden hover-only `<select>` with chips + a native "+ Add to project…" `<select>` (chosen over a button-with-popover after multiple "I can't see it" reports — native widgets are unmissable). Filter respects multi-membership.
+
+**Paper provenance** (`papers.source` column):
+- `papers.source` text column added (`upload | lab | search | pubmed | imported`, default `upload`). All three INSERTs into `papers` (annotator upload, search import, pubmed scheduler) stamp the right source.
+- Lab upload (`api_lab_upload_document`) dual-writes: keeps `lab_documents` AND inserts `papers` row with `source='lab'`, deduped by sha256, mirrored to multi-project junction.
+- One-time backfill of existing `lab_documents` → `papers` via synthetic sha256 (`lab:{user_id}:{id}`), gated by `lab_documents.papers_id` cursor column.
+
+**Annotator batch-container model** (every batch now creates a `annotator_custom_runs` row regardless of mode):
+- New columns: `name` (REQUIRED, ≤120 chars, **unique per user case-insensitive**), `project_id`, `did_classify`, `did_prefill`. Idempotent migrations in `init_db`.
+- Endpoints: `POST /api/annotator/runs` (creates container — **400** missing name, **409** name taken), `PATCH /api/annotator/runs/{rid}/papers` (merge per-paper output into `results_json`), `POST /api/annotator/runs/{rid}/finalize` (mark complete + emit `run_complete`), `PATCH /api/annotator/runs/{rid}` (move/rename — accepts `{project_id, project_id_set, name?}` where `project_id_set` distinguishes "explicitly clear to null" from "leave unchanged").
+- `/schemas/{sid}/run` accepts an optional `run_id` so custom-schema runs reuse an existing container; the worker's `_mark` MERGES into existing `results_json` instead of overwriting (so classify/prefill output PATCHed in earlier survives).
+- Frontend `runBatch()` creates the container up-front, ABORTS loudly on failure (no silent runs), PATCHes after each classify/prefill, finalizes at the end, then opens Results to the new row.
+
+**Per-paper progress events + active-runs pill + browser notifications:**
+- `annotator_run_events` table (FK to `annotator_custom_runs`) + `log_run_event(conn, run_id, event_type, message, detail)` helper in `backend/annotator.py`.
+- `_run_custom_extraction` emits: `run_started`, `paper_started`, `extracting`, `paper_done`, `paper_error`, `paper_skipped`, `run_complete`, `paper_thinking`.
+- `GET /api/annotator/runs/{rid}/events?after=<id>` cursor-based polling (mirrors `quality_appraisal_events` pattern).
+- Frontend `streamRunEvents(runId)` polls every 3s, appends events to the batch log. Survives modal close via a topbar `▶ N runs in progress` pill that opens a per-run live log modal. `pickupInFlightRuns()` re-attaches pollers on page load.
+- `fireBatchNotification(ev)` shows a desktop notification on `run_complete` when the tab isn't focused. `ensureNotificationPermission()` asks lazily on first batch start.
+
+**Chain-of-thought reasoning per paper:**
+- `call_anthropic(messages, system, max_tokens, model=, *, thinking_budget=N)` — when `thinking_budget` is set, requests Claude extended thinking and returns `(answer, thinking)` instead of a bare string. Backwards-compatible — existing callers untouched.
+- Plumbed through `_call_with_pdf` and `extract_custom_fields`. `CustomSchemaRunPayload.thinking_enabled: bool` toggles it (~50% credit bump per paper). Worker emits `paper_thinking` events with the thinking text in `detail_json`.
+- Frontend renders thinking events as collapsible `<details>` blocks under the relevant paper row. Chunked-text fallback returns empty thinking (multi-chunk reasoning would be misleading to merge).
+
+**Pivoted batch summary view** (replaces the flat per-paper grid in the Results tab):
+- Backend `_compute_run_aggregates(snapshot, results, did_classify)` — pure-Python aggregator. Computes `study_type_breakdown` (when did_classify) + `field_aggregates` per field. Kind classifier: numeric (≥80% parse as float) → median/mean/min/max; categorical (≤8 unique AND ≤60-char max) → top + value_counts; text (everything else) → n_unique + sample_values. Field discovery preserves schema order, then appends extras alphabetically.
+- Frontend `renderRunTable()` rewritten. Layout: summary card (name + project + ops + status + counts) → study-type stacked bar (when did_classify) → field summary card grid → per-paper `rt-table` (with new 📋 detail button per row).
+- Two new modals: **field-detail** (value-frequency bars or numeric stats; click a row to load that paper into Form tab) + **paper-detail** (every extracted field as label/value rows, plus "Open in Form tab" button).
+
+**Batch run-list view** (replaces the single-select dropdown):
+- Flat scrolling list of batches sorted chronologically. Each row: name, status badge (running/complete pulse), paper count, project pill, op chips (Classify/Prefill/Custom · schema name), timestamp.
+- Per-row "+ Save to project…" `<select>` lets users move runs into projects after the fact (PATCH `/api/annotator/runs/{rid}`).
+- Filter input above the list searches name/project/status/schema name client-side.
+
+**3-judge adjudication pipeline** (`backend/agents/judge.py`, `backend/agents/adjudicator.py`, `backend/review.py`, `frontend/review.html`):
+- Replaces the single-judge + shadow-regrade flow. Sequential escalation: Judge 1 (Anthropic) → Judge 2 (OpenAI, with Claude fallback if `OPENAI_API_KEY` missing) → Judge 3 (Gemini). Judges 2 and 3 only run on per-question disagreement.
+- `adjudicator.majority_vote()` picks the score 2 of 3 agree on. 3-way splits emit a `needs_review` payload; `review.py:enqueue_review` drops the question into the review queue.
+- Reviewer UI (`frontend/review.html`): question + rubric + all three judge grades side-by-side, pick the winning score, optionally annotate. Audit log of resolutions.
+- `shadow_regrade` is preserved as a thin alias for un-migrated call sites.
+- New tests in `tests/test_adjudication.py` cover the pure-Python parts (majority logic, 3-way-split detection, needs_review payload shape) without LLM calls.
+
+**Quality Appraisal — non-randomized study designs** (Cohort / Case-Control / Non-Randomized Trial / Cross-Sectional / Case-Crossover):
+- New `backend/rob_tools/robins_i.py` (7 domains, 5-level Low/Moderate/Serious/Critical/No information). Pure-Python decision trees; effect-of-assignment variant only in v1.
+- New `backend/reporting_guidelines/strobe.py` (22-item STROBE 2007 checklist).
+- `STUDY_TYPE_REGISTRY` extended with 5 new entries → ROBINS-I + STROBE 2007 + Low initial GRADE.
+- Frontend `domainMetaFor(rob_tool)` picks between `ROB2_DOMAIN_META` (5 domains) and `ROBINS_I_DOMAIN_META` (7 domains); `robBadgeCls(j)` maps any judgement (3-level RoB 2 or 5-level ROBINS-I) to a CSS badge.
+- Mixed-tool runs render the column set from the first successful row's tool; non-matching domain cells show `—`.
+
+**Tests**: 181/181 pass (was 40 in the pre-April-26 baseline). Coverage spans Competition API, Annotator (~24 cases), Quality Appraisal (~70 cases including ROBINS-I + STROBE), Adjudication (~30 cases for majority logic + needs_review), and the new aggregator unit tests.
 
 ### Annotator Custom Extraction & Analytics (April 16, 2026)
 
