@@ -6911,7 +6911,11 @@ def api_annotator_create_batch(body: BatchContainerPayload,
     """Create a batch container so EVERY batch — classify, prefill, custom,
     or a combination — shows up in the Results tab. The frontend POSTs here
     before kicking off per-paper work, then PATCHes per-paper outputs in,
-    then POSTs /finalize when done."""
+    then POSTs /finalize when done.
+
+    The batch name is REQUIRED and must be unique per user — that lets people
+    tell their runs apart in the Results list later. Returns 400 if missing,
+    409 if a non-deleted batch with the same name already exists."""
     user = require_user(rubricgen_session, x_api_key)
     require_active_seat(user, "engineer")
     paper_ids = [int(p) for p in (body.paper_ids or [])]
@@ -6919,10 +6923,37 @@ def api_annotator_create_batch(body: BatchContainerPayload,
         raise HTTPException(400, "paper_ids must be a non-empty list")
     if len(paper_ids) > 200:
         raise HTTPException(400, "at most 200 papers per batch")
-    name = (body.name or "").strip() or _default_batch_name(body, len(paper_ids))
+
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, {
+            "error": "name_required",
+            "detail": "Batch name is required so you can find this run later in Results.",
+        })
+    if len(name) > 120:
+        raise HTTPException(400, {
+            "error": "name_too_long",
+            "detail": "Batch name must be 120 characters or fewer.",
+        })
+
     snapshot = _batch_snapshot(body)
     conn = get_db()
     try:
+        # Per-user uniqueness check (case-insensitive). We can't add a UNIQUE
+        # constraint cleanly because legacy runs may share names — the check
+        # at INSERT time is the canonical guard for new runs.
+        existing = conn.execute(
+            """SELECT id FROM annotator_custom_runs
+                WHERE user_id = ? AND LOWER(name) = LOWER(?)
+                LIMIT 1""",
+            (user["id"], name),
+        ).fetchone()
+        if existing:
+            raise HTTPException(409, {
+                "error": "name_taken",
+                "detail": f"You already have a batch named “{name}”. Pick a different name.",
+                "existing_run_id": existing["id"],
+            })
         with conn:
             cur = conn.execute(
                 """INSERT INTO annotator_custom_runs
@@ -6990,6 +7021,82 @@ def api_annotator_batch_paper_result(rid: int, body: BatchPaperResultPayload,
     finally:
         conn.close()
     return {"ok": True}
+
+
+class BatchPatchPayload(BaseModel):
+    """Update an existing batch's project assignment or name. Both optional —
+    omit a field to leave it unchanged."""
+    project_id: int | None = None      # set to a project ID, or null to clear
+    project_id_set: bool = False       # explicit "yes I'm sending project_id"
+    name: str | None = None
+
+
+@app.patch("/api/annotator/runs/{rid}")
+def api_annotator_runs_patch(rid: int, body: BatchPatchPayload,
+                             rubricgen_session: str | None = Cookie(default=None),
+                             x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Move a batch into (or out of) a project, or rename it. Used by the
+    Results-list "Move to project" dropdown so a user can save batches into
+    project folders after the fact."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    conn = get_db()
+    try:
+        own = conn.execute(
+            "SELECT id, name FROM annotator_custom_runs WHERE id=? AND user_id=?",
+            (rid, user["id"]),
+        ).fetchone()
+        if not own:
+            raise HTTPException(404, "run not found")
+
+        updates: list[tuple[str, object]] = []
+
+        # Name change — re-validate uniqueness if provided.
+        if body.name is not None:
+            new_name = body.name.strip()
+            if not new_name:
+                raise HTTPException(400, "name must not be blank")
+            if len(new_name) > 120:
+                raise HTTPException(400, "name must be 120 characters or fewer")
+            if new_name.lower() != (own["name"] or "").lower():
+                clash = conn.execute(
+                    """SELECT id FROM annotator_custom_runs
+                        WHERE user_id=? AND id != ? AND LOWER(name) = LOWER(?)
+                        LIMIT 1""",
+                    (user["id"], rid, new_name),
+                ).fetchone()
+                if clash:
+                    raise HTTPException(409, {
+                        "error": "name_taken",
+                        "detail": f"You already have a batch named “{new_name}”.",
+                    })
+            updates.append(("name", new_name))
+
+        # Project change — verify ownership before assigning.
+        if body.project_id_set:
+            if body.project_id is not None:
+                proj = conn.execute(
+                    "SELECT id FROM projects WHERE id=? AND user_id=?",
+                    (body.project_id, user["id"]),
+                ).fetchone()
+                if not proj:
+                    raise HTTPException(404, "project not found")
+            updates.append(("project_id", body.project_id))
+
+        if not updates:
+            return {"ok": True, "no_changes": True}
+
+        set_clause = ", ".join(f"{col}=?" for col, _ in updates)
+        values = [v for _, v in updates] + [rid]
+        with conn:
+            conn.execute(
+                f"UPDATE annotator_custom_runs SET {set_clause} WHERE id=?",
+                tuple(values),
+            )
+            conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "id": rid}
 
 
 @app.post("/api/annotator/runs/{rid}/finalize")

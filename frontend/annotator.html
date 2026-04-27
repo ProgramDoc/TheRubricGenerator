@@ -249,21 +249,14 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
   background: rgba(255,255,255,.1); border: 1px dashed rgba(255,255,255,.35);
   color: rgba(255,255,255,.8); font-style: italic; text-shadow: none;
 }
-.proj-add-btn {
-  font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 10px; line-height: 1.5;
-  background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.3);
-  color: #ffffff; cursor: pointer; font-family: inherit;
+/* Native "+ Add to project" select — base styles. The Paper-theme override
+   block below repaints with proper accent color and dropdown caret. */
+.proj-add-select {
+  width: 100%; margin-top: 4px; font-family: inherit; font-size: 11.5px;
+  font-weight: 600; padding: 5px 8px; border-radius: 5px;
+  background: #7c3aed; color: #fff; border: 1px solid #7c3aed;
+  cursor: pointer;
 }
-.proj-add-btn:hover { background: rgba(255,255,255,.22); border-color: rgba(255,255,255,.5); }
-.proj-add-pop {
-  position: absolute; z-index: 100; background: #1e2d42; border: 1px solid rgba(255,255,255,.15);
-  border-radius: 5px; padding: 5px; min-width: 160px; max-height: 200px; overflow-y: auto;
-  box-shadow: 0 4px 12px rgba(0,0,0,.4); font-size: 11px;
-}
-.proj-add-pop-opt {
-  padding: 4px 8px; cursor: pointer; color: #e2e8f0; border-radius: 3px;
-}
-.proj-add-pop-opt:hover { background: rgba(124,58,237,.3); }
 .proj-add-pop-opt.disabled { opacity: .4; cursor: not-allowed; }
 .move-select option { background: #1e2d42; color: #e2e8f0; }
 
@@ -519,6 +512,16 @@ body.pane-resizing * { cursor: col-resize !important; user-select: none !importa
   font-size: 9.5px; padding: 1px 7px; border-radius: 8px;
   background: #f1f5f9; color: #334155; font-weight: 500;
 }
+/* Per-row "Save to project" dropdown — sits inline with the meta chips.
+   Existing .run-row-when has margin-left:auto so the timestamp hugs right;
+   keeping a default left margin here avoids fighting that for layout. */
+.run-move-select {
+  font-family: inherit; font-size: 10.5px;
+  padding: 2px 6px 2px 8px; border-radius: 4px;
+  background: #fff; border: 1px solid var(--border); color: var(--text);
+  cursor: pointer; max-width: 160px;
+}
+.run-move-select:hover { border-color: #7c3aed; }
 
 /* ─── Pivoted batch summary view (lives inside #run-table-host) ─── */
 .run-summary-card {
@@ -1024,29 +1027,37 @@ body.pane-resizing * { cursor: col-resize !important; user-select: none !importa
     border: 1px dashed var(--rule-2) !important;
     color: var(--ink-3) !important;
   }
-  /* "+ project" button must stay visible on BOTH the normal sidebar and the
-     active (selected) paper card — the active state already paints the card
-     in a 14% accent tint, which would swallow a paper-2-on-paper button.
-     Use the accent color directly so the affordance reads either way. */
-  .proj-add-btn {
-    background: var(--accent) !important;
-    border: 1px solid var(--accent) !important;
-    color: #fff !important;
-    font-weight: 600 !important;
-    box-shadow: 0 1px 2px oklch(from var(--ink) l c h / .15);
+  /* Native dropdown for "+ Add to project" — full-width, accent-colored so
+     it stands out on both the cream sidebar AND the active (tinted) card. */
+  .proj-add-select {
+    width: 100%;
+    margin-top: 4px;
+    padding: 5px 8px;
+    font-family: var(--sans);
+    font-size: 11.5px;
+    font-weight: 600;
+    color: #fff;
+    background: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 5px;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='white' d='M0 0l5 6 5-6z'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    padding-right: 22px;
+    box-shadow: 0 1px 2px oklch(from var(--ink) l c h / .18);
   }
-  .proj-add-btn:hover {
-    background: oklch(from var(--accent) calc(l - .04) c h) !important;
-    border-color: oklch(from var(--accent) calc(l - .08) c h) !important;
+  .proj-add-select:hover {
+    background-color: oklch(from var(--accent) calc(l - .04) c h);
   }
-  /* "+ project" popover — was navy; repaint as a paper card with ink text. */
-  .proj-add-pop {
-    background: var(--paper) !important;
-    border: 1px solid var(--rule) !important;
-    box-shadow: 0 4px 14px oklch(from var(--ink) l c h / .12) !important;
+  .proj-add-select option {
+    color: var(--ink);
+    background: var(--paper);
+    font-weight: 500;
   }
-  .proj-add-pop-opt { color: var(--ink) !important; }
-  .proj-add-pop-opt:hover { background: oklch(from var(--accent) l c h / .14) !important; }
   /* (.project-filter-select styling moved into the base rule above —
      the sidebar is always Paper now, no navy baseline to override.) */
 
@@ -1251,13 +1262,17 @@ body.pane-resizing * { cursor: col-resize !important; user-select: none !importa
       <button class="tb-btn" onclick="hideBatchModal()" style="background:#f1f5f9;border-color:var(--border);color:var(--text);">Cancel</button>
     </div>
     <div style="padding:16px 20px;overflow-y:auto;flex:1;">
-      <!-- Batch name + project — surfaced in the Results tab so the user can
-           tell runs apart later. Both default to a sensible placeholder. -->
+      <!-- Batch name (required + unique-per-user). Shown in the Results tab
+           so the user can find this run later. -->
       <div style="margin-bottom:14px;padding:10px 12px;background:#f8fafc;border:1px solid var(--border);border-radius:5px;">
-        <label style="display:block;font-size:10px;font-weight:700;color:var(--blue);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px;">Name this batch</label>
-        <input type="text" id="batch-name-input" placeholder="e.g. Diabetes RCTs — first pass"
+        <label style="display:block;font-size:10px;font-weight:700;color:var(--blue);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px;">
+          Name this batch <span style="color:#dc2626;">*</span>
+        </label>
+        <input type="text" id="batch-name-input" required placeholder="e.g. Diabetes RCTs — first pass"
+               oninput="document.getElementById('batch-name-error').style.display='none';this.style.borderColor='var(--border)';"
                style="width:100%;box-sizing:border-box;padding:6px 9px;border:1px solid var(--border);border-radius:3px;font-family:inherit;font-size:12px;outline:none;">
-        <div style="font-size:10px;color:var(--muted);margin-top:6px;">Auto-fills from the Steps below if you leave this blank. Shown in the Results tab.</div>
+        <div id="batch-name-error" style="display:none;font-size:11px;color:#dc2626;margin-top:6px;font-weight:500;"></div>
+        <div style="font-size:10px;color:var(--muted);margin-top:6px;">Required. Must be unique among your batches — pick a label you'll recognize later.</div>
       </div>
 
       <div style="font-size:10px;font-weight:700;color:var(--blue);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">Steps</div>
@@ -3473,61 +3488,41 @@ function buildPaperItem(p, projLabel) {
     }
   }
 
-  // "+ Project" button → small popover with all projects the paper isn't in.
-  const addBtn = document.createElement('button');
-  addBtn.className = 'proj-add-btn';
-  addBtn.textContent = '+ project';
-  addBtn.title = 'Add this paper to a project';
-  addBtn.addEventListener('click', ev => {
+  // Native <select> dropdown — bulletproof and unmissable. Replaces the
+  // earlier button+popover (which kept being misread as "no UI here").
+  const addSel = document.createElement('select');
+  addSel.className = 'proj-add-select';
+  addSel.title = 'Add this paper to a project';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = '+ Add to project…';
+  placeholder.disabled = true;
+  placeholder.selected = true;
+  addSel.appendChild(placeholder);
+  const available = allProjects.filter(pp => !memberIds.includes(pp.id));
+  if (available.length === 0) {
+    const opt = document.createElement('option');
+    opt.disabled = true;
+    opt.textContent = '(no other projects — create one above)';
+    addSel.appendChild(opt);
+  } else {
+    for (const proj of available) {
+      const opt = document.createElement('option');
+      opt.value = String(proj.id);
+      opt.textContent = proj.name;
+      addSel.appendChild(opt);
+    }
+  }
+  addSel.addEventListener('click', ev => ev.stopPropagation());
+  addSel.addEventListener('change', ev => {
     ev.stopPropagation();
-    showProjectAddPopover(addBtn, p.id, memberIds);
+    const projId = parseInt(ev.target.value);
+    if (projId) addPaperToProject(p.id, projId);
   });
-  chipsRow.appendChild(addBtn);
+  chipsRow.appendChild(addSel);
 
   div.appendChild(chipsRow);
   return div;
-}
-
-// Tiny popover that lists the projects the paper is NOT yet in.
-function showProjectAddPopover(anchor, paperId, currentIds) {
-  // Close any existing popover.
-  document.querySelectorAll('.proj-add-pop').forEach(n => n.remove());
-  const pop = document.createElement('div');
-  pop.className = 'proj-add-pop';
-  const available = allProjects.filter(p => !currentIds.includes(p.id));
-  if (available.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'proj-add-pop-opt disabled';
-    empty.textContent = '(no other projects)';
-    pop.appendChild(empty);
-  } else {
-    for (const proj of available) {
-      const opt = document.createElement('div');
-      opt.className = 'proj-add-pop-opt';
-      opt.textContent = proj.name;
-      opt.addEventListener('click', ev => {
-        ev.stopPropagation();
-        pop.remove();
-        addPaperToProject(paperId, proj.id);
-      });
-      pop.appendChild(opt);
-    }
-  }
-  // Position below the anchor.
-  const rect = anchor.getBoundingClientRect();
-  pop.style.top  = (rect.bottom + window.scrollY + 4) + 'px';
-  pop.style.left = (rect.left + window.scrollX) + 'px';
-  document.body.appendChild(pop);
-  // Dismiss on outside click.
-  setTimeout(() => {
-    const dismiss = (e) => {
-      if (!pop.contains(e.target)) {
-        pop.remove();
-        document.removeEventListener('mousedown', dismiss);
-      }
-    };
-    document.addEventListener('mousedown', dismiss);
-  }, 0);
 }
 
 async function addPaperToProject(paperId, projectId) {
@@ -4222,6 +4217,18 @@ async function runBatch() {
   const projectId = (projVal && projVal !== '0' && projVal !== '') ? parseInt(projVal) : null;
   const userName = (document.getElementById('batch-name-input').value || '').trim();
 
+  // Required-name validation, client side. Backend re-validates and also
+  // checks per-user uniqueness (returns 409).
+  if (!userName) {
+    const err = document.getElementById('batch-name-error');
+    err.textContent = 'Please name this batch first.';
+    err.style.display = 'block';
+    const input = document.getElementById('batch-name-input');
+    input.style.borderColor = '#dc2626';
+    input.focus();
+    return;
+  }
+
   batchRunning = true;
   ensureNotificationPermission();  // lazy ask — only when a real batch starts
   document.getElementById('batch-run-btn').disabled = true;
@@ -4230,7 +4237,9 @@ async function runBatch() {
 
   // Create the batch container row up-front so EVERY batch is visible in
   // the Results tab — not just custom-schema runs. PATCHes accumulate per-
-  // paper outputs into this same row throughout the run.
+  // paper outputs into this same row throughout the run. If this fails,
+  // ABORT the batch loudly — running silently means the user wouldn't see
+  // results in the Results tab, which is exactly the bug we're fixing.
   let containerId = null;
   try {
     const rb = await fetch('/api/annotator/runs', {
@@ -4248,13 +4257,36 @@ async function runBatch() {
       const body = await rb.json();
       containerId = body.run_id;
       _logBatch(`Batch "${body.name}" (#${containerId}) — created`);
-      // Stream the live progress events from this container into the log.
       streamRunEvents(containerId);
     } else {
-      _logBatch('Could not create batch container — running anyway.', 'err');
+      const errBody = await rb.json().catch(() => ({}));
+      const detail = (errBody.detail && typeof errBody.detail === 'object')
+        ? errBody.detail : { detail: errBody.detail || `HTTP ${rb.status}` };
+      // Surface the error inline AND abort. Don't run the per-paper loop —
+      // the work would happen but no Results row would exist for it.
+      const err = document.getElementById('batch-name-error');
+      err.textContent = detail.detail || 'Could not create batch.';
+      err.style.display = 'block';
+      _logBatch(`Could not create batch: ${err.textContent}`, 'err');
+      batchRunning = false;
+      document.getElementById('batch-run-btn').disabled = false;
+      document.getElementById('batch-run-btn').textContent = 'Run';
+      document.getElementById('batch-progress').style.display = 'none';
+      if (detail.error === 'name_taken' || rb.status === 400) {
+        const input = document.getElementById('batch-name-input');
+        input.style.borderColor = '#dc2626';
+        input.focus();
+        input.select();
+      }
+      return;
     }
   } catch (e) {
     _logBatch(`Container error: ${e.message}`, 'err');
+    alert('Could not create batch — network error. Aborting.\n\n' + e.message);
+    batchRunning = false;
+    document.getElementById('batch-run-btn').disabled = false;
+    document.getElementById('batch-run-btn').textContent = 'Run';
+    return;
   }
   _logBatch(`Starting batch on ${paperIds.length} paper(s)…`);
 
@@ -4905,6 +4937,8 @@ let _currentRunDetail = null;
 let _allRuns = [];   // cached for client-side filtering in renderRunsList
 
 async function loadRuns() {
+  // Refresh project list first so the per-row "Save to project" dropdown is current.
+  await _refreshProjectsForRuns();
   try {
     const r = await fetch('/api/annotator/runs');
     _allRuns = r.ok ? await r.json() : [];
@@ -4932,6 +4966,8 @@ function renderRunsList() {
     return;
   }
   // One row per batch. Click to load details into the table below.
+  // Each row also exposes a project-move <select> so batches can be saved
+  // into project folders after the fact.
   host.innerHTML = filtered.map(run => {
     const when = (run.created_at || '').replace('T', ' ').slice(0, 16);
     const opChips = [
@@ -4946,8 +4982,13 @@ function renderRunsList() {
     const projChip = run.project_name
       ? `<span class="proj-pill">${escHtml(run.project_name)}</span>` : '';
     const isActive = (String(run.id) === String(_currentRunId));
-    return `<div class="run-row${isActive ? ' active' : ''}" onclick="loadRun(${run.id})" tabindex="0"
-                 onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();loadRun(${run.id});}">
+    const projectOptions = [
+      `<option value="" disabled ${run.project_id ? '' : 'selected'}>${run.project_id ? 'Move to…' : '+ Save to project…'}</option>`,
+      `<option value="__clear__" ${run.project_id ? '' : 'disabled'}>— No project —</option>`,
+      ...(_allProjects || []).map(p =>
+        `<option value="${p.id}" ${run.project_id === p.id ? 'selected' : ''}>${escHtml(p.name)}</option>`),
+    ].join('');
+    return `<div class="run-row${isActive ? ' active' : ''}" data-run-id="${run.id}" tabindex="0">
       <div class="run-row-top">
         <span class="run-row-name">${escHtml(run.name || ('Run #' + run.id))}</span>
         ${statusChip}
@@ -4956,10 +4997,64 @@ function renderRunsList() {
         <span class="run-row-papers">${run.paper_count} paper${run.paper_count === 1 ? '' : 's'}</span>
         ${projChip}
         ${opChips}
+        <select class="run-move-select" data-run-id="${run.id}" title="Save this batch to a project">${projectOptions}</select>
         <span class="run-row-when">${escHtml(when)}</span>
       </div>
     </div>`;
   }).join('');
+  // Wire row + dropdown handlers (event delegation keeps the listener count down).
+  host.querySelectorAll('.run-row').forEach(row => {
+    const rid = parseInt(row.dataset.runId);
+    row.addEventListener('click', (ev) => {
+      // Don't load the row when the user clicks the project dropdown.
+      if (ev.target.closest('.run-move-select')) return;
+      loadRun(rid);
+    });
+    row.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); loadRun(rid); }
+    });
+  });
+  host.querySelectorAll('.run-move-select').forEach(sel => {
+    sel.addEventListener('click', ev => ev.stopPropagation());
+    sel.addEventListener('change', async (ev) => {
+      ev.stopPropagation();
+      const rid = parseInt(sel.dataset.runId);
+      const val = ev.target.value;
+      const projectId = (val === '__clear__') ? null : parseInt(val);
+      await moveRunToProject(rid, projectId);
+    });
+  });
+}
+
+// Cache of projects for the per-row "Save to project" dropdown. Refreshed by
+// loadRuns() so it stays in sync with the sidebar.
+let _allProjects = [];
+async function _refreshProjectsForRuns() {
+  try {
+    const r = await fetch('/api/projects');
+    _allProjects = r.ok ? await r.json() : [];
+  } catch (e) { _allProjects = []; }
+}
+
+async function moveRunToProject(rid, projectId) {
+  try {
+    const r = await fetch(`/api/annotator/runs/${rid}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id: projectId, project_id_set: true }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      const msg = (err.detail && typeof err.detail === 'object')
+        ? err.detail.detail : (err.detail || `HTTP ${r.status}`);
+      alert('Could not save batch to project: ' + msg);
+      return;
+    }
+    await loadRuns();
+    // If the moved run is currently displayed, refresh its detail to show the new project.
+    if (String(rid) === String(_currentRunId)) loadRun(rid);
+  } catch (e) {
+    alert('Could not save batch to project: ' + (e.message || e));
+  }
 }
 
 async function loadRecentActivity() {
