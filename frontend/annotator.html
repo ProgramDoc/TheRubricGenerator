@@ -840,6 +840,42 @@ body.pane-resizing * { cursor: col-resize !important; user-select: none !importa
   .project-arrow { color: var(--ink-4) !important; }
   .proj-act-btn { color: var(--ink-3) !important; }
   .proj-act-btn:hover { color: var(--ink) !important; background: var(--paper-3) !important; }
+
+  /* Project membership chips — base styles assume a dark sidebar (white
+     text). The sidebar is actually Paper-themed (cream), so white text
+     vanishes. Repaint to ink text on a tinted accent fill. */
+  .proj-chip {
+    background: oklch(from var(--accent) l c h / .14) !important;
+    border: 1px solid oklch(from var(--accent) l c h / .55) !important;
+    color: var(--ink) !important;
+    text-shadow: none !important;
+    font-weight: 600 !important;
+  }
+  .proj-chip-x { color: var(--ink-3) !important; }
+  .proj-chip-x:hover { color: var(--err) !important; }
+  .proj-chip.unassigned {
+    background: var(--paper-2) !important;
+    border: 1px dashed var(--rule-2) !important;
+    color: var(--ink-3) !important;
+  }
+  .proj-add-btn {
+    background: var(--paper-2) !important;
+    border: 1px solid var(--rule-2) !important;
+    color: var(--ink-2) !important;
+  }
+  .proj-add-btn:hover {
+    background: var(--paper-3) !important;
+    border-color: var(--accent) !important;
+    color: var(--ink) !important;
+  }
+  /* "+ project" popover — was navy; repaint as a paper card with ink text. */
+  .proj-add-pop {
+    background: var(--paper) !important;
+    border: 1px solid var(--rule) !important;
+    box-shadow: 0 4px 14px oklch(from var(--ink) l c h / .12) !important;
+  }
+  .proj-add-pop-opt { color: var(--ink) !important; }
+  .proj-add-pop-opt:hover { background: oklch(from var(--accent) l c h / .14) !important; }
   /* (.project-filter-select styling moved into the base rule above —
      the sidebar is always Paper now, no navy baseline to override.) */
 
