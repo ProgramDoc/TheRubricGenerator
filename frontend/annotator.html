@@ -486,6 +486,40 @@ body.pane-resizing * { cursor: col-resize !important; user-select: none !importa
 .rt-cell-skipped { color: var(--muted); font-style: italic; }
 .rt-cell-ok      { color: var(--text); }
 
+/* Runs list — one row per batch in the Results tab. */
+.run-row {
+  padding: 8px 12px; border-bottom: 1px solid #f1f5f9; cursor: pointer;
+  transition: background .12s;
+}
+.run-row:hover { background: #f8fafc; }
+.run-row:last-child { border-bottom: none; }
+.run-row.active { background: rgba(124,58,237,.08); border-left: 3px solid #7c3aed; padding-left: 9px; }
+.run-row-top { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.run-row-name { font-weight: 600; font-size: 12px; color: var(--text); flex: 1; min-width: 0;
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-row-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+                font-size: 10.5px; color: var(--muted); }
+.run-row-papers { font-family: 'IBM Plex Mono', monospace; }
+.run-row-when { margin-left: auto; opacity: .65; font-family: 'IBM Plex Mono', monospace; }
+.run-status {
+  font-size: 9.5px; padding: 1px 6px; border-radius: 8px; text-transform: uppercase;
+  letter-spacing: .04em; background: #e2e8f0; color: #475569;
+}
+.run-status.complete { background: #dcfce7; color: #166534; }
+.run-status.running  { background: #fef3c7; color: #92400e; animation: rs-pulse 1.4s infinite ease-in-out; }
+@keyframes rs-pulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+.op-chip {
+  font-size: 9.5px; padding: 1px 6px; border-radius: 8px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.op-chip.op-classify { background: rgba(14,165,233,.14); color: #0369a1; }
+.op-chip.op-prefill  { background: rgba(16,185,129,.14); color: #047857; }
+.op-chip.op-custom   { background: rgba(124,58,237,.14); color: #6d28d9; }
+.proj-pill {
+  font-size: 9.5px; padding: 1px 7px; border-radius: 8px;
+  background: #f1f5f9; color: #334155; font-weight: 500;
+}
+
 .form-section { margin-bottom: 20px; }
 .form-section-header {
   font-size: 10px; font-weight: 700; color: var(--blue); letter-spacing: .1em;
@@ -858,15 +892,20 @@ body.pane-resizing * { cursor: col-resize !important; user-select: none !importa
     border: 1px dashed var(--rule-2) !important;
     color: var(--ink-3) !important;
   }
+  /* "+ project" button must stay visible on BOTH the normal sidebar and the
+     active (selected) paper card — the active state already paints the card
+     in a 14% accent tint, which would swallow a paper-2-on-paper button.
+     Use the accent color directly so the affordance reads either way. */
   .proj-add-btn {
-    background: var(--paper-2) !important;
-    border: 1px solid var(--rule-2) !important;
-    color: var(--ink-2) !important;
+    background: var(--accent) !important;
+    border: 1px solid var(--accent) !important;
+    color: #fff !important;
+    font-weight: 600 !important;
+    box-shadow: 0 1px 2px oklch(from var(--ink) l c h / .15);
   }
   .proj-add-btn:hover {
-    background: var(--paper-3) !important;
-    border-color: var(--accent) !important;
-    color: var(--ink) !important;
+    background: oklch(from var(--accent) calc(l - .04) c h) !important;
+    border-color: oklch(from var(--accent) calc(l - .08) c h) !important;
   }
   /* "+ project" popover — was navy; repaint as a paper card with ink text. */
   .proj-add-pop {
@@ -1080,6 +1119,15 @@ body.pane-resizing * { cursor: col-resize !important; user-select: none !importa
       <button class="tb-btn" onclick="hideBatchModal()" style="background:#f1f5f9;border-color:var(--border);color:var(--text);">Cancel</button>
     </div>
     <div style="padding:16px 20px;overflow-y:auto;flex:1;">
+      <!-- Batch name + project — surfaced in the Results tab so the user can
+           tell runs apart later. Both default to a sensible placeholder. -->
+      <div style="margin-bottom:14px;padding:10px 12px;background:#f8fafc;border:1px solid var(--border);border-radius:5px;">
+        <label style="display:block;font-size:10px;font-weight:700;color:var(--blue);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px;">Name this batch</label>
+        <input type="text" id="batch-name-input" placeholder="e.g. Diabetes RCTs — first pass"
+               style="width:100%;box-sizing:border-box;padding:6px 9px;border:1px solid var(--border);border-radius:3px;font-family:inherit;font-size:12px;outline:none;">
+        <div style="font-size:10px;color:var(--muted);margin-top:6px;">Auto-fills from the Steps below if you leave this blank. Shown in the Results tab.</div>
+      </div>
+
       <div style="font-size:10px;font-weight:700;color:var(--blue);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">Steps</div>
       <label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:12px;cursor:pointer;">
         <input type="checkbox" id="batch-step-classify" checked> <strong>Classify study design</strong> — run AI classification on papers without a study type
@@ -1486,19 +1534,21 @@ body.pane-resizing * { cursor: col-resize !important; user-select: none !importa
         <div id="recent-activity-body" style="max-height:160px;overflow:auto;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#475569;">Loading…</div>
       </div>
 
-      <!-- Run picker + per-run actions -->
+      <!-- Run-list view + per-run actions. The dropdown was confusing because
+           it hid runs by default; the new list always shows them. -->
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:10px;">
-        <select id="runs-select" onchange="loadRun(this.value)" style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:3px;font-family:inherit;font-size:11px;background:#fff;outline:none;">
-          <option value="">Select a run…</option>
-        </select>
+        <input type="search" id="runs-search" placeholder="Filter by name, project, or status…"
+               oninput="renderRunsList()"
+               style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:3px;font-family:inherit;font-size:11px;outline:none;">
         <button class="tb-btn" id="run-csv-btn" onclick="exportRunCsv()" disabled style="font-size:11px;padding:5px 10px;">⬇ CSV</button>
         <button class="tb-btn" id="run-delete-btn" onclick="deleteCurrentRun()" disabled
                 title="Delete the selected run (schema and papers stay)"
                 style="font-size:11px;padding:5px 10px;background:rgba(220,38,38,.08);border-color:rgba(220,38,38,.35);color:#b91c1c;">✕ Delete</button>
         <button class="tb-btn" onclick="loadRuns()" title="Refresh" style="font-size:11px;padding:5px 8px;">↻</button>
       </div>
-      <div id="run-detail" style="font-size:11px;color:var(--muted);">Custom-schema runs appear here. For Form-tab fields populated by Classify or Prefill, click a paper in the sidebar — values load into the Form tab automatically.</div>
-      <div id="run-table-host" style="overflow:auto;max-height:calc(100vh - 180px);"></div>
+      <div id="runs-list-host" style="margin-bottom:10px;max-height:38vh;overflow-y:auto;border:1px solid var(--border);border-radius:5px;background:#fff;">Loading…</div>
+      <div id="run-detail" style="font-size:11px;color:var(--muted);">Click a row above to see extracted values for that batch. For Form-tab fields populated by Classify or Prefill, click a paper in the sidebar — values load into the Form tab automatically.</div>
+      <div id="run-table-host" style="overflow:auto;max-height:calc(100vh - 360px);"></div>
     </div>
   </div><!-- /tab-pane-results -->
 
@@ -3839,9 +3889,46 @@ function _logBatchEvent(ev) {
   let prefix = '    ';
   if (t === 'paper_done')      { kind = 'ok';  prefix = '    ✓ '; }
   else if (t === 'paper_error' || t === 'paper_skipped') { kind = 'err'; prefix = '    ✗ '; }
-  else if (t === 'run_complete') { kind = 'ok';  prefix = '  ▣ '; }
+  else if (t === 'run_complete') {
+    kind = 'ok';  prefix = '  ▣ ';
+    fireBatchNotification(ev);
+  }
   else if (t === 'run_started')  { kind = '';   prefix = '  ▶ '; }
   _logBatch(prefix + ev.message, kind);
+}
+
+// ── Browser notifications when a batch finishes ────────────────────────
+// Asks for permission once per session (lazy — only when a run starts).
+// On run_complete, fires a desktop notification with the batch name +
+// summary so the user can come back and see it without watching the tab.
+let _notifPermAsked = false;
+function ensureNotificationPermission() {
+  if (_notifPermAsked) return;
+  _notifPermAsked = true;
+  if (!('Notification' in window)) return;
+  if (Notification.permission === 'default') {
+    try { Notification.requestPermission(); } catch (e) {}
+  }
+}
+function fireBatchNotification(ev) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  // Skip if the user is actively looking at the annotator tab.
+  if (document.visibilityState === 'visible' && document.hasFocus()) return;
+  try {
+    const detail = ev.detail || {};
+    const name = detail.name || 'Batch';
+    const ok = detail.ok ?? '?';
+    const err = detail.error ?? 0;
+    const skip = detail.skipped ?? 0;
+    const body = err || skip
+      ? `${ok} ok · ${err} failed · ${skip} skipped`
+      : `${ok} paper${ok === 1 ? '' : 's'} processed`;
+    const n = new Notification(`✓ ${name}`, {
+      body, tag: 'annotator-batch-' + (detail.run_id || Date.now()),
+      icon: '/favicon.ico',
+    });
+    n.onclick = () => { window.focus(); n.close(); };
+  } catch (e) { /* silent */ }
 }
 
 function _logBatchThinking(ev) {
@@ -3963,7 +4050,11 @@ async function runBatch() {
   if (batchRunning) return;
   const doClassify = document.getElementById('batch-step-classify').checked;
   const doPrefill  = document.getElementById('batch-step-prefill').checked;
-  if (!doClassify && !doPrefill) { alert('Select at least one step.'); return; }
+  const doCustom   = document.getElementById('batch-include-custom').checked;
+  const customSid  = document.getElementById('batch-custom-schema').value;
+  if (!doClassify && !doPrefill && !(doCustom && customSid)) {
+    alert('Select at least one step.'); return;
+  }
 
   const groups = FIELD_GROUPS
     .filter(g => document.getElementById('bg-' + g.id).checked)
@@ -3971,10 +4062,45 @@ async function runBatch() {
   if (doPrefill && groups.length === 0) { alert('Pick at least one field group.'); return; }
 
   const paperIds = [...batchSelected];
+  // Active project (if any) — stored on the run for grouping in Results.
+  const projVal = document.getElementById('project-filter').value;
+  const projectId = (projVal && projVal !== '0' && projVal !== '') ? parseInt(projVal) : null;
+  const userName = (document.getElementById('batch-name-input').value || '').trim();
+
   batchRunning = true;
+  ensureNotificationPermission();  // lazy ask — only when a real batch starts
   document.getElementById('batch-run-btn').disabled = true;
   document.getElementById('batch-run-btn').textContent = 'Running…';
   document.getElementById('batch-progress').style.display = 'block';
+
+  // Create the batch container row up-front so EVERY batch is visible in
+  // the Results tab — not just custom-schema runs. PATCHes accumulate per-
+  // paper outputs into this same row throughout the run.
+  let containerId = null;
+  try {
+    const rb = await fetch('/api/annotator/runs', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: userName,
+        project_id: projectId,
+        paper_ids: paperIds,
+        did_classify: doClassify,
+        did_prefill: doPrefill,
+        schema_id: (doCustom && customSid) ? parseInt(customSid) : null,
+      }),
+    });
+    if (rb.ok) {
+      const body = await rb.json();
+      containerId = body.run_id;
+      _logBatch(`Batch "${body.name}" (#${containerId}) — created`);
+      // Stream the live progress events from this container into the log.
+      streamRunEvents(containerId);
+    } else {
+      _logBatch('Could not create batch container — running anyway.', 'err');
+    }
+  } catch (e) {
+    _logBatch(`Container error: ${e.message}`, 'err');
+  }
   _logBatch(`Starting batch on ${paperIds.length} paper(s)…`);
 
   let ok = 0, failed = 0, skipped = 0;
@@ -3996,6 +4122,21 @@ async function runBatch() {
         const out = await r.json();
         studyType = out.study_type;
         _logBatch(`    classified: ${studyType}`, 'ok');
+        if (containerId) {
+          // Mirror the classify output into the batch container so the row
+          // shows up in Results with study_type populated.
+          fetch(`/api/annotator/runs/${containerId}/papers`, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              paper_id: pid, filename: paper.filename, status: 'ok',
+              fields: {
+                study_type: out.study_type,
+                major_category: out.major_category,
+                subcategory: out.subcategory,
+              },
+            }),
+          }).catch(() => {});
+        }
       } catch(e) {
         _logBatch(`    classify error: ${e.message}`, 'err');
         failed++; continue;
@@ -4048,6 +4189,18 @@ async function runBatch() {
         const n = Object.keys(extracted).length;
         _logBatch(`    extracted ${n} field(s)`, 'ok');
 
+        if (containerId) {
+          // Mirror prefill output into the batch container so Results shows
+          // every extracted field as a column without a separate dropdown.
+          fetch(`/api/annotator/runs/${containerId}/papers`, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              paper_id: pid, filename: paper.filename, status: 'ok',
+              fields: extracted,
+            }),
+          }).catch(() => {});
+        }
+
         // Persist extraction to the paper's annotation so the sidebar chip updates
         await fetch(`/api/annotator/papers/${pid}/annotation`, {
           method: 'POST',
@@ -4068,9 +4221,6 @@ async function runBatch() {
   }
 
   // ── 3) Custom schema (optional) — run once over all selected papers ──
-  const doCustom = document.getElementById('batch-include-custom').checked;
-  const customSid = document.getElementById('batch-custom-schema').value;
-  let customRunId = null;
   if (doCustom) {
     if (!customSid) {
       _logBatch('Custom schema: no schema selected — skipping.', 'err');
@@ -4080,7 +4230,11 @@ async function runBatch() {
       try {
         const r = await fetch(`/api/annotator/schemas/${customSid}/run`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ paper_ids: paperIds, thinking_enabled: showReasoning }),
+          body: JSON.stringify({
+            paper_ids: paperIds,
+            thinking_enabled: showReasoning,
+            run_id: containerId,  // reuse the container row
+          }),
         });
         if (!r.ok) {
           const err = await r.json().catch(() => ({}));
@@ -4090,11 +4244,9 @@ async function runBatch() {
           _logBatch(`    custom run failed: ${msg}`, 'err');
         } else {
           const body = await r.json();
-          customRunId = body.run_id;
-          _logBatch(`    custom run #${customRunId}: ${body.status}`, 'ok');
-          // Stream live progress events from the worker into the batch log.
+          _logBatch(`    custom run on container #${body.run_id}: ${body.status}`, 'ok');
           if (body.status === 'running' || body.status === 'complete') {
-            await streamRunEvents(customRunId);
+            await streamRunEvents(body.run_id);
           }
         }
       } catch (e) {
@@ -4109,6 +4261,14 @@ async function runBatch() {
     try { await loadExistingAnnotation(); } catch (e) { /* non-fatal */ }
   }
 
+  // Finalize the container — emits run_complete (which triggers the browser
+  // notification + refreshes the Results tab list).
+  if (containerId) {
+    try {
+      await fetch(`/api/annotator/runs/${containerId}/finalize`, { method: 'POST' });
+    } catch (e) { /* non-fatal */ }
+  }
+
   _logBatch(`Done — ${ok} ok, ${failed} failed, ${skipped} skipped.`,
             failed || skipped ? 'err' : 'ok');
   batchRunning = false;
@@ -4119,13 +4279,12 @@ async function runBatch() {
     document.getElementById('batch-run-btn').onclick = runBatch;
     clearBatchSelection();
     loadPapersAndProjects();
-    // If a custom run was kicked off, jump to its results.
-    if (customRunId) {
+    // Always jump to Results — every batch creates a row now.
+    if (containerId) {
       showRpTab('results');
       setTimeout(() => {
-        const sel = document.getElementById('runs-select');
-        if (sel) { sel.value = customRunId; loadRun(customRunId); }
-      }, 400);
+        loadRuns().then(() => loadRun(containerId));
+      }, 200);
     }
   };
 }
@@ -4588,30 +4747,64 @@ async function deleteSchema(sid) {
 // ═══════════════════════════════════════════════════════════════════════════
 let _currentRunId = null;
 let _currentRunDetail = null;
+let _allRuns = [];   // cached for client-side filtering in renderRunsList
 
 async function loadRuns() {
   try {
     const r = await fetch('/api/annotator/runs');
-    const runs = r.ok ? await r.json() : [];
-    const sel = document.getElementById('runs-select');
-    sel.innerHTML = '<option value="">Select a run…</option>' + runs.map(run => {
-      const when = (run.created_at || '').replace('T', ' ').slice(0, 16);
-      return `<option value="${run.id}">${escHtml(run.schema_name)} — ${when} — ${run.status} (${run.paper_count})</option>`;
-    }).join('');
-    document.getElementById('rp-runs-count').textContent = runs.length ? '(' + runs.length + ')' : '';
-    if (_currentRunId) sel.value = _currentRunId;
-    // Empty-state hint: explain what runs are and how to create one.
-    if (runs.length === 0 && !_currentRunId) {
-      document.getElementById('run-detail').innerHTML =
-        'No custom-schema runs yet. To create one: open the &#9776; Batch modal, ' +
-        'check "Custom schema", pick a schema, then Run.<br>' +
-        '<em style="opacity:.7;">Classify and Prefill outputs are not shown here — ' +
-        "they go to each paper's Form tab.</em>";
-    }
-  } catch(e) {}
-  // Refresh the unified activity log alongside runs (cheap and gives the user
-  // visibility into classify/prefill events that don't create custom-run rows).
+    _allRuns = r.ok ? await r.json() : [];
+    document.getElementById('rp-runs-count').textContent = _allRuns.length ? '(' + _allRuns.length + ')' : '';
+    renderRunsList();
+  } catch(e) { _allRuns = []; renderRunsList(); }
+  // Refresh the unified activity log alongside runs.
   loadRecentActivity();
+}
+
+function renderRunsList() {
+  const host = document.getElementById('runs-list-host');
+  if (!host) return;
+  const q = (document.getElementById('runs-search')?.value || '').trim().toLowerCase();
+  const filtered = !q ? _allRuns : _allRuns.filter(r => {
+    return (r.name || '').toLowerCase().includes(q)
+        || (r.project_name || '').toLowerCase().includes(q)
+        || (r.status || '').toLowerCase().includes(q)
+        || (r.schema_name || '').toLowerCase().includes(q);
+  });
+  if (filtered.length === 0) {
+    host.innerHTML = `<div style="padding:18px;color:var(--muted);font-size:11.5px;text-align:center;">
+      ${_allRuns.length === 0 ? 'No batches yet. Use <strong>&#9776; Batch</strong> to run Classify, Prefill, or a Custom schema on selected papers.' : 'No batches match this filter.'}
+    </div>`;
+    return;
+  }
+  // One row per batch. Click to load details into the table below.
+  host.innerHTML = filtered.map(run => {
+    const when = (run.created_at || '').replace('T', ' ').slice(0, 16);
+    const opChips = [
+      run.did_classify ? '<span class="op-chip op-classify">Classify</span>' : '',
+      run.did_prefill  ? '<span class="op-chip op-prefill">Prefill</span>'  : '',
+      run.schema_id    ? `<span class="op-chip op-custom">Custom${run.schema_name ? ' · ' + escHtml(run.schema_name) : ''}</span>` : '',
+    ].filter(Boolean).join(' ');
+    const statusChip =
+      run.status === 'complete' ? '<span class="run-status complete">complete</span>'
+      : run.status === 'running' ? '<span class="run-status running">running…</span>'
+      : `<span class="run-status">${escHtml(run.status)}</span>`;
+    const projChip = run.project_name
+      ? `<span class="proj-pill">${escHtml(run.project_name)}</span>` : '';
+    const isActive = (String(run.id) === String(_currentRunId));
+    return `<div class="run-row${isActive ? ' active' : ''}" onclick="loadRun(${run.id})" tabindex="0"
+                 onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();loadRun(${run.id});}">
+      <div class="run-row-top">
+        <span class="run-row-name">${escHtml(run.name || ('Run #' + run.id))}</span>
+        ${statusChip}
+      </div>
+      <div class="run-row-meta">
+        <span class="run-row-papers">${run.paper_count} paper${run.paper_count === 1 ? '' : 's'}</span>
+        ${projChip}
+        ${opChips}
+        <span class="run-row-when">${escHtml(when)}</span>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 async function loadRecentActivity() {
@@ -4660,11 +4853,12 @@ async function loadRecentActivity() {
 async function loadRun(runId) {
   if (!runId) {
     _currentRunId = null; _currentRunDetail = null;
-    document.getElementById('run-detail').textContent = 'Select a run to see extracted values across papers.';
+    document.getElementById('run-detail').textContent = 'Click a row above to see extracted values for that batch.';
     document.getElementById('run-table-host').innerHTML = '';
     document.getElementById('run-csv-btn').disabled = true;
     const delBtn = document.getElementById('run-delete-btn');
     if (delBtn) delBtn.disabled = true;
+    renderRunsList();
     return;
   }
   try {
@@ -4676,13 +4870,14 @@ async function loadRun(runId) {
     document.getElementById('run-csv-btn').disabled = false;
     const delBtn = document.getElementById('run-delete-btn');
     if (delBtn) delBtn.disabled = false;
+    renderRunsList();  // re-highlight the active row
   } catch(e) {}
 }
 
 async function deleteCurrentRun() {
   if (!_currentRunId) return;
-  const sel = document.getElementById('runs-select');
-  const label = sel ? (sel.options[sel.selectedIndex]?.textContent || ('run #' + _currentRunId)) : ('run #' + _currentRunId);
+  const run = _allRuns.find(r => String(r.id) === String(_currentRunId));
+  const label = run ? (run.name || ('run #' + _currentRunId)) : ('run #' + _currentRunId);
   if (!confirm('Delete this run?\n\n' + label + '\n\nThe schema and papers are kept. This cannot be undone.')) return;
   try {
     const r = await fetch('/api/annotator/runs/' + _currentRunId, { method: 'DELETE' });
@@ -4693,7 +4888,7 @@ async function deleteCurrentRun() {
       return;
     }
     _currentRunId = null; _currentRunDetail = null;
-    document.getElementById('run-detail').textContent = 'Select a run to see extracted values across papers.';
+    document.getElementById('run-detail').textContent = 'Click a row above to see extracted values for that batch.';
     document.getElementById('run-table-host').innerHTML = '';
     document.getElementById('run-csv-btn').disabled = true;
     const delBtn = document.getElementById('run-delete-btn');

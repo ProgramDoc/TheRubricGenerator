@@ -623,6 +623,16 @@ def _migrate_challenge_columns_v2(conn) -> None:
         # has been backfilled into. Lets the dual-write be idempotent.
         if not column_exists(conn, "lab_documents", "papers_id"):
             conn.execute("ALTER TABLE lab_documents ADD COLUMN papers_id INTEGER")
+        # annotator_custom_runs: turn the table into a general "batch" container
+        # so classify / prefill / custom runs can all show up in the Results tab.
+        if not column_exists(conn, "annotator_custom_runs", "name"):
+            conn.execute("ALTER TABLE annotator_custom_runs ADD COLUMN name TEXT")
+        if not column_exists(conn, "annotator_custom_runs", "project_id"):
+            conn.execute("ALTER TABLE annotator_custom_runs ADD COLUMN project_id INTEGER")
+        if not column_exists(conn, "annotator_custom_runs", "did_classify"):
+            conn.execute("ALTER TABLE annotator_custom_runs ADD COLUMN did_classify INTEGER NOT NULL DEFAULT 0")
+        if not column_exists(conn, "annotator_custom_runs", "did_prefill"):
+            conn.execute("ALTER TABLE annotator_custom_runs ADD COLUMN did_prefill INTEGER NOT NULL DEFAULT 0")
         # Challenge events table
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS challenge_events (
@@ -6433,6 +6443,32 @@ class CustomSchemaRunPayload(BaseModel):
     # emitted as a `paper_thinking` event so the UI can show reasoning blocks.
     # Costs ~50% more credits per paper.
     thinking_enabled: bool = False
+    # When set, the worker writes results into this existing run row (created
+    # by POST /api/annotator/runs) instead of creating a new one. Lets a
+    # single "batch" row hold classify + prefill + custom output together.
+    run_id: int | None = None
+
+
+class BatchContainerPayload(BaseModel):
+    """Create an annotator_custom_runs row up-front so every batch (classify,
+    prefill, custom, or any combination) is visible in the Results tab."""
+    name: str = ""
+    project_id: int | None = None
+    paper_ids: list[int] = []
+    did_classify: bool = False
+    did_prefill: bool = False
+    schema_id: int | None = None  # None = no custom schema; classify/prefill only
+
+
+class BatchPaperResultPayload(BaseModel):
+    """Append a single paper's per-step output to a batch's results_json.
+    Called by the frontend after each /classify and /prefill so the Results
+    tab can show the same fields for non-custom batches."""
+    paper_id: int
+    filename: str | None = None
+    status: str = "ok"     # 'ok' | 'error' | 'skipped'
+    fields: dict = {}      # merged into results_json.papers[pid].fields
+    error: str | None = None
 
 
 def _validate_schema_name(name: str) -> str:
@@ -6685,15 +6721,38 @@ def _run_custom_extraction(user_id: int, is_admin: bool, run_id: int,
     THINKING_BUDGET_TOKENS = 4000
 
     def _mark(status: str, payload: dict) -> None:
+        # MERGE into existing results_json rather than overwrite, so classify /
+        # prefill output that the frontend PATCHed in (via the container flow)
+        # is preserved alongside the custom-schema output the worker produces.
         conn2 = get_db()
         try:
+            existing_row = conn2.execute(
+                "SELECT results_json FROM annotator_custom_runs WHERE id=?",
+                (run_id,),
+            ).fetchone()
+            try:
+                existing = json.loads(existing_row["results_json"] or "{}") if existing_row else {}
+            except Exception:
+                existing = {}
+            existing_papers = existing.get("papers") or {}
+            new_papers = payload.get("papers") or {}
+            for pid_key, new_entry in new_papers.items():
+                prev = existing_papers.get(pid_key) or {}
+                merged_fields = dict(prev.get("fields") or {})
+                merged_fields.update(new_entry.get("fields") or {})
+                existing_papers[pid_key] = {
+                    **prev,
+                    **{k: v for k, v in new_entry.items() if k != "fields"},
+                    "fields": merged_fields,
+                }
+            existing["papers"] = existing_papers
             with conn2:
                 conn2.execute(
                     """UPDATE annotator_custom_runs
                           SET status=?, results_json=?, credits_refunded=?,
                               error_message=?, completed_at=CURRENT_TIMESTAMP
                         WHERE id=?""",
-                    (status, json.dumps(payload), refunded,
+                    (status, json.dumps(existing), refunded,
                      payload.get("error_message"), run_id),
                 )
                 conn2.commit()
@@ -6845,6 +6904,170 @@ def _run_custom_extraction_async(user_id: int, is_admin: bool, run_id: int,
     t.start()
 
 
+@app.post("/api/annotator/runs", status_code=201)
+def api_annotator_create_batch(body: BatchContainerPayload,
+                               rubricgen_session: str | None = Cookie(default=None),
+                               x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Create a batch container so EVERY batch — classify, prefill, custom,
+    or a combination — shows up in the Results tab. The frontend POSTs here
+    before kicking off per-paper work, then PATCHes per-paper outputs in,
+    then POSTs /finalize when done."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    paper_ids = [int(p) for p in (body.paper_ids or [])]
+    if not paper_ids:
+        raise HTTPException(400, "paper_ids must be a non-empty list")
+    if len(paper_ids) > 200:
+        raise HTTPException(400, "at most 200 papers per batch")
+    name = (body.name or "").strip() or _default_batch_name(body, len(paper_ids))
+    snapshot = _batch_snapshot(body)
+    conn = get_db()
+    try:
+        with conn:
+            cur = conn.execute(
+                """INSERT INTO annotator_custom_runs
+                        (user_id, schema_id, schema_snapshot_json, paper_ids_json,
+                         credit_cost, status, name, project_id,
+                         did_classify, did_prefill)
+                   VALUES (?, ?, ?, ?, 0, 'running', ?, ?, ?, ?) RETURNING id""",
+                (user["id"], body.schema_id, json.dumps(snapshot),
+                 json.dumps(paper_ids), name, body.project_id,
+                 1 if body.did_classify else 0, 1 if body.did_prefill else 0),
+            )
+            run_id = cur.lastrowid
+            conn.commit()
+    finally:
+        conn.close()
+    _log_run_event_safe(
+        run_id, "run_started",
+        f"Batch '{name}' starting on {len(paper_ids)} paper(s)",
+        total=len(paper_ids), name=name,
+        operations=_batch_ops_label(body),
+    )
+    return {"run_id": run_id, "name": name, "status": "running"}
+
+
+@app.patch("/api/annotator/runs/{rid}/papers")
+def api_annotator_batch_paper_result(rid: int, body: BatchPaperResultPayload,
+                                     rubricgen_session: str | None = Cookie(default=None),
+                                     x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Append (or update) one paper's outputs into the batch's results_json."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT id, results_json FROM annotator_custom_runs WHERE id=? AND user_id=?",
+            (rid, user["id"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "run not found")
+        try:
+            results = json.loads(row["results_json"] or "{}")
+        except Exception:
+            results = {}
+        papers = results.get("papers") or {}
+        pid_str = str(int(body.paper_id))
+        existing = papers.get(pid_str) or {"fields": {}}
+        # Merge fields rather than overwrite — classify and prefill arrive
+        # as separate calls but should accumulate into the same paper row.
+        merged_fields = dict(existing.get("fields") or {})
+        merged_fields.update(body.fields or {})
+        papers[pid_str] = {
+            "filename": body.filename or existing.get("filename"),
+            "status": body.status or existing.get("status") or "ok",
+            "fields": merged_fields,
+            "error": body.error if body.error is not None else existing.get("error"),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        results["papers"] = papers
+        with conn:
+            conn.execute(
+                "UPDATE annotator_custom_runs SET results_json=? WHERE id=?",
+                (json.dumps(results), rid),
+            )
+            conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+@app.post("/api/annotator/runs/{rid}/finalize")
+def api_annotator_batch_finalize(rid: int,
+                                 rubricgen_session: str | None = Cookie(default=None),
+                                 x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Mark a batch complete + emit run_complete so the active-runs pill
+    clears and the Results list refreshes."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT id, name, results_json FROM annotator_custom_runs WHERE id=? AND user_id=?",
+            (rid, user["id"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "run not found")
+        try:
+            papers = (json.loads(row["results_json"] or "{}").get("papers") or {})
+        except Exception:
+            papers = {}
+        ok = sum(1 for p in papers.values() if (p.get("status") == "ok"))
+        err = sum(1 for p in papers.values() if (p.get("status") == "error"))
+        skip = sum(1 for p in papers.values() if str(p.get("status", "")).startswith("skipped"))
+        with conn:
+            conn.execute(
+                "UPDATE annotator_custom_runs SET status='complete', completed_at=CURRENT_TIMESTAMP WHERE id=?",
+                (rid,),
+            )
+            conn.commit()
+    finally:
+        conn.close()
+    _log_run_event_safe(
+        rid, "run_complete",
+        f"Batch '{row['name'] or rid}' complete — {ok} ok, {err} failed, {skip} skipped",
+        ok=ok, error=err, skipped=skip, total=len(papers), name=row["name"],
+    )
+    return {"ok": True, "ok_count": ok, "error_count": err, "skipped_count": skip}
+
+
+def _default_batch_name(body: BatchContainerPayload, n: int) -> str:
+    """e.g. 'Classify + Prefill — 5 papers'."""
+    ops = []
+    if body.did_classify: ops.append("Classify")
+    if body.did_prefill:  ops.append("Prefill")
+    if body.schema_id:    ops.append("Custom")
+    if not ops:           ops = ["Batch"]
+    return f"{' + '.join(ops)} — {n} paper{'s' if n != 1 else ''}"
+
+
+def _batch_snapshot(body: BatchContainerPayload) -> dict:
+    """Snapshot describing what this batch ran. Mirrors the shape that the
+    Results-tab UI consumes: {name, fields: [{id, label}, ...]}.
+    Fields are inferred from the operations selected — classify contributes
+    study_type + subcategory; prefill contributes a placeholder that the
+    actual extracted keys will populate. Custom-schema runs overwrite this
+    snapshot via the existing /schemas/{sid}/run path."""
+    fields: list[dict] = []
+    if body.did_classify:
+        fields.append({"id": "study_type",   "label": "Study Type"})
+        fields.append({"id": "major_category", "label": "Major Category"})
+        fields.append({"id": "subcategory",  "label": "Subcategory"})
+    return {
+        "name": "Batch run",
+        "description": _batch_ops_label(body),
+        "fields": fields,
+    }
+
+
+def _batch_ops_label(body: BatchContainerPayload) -> str:
+    parts = []
+    if body.did_classify: parts.append("classify")
+    if body.did_prefill:  parts.append("prefill")
+    if body.schema_id:    parts.append(f"custom_schema={body.schema_id}")
+    return ", ".join(parts) or "no-op"
+
+
 @app.post("/api/annotator/schemas/{sid}/run")
 def api_annotator_schemas_run(sid: int, body: CustomSchemaRunPayload,
                               rubricgen_session: str | None = Cookie(default=None),
@@ -6900,17 +7123,51 @@ def api_annotator_schemas_run(sid: int, body: CustomSchemaRunPayload,
         snapshot = {"id": sid, "name": srow["name"],
                     "description": srow["description"] or "",
                     "fields": fields}
-        with conn:
-            cur = conn.execute(
-                """INSERT INTO annotator_custom_runs
-                        (user_id, schema_id, schema_snapshot_json, paper_ids_json,
-                         credit_cost, status)
-                   VALUES (?, ?, ?, ?, ?, 'running') RETURNING id""",
-                (user["id"], sid, json.dumps(snapshot),
-                 json.dumps(paper_ids), total_cost),
-            )
-            run_id = cur.lastrowid
-            conn.commit()
+        # Reuse an existing container row when the caller passed run_id —
+        # this is how the frontend stitches classify + prefill + custom into
+        # one Results-tab row. We extend the existing snapshot's field list
+        # so the table renders both the prior fields and the new ones.
+        run_id: int | None = None
+        if body.run_id:
+            existing = conn.execute(
+                "SELECT id, schema_snapshot_json FROM annotator_custom_runs WHERE id=? AND user_id=?",
+                (body.run_id, user["id"]),
+            ).fetchone()
+            if not existing:
+                raise HTTPException(404, "container run_id not found")
+            run_id = existing["id"]
+            try:
+                prior_snap = json.loads(existing["schema_snapshot_json"] or "{}")
+            except Exception:
+                prior_snap = {}
+            prior_fields = prior_snap.get("fields") or []
+            seen = {f.get("id") for f in prior_fields}
+            merged_fields = list(prior_fields) + [f for f in fields if f.get("id") not in seen]
+            merged_snap = {**prior_snap,
+                           "schema_id": sid,
+                           "schema_name": srow["name"],
+                           "fields": merged_fields}
+            with conn:
+                conn.execute(
+                    """UPDATE annotator_custom_runs
+                          SET schema_id=?, schema_snapshot_json=?,
+                              credit_cost = COALESCE(credit_cost, 0) + ?
+                        WHERE id=?""",
+                    (sid, json.dumps(merged_snap), total_cost, run_id),
+                )
+                conn.commit()
+        if run_id is None:
+            with conn:
+                cur = conn.execute(
+                    """INSERT INTO annotator_custom_runs
+                            (user_id, schema_id, schema_snapshot_json, paper_ids_json,
+                             credit_cost, status)
+                       VALUES (?, ?, ?, ?, ?, 'running') RETURNING id""",
+                    (user["id"], sid, json.dumps(snapshot),
+                     json.dumps(paper_ids), total_cost),
+                )
+                run_id = cur.lastrowid
+                conn.commit()
     finally:
         conn.close()
 
@@ -6935,11 +7192,14 @@ def api_annotator_runs_list(rubricgen_session: str | None = Cookie(default=None)
             """SELECT r.id, r.schema_id, r.schema_snapshot_json,
                       r.paper_ids_json, r.status, r.credit_cost,
                       r.credits_refunded, r.created_at, r.completed_at,
-                      s.name AS schema_name
+                      r.name, r.project_id, r.did_classify, r.did_prefill,
+                      s.name AS schema_name,
+                      p.name AS project_name
                  FROM annotator_custom_runs r
             LEFT JOIN annotator_custom_schemas s ON s.id = r.schema_id
+            LEFT JOIN projects p ON p.id = r.project_id
                 WHERE r.user_id = ?
-                ORDER BY r.created_at DESC LIMIT 50""",
+                ORDER BY r.created_at DESC LIMIT 100""",
             (user["id"],),
         ).fetchall()
     finally:
@@ -6950,16 +7210,24 @@ def api_annotator_runs_list(rubricgen_session: str | None = Cookie(default=None)
             pids = json.loads(r["paper_ids_json"] or "[]")
         except Exception:
             pids = []
-        snap_name = r["schema_name"]
-        if not snap_name:
+        schema_name = r["schema_name"]
+        if not schema_name:
             try:
                 snap = json.loads(r["schema_snapshot_json"] or "{}")
-                snap_name = snap.get("name", "(deleted schema)")
+                schema_name = snap.get("name") or None
             except Exception:
-                snap_name = "(deleted schema)"
+                schema_name = None
+        # Display name falls back to the schema/snapshot name for legacy rows
+        # that pre-date the dedicated `name` column.
+        display_name = (r["name"] or schema_name or f"Run #{r['id']}").strip()
         out.append({
             "id": r["id"], "schema_id": r["schema_id"],
-            "schema_name": snap_name,
+            "name": display_name,
+            "schema_name": schema_name,
+            "project_id": r["project_id"],
+            "project_name": r["project_name"],
+            "did_classify": bool(r["did_classify"]),
+            "did_prefill": bool(r["did_prefill"]),
             "paper_count": len(pids), "status": r["status"],
             "credit_cost": r["credit_cost"] or 0,
             "credits_refunded": r["credits_refunded"] or 0,
