@@ -229,29 +229,32 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
 }
 .paper-act-btn:hover { background: rgba(220,38,38,.3); color: #fca5a5; }
 
-/* Project membership chips — replaces the old move-select dropdown */
-.proj-chips { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; align-items: center; }
+/* Project membership chips — replaces the old move-select dropdown.
+   Sized + colored for legibility on the dark sidebar (the previous values
+   were too dim — 60% opacity at 10px is borderline unreadable). */
+.proj-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; align-items: center; }
 .proj-chip {
-  display: inline-flex; align-items: center; gap: 3px;
-  font-size: 9.5px; padding: 1px 5px 1px 6px; border-radius: 9px;
-  background: rgba(124,58,237,.18); border: 1px solid rgba(124,58,237,.4);
-  color: rgba(255,255,255,.85); font-family: inherit; line-height: 1.5;
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 500; padding: 2px 7px 2px 8px; border-radius: 10px;
+  background: rgba(167,139,250,.28); border: 1px solid rgba(167,139,250,.65);
+  color: #ffffff; font-family: inherit; line-height: 1.5;
+  text-shadow: 0 1px 0 rgba(0,0,0,.25);
 }
 .proj-chip-x {
   background: transparent; border: none; cursor: pointer; padding: 0 0 0 2px;
-  color: rgba(255,255,255,.55); font-size: 11px; line-height: 1;
+  color: rgba(255,255,255,.8); font-size: 13px; line-height: 1; font-weight: 600;
 }
-.proj-chip-x:hover { color: #f87171; }
+.proj-chip-x:hover { color: #fca5a5; }
 .proj-chip.unassigned {
-  background: rgba(255,255,255,.06); border: 1px dashed rgba(255,255,255,.18);
-  color: rgba(255,255,255,.45); font-style: italic;
+  background: rgba(255,255,255,.1); border: 1px dashed rgba(255,255,255,.35);
+  color: rgba(255,255,255,.8); font-style: italic; text-shadow: none;
 }
 .proj-add-btn {
-  font-size: 10px; padding: 1px 6px; border-radius: 9px; line-height: 1.5;
-  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.15);
-  color: rgba(255,255,255,.6); cursor: pointer; font-family: inherit;
+  font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 10px; line-height: 1.5;
+  background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.3);
+  color: #ffffff; cursor: pointer; font-family: inherit;
 }
-.proj-add-btn:hover { background: rgba(255,255,255,.14); color: rgba(255,255,255,.9); }
+.proj-add-btn:hover { background: rgba(255,255,255,.22); border-color: rgba(255,255,255,.5); }
 .proj-add-pop {
   position: absolute; z-index: 100; background: #1e2d42; border: 1px solid rgba(255,255,255,.15);
   border-radius: 5px; padding: 5px; min-width: 160px; max-height: 200px; overflow-y: auto;
