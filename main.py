@@ -7237,6 +7237,152 @@ def api_annotator_runs_list(rubricgen_session: str | None = Cookie(default=None)
     return out
 
 
+def _compute_run_aggregates(snapshot: dict, results: dict,
+                            did_classify: bool) -> dict:
+    """Compute per-batch aggregates from a run's results_json.
+
+    Returns:
+      {
+        "study_type_breakdown": [{value, count, pct}, …]    # only if did_classify
+        "field_aggregates": { field_id: {label, kind, summary} }
+        "field_order": [field_id, …]   # display order
+      }
+
+    Field kinds:
+      - "numeric"     ≥80% of non-empty values parse as float
+      - "categorical" otherwise, when distinct ≤ ceil(n/3) AND ≤ 8
+      - "text"        everything else
+
+    Pure Python — no deps. Safe to call on partial / in-progress runs.
+    """
+    papers = (results or {}).get("papers") or {}
+    n_papers = len(papers)
+
+    # ── Study-type breakdown ────────────────────────────────────────────
+    study_breakdown: list[dict] = []
+    if did_classify:
+        type_counts: dict[str, int] = {}
+        for entry in papers.values():
+            v = ((entry or {}).get("fields") or {}).get("study_type")
+            if v not in (None, "", []):
+                key = str(v)
+                type_counts[key] = type_counts.get(key, 0) + 1
+        for value, count in sorted(type_counts.items(), key=lambda kv: -kv[1]):
+            pct = round(100.0 * count / n_papers, 1) if n_papers else 0.0
+            study_breakdown.append({"value": value, "count": count, "pct": pct})
+
+    # ── Field discovery (snapshot order first, then anything else) ──────
+    snap_fields = (snapshot or {}).get("fields") or []
+    snap_order = [f.get("id") for f in snap_fields if f.get("id")]
+    snap_labels = {f.get("id"): (f.get("label") or f.get("id"))
+                   for f in snap_fields if f.get("id")}
+    seen_in_data: set[str] = set()
+    for entry in papers.values():
+        for k in ((entry or {}).get("fields") or {}).keys():
+            seen_in_data.add(k)
+    extras = sorted(seen_in_data - set(snap_order))
+    field_order = [f for f in snap_order if f in seen_in_data] + extras
+
+    # ── Per-field aggregates ────────────────────────────────────────────
+    def _classify_kind(values: list) -> str:
+        non_empty = [v for v in values if v not in (None, "", [])]
+        if not non_empty:
+            return "text"
+        # Try numeric: strip commas/units, parse as float.
+        n_num = 0
+        for v in non_empty:
+            try:
+                float(str(v).replace(",", "").strip().split()[0])
+                n_num += 1
+            except (ValueError, IndexError):
+                pass
+        if n_num >= 0.8 * len(non_empty):
+            return "numeric"
+        unique = {str(v).strip() for v in non_empty}
+        max_len = max(len(str(v).strip()) for v in non_empty)
+        # Categorical when values are short labels (not sentences) AND repeat
+        # often enough to be useful as a chart. The ceil(n/3) cap is bumped to
+        # at least 3 so small batches (4-6 papers) still show categories.
+        cap = max(3, -(-len(non_empty) // 3))
+        if len(unique) <= min(cap, 8) and max_len <= 60:
+            return "categorical"
+        return "text"
+
+    def _numeric_summary(values: list) -> dict:
+        nums: list[float] = []
+        for v in values:
+            try:
+                nums.append(float(str(v).replace(",", "").strip().split()[0]))
+            except (ValueError, IndexError):
+                continue
+        if not nums:
+            return {"n_with_value": 0, "n_total": len(values)}
+        nums_sorted = sorted(nums)
+        mid = len(nums_sorted) // 2
+        median = (nums_sorted[mid] if len(nums_sorted) % 2 else
+                  (nums_sorted[mid - 1] + nums_sorted[mid]) / 2)
+        return {
+            "median": round(median, 4),
+            "mean": round(sum(nums) / len(nums), 4),
+            "min": round(nums_sorted[0], 4),
+            "max": round(nums_sorted[-1], 4),
+            "n_with_value": len(nums),
+            "n_total": n_papers,
+        }
+
+    def _categorical_summary(values: list) -> dict:
+        counts: dict[str, int] = {}
+        non_empty = [str(v).strip() for v in values if v not in (None, "", [])]
+        for v in non_empty:
+            counts[v] = counts.get(v, 0) + 1
+        if not counts:
+            return {"n_with_value": 0, "n_total": n_papers, "n_unique": 0}
+        top, top_count = max(counts.items(), key=lambda kv: kv[1])
+        return {
+            "top": top,
+            "top_count": top_count,
+            "top_pct": round(100.0 * top_count / len(non_empty), 1),
+            "n_unique": len(counts),
+            "n_with_value": len(non_empty),
+            "n_total": n_papers,
+            "value_counts": [{"value": v, "count": c}
+                             for v, c in sorted(counts.items(), key=lambda kv: -kv[1])],
+        }
+
+    def _text_summary(values: list) -> dict:
+        non_empty = [str(v).strip() for v in values if v not in (None, "", [])]
+        unique = list(dict.fromkeys(non_empty))   # preserve first-seen order
+        return {
+            "n_unique": len(set(unique)),
+            "n_with_value": len(non_empty),
+            "n_total": n_papers,
+            "sample_values": unique[:3],
+        }
+
+    field_aggregates: dict[str, dict] = {}
+    for fid in field_order:
+        values = [((papers.get(pid) or {}).get("fields") or {}).get(fid)
+                  for pid in papers.keys()]
+        kind = _classify_kind(values)
+        if kind == "numeric":
+            summary = _numeric_summary(values)
+        elif kind == "categorical":
+            summary = _categorical_summary(values)
+        else:
+            summary = _text_summary(values)
+        field_aggregates[fid] = {
+            "label": snap_labels.get(fid, fid),
+            "kind": kind,
+            "summary": summary,
+        }
+
+    return {
+        "study_type_breakdown": study_breakdown,
+        "field_aggregates": field_aggregates,
+        "field_order": field_order,
+    }
+
+
 @app.get("/api/annotator/runs/{rid}")
 def api_annotator_runs_get(rid: int,
                            rubricgen_session: str | None = Cookie(default=None),
@@ -7248,7 +7394,8 @@ def api_annotator_runs_get(rid: int,
         row = conn.execute(
             """SELECT id, schema_id, schema_snapshot_json, paper_ids_json,
                       results_json, status, credit_cost, credits_refunded,
-                      error_message, created_at, completed_at
+                      error_message, created_at, completed_at,
+                      name, project_id, did_classify, did_prefill
                  FROM annotator_custom_runs WHERE id=? AND user_id=?""",
             (rid, user["id"]),
         ).fetchone()
@@ -7268,6 +7415,7 @@ def api_annotator_runs_get(rid: int,
         pids = json.loads(row["paper_ids_json"] or "[]")
     except Exception:
         pids = []
+    aggregates = _compute_run_aggregates(snap, results, bool(row["did_classify"]))
     return {
         "id": row["id"],
         "schema_id": row["schema_id"],
@@ -7280,6 +7428,14 @@ def api_annotator_runs_get(rid: int,
         "error_message": row["error_message"],
         "created_at": row["created_at"],
         "completed_at": row["completed_at"],
+        "name": row["name"],
+        "project_id": row["project_id"],
+        "did_classify": bool(row["did_classify"]),
+        "did_prefill": bool(row["did_prefill"]),
+        # New: pivoted aggregates for the Results tab summary view.
+        "study_type_breakdown": aggregates["study_type_breakdown"],
+        "field_aggregates": aggregates["field_aggregates"],
+        "field_order": aggregates["field_order"],
     }
 
 

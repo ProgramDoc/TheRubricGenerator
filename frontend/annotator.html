@@ -520,6 +520,138 @@ body.pane-resizing * { cursor: col-resize !important; user-select: none !importa
   background: #f1f5f9; color: #334155; font-weight: 500;
 }
 
+/* ─── Pivoted batch summary view (lives inside #run-table-host) ─── */
+.run-summary-card {
+  background: #fff; border: 1px solid var(--border); border-radius: 6px;
+  padding: 12px 14px; margin-bottom: 12px;
+}
+.rsc-name {
+  font-family: 'Source Serif 4', serif; font-size: 18px; font-weight: 600;
+  color: var(--text); margin-bottom: 6px;
+}
+.rsc-meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: 11px; color: var(--muted); align-items: center; }
+.rsc-counts { display: flex; gap: 12px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
+.rsc-count { font-family: 'IBM Plex Mono', monospace; font-size: 11px; }
+.rsc-count strong { font-size: 14px; color: var(--text); }
+.rsc-count.ok strong { color: #059669; }
+.rsc-count.err strong { color: #dc2626; }
+.rsc-count.skip strong { color: #a16207; }
+
+/* Study-type stacked bar */
+.study-section {
+  background: #fff; border: 1px solid var(--border); border-radius: 6px;
+  padding: 12px 14px; margin-bottom: 12px;
+}
+.study-section h4 {
+  font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-weight: 700;
+  color: var(--blue); letter-spacing: .14em; text-transform: uppercase;
+  margin: 0 0 8px;
+}
+.study-bar {
+  height: 28px; border-radius: 4px; overflow: hidden; display: flex;
+  border: 1px solid var(--border); background: #f8fafc;
+}
+.study-seg {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10.5px; font-weight: 600; color: #fff; padding: 0 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: default;
+}
+.study-legend {
+  display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 11px;
+}
+.study-legend-dot {
+  width: 10px; height: 10px; border-radius: 2px; display: inline-block;
+  vertical-align: middle; margin-right: 5px;
+}
+
+/* Field summary card grid */
+.fc-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px; margin-bottom: 12px;
+}
+.field-card {
+  background: #fff; border: 1px solid var(--border); border-radius: 6px;
+  padding: 10px 12px; cursor: pointer; transition: border-color .12s, box-shadow .12s;
+  text-align: left; font-family: inherit;
+}
+.field-card:hover {
+  border-color: #7c3aed; box-shadow: 0 2px 6px rgba(124,58,237,.12);
+}
+.field-card .fc-label {
+  font-size: 10.5px; font-weight: 700; color: var(--blue); letter-spacing: .04em;
+  text-transform: uppercase; margin-bottom: 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.field-card .fc-kind {
+  font-size: 9px; padding: 1px 5px; border-radius: 3px; margin-left: 4px;
+  background: #e2e8f0; color: #475569; font-weight: 500; letter-spacing: .03em;
+}
+.field-card .fc-num   { font-family: 'IBM Plex Mono', monospace; font-size: 22px;
+                         font-weight: 600; color: var(--text); line-height: 1.1; }
+.field-card .fc-sub   { font-size: 10.5px; color: var(--muted); margin-top: 4px;
+                         font-family: 'IBM Plex Mono', monospace; }
+.field-card .fc-top   { font-size: 13px; font-weight: 600; color: var(--text);
+                         margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis;
+                         white-space: nowrap; }
+.field-card .fc-pct   { font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+                         color: #7c3aed; font-weight: 600; }
+.field-card .fc-empty { color: var(--muted); font-style: italic; font-size: 11px; }
+
+/* Per-paper table — drilldown button */
+.rt-paper-row .rt-detail-btn {
+  background: transparent; border: none; cursor: pointer; font-size: 14px;
+  color: var(--muted); padding: 0 4px; line-height: 1;
+}
+.rt-paper-row .rt-detail-btn:hover { color: #7c3aed; }
+
+/* Field-detail modal: rows + value-frequency bars */
+.fdm-row {
+  display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  border-bottom: 1px solid #f1f5f9; font-size: 12px; cursor: pointer;
+}
+.fdm-row:hover { background: #fafafa; }
+.fdm-row:last-child { border-bottom: none; }
+.fdm-row .fdm-fname { flex: 1; min-width: 0; overflow: hidden;
+                       text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.fdm-row .fdm-val { font-family: 'IBM Plex Mono', monospace; font-weight: 600;
+                     color: var(--text); flex-shrink: 0; max-width: 50%;
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fdm-row .fdm-val.empty { color: var(--muted); font-style: italic; font-weight: 400; }
+.fdm-bar {
+  display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+  border-bottom: 1px solid #f1f5f9; font-size: 11.5px;
+}
+.fdm-bar .fdm-bar-label { width: 35%; min-width: 0; overflow: hidden;
+                           text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-weight: 500; }
+.fdm-bar .fdm-bar-track { flex: 1; height: 14px; background: #f1f5f9; border-radius: 3px; overflow: hidden; }
+.fdm-bar .fdm-bar-fill { height: 100%; background: #7c3aed; }
+.fdm-bar .fdm-bar-count { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px;
+                          color: var(--muted); flex-shrink: 0; }
+
+/* Paper-detail modal: field rows */
+.pdm-field-row {
+  display: grid; grid-template-columns: 35% 1fr; gap: 12px;
+  padding: 8px 12px; border-bottom: 1px solid #f1f5f9; font-size: 12px;
+}
+.pdm-field-row:last-child { border-bottom: none; }
+.pdm-field-row .pdm-key {
+  font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--blue);
+  text-transform: uppercase; letter-spacing: .04em; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pdm-field-row .pdm-val {
+  color: var(--text); word-wrap: break-word; white-space: pre-wrap;
+}
+.pdm-field-row .pdm-val.empty { color: var(--muted); font-style: italic; }
+.pdm-status-chip {
+  display: inline-block; font-size: 10px; padding: 1px 7px; border-radius: 8px;
+  text-transform: uppercase; letter-spacing: .04em; font-weight: 600; margin-right: 6px;
+}
+.pdm-status-chip.ok { background: #dcfce7; color: #166534; }
+.pdm-status-chip.error { background: #fee2e2; color: #991b1b; }
+.pdm-status-chip.skipped { background: #fef3c7; color: #92400e; }
+
 .form-section { margin-bottom: 20px; }
 .form-section-header {
   font-size: 10px; font-weight: 700; color: var(--blue); letter-spacing: .1em;
@@ -1563,6 +1695,29 @@ body.pane-resizing * { cursor: col-resize !important; user-select: none !importa
     <div class="modal-title">&#9654; Custom extraction runs</div>
     <div id="active-runs-list" style="flex:1;overflow:auto;font-family:'IBM Plex Mono',monospace;font-size:11px;line-height:1.5;background:#0f172a;color:#e2e8f0;padding:12px;border-radius:6px;margin-bottom:12px;">Loading…</div>
     <button class="modal-cancel" onclick="hideActiveRunsModal()">Close</button>
+  </div>
+</div>
+
+<!-- ── FIELD DETAIL MODAL — one feature's value across every paper in batch ── -->
+<div id="field-detail-modal" class="modal-overlay" onclick="if(event.target===this)hideFieldDetailModal()" style="display:none;">
+  <div class="modal-box" style="max-width:680px;width:92vw;max-height:82vh;display:flex;flex-direction:column;">
+    <div class="modal-title" id="fdm-title">Field detail</div>
+    <div id="fdm-summary" style="margin-bottom:10px;"></div>
+    <div id="fdm-list" style="flex:1;overflow:auto;border:1px solid var(--border);border-radius:5px;background:#fff;">Loading…</div>
+    <button class="modal-cancel" onclick="hideFieldDetailModal()" style="margin-top:12px;">Close</button>
+  </div>
+</div>
+
+<!-- ── PAPER DETAIL MODAL — every extracted field for a single paper ──────── -->
+<div id="paper-detail-modal" class="modal-overlay" onclick="if(event.target===this)hidePaperDetailModal()" style="display:none;">
+  <div class="modal-box" style="max-width:680px;width:92vw;max-height:82vh;display:flex;flex-direction:column;">
+    <div class="modal-title" id="pdm-title">Paper detail</div>
+    <div id="pdm-meta" style="font-size:11px;color:var(--muted);margin-bottom:10px;"></div>
+    <div id="pdm-fields" style="flex:1;overflow:auto;border:1px solid var(--border);border-radius:5px;background:#fff;padding:0;">Loading…</div>
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      <button class="tb-btn primary" id="pdm-open-form-btn" style="flex:1;">Open in Form tab</button>
+      <button class="modal-cancel" onclick="hidePaperDetailModal()" style="flex:0 0 auto;">Close</button>
+    </div>
   </div>
 </div>
 
@@ -4899,45 +5054,125 @@ async function deleteCurrentRun() {
   }
 }
 
+// Stable color palette for study-type segments + legend dots.
+const STUDY_TYPE_PALETTE = [
+  '#7c3aed', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444',
+  '#ec4899', '#14b8a6', '#a855f7', '#3b82f6', '#84cc16',
+];
+function _studyColor(i) { return STUDY_TYPE_PALETTE[i % STUDY_TYPE_PALETTE.length]; }
+
 function renderRunTable() {
   const d = _currentRunDetail;
-  if (!d) return;
-  const fields = d.schema.fields || [];
-  const papers = (d.results && d.results.papers) || {};
-  const meta = `${d.schema.name || '(deleted schema)'} · ${Object.keys(papers).length} papers · status ${d.status} · cost ${d.credit_cost}cr (refunded ${d.credits_refunded})`;
-  document.getElementById('run-detail').textContent = meta;
+  const host = document.getElementById('run-table-host');
+  if (!d) { host.innerHTML = ''; return; }
 
-  if (!fields.length) {
-    document.getElementById('run-table-host').innerHTML = '<em style="color:var(--muted);">Schema had no fields.</em>';
-    return;
-  }
-  const headerCells = ['<th>Paper</th>', '<th>Status</th>']
-    .concat(fields.map(f => `<th title="${escHtml(f.id)}">${escHtml(f.label)}</th>`)).join('');
-  const rows = Object.entries(papers).map(([pid, entry]) => {
-    const cls = entry.status === 'ok' ? 'rt-cell-ok' : (entry.status === 'error' ? 'rt-cell-error' : 'rt-cell-skipped');
-    const cells = fields.map(f => {
-      const v = (entry.fields || {})[f.id] || '';
-      return `<td class="${cls}">${escHtml(String(v))}</td>`;
+  const papers = (d.results && d.results.papers) || {};
+  const paperCount = Object.keys(papers).length;
+  const ok    = Object.values(papers).filter(p => p.status === 'ok').length;
+  const errN  = Object.values(papers).filter(p => p.status === 'error').length;
+  const skip  = Object.values(papers).filter(p => String(p.status || '').startsWith('skipped')).length;
+  const opChips = [
+    d.did_classify ? '<span class="op-chip op-classify">Classify</span>' : '',
+    d.did_prefill  ? '<span class="op-chip op-prefill">Prefill</span>'  : '',
+    d.schema_id    ? `<span class="op-chip op-custom">Custom${d.schema && d.schema.schema_name ? ' · ' + escHtml(d.schema.schema_name) : (d.schema && d.schema.name ? ' · ' + escHtml(d.schema.name) : '')}</span>` : '',
+  ].filter(Boolean).join(' ');
+  const projChip = d.project_name ? `<span class="proj-pill">${escHtml(d.project_name)}</span>` : '';
+  const when = (d.created_at || '').replace('T', ' ').slice(0, 16);
+  const statusBadge = d.status === 'complete'
+    ? '<span class="run-status complete">complete</span>'
+    : d.status === 'running' ? '<span class="run-status running">running…</span>'
+    : `<span class="run-status">${escHtml(d.status)}</span>`;
+
+  // ── 1. Summary card ──────────────────────────────────────────────────
+  const summaryHtml = `
+    <div class="run-summary-card">
+      <div class="rsc-name">${escHtml(d.name || (d.schema && d.schema.name) || ('Run #' + d.id))}</div>
+      <div class="rsc-meta">
+        ${statusBadge}
+        ${projChip}
+        ${opChips}
+        <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;">${escHtml(when)}</span>
+      </div>
+      <div class="rsc-counts">
+        <span class="rsc-count"><strong>${paperCount}</strong> papers</span>
+        <span class="rsc-count ok"><strong>${ok}</strong> ok</span>
+        ${errN > 0 ? `<span class="rsc-count err"><strong>${errN}</strong> failed</span>` : ''}
+        ${skip > 0 ? `<span class="rsc-count skip"><strong>${skip}</strong> skipped</span>` : ''}
+      </div>
+    </div>`;
+
+  // ── 2. Study-type breakdown bar ──────────────────────────────────────
+  const breakdown = d.study_type_breakdown || [];
+  let studyHtml = '';
+  if (breakdown.length > 0) {
+    const segs = breakdown.map((b, i) => {
+      const color = _studyColor(i);
+      const label = b.pct >= 8 ? `${escHtml(b.value)} ${b.pct}%` : '';
+      return `<div class="study-seg" style="width:${b.pct}%;background:${color};" title="${escHtml(b.value)} — ${b.count} paper${b.count === 1 ? '' : 's'} (${b.pct}%)">${label}</div>`;
     }).join('');
-    const fname = entry.filename || ('#' + pid);
-    return `<tr class="rt-paper-row" data-pid="${escHtml(pid)}" data-filename="${escHtml(fname)}" tabindex="0" role="button" aria-label="Open ${escHtml(fname)} in Form tab" title="Click or press Enter to open this paper in the Form tab" style="cursor:pointer;">
-      <td>${escHtml(fname)}</td>
-      <td class="${cls}">${escHtml(entry.status)}${entry.error ? ' — ' + escHtml(entry.error) : ''}</td>
-      ${cells}
-    </tr>`;
-  }).join('');
-  document.getElementById('run-table-host').innerHTML =
-    '<table class="rt-table"><thead><tr>' + headerCells + '</tr></thead><tbody>' + rows + '</tbody></table>';
-  // Make each row jump to the paper + Form tab so the user can review extracted values in context.
-  // Mouse and keyboard (Enter / Space) both work — keyboard nav uses tabindex=0 + role=button on the <tr>.
+    const legend = breakdown.map((b, i) => {
+      return `<span><span class="study-legend-dot" style="background:${_studyColor(i)};"></span>${escHtml(b.value)} <span style="color:var(--muted);">(${b.count})</span></span>`;
+    }).join('');
+    studyHtml = `
+      <div class="study-section">
+        <h4>Study-type breakdown</h4>
+        <div class="study-bar">${segs}</div>
+        <div class="study-legend">${legend}</div>
+      </div>`;
+  }
+
+  // ── 3. Field summary cards ───────────────────────────────────────────
+  const aggs = d.field_aggregates || {};
+  const order = d.field_order || Object.keys(aggs);
+  let cardsHtml = '';
+  if (order.length > 0) {
+    const cards = order.map(fid => _renderFieldCard(fid, aggs[fid])).join('');
+    cardsHtml = `<div class="fc-grid">${cards}</div>`;
+  }
+
+  // ── 4. Per-paper table (existing rt-table, with new 📋 detail button) ─
+  let tableHtml = '';
+  if (paperCount === 0) {
+    tableHtml = '<div style="padding:18px;color:var(--muted);font-size:11.5px;text-align:center;background:#fff;border:1px solid var(--border);border-radius:6px;">No paper results yet.</div>';
+  } else {
+    const headerCells = ['<th></th>', '<th>Paper</th>', '<th>Status</th>']
+      .concat(order.map(fid => `<th title="${escHtml(fid)}">${escHtml((aggs[fid] && aggs[fid].label) || fid)}</th>`)).join('');
+    const rows = Object.entries(papers).map(([pid, entry]) => {
+      const cls = entry.status === 'ok' ? 'rt-cell-ok' : (entry.status === 'error' ? 'rt-cell-error' : 'rt-cell-skipped');
+      const cells = order.map(fid => {
+        const v = (entry.fields || {})[fid] || '';
+        return `<td class="${cls}">${escHtml(String(v))}</td>`;
+      }).join('');
+      const fname = entry.filename || ('#' + pid);
+      return `<tr class="rt-paper-row" data-pid="${escHtml(pid)}" data-filename="${escHtml(fname)}" tabindex="0" role="button" aria-label="Open ${escHtml(fname)} in Form tab" style="cursor:pointer;">
+        <td><button class="rt-detail-btn" data-pid="${escHtml(pid)}" title="Show all extracted fields for this paper" aria-label="Show details for ${escHtml(fname)}">&#128203;</button></td>
+        <td title="Click or press Enter to open this paper in the Form tab">${escHtml(fname)}</td>
+        <td class="${cls}">${escHtml(entry.status || '')}${entry.error ? ' — ' + escHtml(entry.error) : ''}</td>
+        ${cells}
+      </tr>`;
+    }).join('');
+    tableHtml = '<table class="rt-table"><thead><tr>' + headerCells + '</tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+
+  host.innerHTML = summaryHtml + studyHtml + cardsHtml + tableHtml;
+
+  // ── Wire interactions ────────────────────────────────────────────────
+  // Field cards → field-detail modal
+  host.querySelectorAll('.field-card').forEach(btn => {
+    btn.addEventListener('click', () => openFieldDetailModal(btn.dataset.fieldId));
+  });
+  // Per-paper rows → load PDF + Form tab; the 📋 button → paper-detail modal
   const openRow = (tr) => {
     const pid = parseInt(tr.dataset.pid);
     if (!pid) return;
     loadPdf(pid, tr.dataset.filename || ('#' + pid));
     showRpTab('form');
   };
-  document.querySelectorAll('#run-table-host .rt-paper-row').forEach(tr => {
-    tr.addEventListener('click', () => openRow(tr));
+  host.querySelectorAll('.rt-paper-row').forEach(tr => {
+    tr.addEventListener('click', (ev) => {
+      if (ev.target.closest('.rt-detail-btn')) return;  // 📋 handles itself
+      openRow(tr);
+    });
     tr.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Spacebar') {
         ev.preventDefault();
@@ -4945,6 +5180,152 @@ function renderRunTable() {
       }
     });
   });
+  host.querySelectorAll('.rt-detail-btn').forEach(btn => {
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      openPaperDetailModal(parseInt(btn.dataset.pid));
+    });
+  });
+
+  // Update the small caption above the host.
+  document.getElementById('run-detail').textContent =
+    'Click a field card for cross-paper detail · click 📋 on a paper row for that paper\'s detail · click anywhere else on a row to open it in the Form tab.';
+}
+
+function _renderFieldCard(fid, agg) {
+  if (!agg) return '';
+  const k = agg.kind, s = agg.summary || {};
+  const label = `<div class="fc-label">${escHtml(agg.label || fid)}<span class="fc-kind">${k}</span></div>`;
+  if (s.n_with_value === 0) {
+    return `<button class="field-card" data-field-id="${escHtml(fid)}">
+      ${label}<div class="fc-empty">no values yet</div>
+    </button>`;
+  }
+  if (k === 'numeric') {
+    return `<button class="field-card" data-field-id="${escHtml(fid)}">
+      ${label}
+      <div class="fc-num">${escHtml(String(s.median))}</div>
+      <div class="fc-sub">median · range ${escHtml(String(s.min))}–${escHtml(String(s.max))} · n=${s.n_with_value}/${s.n_total}</div>
+    </button>`;
+  }
+  if (k === 'categorical') {
+    return `<button class="field-card" data-field-id="${escHtml(fid)}">
+      ${label}
+      <div class="fc-top" title="${escHtml(s.top)}">${escHtml(s.top)}</div>
+      <div class="fc-sub"><span class="fc-pct">${s.top_pct}%</span> · ${s.n_unique} unique · n=${s.n_with_value}/${s.n_total}</div>
+    </button>`;
+  }
+  // text
+  const samples = (s.sample_values || []).slice(0, 2)
+    .map(v => escHtml(v.length > 40 ? v.slice(0, 40) + '…' : v)).join(' · ');
+  return `<button class="field-card" data-field-id="${escHtml(fid)}">
+    ${label}
+    <div class="fc-top">${s.n_unique} unique</div>
+    <div class="fc-sub">${samples || 'free text'} · n=${s.n_with_value}/${s.n_total}</div>
+  </button>`;
+}
+
+// ─── Field-detail drilldown ─────────────────────────────────────────────
+function openFieldDetailModal(fieldId) {
+  const d = _currentRunDetail;
+  if (!d) return;
+  const agg = (d.field_aggregates || {})[fieldId];
+  if (!agg) return;
+  document.getElementById('fdm-title').textContent = `${agg.label || fieldId} — across batch`;
+  const s = agg.summary || {};
+  let summaryHtml = '';
+  if (agg.kind === 'numeric' && s.n_with_value) {
+    summaryHtml = `<div style="background:#f8fafc;padding:10px 12px;border-radius:5px;font-size:11.5px;color:var(--text);font-family:'IBM Plex Mono',monospace;">
+      <strong>median ${s.median}</strong> · mean ${s.mean} · range ${s.min}–${s.max} · n=${s.n_with_value}/${s.n_total}
+    </div>`;
+  } else if (agg.kind === 'categorical' && s.value_counts) {
+    const max = Math.max(...s.value_counts.map(v => v.count));
+    summaryHtml = `<div style="background:#f8fafc;padding:10px 12px;border-radius:5px;">
+      ${s.value_counts.map(vc => {
+        const pct = max ? Math.round(100 * vc.count / max) : 0;
+        return `<div class="fdm-bar">
+          <span class="fdm-bar-label" title="${escHtml(vc.value)}">${escHtml(vc.value)}</span>
+          <span class="fdm-bar-track"><span class="fdm-bar-fill" style="width:${pct}%;"></span></span>
+          <span class="fdm-bar-count">${vc.count}</span>
+        </div>`;
+      }).join('')}
+    </div>`;
+  } else if (agg.kind === 'text') {
+    summaryHtml = `<div style="background:#f8fafc;padding:10px 12px;border-radius:5px;font-size:11.5px;color:var(--muted);">
+      ${s.n_unique} unique values across ${s.n_with_value} of ${s.n_total} papers.
+    </div>`;
+  }
+  document.getElementById('fdm-summary').innerHTML = summaryHtml;
+
+  // Per-paper rows for this field.
+  const papers = (d.results && d.results.papers) || {};
+  const rows = Object.entries(papers).map(([pid, entry]) => {
+    const v = (entry.fields || {})[fieldId];
+    const fname = entry.filename || ('#' + pid);
+    const valHtml = v ? `<span class="fdm-val">${escHtml(String(v))}</span>`
+                      : `<span class="fdm-val empty">(no value)</span>`;
+    return `<div class="fdm-row" data-pid="${escHtml(pid)}" data-filename="${escHtml(fname)}" title="Open this paper in the Form tab">
+      <span class="fdm-fname">${escHtml(fname)}</span>
+      ${valHtml}
+    </div>`;
+  }).join('');
+  const list = document.getElementById('fdm-list');
+  list.innerHTML = rows || '<div style="padding:18px;color:var(--muted);text-align:center;">No papers in this batch.</div>';
+  list.querySelectorAll('.fdm-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const pid = parseInt(row.dataset.pid);
+      hideFieldDetailModal();
+      loadPdf(pid, row.dataset.filename);
+      showRpTab('form');
+    });
+  });
+  document.getElementById('field-detail-modal').style.display = 'flex';
+}
+function hideFieldDetailModal() {
+  document.getElementById('field-detail-modal').style.display = 'none';
+}
+
+// ─── Per-paper drilldown ────────────────────────────────────────────────
+function openPaperDetailModal(pid) {
+  const d = _currentRunDetail;
+  if (!d) return;
+  const entry = (d.results && d.results.papers || {})[String(pid)];
+  if (!entry) return;
+  const fname = entry.filename || ('#' + pid);
+  document.getElementById('pdm-title').textContent = fname;
+
+  const statusCls = entry.status === 'ok' ? 'ok' : (entry.status === 'error' ? 'error' : 'skipped');
+  const completed = (entry.completed_at || '').replace('T', ' ').slice(0, 19);
+  let metaHtml = `<span class="pdm-status-chip ${statusCls}">${escHtml(entry.status || '')}</span>`;
+  if (completed) metaHtml += `<span style="font-family:'IBM Plex Mono',monospace;">${escHtml(completed)}</span>`;
+  if (entry.error) metaHtml += `<div style="margin-top:6px;color:#b91c1c;">Error: ${escHtml(entry.error)}</div>`;
+  document.getElementById('pdm-meta').innerHTML = metaHtml;
+
+  const order = (d.field_order || Object.keys(entry.fields || {}));
+  const aggs = d.field_aggregates || {};
+  const rows = order.map(fid => {
+    const v = (entry.fields || {})[fid];
+    const lbl = (aggs[fid] && aggs[fid].label) || fid;
+    const valHtml = v
+      ? `<span class="pdm-val">${escHtml(String(v))}</span>`
+      : `<span class="pdm-val empty">(no value)</span>`;
+    return `<div class="pdm-field-row">
+      <span class="pdm-key" title="${escHtml(fid)}">${escHtml(lbl)}</span>
+      ${valHtml}
+    </div>`;
+  }).join('');
+  document.getElementById('pdm-fields').innerHTML = rows
+    || '<div style="padding:18px;color:var(--muted);text-align:center;">No extracted fields for this paper.</div>';
+
+  document.getElementById('pdm-open-form-btn').onclick = () => {
+    hidePaperDetailModal();
+    loadPdf(pid, fname);
+    showRpTab('form');
+  };
+  document.getElementById('paper-detail-modal').style.display = 'flex';
+}
+function hidePaperDetailModal() {
+  document.getElementById('paper-detail-modal').style.display = 'none';
 }
 
 function exportRunCsv() {
