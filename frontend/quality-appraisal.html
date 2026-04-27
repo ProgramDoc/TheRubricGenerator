@@ -172,6 +172,9 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
 .rob-low { background: oklch(0.94 0.04 150); color: var(--ok); }
 .rob-some { background: oklch(0.94 0.06 80); color: oklch(0.48 0.12 70); }
 .rob-high { background: oklch(0.94 0.05 25); color: var(--err); }
+.rob-moderate { background: oklch(0.94 0.07 85); color: oklch(0.50 0.13 75); }
+.rob-critical { background: oklch(0.86 0.08 25); color: oklch(0.35 0.15 25); }
+.rob-ni { background: var(--paper-3); color: var(--muted); font-style: italic; }
 
 .grade-high { color: var(--ok); font-weight: 700; }
 .grade-moderate { color: oklch(0.50 0.10 80); font-weight: 700; }
@@ -332,12 +335,11 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
 #qa-pdf-host .textLayer > span.qa-hl-flash {
   color: #000 !important; background: #fff3a0; border-radius: 2px;
   box-shadow: 0 0 0 2px #fff3a0;
-  animation: qa-flash 3.5s ease-out;
+  animation: qa-flash 0.6s ease-out;
 }
 @keyframes qa-flash {
-  0%   { background: #ffe066; box-shadow: 0 0 0 3px #ffe066; }
-  20%  { background: #fff3a0; box-shadow: 0 0 0 2px #fff3a0; }
-  100% { background: transparent; box-shadow: 0 0 0 0 transparent; }
+  0%   { background: #ffe066; box-shadow: 0 0 0 4px #ffe066; }
+  100% { background: #fff3a0; box-shadow: 0 0 0 2px #fff3a0; }
 }
 
 #qa-detail-pane {
@@ -388,6 +390,10 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
 .qa-signal .qrat.qa-clickable:hover {
   background: var(--accent-soft); text-decoration: underline;
 }
+.qa-signal .qrat.qa-active {
+  background: #fff3a0 !important; border-left-color: #daa520 !important;
+  box-shadow: 0 0 0 1px #daa520;
+}
 .qa-signal .qrat::before { content: '📄 '; opacity: 0.6; }
 
 .qa-domain {
@@ -426,6 +432,10 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
 }
 .qa-consort-item .qrat.qa-clickable { cursor: pointer; border-left-color: var(--accent); }
 .qa-consort-item .qrat.qa-clickable:hover { background: var(--accent-soft); text-decoration: underline; }
+.qa-consort-item .qrat.qa-active {
+  background: #fff3a0 !important; border-left-color: #daa520 !important;
+  box-shadow: 0 0 0 1px #daa520;
+}
 .qa-consort-item .qrat::before { content: '📄 '; opacity: 0.6; }
 
 .qa-grade-grid {
@@ -638,6 +648,25 @@ const ROB2_DOMAIN_META = [
   { id: 4, short: 'D4: Outcome measurement', full: 'Bias in measurement of the outcome' },
   { id: 5, short: 'D5: Reported result',     full: 'Bias in selection of the reported result' },
 ];
+const ROBINS_I_DOMAIN_META = [
+  { id: 1, short: 'D1: Confounding',      full: 'Bias due to confounding' },
+  { id: 2, short: 'D2: Selection',        full: 'Bias in selection of participants into the study' },
+  { id: 3, short: 'D3: Classification',   full: 'Bias in classification of interventions' },
+  { id: 4, short: 'D4: Deviations',       full: 'Bias due to deviations from intended interventions' },
+  { id: 5, short: 'D5: Missing data',     full: 'Bias due to missing data' },
+  { id: 6, short: 'D6: Outcome measure',  full: 'Bias in measurement of outcomes' },
+  { id: 7, short: 'D7: Reported result',  full: 'Bias in selection of the reported result' },
+];
+function domainMetaFor(tool) {
+  return tool === 'robins_i' ? ROBINS_I_DOMAIN_META : ROB2_DOMAIN_META;
+}
+const ROB_BADGE_CLS = {
+  'Low': 'rob-low',
+  'Some concerns': 'rob-some', 'High': 'rob-high',
+  'Moderate': 'rob-moderate', 'Serious': 'rob-high', 'Critical': 'rob-critical',
+  'No information': 'rob-ni',
+};
+function robBadgeCls(j) { return ROB_BADGE_CLS[j] || ''; }
 let _detailResult = null;      // the result row currently open in the detail modal
 let _detailPdfDoc = null;      // PDF.js document for the currently-open paper
 let _detailPdfPaperId = null;  // paper id whose PDF is currently rendered
@@ -1021,23 +1050,26 @@ function renderResults() {
     return;
   }
 
-  // Build the column list from the first successful result's RoB domains
+  // Build the column list from the first successful result's tool + RoB domains.
   const firstOk = results.find(r => r.status === 'ok');
+  const runTool = (firstOk && firstOk.rob_tool) || 'rob2';
+  const runDomainMeta = domainMetaFor(runTool);
   const robDomainIds = firstOk && firstOk.rob_domains
-    ? Object.keys(firstOk.rob_domains).sort()
-    : ['1', '2', '3', '4', '5'];
+    ? Object.keys(firstOk.rob_domains).sort((a, b) => Number(a) - Number(b))
+    : runDomainMeta.map(m => String(m.id));
+  const guidelineHeader = runTool === 'robins_i' ? 'STROBE adherence' : 'CONSORT adherence';
 
   const headerCols = [
     '<th class="col-study">Study</th>',
     '<th>Classification</th>',
     '<th>Risk of bias</th>',
-    '<th>CONSORT adherence</th>',
+    `<th>${guidelineHeader}</th>`,
     '<th>Initial GRADE</th>',
     '<th>Updated GRADE</th>',
     '<th>GRADE explanation</th>',
   ];
   robDomainIds.forEach(did => {
-    const meta = ROB2_DOMAIN_META.find(m => String(m.id) === String(did));
+    const meta = runDomainMeta.find(m => String(m.id) === String(did));
     const short = meta ? meta.short : ('RoB Domain ' + did);
     const full = meta ? meta.full : '';
     headerCols.push(`<th class="col-hint" title="${escHtml(full)}">${escHtml(short)}<span class="col-sub">${escHtml(full)}</span></th>`);
@@ -1064,7 +1096,7 @@ function renderResults() {
     const modChips = ['clinical_trial_phase', 'industry_sponsored', 'adaptive_design', 'pragmatic_vs_explanatory']
       .map(k => fields[k] ? `<span class="chip mod">${escHtml(fields[k])}</span>` : '').join('');
 
-    const robCls = r.rob_overall === 'Low' ? 'rob-low' : (r.rob_overall === 'High' ? 'rob-high' : 'rob-some');
+    const robCls = robBadgeCls(r.rob_overall);
     const consort = (r.guideline_adhered != null && r.guideline_applicable != null)
       ? `${r.guideline_adhered} / ${r.guideline_applicable}` +
         (r.guideline_proportion != null
@@ -1077,7 +1109,7 @@ function renderResults() {
     const domainCells = robDomainIds.map(did => {
       const d = (r.rob_domains || {})[did] || {};
       const j = d.judgement || '';
-      const jCls = j === 'Low' ? 'rob-low' : (j === 'High' ? 'rob-high' : (j === 'Some concerns' ? 'rob-some' : ''));
+      const jCls = robBadgeCls(j);
       const signalsHtml = d.signals
         ? Object.keys(d.signals).sort().map(sid =>
             `<span class="chip">${escHtml(sid)}=${escHtml(d.signals[sid])}</span>`).join(' ')
@@ -1204,7 +1236,9 @@ function renderDetailPanel(r, anchor) {
   ].map(([k, lbl]) => fields[k]
     ? `<span class="chip mod" title="${escHtml(lbl)}">${escHtml(fields[k])}</span>` : '').filter(Boolean).join(' ');
 
-  const robCls = r.rob_overall === 'Low' ? 'rob-low' : (r.rob_overall === 'High' ? 'rob-high' : 'rob-some');
+  const robCls = robBadgeCls(r.rob_overall);
+  const detailTool = r.rob_tool || 'rob2';
+  const detailMeta = domainMetaFor(detailTool);
 
   let summaryHtml = `<section id="qa-sec-summary"><h3>Summary</h3>
     <div style="display:grid;grid-template-columns:140px 1fr;gap:6px 12px;font-size:12px;">
@@ -1216,21 +1250,22 @@ function renderDetailPanel(r, anchor) {
       <div>${escHtml(r.primary_outcome || '—')}</div>
       <div style="color:var(--muted);font-weight:600;">Overall RoB</div>
       <div><span class="rob-badge ${robCls}">${escHtml(r.rob_overall || '—')}</span>${r.rob_direction && r.rob_direction !== 'NA' ? ' <span style="color:var(--muted);font-size:11px;">(direction: ' + escHtml(r.rob_direction) + ')</span>' : ''}</div>
-      <div style="color:var(--muted);font-weight:600;">CONSORT adherence</div>
+      <div style="color:var(--muted);font-weight:600;">${escHtml(detailTool === 'robins_i' ? 'STROBE adherence' : 'CONSORT adherence')}</div>
       <div>${(guideline.adhered != null && guideline.applicable != null) ? escHtml(guideline.adhered) + ' / ' + escHtml(guideline.applicable) + (guideline.proportion != null ? ' <span style="color:var(--muted);">(' + (guideline.proportion * 100).toFixed(0) + '%)</span>' : '') : '—'}</div>
       <div style="color:var(--muted);font-weight:600;">GRADE</div>
       <div><span class="${gradeClsOf(r.initial_grade)}">${escHtml(r.initial_grade || '—')}</span> → <span class="${gradeClsOf(r.updated_grade)}">${escHtml(r.updated_grade || '—')}</span></div>
     </div>
   </section>`;
 
-  // ── RoB 2 section ────────────────────────
-  const domainIds = Object.keys(robDomains).sort();
-  const robHtml = `<section id="qa-sec-rob"><h3>Risk of Bias (RoB 2)</h3>
+  // ── RoB section ──────────────────────────
+  const domainIds = Object.keys(robDomains).sort((a, b) => Number(a) - Number(b));
+  const robHeader = detailTool === 'robins_i' ? 'Risk of Bias (ROBINS-I)' : 'Risk of Bias (RoB 2)';
+  const robHtml = `<section id="qa-sec-rob"><h3>${escHtml(robHeader)}</h3>
     ${domainIds.length === 0 ? '<div style="color:var(--muted);">No RoB data.</div>' : domainIds.map(did => {
       const d = robDomains[did] || {};
-      const meta = ROB2_DOMAIN_META.find(m => String(m.id) === String(did)) || {};
+      const meta = detailMeta.find(m => String(m.id) === String(did)) || {};
       const j = d.judgement || '—';
-      const jCls = j === 'Low' ? 'rob-low' : (j === 'High' ? 'rob-high' : (j === 'Some concerns' ? 'rob-some' : ''));
+      const jCls = robBadgeCls(j);
       const signals = d.signals || {};
       const rationales = d.rationales || {};
       const sigKeys = Object.keys(signals).sort();
@@ -1241,10 +1276,10 @@ function renderDetailPanel(r, anchor) {
           const rat = rationales[sid] || '';
           const ansCls = 'qa-ans qa-ans-' + (ans || 'ni').toLowerCase();
           const ratCls = rat ? 'qrat qa-clickable' : 'qrat';
-          const ratAttr = rat ? ` onclick="jumpToQuote(${JSON.stringify(rat)})" title="Click to locate this passage in the PDF"` : '';
+          const ratAttr = rat ? ` onclick="jumpToQuote(${escHtml(JSON.stringify(rat))}, this)" title="Click to locate this passage in the PDF"` : '';
           return `<div class="qa-signal">
             <span class="qid">${escHtml(sid)}</span>
-            <span class="qtxt">${escHtml(signalTextFor(sid, did))}</span>
+            <span class="qtxt">${escHtml(signalTextFor(sid, did, detailTool))}</span>
             <div style="margin-top:4px;"><span class="${ansCls}">${escHtml(ans || 'NI')}</span></div>
             ${rat ? `<span class="${ratCls}"${ratAttr}>${escHtml(rat)}</span>` : ''}
           </div>`;
@@ -1276,11 +1311,12 @@ function renderDetailPanel(r, anchor) {
     if (na !== nb) return na - nb;
     return a.id.localeCompare(b.id);
   };
-  const consortHtml = `<section id="qa-sec-consort"><h3>CONSORT 2025 checklist
+  const guidelineHeading = detailTool === 'robins_i' ? 'STROBE 2007 checklist' : 'CONSORT 2025 checklist';
+  const consortHtml = `<section id="qa-sec-consort"><h3>${escHtml(guidelineHeading)}
     <span style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:8px;">
       ${(guideline.adhered != null) ? escHtml(guideline.adhered) + ' / ' + escHtml(guideline.applicable) + ' applicable' : ''}
     </span></h3>
-    ${consortIds.length === 0 ? '<div style="color:var(--muted);">No CONSORT data.</div>' :
+    ${consortIds.length === 0 ? `<div style="color:var(--muted);">No ${detailTool === 'robins_i' ? 'STROBE' : 'CONSORT'} data.</div>` :
       Object.keys(groups).map(sec => `<div class="qa-consort-group">
         <h4>${escHtml(sec)}</h4>
         ${groups[sec].sort(idSort).map(it => {
@@ -1290,7 +1326,7 @@ function renderDetailPanel(r, anchor) {
           const ev = it.evidence || '';
           const evClickable = it.adhered !== null && ev;
           const evCls = evClickable ? 'qrat qa-clickable' : 'qrat';
-          const evAttr = evClickable ? ` onclick="jumpToQuote(${JSON.stringify(ev)})" title="Click to locate in the PDF"` : '';
+          const evAttr = evClickable ? ` onclick="jumpToQuote(${escHtml(JSON.stringify(ev))}, this)" title="Click to locate in the PDF"` : '';
           return `<div class="qa-consort-item">
             <span class="id">${escHtml(it.id)}</span>
             <span class="adh ${adhCls}">${escHtml(adhText)}</span>
@@ -1305,11 +1341,18 @@ function renderDetailPanel(r, anchor) {
   </section>`;
 
   // ── GRADE section ────────────────────────
-  const highDomainCount = domainIds.filter(id => (robDomains[id] || {}).judgement === 'High').length;
-  const someDomainCount = domainIds.filter(id => (robDomains[id] || {}).judgement === 'Some concerns').length;
+  const judgeCounts = {};
+  domainIds.forEach(id => {
+    const j = (robDomains[id] || {}).judgement || '';
+    if (j) judgeCounts[j] = (judgeCounts[j] || 0) + 1;
+  });
+  const countsLine = detailTool === 'robins_i'
+    ? `Critical: <strong>${judgeCounts['Critical'] || 0}</strong> &middot; Serious: <strong>${judgeCounts['Serious'] || 0}</strong> &middot; Moderate: <strong>${judgeCounts['Moderate'] || 0}</strong>. Per ROBINS-I/GRADE guidance, single-study GRADE downgrades 1 level for Moderate/Serious (2 levels for any Critical, or ≥2 Serious). Other GRADE domains require a body of evidence and are not applied here.`
+    : `High-risk domains: <strong>${judgeCounts['High'] || 0}</strong> &middot; Some-concerns domains: <strong>${judgeCounts['Some concerns'] || 0}</strong>. Per GradePro guidance, single-study GRADE downgrades by 1 level for "Some concerns" or any High domain, and 2 levels when ≥2 domains are High. Other GRADE domains (inconsistency, indirectness, imprecision, publication bias) require a body of evidence and are not applied here.`;
+  const initialDescription = detailTool === 'robins_i' ? 'From study type (non-randomized)' : 'From study type (RCT)';
   const gradeHtml = `<section id="qa-sec-grade"><h3>GRADE certainty</h3>
     <div class="qa-grade-grid">
-      <div class="cell"><div class="lbl">Initial</div><div class="val ${gradeClsOf(r.initial_grade)}">${escHtml(r.initial_grade || '—')}</div><div style="font-size:10px;color:var(--muted);margin-top:3px;">From study type (RCT)</div></div>
+      <div class="cell"><div class="lbl">Initial</div><div class="val ${gradeClsOf(r.initial_grade)}">${escHtml(r.initial_grade || '—')}</div><div style="font-size:10px;color:var(--muted);margin-top:3px;">${escHtml(initialDescription)}</div></div>
       <div class="arrow">→</div>
       <div class="cell"><div class="lbl">Updated</div><div class="val ${gradeClsOf(r.updated_grade)}">${escHtml(r.updated_grade || '—')}</div><div style="font-size:10px;color:var(--muted);margin-top:3px;">After RoB downgrade</div></div>
     </div>
@@ -1320,9 +1363,9 @@ function renderDetailPanel(r, anchor) {
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;font-size:11.5px;">
       ${domainIds.map(did => {
         const d = robDomains[did] || {};
-        const meta = ROB2_DOMAIN_META.find(m => String(m.id) === String(did)) || {};
+        const meta = detailMeta.find(m => String(m.id) === String(did)) || {};
         const j = d.judgement || '—';
-        const jCls = j === 'Low' ? 'rob-low' : (j === 'High' ? 'rob-high' : (j === 'Some concerns' ? 'rob-some' : ''));
+        const jCls = robBadgeCls(j);
         return `<div style="padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--paper);">
           <div style="font-weight:700;font-size:11px;">${escHtml(meta.short || ('D' + did))}</div>
           <div style="margin-top:4px;"><span class="rob-badge ${jCls}">${escHtml(j)}</span></div>
@@ -1330,8 +1373,7 @@ function renderDetailPanel(r, anchor) {
       }).join('')}
     </div>
     <div style="margin-top:10px;font-size:11px;color:var(--muted);">
-      High-risk domains: <strong>${highDomainCount}</strong> &middot; Some-concerns domains: <strong>${someDomainCount}</strong>.
-      Per GradePro guidance, single-study GRADE downgrades by 1 level for "Some concerns" or any High domain, and 2 levels when ≥2 domains are High. Other GRADE domains (inconsistency, indirectness, imprecision, publication bias) require a body of evidence and are not applied here.
+      ${countsLine}
     </div>
   </section>`;
 
@@ -1362,7 +1404,9 @@ function renderDetailPanel(r, anchor) {
 
 function gradeClsOf(g) { return 'grade-' + (g || '').toLowerCase().replace(' ', ''); }
 
-// Look up signaling-question text by signal id + domain id from the prompts catalog (lazy-cached).
+// Look up signaling-question text by tool + signal id + domain id from the
+// prompts catalog (lazy-cached). Keyed by tool because RoB 2 and ROBINS-I
+// signal ids overlap (both start at 1.1).
 let _signalTextCache = null;
 async function _loadSignalTextCache() {
   if (_signalTextCache) return _signalTextCache;
@@ -1371,8 +1415,12 @@ async function _loadSignalTextCache() {
     if (r.ok) {
       const cat = await r.json();
       const map = {};
-      ((cat.rob_tools && cat.rob_tools.rob2 && cat.rob_tools.rob2.domains) || []).forEach(d => {
-        (d.signals || []).forEach(s => { map[String(d.id) + ':' + s.id] = s.text; });
+      Object.entries(cat.rob_tools || {}).forEach(([toolKey, tool]) => {
+        (tool.domains || []).forEach(d => {
+          (d.signals || []).forEach(s => {
+            map[toolKey + ':' + d.id + ':' + s.id] = s.text;
+          });
+        });
       });
       _signalTextCache = map;
     } else {
@@ -1381,8 +1429,8 @@ async function _loadSignalTextCache() {
   } catch { _signalTextCache = {}; }
   return _signalTextCache;
 }
-function signalTextFor(sid, did) {
-  const k = String(did) + ':' + sid;
+function signalTextFor(sid, did, tool) {
+  const k = (tool || 'rob2') + ':' + did + ':' + sid;
   return (_signalTextCache && _signalTextCache[k]) || '';
 }
 // Warm the cache on page load
@@ -1490,7 +1538,14 @@ async function changeDetailZoom(delta) {
 }
 
 /* ── Quote → highlight in PDF text layer ─────────────────────────────── */
-function jumpToQuote(quote) {
+function _clearQuoteHighlight() {
+  document.querySelectorAll('#qa-pdf-host .qa-hl-flash').forEach(s => s.classList.remove('qa-hl-flash'));
+  document.querySelectorAll('#qa-detail-content .qrat.qa-active').forEach(c => c.classList.remove('qa-active'));
+}
+
+function jumpToQuote(quote, chipEl) {
+  _clearQuoteHighlight();
+  if (chipEl && chipEl.classList) chipEl.classList.add('qa-active');
   if (!_detailPdfDoc) {
     toast('PDF is still loading…');
     return;
@@ -1578,9 +1633,43 @@ async function openDevModal() {
 }
 function closeDevModal() { document.getElementById('dev-modal').classList.remove('open'); }
 
+function _renderDevRobTool(tool, sectionNum) {
+  if (!tool) return '';
+  let html = `<div class="dev-section"><h3>${escHtml(sectionNum)}. Risk-of-bias tool — ${escHtml(tool.tool)}</h3>
+    <details><summary>System prompt</summary><pre>${escHtml(tool.system_prompt)}</pre></details>
+    <details><summary>Judgements</summary><div style="font-size:11.5px;">${(tool.judgements || []).map(j => '<span class="chip">' + escHtml(j) + '</span>').join(' ')}</div></details>
+    <details><summary>Overall aggregation algorithm (code)</summary><pre>${escHtml(tool.overall_algorithm_code)}</pre></details>`;
+  (tool.domains || []).forEach(d => {
+    html += `<details><summary>Domain ${escHtml(d.id)} — ${escHtml(d.name)}</summary>
+      <div style="font-size:11.5px;color:var(--muted);margin:6px 0;">Relevant fields: ${(d.relevant_fields || []).map(f => '<span class="chip">' + escHtml(f) + '</span>').join(' ')}</div>
+      <strong>Signaling questions:</strong>
+      ${(d.signals || []).map(s => `<div class="item-row"><span class="id">${escHtml(s.id)}</span>
+        <div><div style="font-weight:600;">${escHtml(s.text)}</div>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:2px;">${escHtml(s.elaboration)}</div></div></div>`).join('')}
+      <details><summary>Prompt template</summary><pre>${escHtml(d.prompt_template)}</pre></details>
+      <details><summary>Decision-tree code</summary><pre>${escHtml(d.decision_tree_code)}</pre></details>
+    </details>`;
+  });
+  html += `</div>`;
+  return html;
+}
+
+function _renderDevGuideline(g, sectionNum) {
+  if (!g) return '';
+  return `<div class="dev-section"><h3>${escHtml(sectionNum)}. Reporting guideline — ${escHtml(g.guideline)}</h3>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:6px;">${escHtml(g.citation)}</div>
+    <details><summary>System prompt</summary><pre>${escHtml(g.system_prompt)}</pre></details>
+    <details><summary>Full prompt template</summary><pre>${escHtml(g.prompt_template)}</pre></details>
+    <details><summary>Scoring code</summary><pre>${escHtml(g.scoring_code)}</pre></details>
+    <details open><summary>Checklist items (${(g.items || []).length})</summary>
+      ${(g.items || []).map(it => `<div class="item-row"><span class="id">${escHtml(it.id)}</span>
+        <div><div style="font-weight:600;">${escHtml(it.section)} &middot; ${escHtml(it.topic)}</div>
+        <div style="font-size:10.5px;color:var(--muted);">${escHtml(it.description)}</div></div></div>`).join('')}
+    </details>
+  </div>`;
+}
+
 function renderDevCatalog(cat) {
-  const rob2 = cat.rob_tools && cat.rob_tools.rob2;
-  const consort = cat.reporting_guidelines && cat.reporting_guidelines.consort2025;
   const grade = cat.grade || {};
   const overview = cat.overview || {};
 
@@ -1592,39 +1681,15 @@ function renderDevCatalog(cat) {
     <details><summary>Primary-outcome picker (code)</summary><pre>${escHtml((cat.primary_outcome_picker || {}).code || '')}</pre></details>
   </div>`;
 
-  if (rob2) {
-    out += `<div class="dev-section"><h3>2. Risk-of-bias tool — ${escHtml(rob2.tool)}</h3>
-      <details><summary>System prompt</summary><pre>${escHtml(rob2.system_prompt)}</pre></details>
-      <details><summary>Overall aggregation algorithm (code)</summary><pre>${escHtml(rob2.overall_algorithm_code)}</pre></details>`;
-    (rob2.domains || []).forEach(d => {
-      out += `<details><summary>Domain ${escHtml(d.id)} — ${escHtml(d.name)}</summary>
-        <div style="font-size:11.5px;color:var(--muted);margin:6px 0;">Relevant fields: ${(d.relevant_fields || []).map(f => '<span class="chip">' + escHtml(f) + '</span>').join(' ')}</div>
-        <strong>Signaling questions:</strong>
-        ${(d.signals || []).map(s => `<div class="item-row"><span class="id">${escHtml(s.id)}</span>
-          <div><div style="font-weight:600;">${escHtml(s.text)}</div>
-          <div style="font-size:10.5px;color:var(--muted);margin-top:2px;">${escHtml(s.elaboration)}</div></div></div>`).join('')}
-        <details><summary>Prompt template</summary><pre>${escHtml(d.prompt_template)}</pre></details>
-        <details><summary>Decision-tree code</summary><pre>${escHtml(d.decision_tree_code)}</pre></details>
-      </details>`;
-    });
-    out += `</div>`;
-  }
+  let sectionNum = 2;
+  Object.values(cat.rob_tools || {}).forEach(tool => {
+    out += _renderDevRobTool(tool, sectionNum++);
+  });
+  Object.values(cat.reporting_guidelines || {}).forEach(g => {
+    out += _renderDevGuideline(g, sectionNum++);
+  });
 
-  if (consort) {
-    out += `<div class="dev-section"><h3>3. Reporting guideline — ${escHtml(consort.guideline)}</h3>
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:6px;">${escHtml(consort.citation)}</div>
-      <details><summary>System prompt</summary><pre>${escHtml(consort.system_prompt)}</pre></details>
-      <details><summary>Full prompt template</summary><pre>${escHtml(consort.prompt_template)}</pre></details>
-      <details><summary>Scoring code</summary><pre>${escHtml(consort.scoring_code)}</pre></details>
-      <details open><summary>Checklist items (${(consort.items || []).length})</summary>
-        ${(consort.items || []).map(it => `<div class="item-row"><span class="id">${escHtml(it.id)}</span>
-          <div><div style="font-weight:600;">${escHtml(it.section)} &middot; ${escHtml(it.topic)}</div>
-          <div style="font-size:10.5px;color:var(--muted);">${escHtml(it.description)}</div></div></div>`).join('')}
-      </details>
-    </div>`;
-  }
-
-  out += `<div class="dev-section"><h3>4. GRADE logic</h3>
+  out += `<div class="dev-section"><h3>${sectionNum}. GRADE logic</h3>
     <p style="font-size:12px;">${escHtml(grade.description || '')}</p>
     <div style="font-size:11.5px;">Levels: ${(grade.levels || []).map(l => '<span class="chip">' + escHtml(l) + '</span>').join(' ')}</div>
     <details open><summary>Code</summary><pre>${escHtml(grade.logic_code || '')}</pre></details>

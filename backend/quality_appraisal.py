@@ -34,8 +34,8 @@ from . import annotator as annotator_mod
 from . import billing as bill_mod
 from . import paper_files
 from .helpers import call_anthropic, parse_json_response
-from .rob_tools import rob2
-from .reporting_guidelines import consort2025
+from .rob_tools import rob2, robins_i
+from .reporting_guidelines import consort2025, strobe
 
 logger = logging.getLogger("rubricgen")
 
@@ -107,26 +107,26 @@ CREATE INDEX IF NOT EXISTS idx_qa_events_run ON quality_appraisal_events(run_id,
 # drop straight in. Unsupported types return None from dispatch() → result
 # gets status='skipped' and the per-paper charge is refunded.
 STUDY_TYPE_REGISTRY: dict[str, dict[str, str]] = {
-    "Randomized Controlled Trial": {
-        "rob_tool": "rob2",
-        "reporting_guideline": "consort2025",
-        "initial_grade": "High",
-    },
+    "Randomized Controlled Trial":  {"rob_tool": "rob2",     "reporting_guideline": "consort2025", "initial_grade": "High"},
+    "Cohort Study":                 {"rob_tool": "robins_i", "reporting_guideline": "strobe",      "initial_grade": "Low"},
+    "Case-Control":                 {"rob_tool": "robins_i", "reporting_guideline": "strobe",      "initial_grade": "Low"},
+    "Non-Randomized Trial":         {"rob_tool": "robins_i", "reporting_guideline": "strobe",      "initial_grade": "Low"},
+    "Cross-Sectional (Analytical)": {"rob_tool": "robins_i", "reporting_guideline": "strobe",      "initial_grade": "Low"},
+    "Case-Crossover":               {"rob_tool": "robins_i", "reporting_guideline": "strobe",      "initial_grade": "Low"},
     # Future (not wired yet — classification skips + refunds):
-    # "Cluster Randomized Trial":   {"rob_tool": "rob2_cluster", "reporting_guideline": "consort_cluster", "initial_grade": "High"},
-    # "Crossover Trial":             {"rob_tool": "rob2_crossover", "reporting_guideline": "consort_crossover", "initial_grade": "High"},
-    # "Cohort Study":                {"rob_tool": "robins_i",     "reporting_guideline": "strobe",           "initial_grade": "Low"},
-    # "Case-Control":                {"rob_tool": "robins_i",     "reporting_guideline": "strobe",           "initial_grade": "Low"},
-    # "Cross-Sectional (Analytical)":{"rob_tool": "robins_i",     "reporting_guideline": "strobe",           "initial_grade": "Low"},
-    # "SR with Meta-Analysis":       {"rob_tool": "amstar2",      "reporting_guideline": "prisma2020",       "initial_grade": "High"},
-    # "Diagnostic Accuracy":         {"rob_tool": "quadas2",      "reporting_guideline": "stard",            "initial_grade": "Low"},
+    # "Cluster Randomized Trial":    {"rob_tool": "rob2_cluster",    "reporting_guideline": "consort_cluster",    "initial_grade": "High"},
+    # "Crossover Trial":             {"rob_tool": "rob2_crossover",  "reporting_guideline": "consort_crossover",  "initial_grade": "High"},
+    # "SR with Meta-Analysis":       {"rob_tool": "amstar2",         "reporting_guideline": "prisma2020",         "initial_grade": "High"},
+    # "Diagnostic Accuracy":         {"rob_tool": "quadas2",         "reporting_guideline": "stard",              "initial_grade": "Low"},
 }
 
 _TOOL_RUNNERS: dict[str, Callable] = {
-    "rob2": rob2.run,
+    "rob2":     rob2.run,
+    "robins_i": robins_i.run,
 }
 _GUIDELINE_RUNNERS: dict[str, Callable] = {
     "consort2025": consort2025.run,
+    "strobe":      strobe.run,
 }
 
 
@@ -162,33 +162,63 @@ def compute_grade(initial: str,
                   ) -> tuple[str, str]:
     """Compute updated GRADE + human-readable explanation.
 
-    v1 downgrades for risk of bias only. The other GRADE domains
-    (inconsistency, indirectness, imprecision, publication bias) require a
-    body of evidence, not a single study, and are out of scope here — this is
-    documented in the developer view.
+    v1 downgrades for risk of bias only. Other GRADE domains (inconsistency,
+    indirectness, imprecision, publication bias) require a body of evidence
+    and are documented as out of scope in the developer view.
 
     Per GradePro guidance:
-      Low RoB overall           → no downgrade (0)
-      Some concerns overall     → downgrade 1 level
-      High RoB overall          → downgrade 1 level (2 if ≥2 domains are High)
+      RoB 2     Low             → 0
+                Some concerns   → 1
+                High            → 1 (2 if ≥2 domains are High)
+      ROBINS-I  Low             → 0
+                Moderate        → 1
+                Serious         → 1 (2 if ≥2 domains are Serious)
+                Critical        → 2 (always)
+                No information  → 1 (conservative)
     """
     idx = _grade_index(initial)
+    judgements = rob_domain_judgements or []
+
     if rob_overall == "Low":
         return initial, "No downgrade: overall risk of bias is Low."
+
+    # RoB 2 branches
     if rob_overall == "Some concerns":
         new_idx = min(idx + 1, len(GRADE_LEVELS) - 1)
-        return GRADE_LEVELS[new_idx], (
-            "Downgraded 1 level for Some concerns in risk of bias."
-        )
-    # High
-    high_domain_count = sum(1 for j in (rob_domain_judgements or []) if j == "High")
-    if high_domain_count >= 2:
+        return GRADE_LEVELS[new_idx], "Downgraded 1 level for Some concerns in risk of bias."
+    if rob_overall == "High":
+        high_count = sum(1 for j in judgements if j == "High")
+        if high_count >= 2:
+            new_idx = min(idx + 2, len(GRADE_LEVELS) - 1)
+            return GRADE_LEVELS[new_idx], (
+                f"Downgraded 2 levels for High risk of bias in {high_count} domains."
+            )
+        new_idx = min(idx + 1, len(GRADE_LEVELS) - 1)
+        return GRADE_LEVELS[new_idx], "Downgraded 1 level for High risk of bias."
+
+    # ROBINS-I branches
+    if rob_overall == "Moderate":
+        new_idx = min(idx + 1, len(GRADE_LEVELS) - 1)
+        return GRADE_LEVELS[new_idx], "Downgraded 1 level for Moderate risk of bias (ROBINS-I)."
+    if rob_overall == "Serious":
+        serious_count = sum(1 for j in judgements if j == "Serious")
+        if serious_count >= 2:
+            new_idx = min(idx + 2, len(GRADE_LEVELS) - 1)
+            return GRADE_LEVELS[new_idx], (
+                f"Downgraded 2 levels for Serious risk of bias in {serious_count} ROBINS-I domains."
+            )
+        new_idx = min(idx + 1, len(GRADE_LEVELS) - 1)
+        return GRADE_LEVELS[new_idx], "Downgraded 1 level for Serious risk of bias (ROBINS-I)."
+    if rob_overall == "Critical":
         new_idx = min(idx + 2, len(GRADE_LEVELS) - 1)
-        return GRADE_LEVELS[new_idx], (
-            f"Downgraded 2 levels for High risk of bias in {high_domain_count} domains."
-        )
+        return GRADE_LEVELS[new_idx], "Downgraded 2 levels for Critical risk of bias (ROBINS-I)."
+    if rob_overall == "No information":
+        new_idx = min(idx + 1, len(GRADE_LEVELS) - 1)
+        return GRADE_LEVELS[new_idx], "Downgraded 1 level for No information in one or more ROBINS-I domains (conservative)."
+
+    # Fallback for any unexpected vocabulary
     new_idx = min(idx + 1, len(GRADE_LEVELS) - 1)
-    return GRADE_LEVELS[new_idx], "Downgraded 1 level for High risk of bias."
+    return GRADE_LEVELS[new_idx], f"Downgraded 1 level for risk of bias ({rob_overall})."
 
 
 # ─────────────────────────────────────────────
@@ -606,10 +636,12 @@ def prompt_catalog() -> dict[str, Any]:
         "registry": STUDY_TYPE_REGISTRY,
         "credit_cost_per_paper": CREDIT_COST_QA_PER_PAPER,
         "rob_tools": {
-            "rob2": rob2.prompt_catalog(),
+            "rob2":     rob2.prompt_catalog(),
+            "robins_i": robins_i.prompt_catalog(),
         },
         "reporting_guidelines": {
             "consort2025": consort2025.prompt_catalog(),
+            "strobe":      strobe.prompt_catalog(),
         },
         "grade": {
             "levels": GRADE_LEVELS,
@@ -673,8 +705,11 @@ def flatten_result_row(result_row: dict[str, Any],
         "updated_grade": result_row.get("updated_grade"),
         "grade_explanation": result_row.get("grade_explanation"),
     }
-    # Per-domain judgements + all signaling-question answers (RoB 2 fields)
-    for dom in rob2.DOMAINS:
+    # Per-domain judgements + all signaling-question answers. Dispatch the
+    # DOMAINS list by rob_tool so ROBINS-I rows get 7 domains (not 5).
+    tool = result_row.get("rob_tool")
+    domains_for_tool = robins_i.DOMAINS if tool == "robins_i" else rob2.DOMAINS
+    for dom in domains_for_tool:
         d = rob_domains.get(str(dom["id"])) or {}
         row[f"rob_d{dom['id']}_judgement"] = d.get("judgement", "")
         for sig in dom["signals"]:

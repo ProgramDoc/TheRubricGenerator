@@ -18,8 +18,8 @@ import json
 import pytest
 
 from backend import quality_appraisal as qa
-from backend.rob_tools import rob2
-from backend.reporting_guidelines import consort2025
+from backend.rob_tools import rob2, robins_i
+from backend.reporting_guidelines import consort2025, strobe
 
 
 # ─────────────────────────────────────────────
@@ -235,6 +235,205 @@ class TestOverall:
 
 
 # ─────────────────────────────────────────────
+# ROBINS-I per-domain decision trees
+# ─────────────────────────────────────────────
+class TestRobinsIDomain1:
+    """ROBINS-I §4.2 confounding."""
+
+    def test_no_potential_confounding_low(self):
+        assert robins_i.robins_i_domain1_judge({"1.1": "N"}) == "Low"
+        assert robins_i.robins_i_domain1_judge({"1.1": "PN"}) == "Low"
+
+    def test_no_adjustment_critical(self):
+        # 1.1 Y, 1.4 N → Critical (no analysis attempted)
+        assert robins_i.robins_i_domain1_judge({
+            "1.1": "Y", "1.4": "N",
+        }) == "Critical"
+
+    def test_post_intervention_adjustment_serious(self):
+        # 1.6 Y → Serious regardless of 1.4/1.5
+        assert robins_i.robins_i_domain1_judge({
+            "1.1": "Y", "1.4": "Y", "1.5": "Y", "1.6": "Y",
+        }) == "Serious"
+
+    def test_well_adjusted_is_moderate(self):
+        # 1.1 Y, 1.4 Y, 1.5 Y, 1.6 N, 1.8 N → Moderate (best case for observational)
+        assert robins_i.robins_i_domain1_judge({
+            "1.1": "Y", "1.4": "Y", "1.5": "Y", "1.6": "N", "1.8": "N",
+        }) == "Moderate"
+
+    def test_poor_measurement_serious(self):
+        assert robins_i.robins_i_domain1_judge({
+            "1.1": "Y", "1.4": "Y", "1.5": "N",
+        }) == "Serious"
+
+    def test_time_varying_confounding_unaddressed_serious(self):
+        assert robins_i.robins_i_domain1_judge({
+            "1.1": "Y", "1.4": "Y", "1.5": "Y", "1.6": "N", "1.8": "Y",
+        }) == "Serious"
+
+
+class TestRobinsIDomain2:
+    """ROBINS-I §4.3 selection of participants."""
+
+    def test_clean_selection_low(self):
+        # No post-intervention selection AND follow-up coincides
+        assert robins_i.robins_i_domain2_judge({
+            "2.1": "N", "2.4": "Y",
+        }) == "Low"
+
+    def test_selection_with_intervention_and_outcome_serious(self):
+        # Post-intervention selection associated with intervention and outcome,
+        # no adjustment → Serious
+        assert robins_i.robins_i_domain2_judge({
+            "2.1": "Y", "2.2": "Y", "2.3": "Y", "2.5": "N",
+        }) == "Serious"
+
+    def test_selection_with_adjustment_moderate(self):
+        assert robins_i.robins_i_domain2_judge({
+            "2.1": "Y", "2.2": "Y", "2.3": "Y", "2.5": "Y",
+        }) == "Moderate"
+
+    def test_immortal_time_without_adjustment_serious(self):
+        # 2.4 N (follow-up doesn't coincide) + no adjustment → Serious
+        assert robins_i.robins_i_domain2_judge({
+            "2.1": "N", "2.4": "N", "2.5": "N",
+        }) == "Serious"
+
+
+class TestRobinsIDomain3:
+    """ROBINS-I §4.4 classification of interventions."""
+
+    def test_clean_classification_low(self):
+        assert robins_i.robins_i_domain3_judge({
+            "3.1": "Y", "3.2": "Y", "3.3": "N",
+        }) == "Low"
+
+    def test_outcome_knowledge_affects_serious(self):
+        assert robins_i.robins_i_domain3_judge({
+            "3.1": "Y", "3.2": "Y", "3.3": "Y",
+        }) == "Serious"
+
+    def test_poor_definition_moderate(self):
+        assert robins_i.robins_i_domain3_judge({
+            "3.1": "N", "3.2": "Y", "3.3": "N",
+        }) == "Moderate"
+
+
+class TestRobinsIDomain4:
+    """ROBINS-I §4.5 deviations (effect of assignment)."""
+
+    def test_no_deviations_balanced_cointerventions_low(self):
+        assert robins_i.robins_i_domain4_judge({
+            "4.1": "N", "4.3": "Y", "4.4": "Y",
+        }) == "Low"
+
+    def test_unbalanced_impactful_deviations_serious(self):
+        assert robins_i.robins_i_domain4_judge({
+            "4.1": "Y", "4.2": "Y", "4.5": "N",
+        }) == "Serious"
+
+    def test_unbalanced_deviations_with_itt_analysis_moderate(self):
+        assert robins_i.robins_i_domain4_judge({
+            "4.1": "Y", "4.2": "Y", "4.5": "Y",
+        }) == "Moderate"
+
+    def test_poor_implementation_serious(self):
+        assert robins_i.robins_i_domain4_judge({
+            "4.1": "N", "4.3": "Y", "4.4": "N",
+        }) == "Serious"
+
+
+class TestRobinsIDomain5:
+    """ROBINS-I §4.6 missing data."""
+
+    def test_complete_data_low(self):
+        assert robins_i.robins_i_domain5_judge({
+            "5.1": "Y", "5.2": "N", "5.3": "N",
+        }) == "Low"
+
+    def test_exclusions_serious(self):
+        assert robins_i.robins_i_domain5_judge({
+            "5.1": "N", "5.2": "Y", "5.3": "N",
+        }) == "Serious"
+
+    def test_some_missing_moderate(self):
+        assert robins_i.robins_i_domain5_judge({
+            "5.1": "N", "5.2": "N", "5.3": "N",
+        }) == "Moderate"
+
+
+class TestRobinsIDomain6:
+    """ROBINS-I §4.7 measurement of outcomes."""
+
+    def test_objective_blinded_low(self):
+        assert robins_i.robins_i_domain6_judge({
+            "6.1": "N", "6.2": "N", "6.3": "Y",
+        }) == "Low"
+
+    def test_systematic_errors_serious(self):
+        assert robins_i.robins_i_domain6_judge({
+            "6.1": "Y", "6.2": "Y", "6.3": "Y", "6.4": "Y",
+        }) == "Serious"
+
+    def test_differential_methods_serious(self):
+        assert robins_i.robins_i_domain6_judge({
+            "6.1": "N", "6.2": "N", "6.3": "N",
+        }) == "Serious"
+
+
+class TestRobinsIDomain7:
+    """ROBINS-I §4.8 selection of reported result."""
+
+    def test_no_selective_reporting_low(self):
+        assert robins_i.robins_i_domain7_judge({
+            "7.1": "N", "7.2": "N", "7.3": "N",
+        }) == "Low"
+
+    def test_any_selective_reporting_serious(self):
+        assert robins_i.robins_i_domain7_judge({
+            "7.1": "Y", "7.2": "N", "7.3": "N",
+        }) == "Serious"
+        assert robins_i.robins_i_domain7_judge({
+            "7.1": "N", "7.2": "Y", "7.3": "N",
+        }) == "Serious"
+        assert robins_i.robins_i_domain7_judge({
+            "7.1": "N", "7.2": "N", "7.3": "Y",
+        }) == "Serious"
+
+    def test_all_ni_is_no_information(self):
+        assert robins_i.robins_i_domain7_judge({
+            "7.1": "NI", "7.2": "NI", "7.3": "NI",
+        }) == "No information"
+
+
+class TestRobinsIOverall:
+    """ROBINS-I worst-domain aggregation."""
+
+    def test_all_low_is_low(self):
+        assert robins_i.robins_i_overall(["Low"] * 7) == "Low"
+
+    def test_any_critical_is_critical(self):
+        assert robins_i.robins_i_overall(
+            ["Low", "Moderate", "Critical", "Serious", "Low", "Low", "Low"]) == "Critical"
+
+    def test_any_serious_is_serious(self):
+        assert robins_i.robins_i_overall(
+            ["Low", "Moderate", "Serious", "Low", "Low", "Low", "Low"]) == "Serious"
+
+    def test_moderate_wins_over_no_information(self):
+        assert robins_i.robins_i_overall(
+            ["Low", "Moderate", "No information", "Low", "Low", "Low", "Low"]) == "Moderate"
+
+    def test_no_information_when_only_low_and_ni(self):
+        assert robins_i.robins_i_overall(
+            ["Low", "Low", "No information", "Low", "Low", "Low", "Low"]) == "No information"
+
+    def test_empty_input_low(self):
+        assert robins_i.robins_i_overall([]) == "Low"
+
+
+# ─────────────────────────────────────────────
 # GRADE logic
 # ─────────────────────────────────────────────
 class TestGrade:
@@ -273,6 +472,37 @@ class TestGrade:
         level, _ = qa.compute_grade("Very low", "High", ["High", "High"])
         assert level == "Very low"
 
+    # ── ROBINS-I branches ────────────────────────────
+    def test_robins_i_low_no_downgrade(self):
+        level, expl = qa.compute_grade("Low", "Low", ["Low"] * 7)
+        assert level == "Low"
+        assert "No downgrade" in expl
+
+    def test_robins_i_moderate_downgrades_one(self):
+        level, expl = qa.compute_grade("Low", "Moderate", ["Moderate"])
+        assert level == "Very low"
+        assert "1 level" in expl
+
+    def test_robins_i_serious_single_domain_downgrades_one(self):
+        level, _ = qa.compute_grade("Low", "Serious",
+                                     ["Serious", "Low", "Low", "Low", "Low", "Low", "Low"])
+        assert level == "Very low"
+
+    def test_robins_i_serious_two_domains_downgrades_two(self):
+        level, expl = qa.compute_grade("High", "Serious",
+                                        ["Serious", "Serious", "Low", "Low", "Low", "Low", "Low"])
+        assert level == "Low"
+        assert "2 levels" in expl
+
+    def test_robins_i_critical_downgrades_two(self):
+        level, expl = qa.compute_grade("High", "Critical", ["Critical"])
+        assert level == "Low"
+        assert "2 levels" in expl
+
+    def test_robins_i_no_information_downgrades_one(self):
+        level, _ = qa.compute_grade("Moderate", "No information", ["No information"])
+        assert level == "Low"
+
 
 # ─────────────────────────────────────────────
 # Study-type registry
@@ -286,10 +516,39 @@ class TestDispatch:
         assert cfg["initial_grade"] == "High"
 
     def test_unsupported_returns_none(self):
-        assert qa.dispatch("Case-Control") is None
-        assert qa.dispatch("Cohort Study") is None
+        # Types still not wired (registry stubs remain commented)
+        assert qa.dispatch("SR with Meta-Analysis") is None
+        assert qa.dispatch("Diagnostic Accuracy") is None
         assert qa.dispatch("") is None
         assert qa.dispatch("Not A Real Study Type") is None
+
+    def test_cohort_study_is_registered(self):
+        cfg = qa.dispatch("Cohort Study")
+        assert cfg is not None
+        assert cfg["rob_tool"] == "robins_i"
+        assert cfg["reporting_guideline"] == "strobe"
+        assert cfg["initial_grade"] == "Low"
+
+    def test_case_control_is_registered(self):
+        cfg = qa.dispatch("Case-Control")
+        assert cfg is not None
+        assert cfg["rob_tool"] == "robins_i"
+        assert cfg["initial_grade"] == "Low"
+
+    def test_non_randomized_trial_is_registered(self):
+        cfg = qa.dispatch("Non-Randomized Trial")
+        assert cfg is not None
+        assert cfg["rob_tool"] == "robins_i"
+
+    def test_cross_sectional_analytical_is_registered(self):
+        cfg = qa.dispatch("Cross-Sectional (Analytical)")
+        assert cfg is not None
+        assert cfg["rob_tool"] == "robins_i"
+
+    def test_case_crossover_is_registered(self):
+        cfg = qa.dispatch("Case-Crossover")
+        assert cfg is not None
+        assert cfg["rob_tool"] == "robins_i"
 
     def test_registry_keys_match_annotator_types(self):
         """Registry keys must be valid annotator study types so classification
@@ -338,6 +597,37 @@ class TestConsort:
 
 
 # ─────────────────────────────────────────────
+# STROBE proportion math
+# ─────────────────────────────────────────────
+class TestStrobe:
+    def test_item_count_covers_checklist(self):
+        assert len(strobe.ITEMS) >= 30
+        ids = {it["id"] for it in strobe.ITEMS}
+        assert {"1a", "1b", "2", "3", "4", "5", "6a", "6b",
+                "12a", "12b", "12c", "12d", "12e",
+                "13a", "13b", "14a", "14b", "14c",
+                "16a", "16b", "16c", "18", "19", "20", "21", "22"}.issubset(ids)
+
+    def test_prompt_contains_all_items(self):
+        prompt = strobe.build_prompt({"study_type": "Cohort Study"})
+        for it in strobe.ITEMS:
+            assert f"**{it['id']}**" in prompt, f"Item {it['id']} missing from prompt"
+
+    def test_proportion_math_excludes_na(self):
+        raw = {
+            "1a": {"adhered": True, "evidence": "yes"},
+            "5":  {"adhered": False, "evidence": "missing"},
+            "6b": {"adhered": None, "evidence": "N/A (unmatched cohort)"},
+            "14c": {"adhered": True, "evidence": "median follow-up 3.1 years"},
+        }
+        applicable = [v for v in raw.values() if v["adhered"] is not None]
+        adhered = sum(1 for v in applicable if v["adhered"] is True)
+        assert len(applicable) == 3
+        assert adhered == 2
+        assert round(adhered / len(applicable), 3) == 0.667
+
+
+# ─────────────────────────────────────────────
 # Primary-outcome picker
 # ─────────────────────────────────────────────
 class TestPrimaryOutcome:
@@ -375,8 +665,10 @@ class TestPromptCatalog:
         assert "overview" in cat
         assert "rob_tools" in cat
         assert "rob2" in cat["rob_tools"]
+        assert "robins_i" in cat["rob_tools"]
         assert "reporting_guidelines" in cat
         assert "consort2025" in cat["reporting_guidelines"]
+        assert "strobe" in cat["reporting_guidelines"]
         assert "grade" in cat
         assert cat["credit_cost_per_paper"] == qa.CREDIT_COST_QA_PER_PAPER
 
@@ -384,8 +676,19 @@ class TestPromptCatalog:
         cat = qa.prompt_catalog()
         rob2_cat = cat["rob_tools"]["rob2"]
         assert len(rob2_cat["domains"]) == 5
-        # Every domain must include its decision-tree source + prompt template.
         for d in rob2_cat["domains"]:
+            assert "def " in d["decision_tree_code"]
+            assert d["prompt_template"].strip()
+            assert d["signals"]
+
+    def test_robins_i_catalog_shows_decision_tree_code(self):
+        cat = qa.prompt_catalog()
+        robins_cat = cat["rob_tools"]["robins_i"]
+        assert len(robins_cat["domains"]) == 7
+        assert set(robins_cat["judgements"]) == {
+            "Low", "Moderate", "Serious", "Critical", "No information",
+        }
+        for d in robins_cat["domains"]:
             assert "def " in d["decision_tree_code"]
             assert d["prompt_template"].strip()
             assert d["signals"]
@@ -445,6 +748,37 @@ class TestFlattenForExport:
         assert row["filename"] == "trial.pdf"
         assert row["status"] == "error"
         assert row["error_message"] == "Classification failed"
+
+    def test_robins_i_row_uses_seven_domains(self):
+        result = {
+            "paper_id": 11, "filename": "cohort.pdf", "status": "ok",
+            "study_type": "Cohort Study", "rob_tool": "robins_i",
+            "primary_outcome": "Cardiovascular mortality",
+            "classification": {"study_type": "Cohort Study"},
+            "extracted_fields": {"citation_title": "Observational cohort"},
+            "rob_domains": {
+                "1": {"judgement": "Moderate", "signals": {"1.1": "Y", "1.4": "Y"}},
+                "2": {"judgement": "Low", "signals": {"2.1": "N", "2.4": "Y"}},
+                "3": {"judgement": "Low", "signals": {"3.1": "Y"}},
+                "4": {"judgement": "Low", "signals": {"4.1": "N"}},
+                "5": {"judgement": "Low", "signals": {"5.1": "Y"}},
+                "6": {"judgement": "Low", "signals": {"6.1": "N"}},
+                "7": {"judgement": "Low", "signals": {"7.1": "N"}},
+            },
+            "rob_overall": "Moderate", "rob_direction": "NA",
+            "guideline": {"proportion": 0.71, "adhered": 22, "applicable": 31},
+            "guideline_proportion": 0.71, "guideline_adhered": 22, "guideline_applicable": 31,
+            "initial_grade": "Low", "updated_grade": "Very low",
+            "grade_explanation": "Downgraded 1 level for Moderate risk of bias (ROBINS-I).",
+        }
+        row = qa.flatten_result_row(result)
+        assert row["rob_overall"] == "Moderate"
+        assert row["rob_d1_judgement"] == "Moderate"
+        # Domains 6 and 7 only exist on ROBINS-I — the dispatch should surface them
+        assert row["rob_d6_judgement"] == "Low"
+        assert row["rob_d7_judgement"] == "Low"
+        assert row["rob_1.1"] == "Y"
+        assert row["rob_7.1"] == "N"
 
 
 # ─────────────────────────────────────────────
