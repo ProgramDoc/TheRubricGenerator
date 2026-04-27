@@ -229,13 +229,39 @@ html, body { height: 100%; overflow: hidden; font-family: 'IBM Plex Sans', sans-
 }
 .paper-act-btn:hover { background: rgba(220,38,38,.3); color: #fca5a5; }
 
-/* Move-to-project select — visible on hover */
-.move-select {
-  display: none; font-size: 9px; padding: 1px 2px; border-radius: 3px; margin-top: 4px;
-  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
-  color: rgba(255,255,255,.4); font-family: inherit; cursor: pointer; width: 100%;
+/* Project membership chips — replaces the old move-select dropdown */
+.proj-chips { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; align-items: center; }
+.proj-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 9.5px; padding: 1px 5px 1px 6px; border-radius: 9px;
+  background: rgba(124,58,237,.18); border: 1px solid rgba(124,58,237,.4);
+  color: rgba(255,255,255,.85); font-family: inherit; line-height: 1.5;
 }
-.paper-item:hover .move-select { display: block; }
+.proj-chip-x {
+  background: transparent; border: none; cursor: pointer; padding: 0 0 0 2px;
+  color: rgba(255,255,255,.55); font-size: 11px; line-height: 1;
+}
+.proj-chip-x:hover { color: #f87171; }
+.proj-chip.unassigned {
+  background: rgba(255,255,255,.06); border: 1px dashed rgba(255,255,255,.18);
+  color: rgba(255,255,255,.45); font-style: italic;
+}
+.proj-add-btn {
+  font-size: 10px; padding: 1px 6px; border-radius: 9px; line-height: 1.5;
+  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.15);
+  color: rgba(255,255,255,.6); cursor: pointer; font-family: inherit;
+}
+.proj-add-btn:hover { background: rgba(255,255,255,.14); color: rgba(255,255,255,.9); }
+.proj-add-pop {
+  position: absolute; z-index: 100; background: #1e2d42; border: 1px solid rgba(255,255,255,.15);
+  border-radius: 5px; padding: 5px; min-width: 160px; max-height: 200px; overflow-y: auto;
+  box-shadow: 0 4px 12px rgba(0,0,0,.4); font-size: 11px;
+}
+.proj-add-pop-opt {
+  padding: 4px 8px; cursor: pointer; color: #e2e8f0; border-radius: 3px;
+}
+.proj-add-pop-opt:hover { background: rgba(124,58,237,.3); }
+.proj-add-pop-opt.disabled { opacity: .4; cursor: not-allowed; }
 .move-select option { background: #1e2d42; color: #e2e8f0; }
 
 #upload-zone {
@@ -954,6 +980,11 @@ body.pane-resizing * { cursor: col-resize !important; user-select: none !importa
   <span id="user-display" class="tb-chrome" style="font-size:11px;color:rgba(255,255,255,.55);font-family:'IBM Plex Mono',monospace;"></span>
   <div class="tb-sep tb-chrome"></div>
   <button class="tb-btn" onclick="showBatchModal()" id="batch-btn" disabled title="Select papers in the sidebar to enable">&#9776; Batch</button>
+  <button class="tb-btn" id="active-runs-pill" onclick="showActiveRunsModal()"
+          title="Custom-extraction runs in progress"
+          style="display:none;background:#7c3aed;color:#fff;border-color:#7c3aed;">
+    <span id="active-runs-pill-label">&#9654; 0 running</span>
+  </button>
   <button class="tb-btn" onclick="showExportDialog()">⬇ Export CSV</button>
   <button class="tb-btn primary" onclick="saveAnnotation()" id="save-btn">Save</button>
   <span id="save-status">no paper selected</span>
@@ -1074,6 +1105,10 @@ body.pane-resizing * { cursor: col-resize !important; user-select: none !importa
             <option value="">— select a saved schema —</option>
           </select>
           <div style="font-size:10px;color:var(--muted);margin-top:4px;">Save a schema first in the ✨ Custom tab if the list is empty.</div>
+          <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11.5px;cursor:pointer;">
+            <input type="checkbox" id="batch-show-reasoning">
+            <span>&#129504; Show model reasoning <span style="opacity:.55;">(per paper, ~50% more credits)</span></span>
+          </label>
         </div>
       </div>
 
@@ -1130,6 +1165,15 @@ body.pane-resizing * { cursor: col-resize !important; user-select: none !importa
   <!-- ── TAB: Form (the existing annotation form) ──────────────────────── -->
   <div class="rp-pane active" id="tab-pane-form">
   <div id="form-scroll">
+
+    <!-- Custom-schema extractions for this paper (read-only, populated from annotator_custom_runs) -->
+    <div id="custom-runs-panel" style="display:none;margin:8px 12px 12px;padding:10px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:6px;font-size:11px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;" onclick="toggleCustomRunsPanel()">
+        <div style="font-weight:600;color:#5b21b6;">&#10024; Custom-schema extractions <span id="custom-runs-count" style="opacity:.6;font-weight:normal;"></span></div>
+        <span id="custom-runs-toggle" style="opacity:.6;font-size:13px;">&#9660;</span>
+      </div>
+      <div id="custom-runs-body" style="margin-top:10px;"></div>
+    </div>
 
     <!-- Stage 1: Classification -->
     <div class="form-section">
@@ -1393,6 +1437,16 @@ body.pane-resizing * { cursor: col-resize !important; user-select: none !importa
                 style="font-size:11px;padding:5px 10px;">← Back to annotator</button>
         <span style="font-size:10px;color:var(--muted);font-family:'IBM Plex Mono',monospace;letter-spacing:.04em;text-transform:uppercase;">Past runs</span>
       </div>
+
+      <!-- Recent activity (classify / prefill / custom across all action types) -->
+      <div id="recent-activity-panel" style="margin-bottom:12px;padding:8px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <div style="font-weight:600;color:#334155;text-transform:uppercase;letter-spacing:.04em;font-size:10px;">Recent activity</div>
+          <button class="tb-btn" onclick="loadRecentActivity()" title="Refresh activity" style="font-size:10px;padding:3px 6px;">↻</button>
+        </div>
+        <div id="recent-activity-body" style="max-height:160px;overflow:auto;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#475569;">Loading…</div>
+      </div>
+
       <!-- Run picker + per-run actions -->
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:10px;">
         <select id="runs-select" onchange="loadRun(this.value)" style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:3px;font-family:inherit;font-size:11px;background:#fff;outline:none;">
@@ -1404,7 +1458,7 @@ body.pane-resizing * { cursor: col-resize !important; user-select: none !importa
                 style="font-size:11px;padding:5px 10px;background:rgba(220,38,38,.08);border-color:rgba(220,38,38,.35);color:#b91c1c;">✕ Delete</button>
         <button class="tb-btn" onclick="loadRuns()" title="Refresh" style="font-size:11px;padding:5px 8px;">↻</button>
       </div>
-      <div id="run-detail" style="font-size:11px;color:var(--muted);">Select a run to see extracted values across papers.</div>
+      <div id="run-detail" style="font-size:11px;color:var(--muted);">Custom-schema runs appear here. For Form-tab fields populated by Classify or Prefill, click a paper in the sidebar — values load into the Form tab automatically.</div>
       <div id="run-table-host" style="overflow:auto;max-height:calc(100vh - 180px);"></div>
     </div>
   </div><!-- /tab-pane-results -->
@@ -1413,6 +1467,15 @@ body.pane-resizing * { cursor: col-resize !important; user-select: none !importa
 </div><!-- /form-panel -->
 
 </div><!-- /layout -->
+
+<!-- ── ACTIVE RUNS MODAL — live progress for in-flight custom extractions ── -->
+<div id="active-runs-modal" class="modal-overlay" onclick="if(event.target===this)hideActiveRunsModal()" style="display:none;">
+  <div class="modal-box" style="max-width:760px;width:90vw;max-height:80vh;display:flex;flex-direction:column;">
+    <div class="modal-title">&#9654; Custom extraction runs</div>
+    <div id="active-runs-list" style="flex:1;overflow:auto;font-family:'IBM Plex Mono',monospace;font-size:11px;line-height:1.5;background:#0f172a;color:#e2e8f0;padding:12px;border-radius:6px;margin-bottom:12px;">Loading…</div>
+    <button class="modal-cancel" onclick="hideActiveRunsModal()">Close</button>
+  </div>
+</div>
 
 <!-- ── EXPORT MODAL ────────────────────────────────────────────────────────── -->
 <div id="export-modal" class="modal-overlay" onclick="if(event.target===this)closeExportModal()">
@@ -3064,9 +3127,18 @@ function renderSidebar() {
 function filteredPapers() {
   const val = document.getElementById('project-filter').value;
   if (val === '') return allPapers;                       // all projects
-  if (val === '0') return allPapers.filter(p => !p.project_id);   // unassigned
+  if (val === '0') {
+    // Unassigned = no membership in any project (junction empty AND no legacy primary).
+    return allPapers.filter(p => {
+      const ids = Array.isArray(p.project_ids) ? p.project_ids : [];
+      return ids.length === 0 && !p.project_id;
+    });
+  }
   const pid = parseInt(val);
-  return allPapers.filter(p => p.project_id === pid);
+  return allPapers.filter(p => {
+    const ids = Array.isArray(p.project_ids) ? p.project_ids : [];
+    return ids.includes(pid) || p.project_id === pid;     // junction OR legacy primary
+  });
 }
 
 function onProjectFilterChange() { renderSidebar(); }
@@ -3122,25 +3194,116 @@ function buildPaperItem(p, projLabel) {
   chip.textContent = done ? (p.ann_status === 'complete' ? 'complete' : p.ann_status) : 'pending';
   bottomRow.appendChild(chip);
 
-  // Move-to-project dropdown (visible on hover — same `.move-select` styling as before)
-  const sel = document.createElement('select');
-  sel.className = 'move-select';
-  sel.title = 'Move to project';
-  sel.innerHTML = `<option value="">move to…</option>
-    <option value="0">— Unassigned —</option>
-    ${allProjects.map(proj =>
-      `<option value="${proj.id}" ${p.project_id === proj.id ? 'selected' : ''}>${escHtml(proj.name)}</option>`
-    ).join('')}`;
-  sel.addEventListener('change', ev => {
-    ev.stopPropagation();
-    const val = ev.target.value;
-    if (val !== '') assignPaperToProject(p.id, val === '0' ? null : parseInt(val));
-  });
-  sel.addEventListener('click', ev => ev.stopPropagation());
-  bottomRow.appendChild(sel);
-
   div.appendChild(bottomRow);
+
+  // Project membership chips (multi-project — uses paper_projects junction).
+  const chipsRow = document.createElement('div');
+  chipsRow.className = 'proj-chips';
+  const memberIds = Array.isArray(p.project_ids) && p.project_ids.length
+    ? p.project_ids
+    : (p.project_id ? [p.project_id] : []);  // back-compat fallback
+  if (memberIds.length === 0) {
+    const unassigned = document.createElement('span');
+    unassigned.className = 'proj-chip unassigned';
+    unassigned.textContent = 'unassigned';
+    chipsRow.appendChild(unassigned);
+  } else {
+    for (const projId of memberIds) {
+      const proj = allProjects.find(x => x.id === projId);
+      const chip = document.createElement('span');
+      chip.className = 'proj-chip';
+      chip.title = 'Click ✕ to remove from this project';
+      const label = document.createElement('span');
+      label.textContent = proj ? proj.name : `#${projId}`;
+      chip.appendChild(label);
+      const x = document.createElement('button');
+      x.className = 'proj-chip-x';
+      x.textContent = '\u00D7';
+      x.title = 'Remove from project';
+      x.addEventListener('click', ev => {
+        ev.stopPropagation();
+        removePaperFromProject(p.id, projId);
+      });
+      chip.appendChild(x);
+      chipsRow.appendChild(chip);
+    }
+  }
+
+  // "+ Project" button → small popover with all projects the paper isn't in.
+  const addBtn = document.createElement('button');
+  addBtn.className = 'proj-add-btn';
+  addBtn.textContent = '+ project';
+  addBtn.title = 'Add this paper to a project';
+  addBtn.addEventListener('click', ev => {
+    ev.stopPropagation();
+    showProjectAddPopover(addBtn, p.id, memberIds);
+  });
+  chipsRow.appendChild(addBtn);
+
+  div.appendChild(chipsRow);
   return div;
+}
+
+// Tiny popover that lists the projects the paper is NOT yet in.
+function showProjectAddPopover(anchor, paperId, currentIds) {
+  // Close any existing popover.
+  document.querySelectorAll('.proj-add-pop').forEach(n => n.remove());
+  const pop = document.createElement('div');
+  pop.className = 'proj-add-pop';
+  const available = allProjects.filter(p => !currentIds.includes(p.id));
+  if (available.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'proj-add-pop-opt disabled';
+    empty.textContent = '(no other projects)';
+    pop.appendChild(empty);
+  } else {
+    for (const proj of available) {
+      const opt = document.createElement('div');
+      opt.className = 'proj-add-pop-opt';
+      opt.textContent = proj.name;
+      opt.addEventListener('click', ev => {
+        ev.stopPropagation();
+        pop.remove();
+        addPaperToProject(paperId, proj.id);
+      });
+      pop.appendChild(opt);
+    }
+  }
+  // Position below the anchor.
+  const rect = anchor.getBoundingClientRect();
+  pop.style.top  = (rect.bottom + window.scrollY + 4) + 'px';
+  pop.style.left = (rect.left + window.scrollX) + 'px';
+  document.body.appendChild(pop);
+  // Dismiss on outside click.
+  setTimeout(() => {
+    const dismiss = (e) => {
+      if (!pop.contains(e.target)) {
+        pop.remove();
+        document.removeEventListener('mousedown', dismiss);
+      }
+    };
+    document.addEventListener('mousedown', dismiss);
+  }, 0);
+}
+
+async function addPaperToProject(paperId, projectId) {
+  try {
+    const r = await fetch(`/api/papers/${paperId}/projects/${projectId}`, { method: 'POST' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    await loadPapersAndProjects();
+  } catch (e) {
+    alert('Add failed: ' + e.message);
+  }
+}
+
+async function removePaperFromProject(paperId, projectId) {
+  try {
+    const r = await fetch(`/api/papers/${paperId}/projects/${projectId}`, { method: 'DELETE' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    await loadPapersAndProjects();
+  } catch (e) {
+    alert('Remove failed: ' + e.message);
+  }
 }
 
 function toggleProject(id) {
@@ -3574,6 +3737,189 @@ function _logBatch(msg, kind) {
   host.scrollTop = host.scrollHeight;
 }
 
+// Track active runs so we can show a "▶ Run in progress" pill in the topbar
+// even after the user closes the batch modal.
+let _activeRunPollers = new Map();  // run_id -> { lastEventId, intervalId }
+
+async function streamRunEvents(runId, onEvent, onComplete) {
+  // Poll /api/annotator/runs/{runId}/events?after=<id> every 3s until run_complete
+  // arrives or 15 minutes elapse. Default behavior: append each event to
+  // #batch-progress-list (the batch modal). Overridable via callbacks for the
+  // active-runs pill modal that reuses this loop.
+  let lastEventId = (_activeRunPollers.get(runId) || {}).lastEventId || 0;
+  const start = Date.now();
+  const MAX_MS = 15 * 60 * 1000;
+  return new Promise((resolve) => {
+    const poll = async () => {
+      try {
+        const r = await fetch(`/api/annotator/runs/${runId}/events?after=${lastEventId}`);
+        if (!r.ok) {
+          if (r.status === 404) { stop(); resolve(); return; }
+          return;  // transient — try again next tick
+        }
+        const body = await r.json();
+        const events = body.events || [];
+        for (const ev of events) {
+          lastEventId = Math.max(lastEventId, ev.id);
+          if (onEvent) onEvent(ev);
+          else _logBatchEvent(ev);
+        }
+        // Track cursor on the active-runs map so reopening the modal picks up where we left off.
+        if (_activeRunPollers.has(runId)) {
+          _activeRunPollers.get(runId).lastEventId = lastEventId;
+        }
+        const done = (body.run_status && body.run_status !== 'running' && body.run_status !== 'pending')
+                  || events.some(e => e.event_type === 'run_complete');
+        if (done) { stop(); if (onComplete) onComplete(body.run_status); resolve(); return; }
+      } catch (e) { /* transient — try again */ }
+      if (Date.now() - start > MAX_MS) { stop(); resolve(); }
+    };
+    const intervalId = setInterval(poll, 3000);
+    _activeRunPollers.set(runId, { lastEventId, intervalId });
+    poll();  // fire immediately, don't wait 3s for the first sample
+    function stop() {
+      const meta = _activeRunPollers.get(runId);
+      if (meta && meta.intervalId) clearInterval(meta.intervalId);
+      _activeRunPollers.delete(runId);
+      refreshActiveRunsPill();
+    }
+    // Update topbar pill on entry too.
+    refreshActiveRunsPill();
+  });
+}
+
+function _logBatchEvent(ev) {
+  // Render a streamed run event into the batch modal log.
+  const t = ev.event_type;
+  // The reasoning event renders as a collapsible block, not a plain line.
+  if (t === 'paper_thinking') {
+    _logBatchThinking(ev);
+    return;
+  }
+  let kind = '';
+  let prefix = '    ';
+  if (t === 'paper_done')      { kind = 'ok';  prefix = '    ✓ '; }
+  else if (t === 'paper_error' || t === 'paper_skipped') { kind = 'err'; prefix = '    ✗ '; }
+  else if (t === 'run_complete') { kind = 'ok';  prefix = '  ▣ '; }
+  else if (t === 'run_started')  { kind = '';   prefix = '  ▶ '; }
+  _logBatch(prefix + ev.message, kind);
+}
+
+function _logBatchThinking(ev) {
+  // Render a Claude extended-thinking dump as a collapsible <details> block.
+  const host = document.getElementById('batch-progress-list');
+  if (!host) return;
+  const det = document.createElement('details');
+  det.style.cssText = 'margin:4px 0 4px 28px;';
+  const summary = document.createElement('summary');
+  summary.style.cssText = 'cursor:pointer;color:#7c3aed;font-size:11px;';
+  const detail = ev.detail || {};
+  const thinking = detail.thinking || '';
+  summary.textContent = `\u{1F9E0} ${ev.message} — click to expand`;
+  det.appendChild(summary);
+  const pre = document.createElement('pre');
+  pre.style.cssText = 'white-space:pre-wrap;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:4px;padding:8px;margin:4px 0 0;font-family:inherit;font-size:11px;line-height:1.5;color:#1e1b4b;max-height:240px;overflow:auto;';
+  pre.textContent = thinking || '(no reasoning captured)';
+  det.appendChild(pre);
+  host.appendChild(det);
+  host.scrollTop = host.scrollHeight;
+}
+
+function refreshActiveRunsPill() {
+  const pill = document.getElementById('active-runs-pill');
+  if (!pill) return;
+  const n = _activeRunPollers.size;
+  if (n === 0) {
+    pill.style.display = 'none';
+  } else {
+    pill.style.display = '';
+    document.getElementById('active-runs-pill-label').textContent =
+      `\u25B6 ${n} run${n === 1 ? '' : 's'} in progress`;
+  }
+}
+
+// ── Active-runs modal ────────────────────────────────────────────────────
+// One <div> per active run with its own scrolling event log. Subscribes to
+// streamRunEvents with custom callbacks so we don't double-render into the
+// batch-modal log.
+let _activeRunsModalSubs = new Map();  // run_id -> { cleanup: fn }
+
+function showActiveRunsModal() {
+  const modal = document.getElementById('active-runs-modal');
+  const host  = document.getElementById('active-runs-list');
+  if (!modal || !host) return;
+  modal.style.display = 'flex';
+  if (_activeRunPollers.size === 0) {
+    host.innerHTML = '<em style="opacity:.6;">No active runs.</em>';
+    return;
+  }
+  host.innerHTML = '';
+  for (const runId of _activeRunPollers.keys()) {
+    const block = document.createElement('div');
+    block.style.cssText = 'margin-bottom:14px;border-left:3px solid #7c3aed;padding-left:10px;';
+    block.innerHTML = `<div style="font-weight:600;margin-bottom:4px;color:#a78bfa;">Run #${runId}</div>
+                       <div class="arm-log" data-run="${runId}" style="white-space:pre-wrap;"></div>`;
+    host.appendChild(block);
+
+    // Hook a side-channel poller for this modal pane. We DON'T overwrite the
+    // primary streamRunEvents loop — we just open a second one whose only job
+    // is rendering into this pane. The polling endpoint is cheap.
+    const logEl = block.querySelector('.arm-log');
+    let cursor = 0;
+    const poll = async () => {
+      try {
+        const r = await fetch(`/api/annotator/runs/${runId}/events?after=${cursor}`);
+        if (!r.ok) return;
+        const body = await r.json();
+        for (const ev of body.events || []) {
+          cursor = Math.max(cursor, ev.id);
+          const line = document.createElement('div');
+          const t = ev.event_type;
+          let color = '#cbd5e1';
+          if (t === 'paper_done')   color = '#34d399';
+          if (t === 'paper_error' || t === 'paper_skipped') color = '#fca5a5';
+          if (t === 'run_complete') color = '#a7f3d0';
+          line.style.color = color;
+          line.textContent = ev.message;
+          logEl.appendChild(line);
+        }
+        logEl.scrollTop = logEl.scrollHeight;
+        if (body.run_status && body.run_status !== 'running' && body.run_status !== 'pending') {
+          cleanup();
+        }
+      } catch (e) {}
+    };
+    const intervalId = setInterval(poll, 3000);
+    poll();
+    const cleanup = () => clearInterval(intervalId);
+    _activeRunsModalSubs.set(runId, { cleanup });
+  }
+}
+
+function hideActiveRunsModal() {
+  document.getElementById('active-runs-modal').style.display = 'none';
+  for (const sub of _activeRunsModalSubs.values()) {
+    try { sub.cleanup(); } catch (e) {}
+  }
+  _activeRunsModalSubs.clear();
+}
+
+async function pickupInFlightRuns() {
+  // On page load (and after a refresh), find any runs the server still has
+  // status='running' and re-attach the streaming poller so the pill shows up.
+  try {
+    const r = await fetch('/api/annotator/runs');
+    if (!r.ok) return;
+    const runs = await r.json();
+    for (const run of runs) {
+      if (run.status === 'running') {
+        // Fire and forget — the poller cleans up its own state.
+        streamRunEvents(run.id);
+      }
+    }
+  } catch (e) { /* non-fatal */ }
+}
+
 async function runBatch() {
   if (batchRunning) return;
   const doClassify = document.getElementById('batch-step-classify').checked;
@@ -3690,11 +4036,12 @@ async function runBatch() {
     if (!customSid) {
       _logBatch('Custom schema: no schema selected — skipping.', 'err');
     } else {
-      _logBatch(`Custom schema: running on ${paperIds.length} paper(s)…`);
+      const showReasoning = document.getElementById('batch-show-reasoning').checked;
+      _logBatch(`Custom schema: running on ${paperIds.length} paper(s)${showReasoning ? ' with reasoning' : ''}…`);
       try {
         const r = await fetch(`/api/annotator/schemas/${customSid}/run`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ paper_ids: paperIds }),
+          body: JSON.stringify({ paper_ids: paperIds, thinking_enabled: showReasoning }),
         });
         if (!r.ok) {
           const err = await r.json().catch(() => ({}));
@@ -3706,11 +4053,21 @@ async function runBatch() {
           const body = await r.json();
           customRunId = body.run_id;
           _logBatch(`    custom run #${customRunId}: ${body.status}`, 'ok');
+          // Stream live progress events from the worker into the batch log.
+          if (body.status === 'running' || body.status === 'complete') {
+            await streamRunEvents(customRunId);
+          }
         }
       } catch (e) {
         _logBatch(`    custom run error: ${e.message}`, 'err');
       }
     }
+  }
+
+  // If the currently-loaded paper was in this batch, refresh the Form tab so
+  // newly-extracted values appear immediately instead of needing a re-click.
+  if (currentPaperId && paperIds.includes(currentPaperId)) {
+    try { await loadExistingAnnotation(); } catch (e) { /* non-fatal */ }
   }
 
   _logBatch(`Done — ${ok} ok, ${failed} failed, ${skipped} skipped.`,
@@ -3834,6 +4191,66 @@ async function loadExistingAnnotation() {
   } else {
     document.getElementById('save-status').textContent = currentFilename;
   }
+
+  // Refresh the "Custom-schema extractions" panel with any AI-extracted values
+  // for this paper. Decoupled from the canonical annotation so manual edits
+  // are never overwritten.
+  loadCustomRunsForPaper(currentPaperId);
+}
+
+let _customRunsCollapsed = false;
+
+async function loadCustomRunsForPaper(paperId) {
+  const panel = document.getElementById('custom-runs-panel');
+  const body  = document.getElementById('custom-runs-body');
+  const count = document.getElementById('custom-runs-count');
+  if (!panel || !body) return;
+  panel.style.display = 'none';
+  body.innerHTML = '';
+  if (!paperId) return;
+  try {
+    const r = await fetch(`/api/annotator/papers/${paperId}/custom-runs`);
+    if (!r.ok) return;
+    const runs = await r.json();
+    if (!runs.length) return;
+    panel.style.display = 'block';
+    count.textContent = `(${runs.length} run${runs.length === 1 ? '' : 's'})`;
+    body.innerHTML = runs.map(run => {
+      const when = (run.created_at || '').replace('T', ' ').slice(0, 16);
+      const okBadge = run.status === 'ok'
+        ? '<span style="background:#10b981;color:#fff;padding:1px 5px;border-radius:3px;font-size:10px;">OK</span>'
+        : `<span style="background:#ef4444;color:#fff;padding:1px 5px;border-radius:3px;font-size:10px;">${escHtml(run.status)}</span>`;
+      const fieldRows = (run.fields || []).map(f =>
+        `<tr>
+           <td style="padding:3px 6px;color:#475569;vertical-align:top;width:35%;">${escHtml(f.label)}</td>
+           <td style="padding:3px 6px;color:#0f172a;">${f.value ? escHtml(f.value) : '<em style="color:#94a3b8;">—</em>'}</td>
+         </tr>`
+      ).join('');
+      return `
+        <div style="margin-bottom:14px;border-left:3px solid #7c3aed;padding-left:10px;">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+            <strong style="color:#0f172a;">${escHtml(run.schema_name)}</strong>
+            ${okBadge}
+            <span style="color:#64748b;font-size:10px;">run #${run.run_id} · ${escHtml(when)}</span>
+          </div>
+          ${run.error ? `<div style="color:#b91c1c;font-size:10px;margin-bottom:4px;">${escHtml(run.error)}</div>` : ''}
+          ${fieldRows ? `<table style="width:100%;border-collapse:collapse;font-size:11px;">${fieldRows}</table>` : ''}
+        </div>`;
+    }).join('');
+    // Honor previous collapsed/expanded state across paper switches.
+    if (_customRunsCollapsed) {
+      body.style.display = 'none';
+      document.getElementById('custom-runs-toggle').textContent = '\u25B6';
+    }
+  } catch (e) { /* non-fatal */ }
+}
+
+function toggleCustomRunsPanel() {
+  _customRunsCollapsed = !_customRunsCollapsed;
+  const body = document.getElementById('custom-runs-body');
+  const toggle = document.getElementById('custom-runs-toggle');
+  if (body)   body.style.display = _customRunsCollapsed ? 'none' : 'block';
+  if (toggle) toggle.textContent = _customRunsCollapsed ? '\u25B6' : '\u25BC';
 }
 
 async function saveAnnotation() {
@@ -4144,7 +4561,61 @@ async function loadRuns() {
     }).join('');
     document.getElementById('rp-runs-count').textContent = runs.length ? '(' + runs.length + ')' : '';
     if (_currentRunId) sel.value = _currentRunId;
+    // Empty-state hint: explain what runs are and how to create one.
+    if (runs.length === 0 && !_currentRunId) {
+      document.getElementById('run-detail').innerHTML =
+        'No custom-schema runs yet. To create one: open the &#9776; Batch modal, ' +
+        'check "Custom schema", pick a schema, then Run.<br>' +
+        '<em style="opacity:.7;">Classify and Prefill outputs are not shown here — ' +
+        "they go to each paper's Form tab.</em>";
+    }
   } catch(e) {}
+  // Refresh the unified activity log alongside runs (cheap and gives the user
+  // visibility into classify/prefill events that don't create custom-run rows).
+  loadRecentActivity();
+}
+
+async function loadRecentActivity() {
+  const body = document.getElementById('recent-activity-body');
+  if (!body) return;
+  try {
+    const r = await fetch('/api/annotator/actions?limit=50');
+    if (!r.ok) { body.textContent = 'Activity unavailable.'; return; }
+    const actions = await r.json();
+    if (!actions.length) {
+      body.innerHTML = '<em style="color:#94a3b8;">No activity yet. Run Classify, Prefill, or a Custom schema to see events here.</em>';
+      return;
+    }
+    const typeBadge = (t) => {
+      const colors = { classify: '#0ea5e9', prefill: '#10b981', custom: '#7c3aed' };
+      return `<span style="background:${colors[t] || '#64748b'};color:#fff;padding:1px 5px;border-radius:3px;font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;">${escHtml(t)}</span>`;
+    };
+    const statusBadge = (s) => {
+      if (s === 'ok') return '<span style="color:#059669;">&#10003; ok</span>';
+      if (s === 'error') return '<span style="color:#dc2626;">&#10007; error</span>';
+      return `<span style="color:#a16207;">${escHtml(s)}</span>`;
+    };
+    body.innerHTML = actions.map(a => {
+      const when = (a.created_at || '').replace('T', ' ').slice(0, 16);
+      const filename = a.paper_filename || (a.paper_id ? `#${a.paper_id}` : '—');
+      const extra = a.action_type === 'custom' && a.schema_name
+        ? ` <span style="opacity:.6;">(${escHtml(a.schema_name)})</span>` : '';
+      const errMsg = a.detail && a.detail.error
+        ? ` <span style="color:#b91c1c;opacity:.8;">— ${escHtml(String(a.detail.error).slice(0, 80))}</span>` : '';
+      // Filename is clickable when we have a paper_id — jumps to Form tab.
+      const fnameHtml = a.paper_id
+        ? `<a href="javascript:void(0)" onclick="loadPdf(${a.paper_id}, ${JSON.stringify(filename)}); showRpTab('form');" style="color:#0f172a;text-decoration:none;border-bottom:1px dashed #cbd5e1;">${escHtml(filename)}</a>`
+        : `<span style="color:#0f172a;">${escHtml(filename)}</span>`;
+      return `<div style="display:flex;gap:6px;align-items:center;padding:3px 0;border-bottom:1px solid #f1f5f9;flex-wrap:wrap;">
+        <span style="opacity:.55;font-size:10px;width:118px;flex-shrink:0;">${escHtml(when)}</span>
+        ${typeBadge(a.action_type)}
+        ${statusBadge(a.status)}
+        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${fnameHtml}${extra}${errMsg}</span>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    body.textContent = 'Activity unavailable.';
+  }
 }
 
 async function loadRun(runId) {
@@ -4214,14 +4685,32 @@ function renderRunTable() {
       const v = (entry.fields || {})[f.id] || '';
       return `<td class="${cls}">${escHtml(String(v))}</td>`;
     }).join('');
-    return `<tr>
-      <td title="paper ${pid}">${escHtml(entry.filename || ('#' + pid))}</td>
+    const fname = entry.filename || ('#' + pid);
+    return `<tr class="rt-paper-row" data-pid="${escHtml(pid)}" data-filename="${escHtml(fname)}" tabindex="0" role="button" aria-label="Open ${escHtml(fname)} in Form tab" title="Click or press Enter to open this paper in the Form tab" style="cursor:pointer;">
+      <td>${escHtml(fname)}</td>
       <td class="${cls}">${escHtml(entry.status)}${entry.error ? ' — ' + escHtml(entry.error) : ''}</td>
       ${cells}
     </tr>`;
   }).join('');
   document.getElementById('run-table-host').innerHTML =
     '<table class="rt-table"><thead><tr>' + headerCells + '</tr></thead><tbody>' + rows + '</tbody></table>';
+  // Make each row jump to the paper + Form tab so the user can review extracted values in context.
+  // Mouse and keyboard (Enter / Space) both work — keyboard nav uses tabindex=0 + role=button on the <tr>.
+  const openRow = (tr) => {
+    const pid = parseInt(tr.dataset.pid);
+    if (!pid) return;
+    loadPdf(pid, tr.dataset.filename || ('#' + pid));
+    showRpTab('form');
+  };
+  document.querySelectorAll('#run-table-host .rt-paper-row').forEach(tr => {
+    tr.addEventListener('click', () => openRow(tr));
+    tr.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Spacebar') {
+        ev.preventDefault();
+        openRow(tr);
+      }
+    });
+  });
 }
 
 function exportRunCsv() {
@@ -4263,6 +4752,12 @@ document.getElementById('file-input').addEventListener('change', function () {
       onProjectFilterChange();
     }
   }
+  // Auto-open a specific paper when ?paper_id=N is set (used by /library cards).
+  const paperIdParam = params.get('paper_id');
+  if (paperIdParam) {
+    const target = allPapers.find(p => String(p.id) === paperIdParam);
+    if (target) loadPdf(target.id, target.filename);
+  }
 
   // Restore the last-active right-pane tab
   try {
@@ -4271,6 +4766,10 @@ document.getElementById('file-input').addEventListener('change', function () {
       showRpTab(saved);
     }
   } catch(e) {}
+
+  // Re-attach progress streamers to any custom-extraction runs the server
+  // still considers in-progress (covers page refreshes and tab close).
+  pickupInFlightRuns();
 })();
 
 /* ─────────────────────────────────────────────────────────────────

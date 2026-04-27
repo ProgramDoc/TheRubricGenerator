@@ -3,174 +3,173 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>The AI Researcher — Community Library</title>
+<title>The AI Researcher — Library</title>
 <link rel="stylesheet" href="/static/_shared/design.css">
 <style>
-  /* ─── Shared design tokens ─────────────────────────────────────────
-     Load the global Paper theme (Geist + Source Serif 4 + JetBrains
-     Mono) and remap this page's legacy --navy/--blue/--sky/etc.
-     variables onto the shared tokens. Existing layout CSS below keeps
-     working; new rules should use the shared tokens directly. */
-  :root {
-    --navy:   oklch(0.22 0.025 260);
-    --blue:   var(--accent);
-    --sky:    var(--accent);
-    --green:  var(--ok);
-    --red:    var(--err);
-    --amber:  var(--warn);
-    --purple: oklch(0.46 0.12 300);
-    --gold:   oklch(0.76 0.11 85);
-    --bg:     var(--paper-2);
-    --card:   var(--paper);
-    --border: var(--rule);
-    --text:   var(--ink);
-    --muted:  var(--ink-3);
-  }
-  html, body { font-family: var(--sans) !important; background: var(--paper-2) !important; color: var(--ink) !important; }
-  .topbar {
-    background: var(--paper) !important;
-    color: var(--ink) !important;
-    border-bottom: 1px solid var(--rule) !important;
-    box-shadow: none !important;
-    height: var(--topbar-h) !important;
-    padding: 0 16px !important;
-    gap: 14px !important;
-  }
-  .topbar nav a, .topbar .nav a { color: var(--ink-2) !important; }
-  .topbar nav a:hover, .topbar .nav a:hover,
-  .topbar nav a.active, .topbar .nav a.is-active {
-    background: var(--paper-2) !important; color: var(--ink) !important;
-  }
-  .topbar .user-badge {
-    background: transparent !important;
-    color: var(--ink-3) !important;
-    border: 1px solid var(--rule) !important; border-radius: 999px !important;
-    font-family: var(--mono) !important; font-size: 10.5px !important;
-  }
-  .topbar .signout-btn {
-    color: var(--ink-2) !important;
-    border: 1px solid var(--rule) !important; background: transparent !important;
-    font-family: var(--sans) !important;
-  }
-  .topbar .signout-btn:hover { background: var(--paper-2) !important; border-color: var(--rule-2) !important; color: var(--ink) !important; }
-  .nav-dropdown-menu, .nav-settings-menu {
-    background: var(--paper) !important;
-    border: 1px solid var(--rule) !important;
-    box-shadow: var(--shadow-3) !important;
-  }
-  .nav-dropdown-menu a, .nav-settings-menu a { color: var(--ink-2) !important; }
-  .nav-dropdown-menu a:hover, .nav-settings-menu a:hover {
-    background: var(--paper-2) !important; color: var(--ink) !important;
-  }
-  .nav-settings .settings-icon { color: var(--ink-3) !important; }
-  .nav-settings .settings-icon:hover { color: var(--ink) !important; }
-  .topbar .badge {
-    background: var(--warn-soft) !important; color: var(--warn) !important;
-  }
-* { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; min-height: 100vh; }
+  /* ── Library page layout: filter rail on the left, card grid on the right.
+     Reuses the shared paper theme (topbar, fonts, accents) so it matches
+     /dashboard, /annotator, etc. */
+  .in-iframe .topbar { display: none !important; }
+  .in-iframe body { padding-top: 0 !important; }
 
-.topbar { background: var(--navy); color: #fff; padding: 12px 28px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
-.in-iframe .topbar { display: none !important; }
-.in-iframe body { padding-top: 0 !important; }
-.topbar .brand { font-size: 16px; font-weight: 700; letter-spacing: -.3px; }
-.topbar .brand span { color: var(--sky); }
-.topbar nav { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
-.topbar nav a { font-family: inherit; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); padding: 6px 12px; border-radius: 5px; text-decoration: none; }
-.topbar nav a:hover { background: rgba(255,255,255,.08); color: #fff; }
-.topbar nav a.active { background: rgba(255,255,255,.15); color: #fff; }
-.topbar .user-badge { margin-left: 14px; padding: 4px 10px; background: rgba(255,255,255,.1); border-radius: 4px; font-size: 11px; color: rgba(255,255,255,.85); }
-.topbar .signout-btn { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); padding: 6px 12px; border-radius: 5px; font-family: inherit; font-size: 11px; font-weight: 600; cursor: pointer; margin-left: 10px; }
+  body { background: oklch(0.98 0.005 80); }
 
-.container { max-width: 1100px; margin: 0 auto; padding: 28px; }
-.page-title { font-size: 22px; font-weight: 700; color: var(--navy); margin-bottom: 4px; letter-spacing: -.3px; }
-.page-subtitle { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
+  .layout {
+    display: grid; grid-template-columns: 260px 1fr;
+    min-height: calc(100vh - var(--topbar-h));
+  }
 
-/* Filters */
-.filter-bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin-bottom: 20px; }
-.filter-group { display: flex; flex-direction: column; gap: 4px; }
-.filter-group label { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
-.filter-group select, .filter-group input {
-  font-family: inherit; font-size: 12px; padding: 7px 12px; border: 1px solid var(--border);
-  border-radius: 5px; background: #fff; color: var(--text); min-width: 140px;
-}
-.btn { font-family: inherit; font-size: 12px; font-weight: 600; padding: 8px 16px; border-radius: 5px; cursor: pointer; border: none; }
-.btn-primary { background: var(--blue); color: #fff; }
-.btn-primary:hover { background: var(--navy); }
-.btn-secondary { background: transparent; color: var(--blue); border: 1px solid var(--border); }
-.btn-secondary:hover { background: #f0f4ff; }
-.btn-sm { font-size: 11px; padding: 5px 10px; }
+  /* ── Filter rail ── */
+  .rail {
+    background: var(--paper);
+    border-right: 1px solid var(--rule);
+    padding: 18px 16px;
+    overflow-y: auto;
+    height: calc(100vh - var(--topbar-h));
+    position: sticky; top: var(--topbar-h);
+  }
+  .rail-section { margin-bottom: 22px; }
+  .rail-h {
+    font-family: var(--mono); font-size: 10px; font-weight: 600;
+    color: var(--ink-3); letter-spacing: .14em; text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .rail input[type="search"], .rail select {
+    width: 100%; box-sizing: border-box; font-family: var(--sans);
+    font-size: 12px; padding: 6px 8px; border: 1px solid var(--rule);
+    border-radius: var(--radius-sm); background: var(--paper); color: var(--ink);
+    outline: none;
+  }
+  .rail input[type="search"]:focus, .rail select:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px oklch(from var(--accent) l c h / .14);
+  }
+  .filter-list { display: flex; flex-direction: column; gap: 4px; }
+  .filter-opt {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 6px; border-radius: 4px; cursor: pointer;
+    font-size: 12px; color: var(--ink-2); user-select: none;
+  }
+  .filter-opt:hover { background: oklch(from var(--ink) l c h / .04); }
+  .filter-opt.active { background: oklch(from var(--accent) l c h / .12); color: var(--ink); font-weight: 500; }
+  .filter-opt .pill-count {
+    margin-left: auto; font-family: var(--mono); font-size: 10px;
+    color: var(--ink-3); background: oklch(from var(--ink) l c h / .06);
+    padding: 1px 6px; border-radius: 8px;
+  }
 
-/* Template cards */
-.template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
-.template-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 18px; transition: box-shadow .15s; }
-.template-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,.06); }
-.template-card .tc-title { font-size: 14px; font-weight: 700; color: var(--navy); margin-bottom: 4px; }
-.template-card .tc-desc { font-size: 11.5px; color: var(--muted); margin-bottom: 10px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.template-card .tc-meta { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
-.tc-badge { font-size: 9.5px; font-weight: 700; padding: 2px 7px; border-radius: 3px; text-transform: uppercase; letter-spacing: .04em; }
-.tc-badge.classification { background: rgba(39,68,114,.12); color: var(--blue); }
-.tc-badge.extraction { background: rgba(22,163,74,.12); color: var(--green); }
-.tc-badge.risk_of_bias { background: rgba(220,38,38,.12); color: var(--red); }
-.tc-badge.comparative { background: rgba(124,58,237,.12); color: var(--purple); }
-.tc-badge.custom { background: rgba(100,116,139,.12); color: var(--muted); }
-.tc-stat { font-size: 11px; color: var(--muted); }
-.tc-stat strong { color: var(--text); }
-.stars { color: var(--gold); font-size: 13px; letter-spacing: 1px; }
-.template-card .tc-actions { display: flex; gap: 8px; margin-top: 10px; }
+  /* ── Main column ── */
+  .main { padding: 22px 28px; overflow-y: auto; }
+  .header-row { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+  .page-title {
+    font-family: var(--serif); font-size: 26px; font-weight: 600;
+    color: var(--ink); letter-spacing: -.02em;
+  }
+  .page-subtitle { color: var(--ink-3); font-size: 13px; margin-bottom: 18px; }
+  .toolbar {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 16px;
+    padding: 8px 10px; background: var(--paper); border: 1px solid var(--rule);
+    border-radius: var(--radius); box-shadow: var(--shadow-1);
+  }
+  .toolbar .count { font-family: var(--mono); font-size: 11px; color: var(--ink-3); margin-right: auto; }
+  .btn {
+    font-family: var(--sans); font-size: 12px; padding: 6px 12px;
+    border: 1px solid var(--rule); border-radius: var(--radius-sm);
+    background: var(--paper); color: var(--ink); cursor: pointer;
+    transition: background var(--t), border-color var(--t);
+  }
+  .btn:hover { background: oklch(from var(--ink) l c h / .04); }
+  .btn.primary { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .btn.primary:hover { background: oklch(from var(--ink) calc(l - .04) c h); }
+  .btn.danger { color: var(--err); border-color: oklch(from var(--err) l c h / .35); }
+  .btn.danger:hover { background: oklch(from var(--err) l c h / .08); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
 
-/* Pagination */
-.pagination { display: flex; gap: 8px; justify-content: center; margin-top: 24px; }
-.pagination button { font-family: inherit; font-size: 12px; padding: 6px 14px; border: 1px solid var(--border); border-radius: 5px; background: #fff; cursor: pointer; }
-.pagination button.active { background: var(--blue); color: #fff; border-color: var(--blue); }
-.pagination button:hover:not(.active) { background: #f0f4ff; }
+  /* ── Card grid ── */
+  .grid {
+    display: grid; gap: 14px;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  }
+  .card {
+    background: var(--paper); border: 1px solid var(--rule);
+    border-radius: var(--radius); padding: 14px 16px; cursor: pointer;
+    transition: border-color var(--t), box-shadow var(--t);
+    box-shadow: var(--shadow-1); position: relative;
+  }
+  .card:hover { border-color: oklch(from var(--accent) l c h / .55); box-shadow: var(--shadow-2); }
+  .card.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px oklch(from var(--accent) l c h / .15), var(--shadow-2);
+  }
+  .card-checkbox {
+    position: absolute; top: 12px; right: 12px;
+    accent-color: var(--accent); cursor: pointer;
+  }
+  .card-title {
+    font-family: var(--sans); font-size: 13.5px; font-weight: 600;
+    color: var(--ink); margin-bottom: 6px; padding-right: 24px;
+    overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+    -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    line-height: 1.35; min-height: calc(13.5px * 1.35 * 2);
+  }
+  .card-meta {
+    font-family: var(--mono); font-size: 10px; color: var(--ink-3);
+    margin-bottom: 10px; display: flex; gap: 8px; flex-wrap: wrap;
+  }
+  .card-projects { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; min-height: 20px; }
+  .card-chip {
+    font-size: 10px; padding: 1px 7px; border-radius: 9px;
+    background: oklch(from var(--accent) l c h / .12);
+    border: 1px solid oklch(from var(--accent) l c h / .35);
+    color: var(--ink); line-height: 1.55;
+  }
+  .card-chip.unassigned {
+    background: transparent; border: 1px dashed var(--rule); color: var(--ink-3); font-style: italic;
+  }
+  .card-stats {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
+    border-top: 1px dashed var(--rule); padding-top: 8px; margin-top: 4px;
+  }
+  .card-stat {
+    text-align: center; font-family: var(--mono); font-size: 10px; color: var(--ink-3);
+  }
+  .card-stat .num { display: block; font-size: 14px; font-weight: 600; color: var(--ink); font-family: var(--sans); }
+  .card-status {
+    position: absolute; bottom: 56px; right: 14px;
+    font-family: var(--mono); font-size: 9px; padding: 2px 6px; border-radius: 9px;
+    text-transform: uppercase; letter-spacing: .06em;
+  }
+  .card-status.complete { background: oklch(from var(--ok) l c h / .15); color: var(--ok); }
+  .card-status.in_progress { background: oklch(from var(--warn) l c h / .15); color: var(--warn); }
+  .card-status.unannotated { background: oklch(from var(--ink) l c h / .06); color: var(--ink-3); }
+  .empty {
+    text-align: center; padding: 80px 20px; color: var(--ink-3);
+    font-family: var(--serif); font-size: 16px;
+  }
+  .empty p { margin: 8px 0; }
 
-.empty { padding: 40px; text-align: center; color: var(--muted); font-size: 12px; }
-
-/* Preview modal */
-.modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.5); z-index: 100; justify-content: center; align-items: start; padding-top: 60px; }
-.modal-overlay.open { display: flex; }
-.modal { background: #fff; border-radius: 10px; max-width: 700px; width: 95%; max-height: 80vh; overflow-y: auto; padding: 28px; box-shadow: 0 12px 40px rgba(0,0,0,.2); }
-.modal h2 { font-size: 18px; font-weight: 700; color: var(--navy); margin-bottom: 4px; }
-.modal .modal-desc { font-size: 12px; color: var(--muted); margin-bottom: 16px; }
-.modal-close { float: right; font-size: 18px; cursor: pointer; color: var(--muted); background: none; border: none; }
-.question-preview { padding: 10px 0; border-bottom: 1px solid #f1f5f9; }
-.question-preview:last-child { border-bottom: none; }
-.qp-id { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--muted); }
-.qp-text { font-size: 12px; color: var(--text); margin-top: 2px; }
-.nav-dropdown { position: relative; display: inline-block; }
-.nav-dropdown > a { cursor: default; }
-.nav-dropdown-menu { display: none; position: absolute; top: 100%; left: 0; min-width: 160px; background: var(--navy); border: 1px solid rgba(255,255,255,.15); border-radius: 6px; padding: 4px 0; margin-top: 4px; z-index: 50; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
-.nav-dropdown:hover .nav-dropdown-menu { display: block; }
-.nav-dropdown-menu a { display: block; padding: 8px 16px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); text-decoration: none; border-radius: 0; }
-.nav-dropdown-menu a:hover { background: rgba(255,255,255,.08); color: #fff; }
-.nav-settings { position: relative; display: inline-block; }
-.nav-settings .settings-icon { background: none; border: none; color: rgba(255,255,255,.7); font-size: 16px; cursor: pointer; padding: 4px 8px; }
-.nav-settings .settings-icon:hover { color: #fff; }
-.nav-settings-menu { display: none; position: absolute; top: 100%; right: 0; min-width: 150px; background: var(--navy); border: 1px solid rgba(255,255,255,.15); border-radius: 6px; padding: 4px 0; margin-top: 4px; z-index: 50; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
-.nav-settings:hover .nav-settings-menu { display: block; }
-.nav-settings-menu a { display: block; padding: 8px 16px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); text-decoration: none; }
-.nav-settings-menu a:hover { background: rgba(255,255,255,.08); color: #fff; }
-@media (max-width: 600px) {
-  .topbar { padding: 10px 14px; flex-wrap: wrap; gap: 6px; }
-  .topbar .brand { font-size: 14px; }
-  .topbar nav { gap: 2px; }
-  .topbar nav a { font-size: 10px; padding: 4px 6px; }
-  .topbar nav a[href="/developers"], .topbar nav a[href*="sso/annotator"], .topbar nav a[href="/library"] { display: none; }
-  .topbar .user-badge { font-size: 9px; margin-left: 4px; padding: 3px 6px; }
-  .topbar .signout-btn { font-size: 9px; padding: 4px 8px; margin-left: 4px; }
-}
+  /* Bulk-assign popover */
+  .ba-pop {
+    position: absolute; z-index: 200; background: var(--paper); border: 1px solid var(--rule);
+    border-radius: var(--radius-sm); padding: 6px; min-width: 180px;
+    box-shadow: var(--shadow-2); font-size: 12px;
+  }
+  .ba-pop-opt {
+    padding: 6px 10px; cursor: pointer; color: var(--ink); border-radius: 3px;
+  }
+  .ba-pop-opt:hover { background: oklch(from var(--accent) l c h / .15); }
 </style>
 </head>
 <body>
 <script>if(window.self!==window.top)document.documentElement.classList.add('in-iframe')</script>
 
+<!-- Shared paper-theme topbar — kept in sync with dashboard / annotator -->
 <header class="topbar">
   <div class="brand">
     <div class="brand-mark" aria-hidden="true"></div>
     <div class="brand-name">The AI Researcher<span class="tag">Library</span></div>
   </div>
-  <nav>
+  <nav class="nav">
     <a href="/">Lab</a>
     <a href="/dashboard">Dashboard</a>
     <div class="nav-dropdown">
@@ -180,231 +179,354 @@ html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); co
         <a href="/leaderboard">Leaderboard</a>
       </div>
     </div>
-    <a href="/public-tests">Public Tests</a>
-    <a href="/models">Models</a>
-    <a href="/leaderboard">Leaderboard</a>
+    <a href="/rubric-generator">Rubric Generator</a>
     <a href="/analytics">Analytics</a>
-    <a href="/library" class="active">Library</a>
+    <a href="/library" class="is-active">Library</a>
     <a href="/search">Search</a>
-    <a href="/pdf-viewer">PDF Viewer</a>
     <a href="/annotator">Annotator</a>
     <a href="/quality-appraisal">Quality Appraisal</a>
-    <a href="/developers">Developers</a>
-    <a href="/admin" id="nav-admin" style="display:none">Admin</a>
-    <span class="user-badge" id="user-badge">—</span>
-    <div class="nav-settings">
-      <button class="settings-icon" title="Settings">⚙</button>
-      <div class="nav-settings-menu">
-        <a href="/billing">Billing</a>
-        <a href="/billing?tab=preferences">Preferences</a>
-      </div>
-    </div>
-    <button class="signout-btn" onclick="signOut()">Sign Out</button>
+    <a href="/community-library" style="opacity:.65;font-size:11px;">Community</a>
   </nav>
+  <div class="topbar-right">
+    <span class="user-badge" id="user-badge">—</span>
+  </div>
 </header>
 
-<div class="container">
-  <div class="page-title">Community Library</div>
-  <div class="page-subtitle">Browse, fork, and rate rubric templates shared by the community</div>
-
-  <div class="filter-bar">
-    <div class="filter-group">
-      <label>Type</label>
-      <select id="f-type" onchange="loadLibrary()">
-        <option value="">All Types</option>
-        <option value="classification">Classification</option>
-        <option value="extraction">Extraction</option>
-        <option value="risk_of_bias">Risk of Bias</option>
-        <option value="comparative">Comparative</option>
-        <option value="custom">Custom</option>
-      </select>
+<div class="layout">
+  <!-- ── Filter rail ────────────────────────────────────────────────── -->
+  <aside class="rail">
+    <div class="rail-section">
+      <div class="rail-h">Search</div>
+      <input type="search" id="q-input" placeholder="Filename contains…" autocomplete="off">
     </div>
-    <div class="filter-group">
-      <label>Sort</label>
-      <select id="f-sort" onchange="loadLibrary()">
-        <option value="recent">Most Recent</option>
-        <option value="rating">Highest Rated</option>
-        <option value="popular">Most Forked</option>
-      </select>
-    </div>
-    <div class="filter-group">
-      <label>Search</label>
-      <input type="text" id="f-search" placeholder="Search templates..." onkeydown="if(event.key==='Enter')loadLibrary()">
-    </div>
-    <button class="btn btn-secondary" onclick="loadLibrary()">Search</button>
-  </div>
 
-  <div id="library-grid" class="template-grid">
-    <div class="empty">Loading...</div>
-  </div>
-
-  <div class="pagination" id="pagination"></div>
-</div>
-
-<!-- Preview modal -->
-<div class="modal-overlay" id="modal">
-  <div class="modal">
-    <button class="modal-close" onclick="closeModal()">&times;</button>
-    <h2 id="modal-title"></h2>
-    <div class="modal-desc" id="modal-desc"></div>
-    <div id="modal-meta" style="margin-bottom:14px"></div>
-    <div id="modal-questions"></div>
-    <div style="margin-top:16px;display:flex;gap:8px">
-      <button class="btn btn-primary" id="modal-fork-btn" onclick="forkFromModal()">Fork to My Templates</button>
-      <div style="display:flex;align-items:center;gap:4px;margin-left:auto">
-        <span style="font-size:11px;color:var(--muted)">Rate:</span>
-        <select id="modal-rating" style="font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:3px">
-          <option value="">—</option><option value="1">1</option><option value="2">2</option>
-          <option value="3">3</option><option value="4">4</option><option value="5">5</option>
-        </select>
-        <button class="btn btn-sm btn-secondary" onclick="rateFromModal()">Rate</button>
+    <div class="rail-section">
+      <div class="rail-h">Project</div>
+      <div class="filter-list" id="project-filter-list">
+        <div class="filter-opt active" data-project="">All papers <span class="pill-count" id="cnt-all">0</span></div>
+        <div class="filter-opt" data-project="unassigned">Unassigned <span class="pill-count" id="cnt-unassigned">0</span></div>
       </div>
     </div>
-  </div>
+
+    <div class="rail-section">
+      <div class="rail-h">Annotation status</div>
+      <div class="filter-list">
+        <div class="filter-opt active" data-status="">Any</div>
+        <div class="filter-opt" data-status="annotated">Complete</div>
+        <div class="filter-opt" data-status="in_progress">In progress</div>
+        <div class="filter-opt" data-status="unannotated">Not started</div>
+      </div>
+    </div>
+
+    <div class="rail-section">
+      <div class="rail-h">Source</div>
+      <div class="filter-list">
+        <div class="filter-opt active" data-source="">Any</div>
+        <div class="filter-opt" data-source="upload">Upload</div>
+        <div class="filter-opt" data-source="lab">Lab</div>
+        <div class="filter-opt" data-source="search">Search</div>
+        <div class="filter-opt" data-source="pubmed">PubMed</div>
+      </div>
+      <div style="font-size:10px;color:var(--ink-3);margin-top:6px;font-style:italic;">
+        New uploads are tagged with their origin (Annotator, Lab, Search, PubMed). Older papers default to Upload.
+      </div>
+    </div>
+
+    <div class="rail-section" style="margin-top:30px;">
+      <button class="btn primary" style="width:100%;" onclick="document.getElementById('upload-input').click()">+ Upload PDF</button>
+      <input type="file" id="upload-input" accept=".pdf" multiple style="display:none;" onchange="handleUpload(this.files)">
+    </div>
+  </aside>
+
+  <!-- ── Main column ───────────────────────────────────────────────── -->
+  <main class="main">
+    <div class="header-row">
+      <div class="page-title">Library</div>
+    </div>
+    <div class="page-subtitle">Every PDF you've added to The AI Researcher, in one place. Click a card to open it in the Annotator.</div>
+
+    <div class="toolbar">
+      <span class="count" id="result-count">0 papers</span>
+      <button class="btn" id="bulk-assign-btn" onclick="showBulkAssignPop(event)" disabled>Add selected to project…</button>
+      <button class="btn danger" id="bulk-delete-btn" onclick="bulkDelete()" disabled>Delete selected</button>
+      <button class="btn" onclick="loadLibrary()">↻ Refresh</button>
+    </div>
+
+    <div id="grid-host">
+      <div class="empty"><p>Loading your library…</p></div>
+    </div>
+  </main>
 </div>
 
 <script>
-let currentUser = null;
-let currentPage = 1;
-let currentModalId = null;
+// ─── State ────────────────────────────────────────────────────────────
+let _papers = [];
+let _projects = [];
+let _selected = new Set();
+let _filters = { q: '', project: '', status: '', source: '' };
+let _qDebounce = null;
 
-async function checkAuth() {
+function escHtml(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────
+(async function init() {
+  // Auth check + user badge
   try {
     const r = await fetch('/api/auth/me');
     if (!r.ok) { window.location.href = '/login'; return; }
-    currentUser = await r.json();
-    document.getElementById('user-badge').textContent = currentUser.display_name || currentUser.email;
-    if (currentUser.role === 'admin') document.getElementById('nav-admin').style.display = '';
-  } catch { window.location.href = '/login'; }
-}
+    const me = await r.json();
+    document.getElementById('user-badge').textContent = me.email || me.display_name || 'user';
+  } catch (e) { window.location.href = '/login'; return; }
 
-async function signOut() {
-  await fetch('/api/auth/logout', { method: 'POST' });
-  window.location.href = '/login';
-}
+  // Wire filter clicks
+  document.querySelectorAll('.filter-opt').forEach(el => {
+    el.addEventListener('click', () => {
+      const list = el.parentElement;
+      list.querySelectorAll('.filter-opt').forEach(s => s.classList.remove('active'));
+      el.classList.add('active');
+      // Identify which axis we toggled.
+      if (el.dataset.project !== undefined) _filters.project = el.dataset.project;
+      else if (el.dataset.status !== undefined) _filters.status = el.dataset.status;
+      else if (el.dataset.source !== undefined) _filters.source = el.dataset.source;
+      loadLibrary();
+    });
+  });
 
-function escapeHtml(s) {
-  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
+  document.getElementById('q-input').addEventListener('input', (ev) => {
+    _filters.q = ev.target.value;
+    clearTimeout(_qDebounce);
+    _qDebounce = setTimeout(loadLibrary, 250);
+  });
 
-function starsHtml(rating) {
-  if (!rating) return '<span class="stars">-----</span>';
-  const full = Math.round(rating);
-  return '<span class="stars">' + '&#9733;'.repeat(full) + '&#9734;'.repeat(5 - full) + '</span>';
-}
+  await loadLibrary();
+})();
 
-async function loadLibrary(page) {
-  if (page) currentPage = page;
-  else currentPage = 1;
-
-  const type = document.getElementById('f-type').value;
-  const sort = document.getElementById('f-sort').value;
-  const search = document.getElementById('f-search').value.trim();
-  const params = new URLSearchParams({ page: currentPage, sort });
-  if (type) params.set('type', type);
-  if (search) params.set('search', search);
-
-  const r = await fetch('/api/community/templates?' + params);
-  const grid = document.getElementById('library-grid');
-  if (!r.ok) { grid.innerHTML = '<div class="empty">Failed to load library</div>'; return; }
-  const data = await r.json();
-
-  if (!data.items.length) {
-    grid.innerHTML = '<div class="empty" style="grid-column:1/-1">No templates found. Be the first to publish one!</div>';
-    document.getElementById('pagination').innerHTML = '';
+// ─── Data loading ─────────────────────────────────────────────────────
+async function loadLibrary() {
+  const params = new URLSearchParams();
+  if (_filters.q)       params.set('q', _filters.q);
+  if (_filters.project) params.set('project', _filters.project);
+  if (_filters.status)  params.set('status', _filters.status);
+  if (_filters.source)  params.set('source', _filters.source);
+  let body;
+  try {
+    const r = await fetch('/api/library/papers?' + params.toString());
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    body = await r.json();
+  } catch (e) {
+    document.getElementById('grid-host').innerHTML =
+      `<div class="empty"><p>Couldn't load library.</p><p style="font-size:11px;">${escHtml(e.message)}</p></div>`;
     return;
   }
+  _papers = body.papers || [];
+  _projects = body.projects || [];
+  renderProjectFilters();
+  renderGrid();
+  document.getElementById('result-count').textContent =
+    _papers.length === 1 ? '1 paper' : `${_papers.length} papers`;
+}
 
-  grid.innerHTML = data.items.map(t => `
-    <div class="template-card">
-      <div class="tc-title">${escapeHtml(t.title)}</div>
-      <div class="tc-desc">${escapeHtml(t.description || 'No description')}</div>
-      <div class="tc-meta">
-        <span class="tc-badge ${t.rubric_type}">${escapeHtml(t.rubric_type.replace(/_/g, ' '))}</span>
-        <span class="tc-stat"><strong>${t.question_count}</strong> questions</span>
-        <span class="tc-stat">${starsHtml(t.avg_rating)} (${t.rating_count})</span>
-        <span class="tc-stat"><strong>${t.fork_count}</strong> forks</span>
-      </div>
-      <div style="font-size:11px;color:var(--muted)">by ${escapeHtml(t.publisher_name || 'Unknown')}</div>
-      <div class="tc-actions">
-        <button class="btn btn-sm btn-primary" onclick="previewTemplate(${t.id})">Preview</button>
-        <button class="btn btn-sm btn-secondary" onclick="forkTemplate(${t.id})">Fork</button>
-      </div>
-    </div>
-  `).join('');
-
-  // Pagination
-  const totalPages = Math.ceil(data.total / 20);
-  const pag = document.getElementById('pagination');
-  if (totalPages <= 1) { pag.innerHTML = ''; return; }
-  let pagHtml = '';
-  for (let i = 1; i <= Math.min(totalPages, 10); i++) {
-    pagHtml += `<button class="${i === currentPage ? 'active' : ''}" onclick="loadLibrary(${i})">${i}</button>`;
+function renderProjectFilters() {
+  const list = document.getElementById('project-filter-list');
+  // Preserve "All" + "Unassigned" + active state, replace project options.
+  const all = [...list.children].filter(c => c.dataset.project !== '' && c.dataset.project !== 'unassigned');
+  all.forEach(c => c.remove());
+  for (const p of _projects) {
+    const node = document.createElement('div');
+    node.className = 'filter-opt' + (_filters.project === String(p.id) ? ' active' : '');
+    node.dataset.project = String(p.id);
+    node.innerHTML = `${escHtml(p.name)}<span class="pill-count">·</span>`;
+    node.addEventListener('click', () => {
+      list.querySelectorAll('.filter-opt').forEach(s => s.classList.remove('active'));
+      node.classList.add('active');
+      _filters.project = String(p.id);
+      loadLibrary();
+    });
+    list.appendChild(node);
   }
-  pag.innerHTML = pagHtml;
+  // Recompute simple counts (visible papers only is fine — feels live).
+  document.getElementById('cnt-all').textContent = _papers.length;
+  document.getElementById('cnt-unassigned').textContent =
+    _papers.filter(p => !p.projects || p.projects.length === 0).length;
 }
 
-async function previewTemplate(communityId) {
-  const r = await fetch(`/api/community/templates/${communityId}`);
-  if (!r.ok) { alert('Failed to load template'); return; }
-  const t = await r.json();
-  currentModalId = communityId;
-
-  document.getElementById('modal-title').textContent = t.title;
-  document.getElementById('modal-desc').textContent = t.description || '';
-  document.getElementById('modal-meta').innerHTML = `
-    <span class="tc-badge ${t.rubric_type}">${t.rubric_type.replace(/_/g, ' ')}</span>
-    <span class="tc-stat" style="margin-left:8px">${starsHtml(t.avg_rating)} (${t.rating_count} ratings)</span>
-    <span class="tc-stat" style="margin-left:8px"><strong>${t.fork_count}</strong> forks</span>
-  `;
-
-  const questions = t.template_data?.questions || [];
-  document.getElementById('modal-questions').innerHTML = questions.length
-    ? questions.map(q => `
-        <div class="question-preview">
-          <div class="qp-id">${escapeHtml(q.id)} &middot; ${escapeHtml(q.domain || '')} &middot; ${q.max_points || 1} pts</div>
-          <div class="qp-text">${escapeHtml(q.question)}</div>
-        </div>
-      `).join('')
-    : '<div class="empty">No questions in this template</div>';
-
-  document.getElementById('modal').classList.add('open');
+function renderGrid() {
+  const host = document.getElementById('grid-host');
+  if (_papers.length === 0) {
+    host.innerHTML = `<div class="empty">
+      <p style="font-size:18px;">No papers match these filters.</p>
+      <p>Try clearing the filters or upload a new PDF.</p>
+    </div>`;
+    return;
+  }
+  const grid = document.createElement('div');
+  grid.className = 'grid';
+  for (const p of _papers) {
+    grid.appendChild(buildCard(p));
+  }
+  host.replaceChildren(grid);
+  refreshBulkButtons();
 }
 
-function closeModal() {
-  document.getElementById('modal').classList.remove('open');
-  currentModalId = null;
-}
-
-async function forkTemplate(communityId) {
-  const r = await fetch(`/api/community/templates/${communityId}/fork`, { method: 'POST' });
-  if (!r.ok) { const e = await r.json(); alert(e.detail || 'Fork failed'); return; }
-  const data = await r.json();
-  alert(`Forked! Template "${data.name}" added to your templates.`);
-}
-
-function forkFromModal() {
-  if (currentModalId) forkTemplate(currentModalId);
-}
-
-async function rateFromModal() {
-  if (!currentModalId) return;
-  const rating = parseInt(document.getElementById('modal-rating').value);
-  if (!rating) { alert('Select a rating (1-5)'); return; }
-  const r = await fetch(`/api/community/templates/${currentModalId}/rate`, {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ rating }),
+function buildCard(p) {
+  const card = document.createElement('div');
+  card.className = 'card' + (_selected.has(p.id) ? ' selected' : '');
+  card.addEventListener('click', (ev) => {
+    if (ev.target.tagName === 'INPUT') return;  // checkbox click → handled separately
+    // Open in annotator. Pass paper_id so the page can deep-link to it (annotator
+    // uses ?project_id today; we add ?paper_id which it can pick up).
+    window.location.href = `/annotator?paper_id=${p.id}`;
   });
-  if (!r.ok) { const e = await r.json(); alert(e.detail || 'Rating failed'); return; }
-  alert('Rating submitted!');
-  loadLibrary(currentPage);
+
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.className = 'card-checkbox';
+  cb.checked = _selected.has(p.id);
+  cb.addEventListener('click', ev => ev.stopPropagation());
+  cb.addEventListener('change', () => {
+    if (cb.checked) _selected.add(p.id); else _selected.delete(p.id);
+    card.classList.toggle('selected', cb.checked);
+    refreshBulkButtons();
+  });
+  card.appendChild(cb);
+
+  const title = document.createElement('div');
+  title.className = 'card-title';
+  title.textContent = p.filename;
+  title.title = p.filename;
+  card.appendChild(title);
+
+  const meta = document.createElement('div');
+  meta.className = 'card-meta';
+  const when = (p.created_at || '').replace('T', ' ').slice(0, 10);
+  meta.innerHTML = `<span>${escHtml(when || '—')}</span>
+                    <span style="opacity:.5;">·</span>
+                    <span>${escHtml(p.source || 'upload')}</span>`;
+  card.appendChild(meta);
+
+  const projsRow = document.createElement('div');
+  projsRow.className = 'card-projects';
+  const projs = p.projects || [];
+  if (!projs.length) {
+    projsRow.innerHTML = `<span class="card-chip unassigned">unassigned</span>`;
+  } else {
+    for (const pr of projs) {
+      const chip = document.createElement('span');
+      chip.className = 'card-chip';
+      chip.textContent = pr.name || `#${pr.id}`;
+      projsRow.appendChild(chip);
+    }
+  }
+  card.appendChild(projsRow);
+
+  // Status badge (top right of stats area)
+  const status = p.ann_status || 'unannotated';
+  const badge = document.createElement('span');
+  badge.className = 'card-status ' + (status === 'complete' ? 'complete' :
+                                       status === 'in_progress' ? 'in_progress' : 'unannotated');
+  badge.textContent = status.replace('_', ' ');
+  card.appendChild(badge);
+
+  const stats = document.createElement('div');
+  stats.className = 'card-stats';
+  stats.innerHTML = `
+    <div class="card-stat"><span class="num">${p.rubric_count || 0}</span>rubric${p.rubric_count === 1 ? '' : 's'}</div>
+    <div class="card-stat"><span class="num">${p.eval_count || 0}</span>eval${p.eval_count === 1 ? '' : 's'}</div>
+    <div class="card-stat"><span class="num">${p.challenge_count || 0}</span>challenge${p.challenge_count === 1 ? '' : 's'}</div>
+    <div class="card-stat"><span class="num">${p.custom_run_count || 0}</span>run${p.custom_run_count === 1 ? '' : 's'}</div>`;
+  card.appendChild(stats);
+
+  return card;
 }
 
-async function init() {
-  await checkAuth();
-  loadLibrary();
+function refreshBulkButtons() {
+  const n = _selected.size;
+  document.getElementById('bulk-assign-btn').disabled = n === 0;
+  document.getElementById('bulk-delete-btn').disabled = n === 0;
+  if (n > 0) {
+    document.getElementById('result-count').textContent = `${n} selected of ${_papers.length} papers`;
+  } else {
+    document.getElementById('result-count').textContent =
+      _papers.length === 1 ? '1 paper' : `${_papers.length} papers`;
+  }
 }
-init();
+
+// ─── Bulk actions ─────────────────────────────────────────────────────
+function showBulkAssignPop(ev) {
+  document.querySelectorAll('.ba-pop').forEach(n => n.remove());
+  const pop = document.createElement('div');
+  pop.className = 'ba-pop';
+  if (_projects.length === 0) {
+    pop.innerHTML = `<div class="ba-pop-opt" style="opacity:.5;">(no projects yet — create one in the Annotator)</div>`;
+  } else {
+    for (const pr of _projects) {
+      const opt = document.createElement('div');
+      opt.className = 'ba-pop-opt';
+      opt.textContent = `+ ${pr.name}`;
+      opt.addEventListener('click', () => { pop.remove(); bulkAssign(pr.id); });
+      pop.appendChild(opt);
+    }
+  }
+  const rect = ev.target.getBoundingClientRect();
+  pop.style.top  = (rect.bottom + window.scrollY + 4) + 'px';
+  pop.style.left = (rect.left + window.scrollX) + 'px';
+  document.body.appendChild(pop);
+  setTimeout(() => {
+    const dismiss = (e) => {
+      if (!pop.contains(e.target)) { pop.remove(); document.removeEventListener('mousedown', dismiss); }
+    };
+    document.addEventListener('mousedown', dismiss);
+  }, 0);
+}
+
+async function bulkAssign(projectId) {
+  const ids = [..._selected];
+  let ok = 0, failed = 0;
+  for (const pid of ids) {
+    try {
+      const r = await fetch(`/api/papers/${pid}/projects/${projectId}`, { method: 'POST' });
+      if (r.ok) ok++; else failed++;
+    } catch (e) { failed++; }
+  }
+  alert(`Added ${ok} paper(s) to project. ${failed ? failed + ' failed.' : ''}`);
+  _selected.clear();
+  await loadLibrary();
+}
+
+async function bulkDelete() {
+  const ids = [..._selected];
+  if (!confirm(`Delete ${ids.length} paper(s)? This also removes annotations and run results for them. Cannot be undone.`)) return;
+  let ok = 0, failed = 0;
+  for (const pid of ids) {
+    try {
+      const r = await fetch(`/api/papers/${pid}`, { method: 'DELETE' });
+      if (r.ok) ok++; else failed++;
+    } catch (e) { failed++; }
+  }
+  alert(`Deleted ${ok} paper(s). ${failed ? failed + ' failed.' : ''}`);
+  _selected.clear();
+  await loadLibrary();
+}
+
+// ─── Upload ───────────────────────────────────────────────────────────
+async function handleUpload(files) {
+  if (!files || files.length === 0) return;
+  let ok = 0, failed = 0;
+  for (const f of files) {
+    const fd = new FormData();
+    fd.append('file', f);
+    try {
+      const r = await fetch('/api/papers/upload', { method: 'POST', body: fd });
+      if (r.ok) ok++; else failed++;
+    } catch (e) { failed++; }
+  }
+  document.getElementById('upload-input').value = '';
+  if (failed) alert(`${ok} uploaded, ${failed} failed.`);
+  await loadLibrary();
+}
 </script>
 </body>
 </html>

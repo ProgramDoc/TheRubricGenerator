@@ -89,7 +89,75 @@ CREATE TABLE IF NOT EXISTS annotator_custom_runs (
     completed_at         TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_annruns_user ON annotator_custom_runs(user_id, created_at DESC);
+
+-- Unified action log: every classify / prefill / custom-run event lands here so
+-- the Results tab can show "what's happened recently" across all action types,
+-- not just custom-schema runs.
+CREATE TABLE IF NOT EXISTS annotator_actions (
+    id           SERIAL PRIMARY KEY,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    paper_id     INTEGER REFERENCES papers(id) ON DELETE SET NULL,
+    action_type  TEXT    NOT NULL,            -- 'classify' | 'prefill' | 'custom'
+    schema_id    INTEGER,                     -- only for 'custom'
+    run_id       INTEGER,                     -- only for 'custom' (FK to annotator_custom_runs)
+    status       TEXT    NOT NULL,            -- 'ok' | 'error' | 'skipped_deleted' | 'skipped_permission_denied'
+    detail_json  TEXT,                        -- {filename, error, study_type, fields_count, ...}
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_annotator_actions_user
+    ON annotator_actions(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_annotator_actions_paper
+    ON annotator_actions(paper_id, created_at DESC);
+
+-- Per-run progress event log. Mirrors the quality_appraisal_events / challenge_events
+-- pattern: backend appends, frontend polls with an ?after=<id> cursor.
+CREATE TABLE IF NOT EXISTS annotator_run_events (
+    id          SERIAL PRIMARY KEY,
+    run_id      INTEGER NOT NULL REFERENCES annotator_custom_runs(id) ON DELETE CASCADE,
+    event_type  TEXT    NOT NULL,
+    message     TEXT    NOT NULL,
+    detail_json TEXT,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_annotator_run_events_run
+    ON annotator_run_events(run_id, id);
 """
+
+
+def log_annotator_action(conn, user_id: int, paper_id: int | None,
+                         action_type: str, status: str,
+                         schema_id: int | None = None,
+                         run_id: int | None = None,
+                         detail: dict | None = None) -> None:
+    """Best-effort write to ``annotator_actions``. Logging must never break the action."""
+    try:
+        conn.execute(
+            """INSERT INTO annotator_actions
+                  (user_id, paper_id, action_type, schema_id, run_id, status, detail_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, paper_id, action_type, schema_id, run_id, status,
+             json.dumps(detail) if detail else None),
+        )
+        conn.commit()
+    except Exception as e:
+        logger.warning("annotator_action log failed (action=%s status=%s): %s",
+                       action_type, status, e)
+
+
+def log_run_event(conn, run_id: int, event_type: str, message: str,
+                  detail: dict | None = None) -> None:
+    """Append a progress event for a custom-run job. Best-effort — never raises."""
+    try:
+        conn.execute(
+            """INSERT INTO annotator_run_events
+                  (run_id, event_type, message, detail_json)
+               VALUES (?, ?, ?, ?)""",
+            (run_id, event_type, message, json.dumps(detail) if detail else None),
+        )
+        conn.commit()
+    except Exception as e:
+        logger.warning("annotator_run_event log failed (run=%s type=%s): %s",
+                       run_id, event_type, e)
 
 
 # ─────────────────────────────────────────────
@@ -678,7 +746,8 @@ def _extract_chunked(text: str, prompt: str, max_tokens: int, *,
 
 
 def _call_with_pdf(pdf_bytes: bytes, prompt: str, max_tokens: int = 4096, *,
-                   classification_mode: bool = False) -> dict:
+                   classification_mode: bool = False,
+                   thinking_budget: int | None = None):
     """Send the PDF as a base64 document block + text prompt. Handles oversized
     papers by falling back through a multi-stage pipeline:
 
@@ -691,6 +760,10 @@ def _call_with_pdf(pdf_bytes: bytes, prompt: str, max_tokens: int = 4096, *,
        the first chunk since study design is a paper-level property.
 
     ``call_anthropic`` in ``helpers.py`` already sets the PDF beta header.
+
+    When ``thinking_budget`` is set, returns ``(parsed_dict, thinking_text)``
+    instead of just ``parsed_dict``. Chunked-text fallback never returns
+    thinking (the merge would be misleading) — only the fast path does.
     """
     if len(pdf_bytes) > _PDF_UPLOAD_BYTE_LIMIT:
         size_mb = len(pdf_bytes) / (1024 * 1024)
@@ -710,6 +783,12 @@ def _call_with_pdf(pdf_bytes: bytes, prompt: str, max_tokens: int = 4096, *,
         ],
     }]
     try:
+        if thinking_budget:
+            answer, thinking = call_anthropic(
+                messages, system="", max_tokens=max_tokens,
+                thinking_budget=thinking_budget,
+            )
+            return parse_json_response(answer), thinking
         raw = call_anthropic(messages, system="", max_tokens=max_tokens)
         return parse_json_response(raw)
     except HTTPException as e:
@@ -721,8 +800,12 @@ def _call_with_pdf(pdf_bytes: bytes, prompt: str, max_tokens: int = 4096, *,
         logger.warning("PDF (%d bytes) exceeds input limit — entering chunked-text fallback",
                        len(pdf_bytes))
         body = _extract_pdf_text(pdf_bytes)  # may itself raise 413 for OCR cases
-        return _extract_chunked(body, prompt, max_tokens,
-                                first_chunk_only=classification_mode)
+        result = _extract_chunked(body, prompt, max_tokens,
+                                  first_chunk_only=classification_mode)
+        if thinking_budget:
+            # Chunked path can't produce coherent thinking — return empty string.
+            return result, ""
+        return result
 
 
 def classify_study_design(pdf_bytes: bytes) -> dict:
@@ -899,7 +982,9 @@ def save_annotation(conn, paper_id: int, reviewer_id: int, payload: dict) -> dic
 
 
 def list_papers_with_status(conn, user_id: int) -> list[dict]:
-    """All the user's PDFs with per-paper annotation status, for the left sidebar."""
+    """All the user's PDFs with per-paper annotation status, for the left sidebar.
+    Includes ``project_ids`` (multi-project membership via paper_projects junction)
+    alongside the legacy single ``project_id`` for back-compat."""
     rows = conn.execute(
         """SELECT p.id, p.filename, p.project_id, p.created_at,
                   a.status       AS ann_status,
@@ -912,7 +997,23 @@ def list_papers_with_status(conn, user_id: int) -> list[dict]:
          ORDER BY p.created_at DESC""",
         (user_id, user_id),
     ).fetchall()
-    return [dict(r) for r in rows]
+    out = [dict(r) for r in rows]
+    if not out:
+        return out
+    # One round-trip for all junction memberships, then fan out to each row.
+    pp_rows = conn.execute(
+        f"""SELECT pp.paper_id, pp.project_id
+              FROM paper_projects pp
+              JOIN papers p ON p.id = pp.paper_id
+             WHERE p.user_id = ?""",
+        (user_id,),
+    ).fetchall()
+    by_pid: dict[int, list[int]] = {}
+    for r in pp_rows:
+        by_pid.setdefault(r["paper_id"], []).append(r["project_id"])
+    for d in out:
+        d["project_ids"] = by_pid.get(d["id"], [])
+    return out
 
 
 # ─────────────────────────────────────────────
@@ -1207,13 +1308,23 @@ def build_custom_prompt(fields: list[dict]) -> str:
     )
 
 
-def extract_custom_fields(pdf_bytes: bytes, fields: list[dict]) -> dict:
-    """Run the user-defined extraction on a single PDF. Returns {field_id: value}."""
+def extract_custom_fields(pdf_bytes: bytes, fields: list[dict],
+                          *, thinking_budget: int | None = None):
+    """Run the user-defined extraction on a single PDF. Returns {field_id: value}.
+    With ``thinking_budget`` set, returns ``(fields_dict, thinking_text)`` so
+    callers can surface the model's chain-of-thought in the UI."""
     prompt = build_custom_prompt(fields)
-    result = _call_with_pdf(pdf_bytes, prompt, max_tokens=8192)
-    # Only return keys that are actually in the schema; coerce to strings.
+    if thinking_budget:
+        result, thinking = _call_with_pdf(pdf_bytes, prompt, max_tokens=8192,
+                                          thinking_budget=thinking_budget)
+    else:
+        result = _call_with_pdf(pdf_bytes, prompt, max_tokens=8192)
+        thinking = None
     allowed = {f["id"] for f in fields}
-    return {k: str(v) for k, v in result.items() if k in allowed and v not in (None, "", [])}
+    cleaned = {k: str(v) for k, v in result.items() if k in allowed and v not in (None, "", [])}
+    if thinking_budget:
+        return cleaned, thinking
+    return cleaned
 
 
 # ─────────────────────────────────────────────

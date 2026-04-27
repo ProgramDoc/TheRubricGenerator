@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The AI Researcher — Community Library</title>
+<link rel="stylesheet" href="/static/_shared/design.css">
+<style>
+  /* ─── Shared design tokens ─────────────────────────────────────────
+     Load the global Paper theme (Geist + Source Serif 4 + JetBrains
+     Mono) and remap this page's legacy --navy/--blue/--sky/etc.
+     variables onto the shared tokens. Existing layout CSS below keeps
+     working; new rules should use the shared tokens directly. */
+  :root {
+    --navy:   oklch(0.22 0.025 260);
+    --blue:   var(--accent);
+    --sky:    var(--accent);
+    --green:  var(--ok);
+    --red:    var(--err);
+    --amber:  var(--warn);
+    --purple: oklch(0.46 0.12 300);
+    --gold:   oklch(0.76 0.11 85);
+    --bg:     var(--paper-2);
+    --card:   var(--paper);
+    --border: var(--rule);
+    --text:   var(--ink);
+    --muted:  var(--ink-3);
+  }
+  html, body { font-family: var(--sans) !important; background: var(--paper-2) !important; color: var(--ink) !important; }
+  .topbar {
+    background: var(--paper) !important;
+    color: var(--ink) !important;
+    border-bottom: 1px solid var(--rule) !important;
+    box-shadow: none !important;
+    height: var(--topbar-h) !important;
+    padding: 0 16px !important;
+    gap: 14px !important;
+  }
+  .topbar nav a, .topbar .nav a { color: var(--ink-2) !important; }
+  .topbar nav a:hover, .topbar .nav a:hover,
+  .topbar nav a.active, .topbar .nav a.is-active {
+    background: var(--paper-2) !important; color: var(--ink) !important;
+  }
+  .topbar .user-badge {
+    background: transparent !important;
+    color: var(--ink-3) !important;
+    border: 1px solid var(--rule) !important; border-radius: 999px !important;
+    font-family: var(--mono) !important; font-size: 10.5px !important;
+  }
+  .topbar .signout-btn {
+    color: var(--ink-2) !important;
+    border: 1px solid var(--rule) !important; background: transparent !important;
+    font-family: var(--sans) !important;
+  }
+  .topbar .signout-btn:hover { background: var(--paper-2) !important; border-color: var(--rule-2) !important; color: var(--ink) !important; }
+  .nav-dropdown-menu, .nav-settings-menu {
+    background: var(--paper) !important;
+    border: 1px solid var(--rule) !important;
+    box-shadow: var(--shadow-3) !important;
+  }
+  .nav-dropdown-menu a, .nav-settings-menu a { color: var(--ink-2) !important; }
+  .nav-dropdown-menu a:hover, .nav-settings-menu a:hover {
+    background: var(--paper-2) !important; color: var(--ink) !important;
+  }
+  .nav-settings .settings-icon { color: var(--ink-3) !important; }
+  .nav-settings .settings-icon:hover { color: var(--ink) !important; }
+  .topbar .badge {
+    background: var(--warn-soft) !important; color: var(--warn) !important;
+  }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { font-family: 'IBM Plex Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; min-height: 100vh; }
+
+.topbar { background: var(--navy); color: #fff; padding: 12px 28px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+.in-iframe .topbar { display: none !important; }
+.in-iframe body { padding-top: 0 !important; }
+.topbar .brand { font-size: 16px; font-weight: 700; letter-spacing: -.3px; }
+.topbar .brand span { color: var(--sky); }
+.topbar nav { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.topbar nav a { font-family: inherit; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); padding: 6px 12px; border-radius: 5px; text-decoration: none; }
+.topbar nav a:hover { background: rgba(255,255,255,.08); color: #fff; }
+.topbar nav a.active { background: rgba(255,255,255,.15); color: #fff; }
+.topbar .user-badge { margin-left: 14px; padding: 4px 10px; background: rgba(255,255,255,.1); border-radius: 4px; font-size: 11px; color: rgba(255,255,255,.85); }
+.topbar .signout-btn { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); padding: 6px 12px; border-radius: 5px; font-family: inherit; font-size: 11px; font-weight: 600; cursor: pointer; margin-left: 10px; }
+
+.container { max-width: 1100px; margin: 0 auto; padding: 28px; }
+.page-title { font-size: 22px; font-weight: 700; color: var(--navy); margin-bottom: 4px; letter-spacing: -.3px; }
+.page-subtitle { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
+
+/* Filters */
+.filter-bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin-bottom: 20px; }
+.filter-group { display: flex; flex-direction: column; gap: 4px; }
+.filter-group label { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.filter-group select, .filter-group input {
+  font-family: inherit; font-size: 12px; padding: 7px 12px; border: 1px solid var(--border);
+  border-radius: 5px; background: #fff; color: var(--text); min-width: 140px;
+}
+.btn { font-family: inherit; font-size: 12px; font-weight: 600; padding: 8px 16px; border-radius: 5px; cursor: pointer; border: none; }
+.btn-primary { background: var(--blue); color: #fff; }
+.btn-primary:hover { background: var(--navy); }
+.btn-secondary { background: transparent; color: var(--blue); border: 1px solid var(--border); }
+.btn-secondary:hover { background: #f0f4ff; }
+.btn-sm { font-size: 11px; padding: 5px 10px; }
+
+/* Template cards */
+.template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+.template-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 18px; transition: box-shadow .15s; }
+.template-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,.06); }
+.template-card .tc-title { font-size: 14px; font-weight: 700; color: var(--navy); margin-bottom: 4px; }
+.template-card .tc-desc { font-size: 11.5px; color: var(--muted); margin-bottom: 10px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.template-card .tc-meta { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+.tc-badge { font-size: 9.5px; font-weight: 700; padding: 2px 7px; border-radius: 3px; text-transform: uppercase; letter-spacing: .04em; }
+.tc-badge.classification { background: rgba(39,68,114,.12); color: var(--blue); }
+.tc-badge.extraction { background: rgba(22,163,74,.12); color: var(--green); }
+.tc-badge.risk_of_bias { background: rgba(220,38,38,.12); color: var(--red); }
+.tc-badge.comparative { background: rgba(124,58,237,.12); color: var(--purple); }
+.tc-badge.custom { background: rgba(100,116,139,.12); color: var(--muted); }
+.tc-stat { font-size: 11px; color: var(--muted); }
+.tc-stat strong { color: var(--text); }
+.stars { color: var(--gold); font-size: 13px; letter-spacing: 1px; }
+.template-card .tc-actions { display: flex; gap: 8px; margin-top: 10px; }
+
+/* Pagination */
+.pagination { display: flex; gap: 8px; justify-content: center; margin-top: 24px; }
+.pagination button { font-family: inherit; font-size: 12px; padding: 6px 14px; border: 1px solid var(--border); border-radius: 5px; background: #fff; cursor: pointer; }
+.pagination button.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+.pagination button:hover:not(.active) { background: #f0f4ff; }
+
+.empty { padding: 40px; text-align: center; color: var(--muted); font-size: 12px; }
+
+/* Preview modal */
+.modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.5); z-index: 100; justify-content: center; align-items: start; padding-top: 60px; }
+.modal-overlay.open { display: flex; }
+.modal { background: #fff; border-radius: 10px; max-width: 700px; width: 95%; max-height: 80vh; overflow-y: auto; padding: 28px; box-shadow: 0 12px 40px rgba(0,0,0,.2); }
+.modal h2 { font-size: 18px; font-weight: 700; color: var(--navy); margin-bottom: 4px; }
+.modal .modal-desc { font-size: 12px; color: var(--muted); margin-bottom: 16px; }
+.modal-close { float: right; font-size: 18px; cursor: pointer; color: var(--muted); background: none; border: none; }
+.question-preview { padding: 10px 0; border-bottom: 1px solid #f1f5f9; }
+.question-preview:last-child { border-bottom: none; }
+.qp-id { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--muted); }
+.qp-text { font-size: 12px; color: var(--text); margin-top: 2px; }
+.nav-dropdown { position: relative; display: inline-block; }
+.nav-dropdown > a { cursor: default; }
+.nav-dropdown-menu { display: none; position: absolute; top: 100%; left: 0; min-width: 160px; background: var(--navy); border: 1px solid rgba(255,255,255,.15); border-radius: 6px; padding: 4px 0; margin-top: 4px; z-index: 50; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+.nav-dropdown:hover .nav-dropdown-menu { display: block; }
+.nav-dropdown-menu a { display: block; padding: 8px 16px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); text-decoration: none; border-radius: 0; }
+.nav-dropdown-menu a:hover { background: rgba(255,255,255,.08); color: #fff; }
+.nav-settings { position: relative; display: inline-block; }
+.nav-settings .settings-icon { background: none; border: none; color: rgba(255,255,255,.7); font-size: 16px; cursor: pointer; padding: 4px 8px; }
+.nav-settings .settings-icon:hover { color: #fff; }
+.nav-settings-menu { display: none; position: absolute; top: 100%; right: 0; min-width: 150px; background: var(--navy); border: 1px solid rgba(255,255,255,.15); border-radius: 6px; padding: 4px 0; margin-top: 4px; z-index: 50; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+.nav-settings:hover .nav-settings-menu { display: block; }
+.nav-settings-menu a { display: block; padding: 8px 16px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.7); text-decoration: none; }
+.nav-settings-menu a:hover { background: rgba(255,255,255,.08); color: #fff; }
+@media (max-width: 600px) {
+  .topbar { padding: 10px 14px; flex-wrap: wrap; gap: 6px; }
+  .topbar .brand { font-size: 14px; }
+  .topbar nav { gap: 2px; }
+  .topbar nav a { font-size: 10px; padding: 4px 6px; }
+  .topbar nav a[href="/developers"], .topbar nav a[href*="sso/annotator"], .topbar nav a[href="/library"] { display: none; }
+  .topbar .user-badge { font-size: 9px; margin-left: 4px; padding: 3px 6px; }
+  .topbar .signout-btn { font-size: 9px; padding: 4px 8px; margin-left: 4px; }
+}
+</style>
+</head>
+<body>
+<script>if(window.self!==window.top)document.documentElement.classList.add('in-iframe')</script>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark" aria-hidden="true"></div>
+    <div class="brand-name">The AI Researcher<span class="tag">Library</span></div>
+  </div>
+  <nav>
+    <a href="/">Lab</a>
+    <a href="/dashboard">Dashboard</a>
+    <div class="nav-dropdown">
+      <a href="/challenges">Benchmark Lab ▾</a>
+      <div class="nav-dropdown-menu">
+        <a href="/challenges">Challenges</a>
+        <a href="/leaderboard">Leaderboard</a>
+      </div>
+    </div>
+    <a href="/public-tests">Public Tests</a>
+    <a href="/models">Models</a>
+    <a href="/leaderboard">Leaderboard</a>
+    <a href="/analytics">Analytics</a>
+    <a href="/library" class="active">Library</a>
+    <a href="/search">Search</a>
+    <a href="/pdf-viewer">PDF Viewer</a>
+    <a href="/annotator">Annotator</a>
+    <a href="/quality-appraisal">Quality Appraisal</a>
+    <a href="/developers">Developers</a>
+    <a href="/admin" id="nav-admin" style="display:none">Admin</a>
+    <span class="user-badge" id="user-badge">—</span>
+    <div class="nav-settings">
+      <button class="settings-icon" title="Settings">⚙</button>
+      <div class="nav-settings-menu">
+        <a href="/billing">Billing</a>
+        <a href="/billing?tab=preferences">Preferences</a>
+      </div>
+    </div>
+    <button class="signout-btn" onclick="signOut()">Sign Out</button>
+  </nav>
+</header>
+
+<div class="container">
+  <div class="page-title">Community Library</div>
+  <div class="page-subtitle">Browse, fork, and rate rubric templates shared by the community</div>
+
+  <div class="filter-bar">
+    <div class="filter-group">
+      <label>Type</label>
+      <select id="f-type" onchange="loadLibrary()">
+        <option value="">All Types</option>
+        <option value="classification">Classification</option>
+        <option value="extraction">Extraction</option>
+        <option value="risk_of_bias">Risk of Bias</option>
+        <option value="comparative">Comparative</option>
+        <option value="custom">Custom</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label>Sort</label>
+      <select id="f-sort" onchange="loadLibrary()">
+        <option value="recent">Most Recent</option>
+        <option value="rating">Highest Rated</option>
+        <option value="popular">Most Forked</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label>Search</label>
+      <input type="text" id="f-search" placeholder="Search templates..." onkeydown="if(event.key==='Enter')loadLibrary()">
+    </div>
+    <button class="btn btn-secondary" onclick="loadLibrary()">Search</button>
+  </div>
+
+  <div id="library-grid" class="template-grid">
+    <div class="empty">Loading...</div>
+  </div>
+
+  <div class="pagination" id="pagination"></div>
+</div>
+
+<!-- Preview modal -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal()">&times;</button>
+    <h2 id="modal-title"></h2>
+    <div class="modal-desc" id="modal-desc"></div>
+    <div id="modal-meta" style="margin-bottom:14px"></div>
+    <div id="modal-questions"></div>
+    <div style="margin-top:16px;display:flex;gap:8px">
+      <button class="btn btn-primary" id="modal-fork-btn" onclick="forkFromModal()">Fork to My Templates</button>
+      <div style="display:flex;align-items:center;gap:4px;margin-left:auto">
+        <span style="font-size:11px;color:var(--muted)">Rate:</span>
+        <select id="modal-rating" style="font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:3px">
+          <option value="">—</option><option value="1">1</option><option value="2">2</option>
+          <option value="3">3</option><option value="4">4</option><option value="5">5</option>
+        </select>
+        <button class="btn btn-sm btn-secondary" onclick="rateFromModal()">Rate</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentUser = null;
+let currentPage = 1;
+let currentModalId = null;
+
+async function checkAuth() {
+  try {
+    const r = await fetch('/api/auth/me');
+    if (!r.ok) { window.location.href = '/login'; return; }
+    currentUser = await r.json();
+    document.getElementById('user-badge').textContent = currentUser.display_name || currentUser.email;
+    if (currentUser.role === 'admin') document.getElementById('nav-admin').style.display = '';
+  } catch { window.location.href = '/login'; }
+}
+
+async function signOut() {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  window.location.href = '/login';
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function starsHtml(rating) {
+  if (!rating) return '<span class="stars">-----</span>';
+  const full = Math.round(rating);
+  return '<span class="stars">' + '&#9733;'.repeat(full) + '&#9734;'.repeat(5 - full) + '</span>';
+}
+
+async function loadLibrary(page) {
+  if (page) currentPage = page;
+  else currentPage = 1;
+
+  const type = document.getElementById('f-type').value;
+  const sort = document.getElementById('f-sort').value;
+  const search = document.getElementById('f-search').value.trim();
+  const params = new URLSearchParams({ page: currentPage, sort });
+  if (type) params.set('type', type);
+  if (search) params.set('search', search);
+
+  const r = await fetch('/api/community/templates?' + params);
+  const grid = document.getElementById('library-grid');
+  if (!r.ok) { grid.innerHTML = '<div class="empty">Failed to load library</div>'; return; }
+  const data = await r.json();
+
+  if (!data.items.length) {
+    grid.innerHTML = '<div class="empty" style="grid-column:1/-1">No templates found. Be the first to publish one!</div>';
+    document.getElementById('pagination').innerHTML = '';
+    return;
+  }
+
+  grid.innerHTML = data.items.map(t => `
+    <div class="template-card">
+      <div class="tc-title">${escapeHtml(t.title)}</div>
+      <div class="tc-desc">${escapeHtml(t.description || 'No description')}</div>
+      <div class="tc-meta">
+        <span class="tc-badge ${t.rubric_type}">${escapeHtml(t.rubric_type.replace(/_/g, ' '))}</span>
+        <span class="tc-stat"><strong>${t.question_count}</strong> questions</span>
+        <span class="tc-stat">${starsHtml(t.avg_rating)} (${t.rating_count})</span>
+        <span class="tc-stat"><strong>${t.fork_count}</strong> forks</span>
+      </div>
+      <div style="font-size:11px;color:var(--muted)">by ${escapeHtml(t.publisher_name || 'Unknown')}</div>
+      <div class="tc-actions">
+        <button class="btn btn-sm btn-primary" onclick="previewTemplate(${t.id})">Preview</button>
+        <button class="btn btn-sm btn-secondary" onclick="forkTemplate(${t.id})">Fork</button>
+      </div>
+    </div>
+  `).join('');
+
+  // Pagination
+  const totalPages = Math.ceil(data.total / 20);
+  const pag = document.getElementById('pagination');
+  if (totalPages <= 1) { pag.innerHTML = ''; return; }
+  let pagHtml = '';
+  for (let i = 1; i <= Math.min(totalPages, 10); i++) {
+    pagHtml += `<button class="${i === currentPage ? 'active' : ''}" onclick="loadLibrary(${i})">${i}</button>`;
+  }
+  pag.innerHTML = pagHtml;
+}
+
+async function previewTemplate(communityId) {
+  const r = await fetch(`/api/community/templates/${communityId}`);
+  if (!r.ok) { alert('Failed to load template'); return; }
+  const t = await r.json();
+  currentModalId = communityId;
+
+  document.getElementById('modal-title').textContent = t.title;
+  document.getElementById('modal-desc').textContent = t.description || '';
+  document.getElementById('modal-meta').innerHTML = `
+    <span class="tc-badge ${t.rubric_type}">${t.rubric_type.replace(/_/g, ' ')}</span>
+    <span class="tc-stat" style="margin-left:8px">${starsHtml(t.avg_rating)} (${t.rating_count} ratings)</span>
+    <span class="tc-stat" style="margin-left:8px"><strong>${t.fork_count}</strong> forks</span>
+  `;
+
+  const questions = t.template_data?.questions || [];
+  document.getElementById('modal-questions').innerHTML = questions.length
+    ? questions.map(q => `
+        <div class="question-preview">
+          <div class="qp-id">${escapeHtml(q.id)} &middot; ${escapeHtml(q.domain || '')} &middot; ${q.max_points || 1} pts</div>
+          <div class="qp-text">${escapeHtml(q.question)}</div>
+        </div>
+      `).join('')
+    : '<div class="empty">No questions in this template</div>';
+
+  document.getElementById('modal').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('modal').classList.remove('open');
+  currentModalId = null;
+}
+
+async function forkTemplate(communityId) {
+  const r = await fetch(`/api/community/templates/${communityId}/fork`, { method: 'POST' });
+  if (!r.ok) { const e = await r.json(); alert(e.detail || 'Fork failed'); return; }
+  const data = await r.json();
+  alert(`Forked! Template "${data.name}" added to your templates.`);
+}
+
+function forkFromModal() {
+  if (currentModalId) forkTemplate(currentModalId);
+}
+
+async function rateFromModal() {
+  if (!currentModalId) return;
+  const rating = parseInt(document.getElementById('modal-rating').value);
+  if (!rating) { alert('Select a rating (1-5)'); return; }
+  const r = await fetch(`/api/community/templates/${currentModalId}/rate`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ rating }),
+  });
+  if (!r.ok) { const e = await r.json(); alert(e.detail || 'Rating failed'); return; }
+  alert('Rating submitted!');
+  loadLibrary(currentPage);
+}
+
+async function init() {
+  await checkAuth();
+  loadLibrary();
+}
+init();
+</script>
+</body>
+</html>

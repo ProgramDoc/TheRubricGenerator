@@ -63,6 +63,8 @@ from backend import annotator as annotator_mod
 from backend import paper_files as paper_files_mod
 from backend.quality_appraisal import QUALITY_APPRAISAL_TABLES_SQL
 from backend import quality_appraisal as qa_mod
+from backend.review import GRADE_REVIEWS_TABLES_SQL
+from backend import review as review_mod
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rubricgen")
@@ -172,6 +174,20 @@ def init_db() -> None:
                 created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(sha256, user_id)
             );
+
+            -- Multi-project membership: a paper can belong to many projects.
+            -- papers.project_id is kept as a "primary" pointer for back-compat
+            -- (and for legacy single-project queries). The junction is the
+            -- source of truth for filtering, sidebar grouping, and the
+            -- /library page.
+            CREATE TABLE IF NOT EXISTS paper_projects (
+                paper_id   INTEGER NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+                project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                added_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (paper_id, project_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_paper_projects_proj
+                ON paper_projects(project_id);
 
             CREATE TABLE IF NOT EXISTS rubrics (
                 id           SERIAL PRIMARY KEY,
@@ -385,6 +401,8 @@ def init_db() -> None:
         conn.executescript(ANNOTATOR_TABLES_SQL)
         # Quality Appraisal AI: risk-of-bias + reporting-guideline + GRADE per paper
         conn.executescript(QUALITY_APPRAISAL_TABLES_SQL)
+        # 3-judge adjudication: human-review queue for grade disagreements
+        conn.executescript(GRADE_REVIEWS_TABLES_SQL)
         # Project invitations (for unregistered users)
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS project_invitations (
@@ -597,6 +615,14 @@ def _migrate_challenge_columns_v2(conn) -> None:
         # Papers: durable storage path (s3:// URI or local uploads/ path). NULL = legacy local disk layout.
         if not column_exists(conn, "papers", "storage_path"):
             conn.execute("ALTER TABLE papers ADD COLUMN storage_path TEXT")
+        # Papers: provenance tag — 'upload' | 'lab' | 'search' | 'pubmed' | 'imported'.
+        # Drives the "Source" filter on /library and lets the Library show where each PDF came from.
+        if not column_exists(conn, "papers", "source"):
+            conn.execute("ALTER TABLE papers ADD COLUMN source TEXT NOT NULL DEFAULT 'upload'")
+        # lab_documents migration cursor — the id of the papers row this lab_document
+        # has been backfilled into. Lets the dual-write be idempotent.
+        if not column_exists(conn, "lab_documents", "papers_id"):
+            conn.execute("ALTER TABLE lab_documents ADD COLUMN papers_id INTEGER")
         # Challenge events table
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS challenge_events (
@@ -631,6 +657,44 @@ def _migrate_challenge_columns_v2(conn) -> None:
         """)
         if not column_exists(conn, "registered_models", "updated_at"):
             conn.execute("ALTER TABLE registered_models ADD COLUMN updated_at TEXT")
+        # Backfill paper_projects from the legacy single papers.project_id FK.
+        # Idempotent — re-run on every startup, ON CONFLICT DO NOTHING handles dupes.
+        conn.execute(
+            """INSERT INTO paper_projects (paper_id, project_id)
+               SELECT id, project_id FROM papers
+                WHERE project_id IS NOT NULL
+               ON CONFLICT DO NOTHING"""
+        )
+        # Backfill lab_documents → papers. We use a synthetic sha256 of
+        # 'lab:{user_id}:{lab_doc_id}' since lab_documents never stored a hash.
+        # Idempotent: lab_documents.papers_id IS NULL gates the insert; once
+        # set, the row is considered migrated.
+        try:
+            unmigrated = conn.execute(
+                """SELECT id, user_id, project_id, filename, file_path
+                     FROM lab_documents
+                    WHERE papers_id IS NULL"""
+            ).fetchall()
+            for ld in unmigrated:
+                synthetic_sha = f"lab:{ld['user_id']}:{ld['id']}"
+                cur = conn.execute(
+                    """INSERT INTO papers
+                            (filename, sha256, user_id, project_id,
+                             storage_path, source)
+                       VALUES (?, ?, ?, ?, ?, 'lab')
+                       ON CONFLICT DO NOTHING
+                       RETURNING id""",
+                    (ld["filename"], synthetic_sha, ld["user_id"],
+                     ld["project_id"], ld["file_path"]),
+                )
+                row = cur.fetchone()
+                if row:
+                    conn.execute(
+                        "UPDATE lab_documents SET papers_id=? WHERE id=?",
+                        (row["id"], ld["id"]),
+                    )
+        except Exception as e:
+            logger.warning("lab_documents backfill skipped: %s", e)
         conn.commit()
 
 
@@ -1071,6 +1135,17 @@ def quality_appraisal_page(rubricgen_session: str | None = Cookie(default=None))
     return FileResponse(str(FRONTEND / "quality-appraisal.html"), media_type="text/html")
 
 
+@app.get("/review", include_in_schema=False)
+def review_page(rubricgen_session: str | None = Cookie(default=None)):
+    """Admin inbox for human adjudication of 3-judge grade splits."""
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    if user.get("role") != "admin":
+        return RedirectResponse("/", status_code=302)
+    return FileResponse(str(FRONTEND / "review.html"), media_type="text/html")
+
+
 @app.get("/challenges", include_in_schema=False)
 def challenges_page(rubricgen_session: str | None = Cookie(default=None)):
     user = _get_user_from_token(rubricgen_session)
@@ -1183,10 +1258,20 @@ def org_page(org_id: int, rubricgen_session: str | None = Cookie(default=None)):
 
 @app.get("/library", include_in_schema=False)
 def library_page(rubricgen_session: str | None = Cookie(default=None)):
+    """Personal PDF library — all the user's papers across projects + sources."""
     user = _get_user_from_token(rubricgen_session)
     if not user:
         return RedirectResponse("/login", status_code=302)
     return FileResponse(str(FRONTEND / "library.html"), media_type="text/html")
+
+
+@app.get("/community-library", include_in_schema=False)
+def community_library_page(rubricgen_session: str | None = Cookie(default=None)):
+    """Public community library — shared rubrics + challenges. Used to live at /library."""
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return FileResponse(str(FRONTEND / "community-library.html"), media_type="text/html")
 
 
 @app.get("/search", include_in_schema=False)
@@ -1626,6 +1711,79 @@ def admin_include_challenge(cid: int,
     bench.refresh_leaderboard(conn)
     conn.close()
     return {"ok": True, "message": f"Challenge {cid} included in leaderboard"}
+
+
+# ─── Grade-review queue (3-judge adjudication escalations) ───
+#
+# When primary, shadow, and third judges all give a different score on the
+# same question, the adjudicator in backend/agents/adjudicator.py flags it
+# and backend/review.py persists it to the grade_reviews table. These
+# endpoints power the /review admin inbox.
+
+class ReviewResolvePayload(BaseModel):
+    final_score: float
+    reviewer_note: Optional[str] = ""
+
+
+@app.get("/api/reviews/pending")
+def api_reviews_pending(limit: int = 200,
+                        rubricgen_session: str | None = Cookie(default=None)):
+    """List pending grade-review items (3-way-split questions)."""
+    require_admin(rubricgen_session)
+    conn = get_db()
+    try:
+        return review_mod.list_pending_reviews(conn, limit=limit)
+    finally:
+        conn.close()
+
+
+@app.get("/api/reviews/{review_id}")
+def api_review_detail(review_id: int,
+                      rubricgen_session: str | None = Cookie(default=None)):
+    """Fetch a single review item — the admin UI's detail pane."""
+    require_admin(rubricgen_session)
+    conn = get_db()
+    try:
+        row = review_mod.get_review(conn, review_id)
+        if not row:
+            raise HTTPException(404, "Review not found")
+        return row
+    finally:
+        conn.close()
+
+
+@app.post("/api/reviews/{review_id}/resolve")
+def api_review_resolve(review_id: int,
+                       body: ReviewResolvePayload,
+                       rubricgen_session: str | None = Cookie(default=None)):
+    """Resolve a pending review with the human adjudicator's final score.
+
+    Updates the grade_reviews row, rewrites the participant's grade_json +
+    denormalized accuracy/total_score columns so the leaderboard reflects
+    the final grade.
+    """
+    user = require_admin(rubricgen_session)
+    conn = get_db()
+    try:
+        try:
+            result = review_mod.resolve_review(
+                conn,
+                review_id=review_id,
+                final_score=body.final_score,
+                reviewer_user_id=user["id"],
+                reviewer_note=body.reviewer_note or "",
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        # Refresh the leaderboard so the adjudicated score shows up
+        # immediately rather than waiting for the next benchmark pass.
+        try:
+            bench.refresh_leaderboard(conn)
+        except Exception as e:
+            logger.warning("refresh_leaderboard after resolve failed: %s", e)
+        return {"ok": True, "review": result}
+    finally:
+        conn.close()
 
 
 @app.get("/api/admin/users")
@@ -3554,8 +3712,23 @@ def list_papers(rubricgen_session: str | None = Cookie(default=None)):
            ORDER BY p.created_at DESC""",
         (user["id"], user["id"], user["id"]),
     ).fetchall()
+    out = [dict(r) for r in rows]
+    if out:
+        # Attach multi-project membership in one round-trip.
+        pp_rows = conn.execute(
+            """SELECT pp.paper_id, pp.project_id
+                 FROM paper_projects pp
+                 JOIN papers p ON p.id = pp.paper_id
+                WHERE p.user_id = ?""",
+            (user["id"],),
+        ).fetchall()
+        by_pid: dict[int, list[int]] = {}
+        for r in pp_rows:
+            by_pid.setdefault(r["paper_id"], []).append(r["project_id"])
+        for d in out:
+            d["project_ids"] = by_pid.get(d["id"], [])
     conn.close()
-    return [dict(r) for r in rows]
+    return out
 
 
 @app.post("/api/papers/upload", status_code=201)
@@ -3601,8 +3774,8 @@ async def upload_paper(
         try:
             with conn:
                 cur = conn.execute(
-                    "INSERT INTO papers (filename, disk_filename, storage_path, sha256, user_id, project_id) "
-                    "VALUES (?,?,?,?,?,?) RETURNING id",
+                    "INSERT INTO papers (filename, disk_filename, storage_path, sha256, user_id, project_id, source) "
+                    "VALUES (?,?,?,?,?,?, 'upload') RETURNING id",
                     (file.filename, disk_name, storage_path, sha256, user["id"], project_id),
                 )
                 conn.commit()
@@ -3678,17 +3851,285 @@ async def replace_paper_file(
 
 @app.patch("/api/papers/{pid}/assign")
 def assign_paper(pid: int, body: PaperAssign, rubricgen_session: str | None = Cookie(default=None)):
+    """Set the paper's *primary* project (the legacy single-FK pointer).
+    Multi-project membership lives in ``paper_projects`` — see the dedicated
+    POST/DELETE /api/papers/{pid}/projects/{project_id} endpoints. This route
+    is kept for back-compat; new code should use the junction endpoints.
+    """
     user = require_user(rubricgen_session)
     require_active_seat(user, "engineer")
     conn = get_db()
-    with conn:
-        conn.execute(
-            "UPDATE papers SET project_id=? WHERE id=? AND user_id=?",
-            (body.project_id, pid, user["id"]),
-        )
-        conn.commit()
-    conn.close()
+    try:
+        # Ownership check.
+        own = conn.execute(
+            "SELECT id FROM papers WHERE id=? AND user_id=?",
+            (pid, user["id"]),
+        ).fetchone()
+        if not own:
+            raise HTTPException(404, "paper not found")
+        with conn:
+            conn.execute(
+                "UPDATE papers SET project_id=? WHERE id=? AND user_id=?",
+                (body.project_id, pid, user["id"]),
+            )
+            # Mirror to the junction so the multi-project view stays consistent.
+            if body.project_id is not None:
+                conn.execute(
+                    """INSERT INTO paper_projects (paper_id, project_id)
+                       VALUES (?, ?) ON CONFLICT DO NOTHING""",
+                    (pid, body.project_id),
+                )
+            conn.commit()
+    finally:
+        conn.close()
     return {"ok": True}
+
+
+# Accept POST too, for back-compat with frontend code that hasn't switched to PATCH yet.
+# (annotator.html:assignPaperToProject historically posted here even though the route was PATCH-only.)
+@app.post("/api/papers/{pid}/assign")
+def assign_paper_post(pid: int, body: PaperAssign,
+                      rubricgen_session: str | None = Cookie(default=None)):
+    return assign_paper(pid, body, rubricgen_session)
+
+
+@app.get("/api/papers/{pid}/projects")
+def list_paper_projects(pid: int,
+                        rubricgen_session: str | None = Cookie(default=None),
+                        x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Return the project IDs this paper currently belongs to."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    conn = get_db()
+    try:
+        own = conn.execute(
+            "SELECT id, project_id FROM papers WHERE id=? AND user_id=?",
+            (pid, user["id"]),
+        ).fetchone()
+        if not own:
+            raise HTTPException(404, "paper not found")
+        rows = conn.execute(
+            """SELECT pp.project_id, p.name
+                 FROM paper_projects pp
+            LEFT JOIN projects p ON p.id = pp.project_id
+                WHERE pp.paper_id = ?
+                ORDER BY p.name ASC""",
+            (pid,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return {
+        "paper_id": pid,
+        "primary_project_id": own["project_id"],
+        "projects": [{"id": r["project_id"], "name": r["name"]} for r in rows],
+    }
+
+
+@app.post("/api/papers/{pid}/projects/{project_id}", status_code=201)
+def add_paper_to_project(pid: int, project_id: int,
+                         rubricgen_session: str | None = Cookie(default=None),
+                         x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Add this paper to a project. Idempotent — re-adding is a no-op."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    conn = get_db()
+    try:
+        # Joint ownership check — both sides belong to the user.
+        paper = conn.execute(
+            "SELECT id, project_id FROM papers WHERE id=? AND user_id=?",
+            (pid, user["id"]),
+        ).fetchone()
+        if not paper:
+            raise HTTPException(404, "paper not found")
+        proj = conn.execute(
+            "SELECT id FROM projects WHERE id=? AND user_id=?",
+            (project_id, user["id"]),
+        ).fetchone()
+        if not proj:
+            raise HTTPException(404, "project not found")
+        with conn:
+            conn.execute(
+                """INSERT INTO paper_projects (paper_id, project_id)
+                   VALUES (?, ?) ON CONFLICT DO NOTHING""",
+                (pid, project_id),
+            )
+            # If the paper has no primary yet, set this one so legacy single-project
+            # consumers still see it grouped somewhere.
+            if paper["project_id"] is None:
+                conn.execute(
+                    "UPDATE papers SET project_id=? WHERE id=?",
+                    (project_id, pid),
+                )
+            conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "paper_id": pid, "project_id": project_id}
+
+
+@app.delete("/api/papers/{pid}/projects/{project_id}")
+def remove_paper_from_project(pid: int, project_id: int,
+                              rubricgen_session: str | None = Cookie(default=None),
+                              x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Remove this paper from a project. The paper itself is untouched."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    conn = get_db()
+    try:
+        paper = conn.execute(
+            "SELECT id, project_id FROM papers WHERE id=? AND user_id=?",
+            (pid, user["id"]),
+        ).fetchone()
+        if not paper:
+            raise HTTPException(404, "paper not found")
+        with conn:
+            conn.execute(
+                "DELETE FROM paper_projects WHERE paper_id=? AND project_id=?",
+                (pid, project_id),
+            )
+            # If the removed project was the primary, promote any remaining
+            # membership (else NULL the primary).
+            if paper["project_id"] == project_id:
+                next_row = conn.execute(
+                    "SELECT project_id FROM paper_projects WHERE paper_id=? ORDER BY added_at ASC LIMIT 1",
+                    (pid,),
+                ).fetchone()
+                conn.execute(
+                    "UPDATE papers SET project_id=? WHERE id=?",
+                    (next_row["project_id"] if next_row else None, pid),
+                )
+            conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+@app.get("/api/library/papers")
+def api_library_papers(project: str | None = None,
+                       source: str | None = None,
+                       status: str | None = None,
+                       q: str | None = None,
+                       limit: int = 200,
+                       rubricgen_session: str | None = Cookie(default=None),
+                       x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Aggregated personal-library view. One row per paper with multi-project
+    membership, source, annotation status, challenge count, and run count.
+
+    Filters (all optional, AND-combined):
+      - project=ID  → only papers in this project (junction OR primary). 'unassigned' for none.
+      - source=upload|lab|search|pubmed|imported  → reserved; honored once papers.source ships.
+      - status=annotated|unannotated|in_progress  → annotation state.
+      - q=foo  → case-insensitive substring on filename.
+    """
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    try:
+        limit = max(1, min(int(limit), 1000))
+    except Exception:
+        limit = 200
+    conn = get_db()
+    try:
+        # Aggregated paper list. Counts via correlated subqueries — fine for
+        # personal libraries up to a few thousand papers.
+        rows = conn.execute(
+            f"""SELECT p.id, p.filename, p.sha256, p.project_id,
+                       p.created_at, p.source,
+                       a.status     AS ann_status,
+                       a.updated_at AS ann_updated_at,
+                       (SELECT COUNT(*) FROM rubrics r       WHERE r.paper_id=p.id AND r.user_id=?) AS rubric_count,
+                       (SELECT COUNT(*) FROM evaluations e   WHERE e.paper_id=p.id AND e.user_id=?) AS eval_count,
+                       (SELECT COUNT(*) FROM challenge_papers cp WHERE cp.paper_id=p.id) AS challenge_count
+                  FROM papers p
+             LEFT JOIN annotations a
+                    ON a.paper_id = p.id AND a.reviewer_id = ?
+                 WHERE p.user_id = ?
+              ORDER BY p.created_at DESC""",
+            (user["id"], user["id"], user["id"], user["id"]),
+        ).fetchall()
+        # Junction memberships in one round-trip.
+        pp_rows = conn.execute(
+            """SELECT pp.paper_id, pp.project_id, prj.name
+                 FROM paper_projects pp
+            LEFT JOIN projects prj ON prj.id = pp.project_id
+                 JOIN papers p     ON p.id  = pp.paper_id
+                WHERE p.user_id = ?""",
+            (user["id"],),
+        ).fetchall()
+        # All projects for label lookup on the legacy primary FK.
+        proj_rows = conn.execute(
+            "SELECT id, name FROM projects WHERE user_id=? ORDER BY name ASC",
+            (user["id"],),
+        ).fetchall()
+        # Custom-run participation: count runs whose paper_ids_json includes this paper.
+        # Pulled in Python to avoid PG/SQLite JSON-fn portability mess.
+        run_rows = conn.execute(
+            "SELECT id, paper_ids_json FROM annotator_custom_runs WHERE user_id=?",
+            (user["id"],),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    proj_lookup = {r["id"]: r["name"] for r in proj_rows}
+    junctions: dict[int, list[dict]] = {}
+    for r in pp_rows:
+        junctions.setdefault(r["paper_id"], []).append(
+            {"id": r["project_id"], "name": r["name"]}
+        )
+
+    run_count_by_pid: dict[int, int] = {}
+    for r in run_rows:
+        try:
+            for pid in json.loads(r["paper_ids_json"] or "[]"):
+                run_count_by_pid[int(pid)] = run_count_by_pid.get(int(pid), 0) + 1
+        except Exception:
+            continue
+
+    # Build the result list with normalized projects + filter application.
+    q_lower = (q or "").strip().lower()
+    out: list[dict] = []
+    for r in rows:
+        d = dict(r)
+        membership = junctions.get(d["id"], [])
+        # Always include the legacy primary FK if it isn't already in the junction
+        # (covers freshly-uploaded papers before backfill catches them).
+        if d.get("project_id") and not any(m["id"] == d["project_id"] for m in membership):
+            membership.append({"id": d["project_id"], "name": proj_lookup.get(d["project_id"], f"#{d['project_id']}")})
+        d["projects"] = membership
+        d["project_ids"] = [m["id"] for m in membership]
+        d["custom_run_count"] = run_count_by_pid.get(d["id"], 0)
+        d["source"] = d.get("source") or "upload"
+        # Filters
+        if q_lower and q_lower not in (d["filename"] or "").lower():
+            continue
+        if project:
+            if project == "unassigned":
+                if membership:
+                    continue
+            else:
+                try:
+                    pid_filter = int(project)
+                except ValueError:
+                    continue
+                if pid_filter not in d["project_ids"]:
+                    continue
+        if source and source != d["source"]:
+            continue
+        if status:
+            ann = d.get("ann_status")
+            if status == "annotated" and ann != "complete":
+                continue
+            if status == "unannotated" and ann not in (None, ""):
+                continue
+            if status == "in_progress" and ann != "in_progress":
+                continue
+        out.append(d)
+        if len(out) >= limit:
+            break
+
+    return {
+        "papers": out,
+        "projects": [{"id": p["id"], "name": p["name"]} for p in proj_rows],
+        "total": len(out),
+    }
 
 
 @app.delete("/api/papers/{pid}")
@@ -5247,6 +5688,45 @@ async def api_lab_upload_document(
         )
         doc["storage_used_mb"] = limit_check["used_mb"]
         doc["storage_limit_mb"] = limit_check["limit_mb"]
+
+        # Dual-write into the papers library so the upload also shows up in
+        # /library and the Annotator. We compute a real sha256 here (cheap —
+        # we already have the bytes in memory). On hash collision with an
+        # existing paper, the ON CONFLICT keeps the existing row and we just
+        # link `lab_documents.papers_id` to it.
+        try:
+            sha = hashlib.sha256(content).hexdigest()
+            cur = conn.execute(
+                """INSERT INTO papers
+                        (filename, sha256, user_id, project_id,
+                         storage_path, source)
+                   VALUES (?, ?, ?, ?, ?, 'lab')
+                   ON CONFLICT (sha256, user_id) DO NOTHING
+                   RETURNING id""",
+                (filename, sha, user["id"], project_id, storage_path),
+            )
+            row = cur.fetchone()
+            paper_id = row["id"] if row else conn.execute(
+                "SELECT id FROM papers WHERE sha256=? AND user_id=?",
+                (sha, user["id"]),
+            ).fetchone()["id"]
+            with conn:
+                conn.execute(
+                    "UPDATE lab_documents SET papers_id=? WHERE id=?",
+                    (paper_id, doc["id"]),
+                )
+                # Also mirror to the multi-project junction.
+                if project_id:
+                    conn.execute(
+                        """INSERT INTO paper_projects (paper_id, project_id)
+                           VALUES (?, ?) ON CONFLICT DO NOTHING""",
+                        (paper_id, project_id),
+                    )
+                conn.commit()
+            doc["papers_id"] = paper_id
+        except Exception as e:
+            logger.warning("Lab dual-write to papers failed (doc=%s): %s",
+                           doc.get("id"), e)
     finally:
         conn.close()
     return doc
@@ -5655,12 +6135,25 @@ def api_annotator_classify(pid: int,
         conn.close()
 
     try:
-        return annotator_mod.classify_study_design(pdf_bytes)
-    except HTTPException:
+        result = annotator_mod.classify_study_design(pdf_bytes)
+        _log_annotator_action_safe(
+            user["id"], pid, "classify", "ok",
+            filename=filename, study_type=result.get("study_type") if isinstance(result, dict) else None,
+        )
+        return result
+    except HTTPException as he:
         _refund_annotator(user, annotator_mod.CREDIT_COST_CLASSIFY, "classify", filename)
+        _log_annotator_action_safe(
+            user["id"], pid, "classify", "error",
+            filename=filename, error=str(he.detail)[:300],
+        )
         raise
     except Exception as e:
         _refund_annotator(user, annotator_mod.CREDIT_COST_CLASSIFY, "classify", filename)
+        _log_annotator_action_safe(
+            user["id"], pid, "classify", "error",
+            filename=filename, error=str(e)[:300],
+        )
         logger.error("Annotator classify failed: %s", e)
         raise HTTPException(502, f"Classification failed: {e}")
 
@@ -5704,17 +6197,31 @@ def api_annotator_prefill(pid: int, body: dict,
         conn.close()
 
     try:
-        return annotator_mod.prefill_fields(
+        result = annotator_mod.prefill_fields(
             pdf_bytes, study_type,
             groups=groups,
             type_fields=type_fields,
             modifier_fields=modifier_fields,
         )
-    except HTTPException:
+        _log_annotator_action_safe(
+            user["id"], pid, "prefill", "ok",
+            filename=filename, study_type=study_type,
+            fields_count=len(result) if isinstance(result, dict) else 0,
+        )
+        return result
+    except HTTPException as he:
         _refund_annotator(user, annotator_mod.CREDIT_COST_PREFILL, "prefill", filename)
+        _log_annotator_action_safe(
+            user["id"], pid, "prefill", "error",
+            filename=filename, study_type=study_type, error=str(he.detail)[:300],
+        )
         raise
     except Exception as e:
         _refund_annotator(user, annotator_mod.CREDIT_COST_PREFILL, "prefill", filename)
+        _log_annotator_action_safe(
+            user["id"], pid, "prefill", "error",
+            filename=filename, study_type=study_type, error=str(e)[:300],
+        )
         logger.error("Annotator prefill failed: %s", e)
         raise HTTPException(502, f"Prefill failed: {e}")
 
@@ -5732,6 +6239,155 @@ def _refund_annotator(user: dict, amount: int, op: str, filename: str) -> None:
             rc.close()
     except Exception as refund_err:
         logger.error("Annotator refund failed: %s", refund_err)
+
+
+def _log_annotator_action_safe(user_id: int, paper_id: int | None,
+                               action_type: str, status: str,
+                               schema_id: int | None = None,
+                               run_id: int | None = None,
+                               **detail) -> None:
+    """Open a short-lived DB conn just to log an annotator action. Never raises."""
+    try:
+        conn = get_db()
+        try:
+            annotator_mod.log_annotator_action(
+                conn, user_id, paper_id, action_type, status,
+                schema_id=schema_id, run_id=run_id,
+                detail=detail or None,
+            )
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+
+def _log_run_event_safe(run_id: int, event_type: str, message: str, **detail) -> None:
+    """Append a per-run progress event from anywhere (incl. worker threads). Never raises."""
+    try:
+        conn = get_db()
+        try:
+            annotator_mod.log_run_event(conn, run_id, event_type, message,
+                                        detail=detail or None)
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+
+@app.get("/api/annotator/papers/{pid}/custom-runs")
+def api_annotator_paper_custom_runs(pid: int,
+                                    rubricgen_session: str | None = Cookie(default=None),
+                                    x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """All custom-schema extractions for this paper, most recent first.
+    Used by the Form tab's "Custom-schema extractions" panel so users can see
+    AI-extracted values in context with the paper without merging them into
+    the canonical annotation row.
+    """
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    is_admin = user.get("role") == "admin"
+    conn = get_db()
+    try:
+        # Ownership check (admin bypass).
+        if not is_admin:
+            own = conn.execute(
+                "SELECT 1 FROM papers WHERE id=? AND user_id=?",
+                (pid, user["id"]),
+            ).fetchone()
+            if not own:
+                raise HTTPException(404, "paper not found")
+        rows = conn.execute(
+            """SELECT r.id, r.schema_id, r.schema_snapshot_json, r.results_json,
+                      r.status, r.created_at, s.name AS schema_name
+                 FROM annotator_custom_runs r
+            LEFT JOIN annotator_custom_schemas s ON s.id = r.schema_id
+                WHERE r.user_id = ?
+                ORDER BY r.created_at DESC""",
+            (user["id"],),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    pid_key = str(pid)
+    out: list[dict] = []
+    for r in rows:
+        try:
+            results = json.loads(r["results_json"] or "{}")
+        except Exception:
+            continue
+        paper_entry = (results.get("papers") or {}).get(pid_key)
+        if not paper_entry:
+            continue  # this run didn't include this paper
+        try:
+            snap = json.loads(r["schema_snapshot_json"] or "{}")
+        except Exception:
+            snap = {}
+        field_defs = snap.get("fields") or []
+        extracted = paper_entry.get("fields") or {}
+        out.append({
+            "run_id": r["id"],
+            "schema_id": r["schema_id"],
+            "schema_name": r["schema_name"] or snap.get("name") or "(deleted schema)",
+            "status": paper_entry.get("status", "unknown"),
+            "error": paper_entry.get("error"),
+            "created_at": r["created_at"],
+            "fields": [
+                {"id": f.get("id"), "label": f.get("label", f.get("id", "")),
+                 "value": str(extracted.get(f.get("id"), "") or "")}
+                for f in field_defs
+            ],
+        })
+    return out
+
+
+@app.get("/api/annotator/actions")
+def api_annotator_actions(limit: int = 50,
+                          rubricgen_session: str | None = Cookie(default=None),
+                          x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Recent annotator activity across all action types (classify / prefill / custom).
+    Powers the "Recent activity" view in the Results tab."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    try:
+        limit = max(1, min(int(limit), 200))
+    except Exception:
+        limit = 50
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """SELECT a.id, a.paper_id, a.action_type, a.schema_id, a.run_id,
+                      a.status, a.detail_json, a.created_at,
+                      p.filename AS paper_filename,
+                      s.name     AS schema_name
+                 FROM annotator_actions a
+            LEFT JOIN papers p                    ON p.id = a.paper_id
+            LEFT JOIN annotator_custom_schemas s  ON s.id = a.schema_id
+                WHERE a.user_id = ?
+                ORDER BY a.created_at DESC
+                LIMIT ?""",
+            (user["id"], limit),
+        ).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        try:
+            detail = json.loads(r["detail_json"] or "{}")
+        except Exception:
+            detail = {}
+        out.append({
+            "id": r["id"],
+            "paper_id": r["paper_id"],
+            "paper_filename": r["paper_filename"] or detail.get("filename"),
+            "action_type": r["action_type"],
+            "schema_id": r["schema_id"],
+            "schema_name": r["schema_name"],
+            "run_id": r["run_id"],
+            "status": r["status"],
+            "detail": detail,
+            "created_at": r["created_at"],
+        })
+    return out
 
 
 @app.get("/api/annotator/analytics")
@@ -5773,6 +6429,10 @@ class CustomSchemaParseTextPayload(BaseModel):
 
 class CustomSchemaRunPayload(BaseModel):
     paper_ids: list[int] = []
+    # When true, Claude's extended-thinking output is captured per paper and
+    # emitted as a `paper_thinking` event so the UI can show reasoning blocks.
+    # Costs ~50% more credits per paper.
+    thinking_enabled: bool = False
 
 
 def _validate_schema_name(name: str) -> str:
@@ -6004,17 +6664,25 @@ def api_annotator_schemas_delete(sid: int,
 # ─────────────────────────────────────────────
 
 def _run_custom_extraction(user_id: int, is_admin: bool, run_id: int,
-                           fields: list[dict], paper_ids: list[int]) -> None:
+                           schema_id: int | None,
+                           fields: list[dict], paper_ids: list[int],
+                           thinking_enabled: bool = False) -> None:
     """Execute a custom-extraction run. Safe to call from a background thread.
 
     Writes ``results_json`` + ``status`` on completion, refunds per-paper on
     failure. Each paper is isolated: a deleted paper or a flaky LLM call
     fails just that row, not the whole run.
+
+    When ``thinking_enabled``, Claude's extended thinking is captured per paper
+    and emitted as a ``paper_thinking`` event for live display in the UI.
     """
     from backend import billing as bill_mod
     per_paper_cost = annotator_mod.CREDIT_COST_CUSTOM_PREFILL
     paper_results: dict[str, Any] = {}
     refunded = 0
+    # Reasonable default for medical-paper extraction; calibrated to keep cost
+    # bump in the ~50% range vs non-thinking runs.
+    THINKING_BUDGET_TOKENS = 4000
 
     def _mark(status: str, payload: dict) -> None:
         conn2 = get_db()
@@ -6032,7 +6700,15 @@ def _run_custom_extraction(user_id: int, is_admin: bool, run_id: int,
         finally:
             conn2.close()
 
-    for pid in paper_ids:
+    total = len(paper_ids)
+    _log_run_event_safe(run_id, "run_started",
+                        f"Starting custom extraction on {total} paper(s)",
+                        total=total, fields_count=len(fields))
+
+    ok_count = 0
+    err_count = 0
+    skip_count = 0
+    for idx, pid in enumerate(paper_ids, start=1):
         paper_conn = get_db()
         entry: dict[str, Any] = {"status": "error", "filename": None,
                                  "fields": {}, "error": None,
@@ -6043,6 +6719,11 @@ def _run_custom_extraction(user_id: int, is_admin: bool, run_id: int,
                     paper_conn, PAPERS_DIR, pid, user_id, is_admin=is_admin
                 )
                 entry["filename"] = filename
+                _log_run_event_safe(
+                    run_id, "paper_started",
+                    f"[{idx}/{total}] Loaded {filename}",
+                    paper_id=pid, paper_index=idx, total=total, filename=filename,
+                )
             except HTTPException as he:
                 code = getattr(he, "status_code", 0)
                 if code == 404:
@@ -6062,12 +6743,38 @@ def _run_custom_extraction(user_id: int, is_admin: bool, run_id: int,
                         refunded += per_paper_cost
                     except Exception:
                         pass
+                _log_run_event_safe(
+                    run_id, "paper_skipped",
+                    f"[{idx}/{total}] Skipped paper #{pid} ({entry['status']}): {entry['error'][:100]}",
+                    paper_id=pid, paper_index=idx, total=total,
+                    status=entry["status"], error=entry["error"],
+                )
+                skip_count += 1
                 continue
         finally:
             paper_conn.close()
 
+        _log_run_event_safe(
+            run_id, "extracting",
+            f"[{idx}/{total}] Extracting {len(fields)} field(s) from {filename}",
+            paper_id=pid, paper_index=idx, total=total,
+            filename=filename, fields_count=len(fields),
+        )
+
         try:
-            extracted = annotator_mod.extract_custom_fields(pdf_bytes, fields)
+            if thinking_enabled:
+                extracted, thinking_text = annotator_mod.extract_custom_fields(
+                    pdf_bytes, fields, thinking_budget=THINKING_BUDGET_TOKENS,
+                )
+                if thinking_text:
+                    _log_run_event_safe(
+                        run_id, "paper_thinking",
+                        f"[{idx}/{total}] Reasoning ({len(thinking_text)} chars)",
+                        paper_id=pid, paper_index=idx, total=total,
+                        filename=filename, thinking=thinking_text,
+                    )
+            else:
+                extracted = annotator_mod.extract_custom_fields(pdf_bytes, fields)
             entry["fields"] = extracted
             entry["status"] = "ok"
         except Exception as e:
@@ -6089,15 +6796,49 @@ def _run_custom_extraction(user_id: int, is_admin: bool, run_id: int,
 
         entry["completed_at"] = datetime.now(timezone.utc).isoformat()
         paper_results[str(pid)] = entry
+        # Per-paper action log (status mirrors the run entry's status field).
+        _log_annotator_action_safe(
+            user_id, pid, "custom", entry["status"],
+            schema_id=schema_id, run_id=run_id,
+            filename=entry.get("filename"),
+            error=(entry.get("error") or None),
+            fields_count=len(entry.get("fields") or {}),
+        )
+
+        if entry["status"] == "ok":
+            ok_count += 1
+            _log_run_event_safe(
+                run_id, "paper_done",
+                f"[{idx}/{total}] {filename} — extracted {len(entry['fields'])} field(s)",
+                paper_id=pid, paper_index=idx, total=total,
+                filename=filename, fields_count=len(entry["fields"]),
+            )
+        else:
+            err_count += 1
+            _log_run_event_safe(
+                run_id, "paper_error",
+                f"[{idx}/{total}] {filename or ('#' + str(pid))} — {entry['error'][:120] if entry['error'] else 'failed'}",
+                paper_id=pid, paper_index=idx, total=total,
+                filename=entry.get("filename"), error=entry["error"],
+            )
 
     _mark("complete", {"papers": paper_results})
+    _log_run_event_safe(
+        run_id, "run_complete",
+        f"Run complete — {ok_count} ok, {err_count} failed, {skip_count} skipped",
+        ok=ok_count, error=err_count, skipped=skip_count, total=total,
+        refunded=refunded,
+    )
 
 
 def _run_custom_extraction_async(user_id: int, is_admin: bool, run_id: int,
-                                 fields: list[dict], paper_ids: list[int]) -> None:
+                                 schema_id: int | None,
+                                 fields: list[dict], paper_ids: list[int],
+                                 thinking_enabled: bool = False) -> None:
     t = threading.Thread(
         target=_run_custom_extraction,
-        args=(user_id, is_admin, run_id, fields, paper_ids),
+        args=(user_id, is_admin, run_id, schema_id, fields, paper_ids,
+              thinking_enabled),
         daemon=True,
         name=f"annotator-custom-run-{run_id}",
     )
@@ -6143,11 +6884,18 @@ def api_annotator_schemas_run(sid: int, body: CustomSchemaRunPayload,
         if missing:
             raise HTTPException(400, f"unknown or unowned paper ids: {missing}")
 
-        # Credit pre-flight
-        total_cost = len(paper_ids) * annotator_mod.CREDIT_COST_CUSTOM_PREFILL
+        # Credit pre-flight. Reasoning bumps cost ~50% per paper.
+        per_paper = annotator_mod.CREDIT_COST_CUSTOM_PREFILL
+        if body.thinking_enabled:
+            per_paper = int(round(per_paper * 1.5))
+        total_cost = len(paper_ids) * per_paper
         is_admin = user.get("role") == "admin"
-        _annotator_ai_gate(conn, user, total_cost,
-                           f"Annotator custom run (schema {sid}, {len(paper_ids)} papers)")
+        gate_label = (
+            f"Annotator custom run (schema {sid}, {len(paper_ids)} papers"
+            + (", reasoning on" if body.thinking_enabled else "")
+            + ")"
+        )
+        _annotator_ai_gate(conn, user, total_cost, gate_label)
 
         snapshot = {"id": sid, "name": srow["name"],
                     "description": srow["description"] or "",
@@ -6168,9 +6916,11 @@ def api_annotator_schemas_run(sid: int, body: CustomSchemaRunPayload,
 
     # Small runs finish inside the request; larger ones run in a background thread.
     if len(paper_ids) <= 10:
-        _run_custom_extraction(user["id"], is_admin, run_id, fields, paper_ids)
+        _run_custom_extraction(user["id"], is_admin, run_id, sid, fields, paper_ids,
+                               thinking_enabled=body.thinking_enabled)
         return {"run_id": run_id, "status": "complete"}
-    _run_custom_extraction_async(user["id"], is_admin, run_id, fields, paper_ids)
+    _run_custom_extraction_async(user["id"], is_admin, run_id, sid, fields, paper_ids,
+                                 thinking_enabled=body.thinking_enabled)
     return {"run_id": run_id, "status": "running"}
 
 
@@ -6304,6 +7054,53 @@ def api_annotator_runs_csv(rid: int,
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{safe}"'},
     )
+
+
+@app.get("/api/annotator/runs/{rid}/events")
+def api_annotator_run_events(rid: int, after: int = 0,
+                             rubricgen_session: str | None = Cookie(default=None),
+                             x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Progress events for a custom-extraction run, newer than ``after``.
+    Frontend polls with ?after=<last_event_id> to stream live progress.
+    Same shape as /api/quality-appraisal/runs/{id}/events."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    try:
+        after_id = max(0, int(after))
+    except Exception:
+        after_id = 0
+    conn = get_db()
+    try:
+        # Ownership check on the run.
+        own = conn.execute(
+            "SELECT id, status FROM annotator_custom_runs WHERE id=? AND user_id=?",
+            (rid, user["id"]),
+        ).fetchone()
+        if not own:
+            raise HTTPException(404, "run not found")
+        rows = conn.execute(
+            """SELECT id, event_type, message, detail_json, created_at
+                 FROM annotator_run_events
+                WHERE run_id=? AND id > ?
+                ORDER BY id ASC LIMIT 500""",
+            (rid, after_id),
+        ).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        try:
+            detail = json.loads(r["detail_json"]) if r["detail_json"] else None
+        except Exception:
+            detail = None
+        out.append({
+            "id": r["id"],
+            "event_type": r["event_type"],
+            "message": r["message"],
+            "detail": detail,
+            "created_at": r["created_at"],
+        })
+    return {"run_status": own["status"], "events": out}
 
 
 @app.delete("/api/annotator/runs/{rid}")

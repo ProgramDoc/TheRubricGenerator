@@ -10,14 +10,24 @@ import json
 import logging
 import sqlite3
 import threading
+import time
 import traceback
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from fastapi import HTTPException
+
 from .agents.generator import run_generator_agent
-from .agents.judge import run_judge_agent, shadow_regrade
+from .agents.judge import run_judge_agent, run_second_judge
+from .agents.adjudicator import (
+    run_third_judge,
+    adjudicate_grades,
+    needs_adjudication,
+    third_judge_available,
+)
 from .agents.participants import run_participant_model
+from . import review as review_mod
 from .obsidian import (
     write_challenge_note,
     write_skill_note,  # legacy — kept for back-compat, no longer called here
@@ -472,6 +482,60 @@ def _load_papers_b64(conn: sqlite3.Connection, challenge_id: int,
     return papers_b64, papers_meta
 
 
+_GENERATOR_MAX_ATTEMPTS = 3
+# Permanent failures we should not retry (oversized input, auth, malformed request)
+_GENERATOR_NO_RETRY_STATUSES = {400, 401, 403, 413}
+
+
+def _generator_with_retry(*args, **kwargs) -> tuple[dict, int]:
+    """Call run_generator_agent with bounded retries on transient failures.
+    Retries on 5xx, rate-limit, network errors, and JSON parse failures.
+    Does NOT retry permanent errors (413 oversized, auth, bad request)."""
+    last_exc: Exception | None = None
+    for attempt in range(1, _GENERATOR_MAX_ATTEMPTS + 1):
+        try:
+            return run_generator_agent(*args, **kwargs)
+        except HTTPException as e:
+            if e.status_code in _GENERATOR_NO_RETRY_STATUSES:
+                raise
+            last_exc = e
+        except Exception as e:
+            last_exc = e
+        if attempt < _GENERATOR_MAX_ATTEMPTS:
+            delay = 2 ** (attempt - 1)
+            logger.warning("Generator attempt %d/%d failed (%s). Retrying in %ds.",
+                           attempt, _GENERATOR_MAX_ATTEMPTS, last_exc, delay)
+            time.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
+
+
+def _split_composition_for_batches(total: dict | None,
+                                   batch_paper_counts: list[int]) -> list[dict | None]:
+    """Distribute a composition dict across batches proportional to paper count.
+    Uses largest-remainder allocation so per-key totals are preserved exactly."""
+    if not total:
+        return [None] * len(batch_paper_counts)
+    n_papers = sum(batch_paper_counts)
+    if n_papers == 0:
+        return [None] * len(batch_paper_counts)
+    per_batch: list[dict] = [{} for _ in batch_paper_counts]
+    for key, count in total.items():
+        if count <= 0:
+            continue
+        shares = [count * bs / n_papers for bs in batch_paper_counts]
+        floors = [int(s) for s in shares]
+        remainder = count - sum(floors)
+        order = sorted(range(len(batch_paper_counts)),
+                       key=lambda i: shares[i] - floors[i], reverse=True)
+        for i in order[:remainder]:
+            floors[i] += 1
+        for i, v in enumerate(floors):
+            if v > 0:
+                per_batch[i][key] = v
+    return [d if d else None for d in per_batch]
+
+
 def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
                   vault_dir: Path) -> None:
     """Orchestrate a full challenge run. Intended to be invoked on a background thread.
@@ -513,7 +577,7 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
                    {"skill_version": gen_skill.get("version"), "paper_count": len(papers_b64)})
 
         if is_daily or len(papers_b64) <= BATCH_SIZE:
-            rubric, gen_ms = run_generator_agent(
+            rubric, gen_ms = _generator_with_retry(
                 papers_b64,
                 challenge.get("theme") or "",
                 gen_skill,
@@ -523,21 +587,29 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
                 questions_per_paper=5,
             )
         else:
-            num_batches = (len(papers_b64) + BATCH_SIZE - 1) // BATCH_SIZE
+            batches = [papers_b64[i:i + BATCH_SIZE]
+                       for i in range(0, len(papers_b64), BATCH_SIZE)]
+            num_batches = len(batches)
             logger.info("Batching %d papers in groups of %d", len(papers_b64), BATCH_SIZE)
+            batch_sizes = [len(b) for b in batches]
+            total_daily = DAILY_COMPOSITION if is_daily else None
+            total_domain = DOMAIN_COMPOSITION if is_daily else None
+            daily_per_batch = _split_composition_for_batches(total_daily, batch_sizes)
+            domain_per_batch = _split_composition_for_batches(total_domain, batch_sizes)
             all_questions = []
             total_gen_ms = 0
             q_counter = 0
-            for i in range(0, len(papers_b64), BATCH_SIZE):
-                batch_num = (i // BATCH_SIZE) + 1
-                batch = papers_b64[i:i + BATCH_SIZE]
+            for batch_idx, batch in enumerate(batches):
+                batch_num = batch_idx + 1
                 _log_event(conn, challenge_id, "generator_batch",
                            f"Generating questions for batch {batch_num}/{num_batches} ({len(batch)} papers)")
-                batch_rubric, batch_ms = run_generator_agent(
+                batch_rubric, batch_ms = _generator_with_retry(
                     batch,
                     challenge.get("theme") or "",
                     gen_skill,
                     difficulty=challenge.get("difficulty"),
+                    daily_composition=daily_per_batch[batch_idx],
+                    domain_composition=domain_per_batch[batch_idx],
                     questions_per_paper=5,
                 )
                 total_gen_ms += batch_ms
@@ -610,10 +682,90 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
                     )
                     conn.commit()
 
-                # 4. Judge this model
+                # 4. Judge this model — 3-pass adjudication pipeline.
+                #    Pass 1 (primary, Anthropic): always run.
+                #    Pass 2 (shadow,  Anthropic): always run.  Also scores
+                #                                 the judge's self-consistency.
+                #    Pass 3 (third,   Gemini):    only when primary & shadow
+                #                                 disagree on ≥1 question.
+                #    Per-question resolution: agree → primary. disagree w/
+                #                             third-majority → majority.
+                #                             3-way split → flag for human
+                #                             review; primary stands as the
+                #                             provisional score until a human
+                #                             resolves it.
                 _log_event(conn, challenge_id, "model_grading",
                            f"Judge v{judge_skill.get('version', '?')} grading {model_id}...")
-                grades, judge_ms = run_judge_agent(rubric, answers, judge_skill)
+                primary_grades, judge_ms = run_judge_agent(rubric, answers, judge_skill)
+
+                # Pass 2: second judge (OpenAI, with Claude fallback if
+                # OPENAI_API_KEY is unset). Independent cross-vendor grade.
+                try:
+                    shadow_grades, _ = run_second_judge(rubric, answers, judge_skill)
+                except Exception as e:
+                    logger.error("Second judge failed for %s: %s", model_id, e)
+                    shadow_grades = {"grades": []}
+
+                # Pass 3: third judge (Gemini) only if a per-question diff exists
+                third_grades = None
+                if needs_adjudication(primary_grades, shadow_grades):
+                    if third_judge_available():
+                        try:
+                            third_grades, third_ms = run_third_judge(
+                                rubric, answers, judge_skill,
+                            )
+                            _log_event(
+                                conn, challenge_id, "model_adjudicated",
+                                f"Third judge invoked for {model_id} "
+                                f"({third_ms/1000:.1f}s)",
+                                {"model_id": model_id, "third_judge_ms": third_ms},
+                            )
+                        except Exception as e:
+                            logger.error("Third-judge call failed for %s: %s",
+                                         model_id, e)
+                            third_grades = None
+                    else:
+                        logger.warning(
+                            "Disagreement on %s but GEMINI_API_KEY not set; "
+                            "primary grade stands (no_third).", model_id,
+                        )
+
+                grades, flagged = adjudicate_grades(
+                    primary_grades, shadow_grades, third_grades,
+                )
+
+                # Persist human-review cases. Primary score stays in place
+                # for provisional leaderboard calculation; the review
+                # resolution step rewrites grade_json + denormalized scores.
+                if flagged:
+                    answer_map = {
+                        r["question_id"]: r.get("answer", "")
+                        for r in (answers.get("responses") or [])
+                    }
+                    try:
+                        new_review_ids = review_mod.flag_for_review(
+                            conn,
+                            challenge_id=challenge_id,
+                            participant_id=mp["id"],
+                            flagged=flagged,
+                            model_answer_map=answer_map,
+                        )
+                        _log_event(
+                            conn, challenge_id, "human_review_flagged",
+                            f"{len(flagged)} question(s) flagged for human review "
+                            f"on {model_id} — adjudicator found a 3-way split.",
+                            {"model_id": model_id,
+                             "review_ids": new_review_ids},
+                        )
+                        # Fire-and-forget email to admins. Failures are logged
+                        # inside notify_admins and never propagate up.
+                        try:
+                            review_mod.notify_admins(conn, new_review_ids)
+                        except Exception as e:
+                            logger.error("notify_admins failed: %s", e)
+                    except Exception as e:
+                        logger.error("flag_for_review failed for %s: %s",
+                                     model_id, e)
 
                 run_score = score_model_run(grades, answer_ms)
 
@@ -704,18 +856,34 @@ def run_challenge(get_db_fn, challenge_id: int, papers_dir: Path,
 
         gen_score = score_generator(graded_participants, gen_ms, avg_validity)
 
-        # Judge score: use a shadow regrade on the first successful participant
+        # Judge score: reuse the primary/shadow scores already captured in
+        # each graded participant's grade_json[*].adjudication.* — the 3-pass
+        # pipeline above ran shadow inline, so a second shadow call here
+        # would double-charge the judge. First successful participant is
+        # the representative sample (matches the pre-adjudication behavior).
         judge_score_val = 0.0
         if graded_participants:
             first = graded_participants[0]
             try:
-                primary_grades = json.loads(first.get("grade_json") or "{}")
-                primary_answers = json.loads(first.get("answer_json") or "{}")
-                shadow = shadow_regrade(rubric, primary_answers, judge_skill)
+                full = json.loads(first.get("grade_json") or "{}")
+                primary_proxy = {"grades": [
+                    {"question_id":  g["question_id"],
+                     "max_points":   g.get("max_points", 1),
+                     "score": (g.get("adjudication") or {}).get("primary_score",
+                                                                 g.get("score", 0))}
+                    for g in full.get("grades", [])
+                ]}
+                shadow_proxy = {"grades": [
+                    {"question_id":  g["question_id"],
+                     "max_points":   g.get("max_points", 1),
+                     "score": (g.get("adjudication") or {}).get("shadow_score",
+                                                                 g.get("score", 0))}
+                    for g in full.get("grades", [])
+                ]}
                 judge_time = int(first.get("judge_time_ms") or 0)
-                judge_score_val = score_judge(primary_grades, shadow, judge_time)
+                judge_score_val = score_judge(primary_proxy, shadow_proxy, judge_time)
             except Exception as e:
-                logger.error("Shadow regrade failed: %s", e)
+                logger.error("Judge consistency scoring failed: %s", e)
 
         with conn:
             conn.execute(

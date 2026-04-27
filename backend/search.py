@@ -748,8 +748,8 @@ def import_results(conn: sqlite3.Connection, session_id: int,
             try:
                 with conn:
                     cur = conn.execute(
-                        """INSERT INTO papers (filename, disk_filename, storage_path, sha256, user_id, project_id)
-                           VALUES (?, ?, ?, ?, ?, ?) RETURNING id""",
+                        """INSERT INTO papers (filename, disk_filename, storage_path, sha256, user_id, project_id, source)
+                           VALUES (?, ?, ?, ?, ?, ?, 'search') RETURNING id""",
                         (filename, disk_filename, storage_path, sha256, user_id, project_id),
                     )
                     paper_id = cur.lastrowid

@@ -17,7 +17,7 @@ from fastapi import HTTPException
 logger = logging.getLogger("rubricgen")
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-ANTHROPIC_MODEL   = os.environ.get("ANTHROPIC_MODEL",   "claude-sonnet-4-20250514")
+ANTHROPIC_MODEL   = os.environ.get("ANTHROPIC_MODEL",   "claude-sonnet-4-6")
 OPENAI_API_KEY    = os.environ.get("OPENAI_API_KEY",    "")
 GEMINI_API_KEY    = os.environ.get("GEMINI_API_KEY",    "")
 
@@ -40,16 +40,29 @@ def time_ms(fn: Callable, *args, **kwargs) -> tuple[Any, int]:
 
 
 def call_anthropic(messages: list, system: str, max_tokens: int = 4096,
-                   model: str | None = None) -> str:
-    """Call Anthropic API and return text response."""
+                   model: str | None = None,
+                   *, thinking_budget: int | None = None):
+    """Call Anthropic API and return text response.
+
+    When ``thinking_budget`` (in tokens) is provided, extended thinking is
+    enabled and the function returns ``(answer_text, thinking_text)`` instead
+    of a bare string. The token budget for the answer is unaffected — the
+    request's ``max_tokens`` is bumped by ``thinking_budget`` so the model has
+    headroom for both the reasoning block and the final answer.
+    """
     if not ANTHROPIC_API_KEY:
         raise HTTPException(500, "ANTHROPIC_API_KEY not configured")
-    payload = json.dumps({
+    payload_dict: dict[str, Any] = {
         "model": model or ANTHROPIC_MODEL,
-        "max_tokens": max_tokens,
+        "max_tokens": max_tokens + (thinking_budget or 0),
         "system": system,
         "messages": messages,
-    }).encode()
+    }
+    if thinking_budget and thinking_budget > 0:
+        payload_dict["thinking"] = {
+            "type": "enabled", "budget_tokens": int(thinking_budget),
+        }
+    payload = json.dumps(payload_dict).encode()
     req = urllib.request.Request(
         "https://api.anthropic.com/v1/messages",
         data=payload,
@@ -64,6 +77,17 @@ def call_anthropic(messages: list, system: str, max_tokens: int = 4096,
     try:
         with urllib.request.urlopen(req, timeout=300) as resp:
             data = json.loads(resp.read())
+        if thinking_budget and thinking_budget > 0:
+            # Mixed content blocks: collect thinking + text separately.
+            thinking_parts: list[str] = []
+            text_parts: list[str] = []
+            for block in data.get("content", []):
+                btype = block.get("type")
+                if btype == "thinking":
+                    thinking_parts.append(block.get("thinking", "") or "")
+                elif btype == "text":
+                    text_parts.append(block.get("text", "") or "")
+            return "\n".join(text_parts), "\n".join(thinking_parts)
         return data["content"][0]["text"]
     except urllib.error.HTTPError as e:
         body = e.read().decode()
