@@ -76,7 +76,14 @@ def _try_pmc(pmcid: str, dest_dir: Path) -> dict | None:
     }
 
 
-def _try_unpaywall(client: httpx.Client, doi: str) -> dict | None:
+def _unpaywall_lookup(client: httpx.Client, doi: str) -> dict | None:
+    """Return Unpaywall's ``best_oa_location`` dict, or None if missing/error.
+
+    The dict typically has ``url_for_pdf`` (direct PDF link) and ``url`` (HTML
+    landing page). Either may be useful: the PDF URL for a fast download, the
+    landing URL for a Firecrawl JS-rendered fallback when direct download
+    is blocked.
+    """
     api = f"https://api.unpaywall.org/v2/{doi}"
     try:
         r = client.get(api, params={"email": UNPAYWALL_EMAIL})
@@ -86,7 +93,13 @@ def _try_unpaywall(client: httpx.Client, doi: str) -> dict | None:
     except Exception as e:
         logger.info("Unpaywall lookup failed for %s: %s", doi, e)
         return None
-    loc = body.get("best_oa_location") or {}
+    return body.get("best_oa_location") or None
+
+
+def _try_unpaywall(client: httpx.Client, doi: str) -> dict | None:
+    loc = _unpaywall_lookup(client, doi)
+    if not loc:
+        return None
     pdf_url = loc.get("url_for_pdf")
     if not pdf_url:
         return None
@@ -218,11 +231,23 @@ def fetch_pdf_for_result(result: dict, dest_dir: Path,
     with httpx.Client(
         follow_redirects=True, timeout=HTTP_TIMEOUT, headers=headers
     ) as client:
+        # Cache Unpaywall's response — used twice (PDF URL + landing URL fallback).
+        unpaywall_loc = None
         doi = (result.get("doi") or "").strip()
         if doi:
-            out = _try_unpaywall(client, doi)
-            if out:
-                return out
+            unpaywall_loc = _unpaywall_lookup(client, doi)
+            if unpaywall_loc:
+                pdf_url = unpaywall_loc.get("url_for_pdf")
+                if pdf_url:
+                    out = _try_direct(client, pdf_url)
+                    if out:
+                        return out
+                    # Direct PDF URL was 403'd — try Firecrawl on it directly,
+                    # which uses a real browser session.
+                    if use_firecrawl:
+                        out = _firecrawl_direct_pdf(pdf_url)
+                        if out:
+                            return out
 
         url = (result.get("url") or "").strip()
         if url:
@@ -237,11 +262,57 @@ def fetch_pdf_for_result(result: dict, dest_dir: Path,
             out = _try_direct(client, url)
             if out:
                 return out
-            # Final aggressive fallback: render the page with a real browser
-            # via Firecrawl. Costs an external API call so it's opt-in.
+            # Final aggressive fallback: render with Firecrawl. Prefer the
+            # Unpaywall landing URL (publisher's article page) over the
+            # PubMed URL — PubMed rarely exposes citation_pdf_url, but
+            # publisher landing pages do.
             if use_firecrawl:
-                out = _try_firecrawl(client, url)
-                if out:
-                    return out
+                landing = (unpaywall_loc or {}).get("url") if unpaywall_loc else None
+                for try_url in (landing, url):
+                    if not try_url:
+                        continue
+                    out = _try_firecrawl(client, try_url)
+                    if out:
+                        return out
 
     return None
+
+
+def _firecrawl_direct_pdf(pdf_url: str) -> dict | None:
+    """Fetch a PDF URL through Firecrawl when plain ``httpx`` gets a 403.
+
+    Firecrawl's scrape endpoint follows JS challenges and bot-protection
+    (Cloudflare, akamai, etc.) for the URL. We ask for the raw HTML output
+    — when the URL is a PDF, Firecrawl returns the PDF bytes encoded in the
+    response body. We then validate %PDF magic bytes.
+    """
+    api_key = os.environ.get("FIRECRAWL_API_KEY")
+    if not api_key:
+        return None
+    try:
+        with httpx.Client(timeout=FIRECRAWL_TIMEOUT) as fc:
+            r = fc.post(
+                f"{FIRECRAWL_BASE_URL.rstrip('/')}/v1/scrape",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={"url": pdf_url, "formats": ["rawHtml"]},
+            )
+        if r.status_code != 200:
+            logger.info("Firecrawl direct-PDF failed %s: %s", r.status_code, r.text[:200])
+            return None
+        body = r.json()
+        if not body.get("success"):
+            return None
+        raw = (body.get("data") or {}).get("rawHtml") or ""
+        # Firecrawl base64-encodes binary if it can't render as text. For now
+        # we only accept clear-text %PDF in the rawHtml — most paywall PDFs
+        # come back as text/markdown after rendering, not binary. If this
+        # path proves insufficient we'll add base64 detection.
+        if not raw.startswith("%PDF"):
+            return None
+        return _store_pdf_bytes(raw.encode("latin-1", errors="ignore"))
+    except Exception as e:
+        logger.warning("Firecrawl direct-PDF crashed for %s: %s", pdf_url, e)
+        return None

@@ -802,6 +802,36 @@ def _insert_pdf_paper(conn, r, user_id: int, project_id: int | None,
         return None
 
 
+def _upgrade_paper_to_pdf(conn, paper_id: int, r, pdf_result: dict) -> int | None:
+    """Turn an existing metadata-only / fetch_failed papers row into a
+    PDF-backed one. Updates filename, sha256, storage_path, disk_filename,
+    and pdf_status='present' atomically. The id is preserved so other tables
+    (annotations, rubrics, etc.) keep their references."""
+    sha256 = pdf_result["sha256"]
+    pmcid_pref = r["pmcid"] or "paper"
+    filename = f"{pmcid_pref}_{r['title'][:60].replace(' ', '_')}.pdf"
+    try:
+        with conn:
+            conn.execute(
+                """UPDATE papers
+                   SET filename = ?, disk_filename = ?, storage_path = ?,
+                       sha256 = ?, pdf_status = 'present'
+                   WHERE id = ?""",
+                (
+                    filename,
+                    pdf_result["filename"],
+                    pdf_result.get("storage_path"),
+                    sha256,
+                    paper_id,
+                ),
+            )
+            conn.commit()
+        return paper_id
+    except Exception as e:
+        logger.error("Failed to upgrade paper %s to PDF: %s", paper_id, e)
+        return None
+
+
 def _insert_failed_fetch_paper(conn, r, user_id: int,
                                project_id: int | None) -> int | None:
     """Same as metadata-only but marks pdf_status='fetch_failed' so the UI can
@@ -951,12 +981,23 @@ def run_pdf_fetch_job(get_conn, run_id: int, papers_dir: Path,
             ).fetchone()
             if not r:
                 continue
-            if r["imported"]:
-                continue
+
+            # Decide whether to skip already-imported results. We *don't* skip
+            # if the linked paper is metadata-only or fetch_failed — those are
+            # exactly the rows a fetch / firecrawl re-run is meant to upgrade.
+            existing_paper = None
+            if r["imported"] and r["paper_id"]:
+                existing_paper = conn.execute(
+                    "SELECT id, pdf_status FROM papers WHERE id = ?",
+                    (r["paper_id"],),
+                ).fetchone()
+                if existing_paper and existing_paper["pdf_status"] == "present":
+                    continue  # already has a real PDF, nothing to do
 
             log_pdf_fetch_event(conn, run_id, "result_started",
                                 f"Fetching: {r['title'][:80]}",
-                                {"result_id": rid, "pmid": r["pmid"], "doi": r["doi"]})
+                                {"result_id": rid, "pmid": r["pmid"], "doi": r["doi"],
+                                 "upgrading": bool(existing_paper)})
 
             try:
                 result_dict = {
@@ -974,7 +1015,13 @@ def run_pdf_fetch_job(get_conn, run_id: int, papers_dir: Path,
                 pdf_result = None
 
             if pdf_result:
-                paper_id = _insert_pdf_paper(conn, r, user_id, project_id, pdf_result)
+                if existing_paper:
+                    # Upgrade in place: turn the metadata-only row into a
+                    # PDF-backed one without changing its id (which other
+                    # tables reference).
+                    paper_id = _upgrade_paper_to_pdf(conn, existing_paper["id"], r, pdf_result)
+                else:
+                    paper_id = _insert_pdf_paper(conn, r, user_id, project_id, pdf_result)
                 if paper_id:
                     with conn:
                         conn.execute(
@@ -984,21 +1031,27 @@ def run_pdf_fetch_job(get_conn, run_id: int, papers_dir: Path,
                         conn.commit()
                     succeeded += 1
                     log_pdf_fetch_event(conn, run_id, "result_done",
-                                        f"PDF fetched: {r['title'][:80]}",
-                                        {"result_id": rid, "paper_id": paper_id})
+                                        f"PDF fetched: {r['title'][:80]}"
+                                        + (" (upgraded)" if existing_paper else ""),
+                                        {"result_id": rid, "paper_id": paper_id,
+                                         "upgraded": bool(existing_paper)})
                     continue
-                # insert failed → fall through to failed/refund path
+                # insert/upgrade failed → fall through to failure path
                 pdf_result = None
 
-            # Failure path: still create metadata-only row so user gets *something*
-            paper_id = _insert_failed_fetch_paper(conn, r, user_id, project_id)
-            if paper_id:
-                with conn:
-                    conn.execute(
-                        "UPDATE search_results SET imported = 1, paper_id = ? WHERE id = ?",
-                        (paper_id, rid),
-                    )
-                    conn.commit()
+            # Failure path: keep / create the metadata-only row.
+            if existing_paper:
+                # Already have a metadata row — just leave it as-is, no DB churn.
+                paper_id = existing_paper["id"]
+            else:
+                paper_id = _insert_failed_fetch_paper(conn, r, user_id, project_id)
+                if paper_id:
+                    with conn:
+                        conn.execute(
+                            "UPDATE search_results SET imported = 1, paper_id = ? WHERE id = ?",
+                            (paper_id, rid),
+                        )
+                        conn.commit()
             failed += 1
             if refund_callback:
                 try:
