@@ -665,15 +665,18 @@ def _build_linkout_url(database: str, query: str) -> str | None:
 def save_results(conn: sqlite3.Connection, session_id: int,
                  query_version: int, database: str,
                  articles: list[dict]) -> int:
-    """Cache search results in the database. Returns count saved."""
+    """Cache search results in the database. Stamps the inserted DB row id back
+    onto each article (as ``a["id"]``) so the response shape lets the frontend
+    bind checkboxes to the same id ``/api/search/import`` expects.
+    Returns count saved."""
     count = 0
     with conn:
         for a in articles:
-            conn.execute(
+            cur = conn.execute(
                 """INSERT INTO search_results
                    (session_id, query_version, database_name, pmid, doi, title,
                     authors, journal, pub_date, abstract, pmcid, citation_count, url)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
                 (
                     session_id, query_version, database,
                     a.get("pmid", ""), a.get("doi", ""),
@@ -683,6 +686,7 @@ def save_results(conn: sqlite3.Connection, session_id: int,
                     a.get("citation_count", 0), a.get("url", ""),
                 ),
             )
+            a["id"] = cur.lastrowid
             count += 1
         conn.commit()
     return count
