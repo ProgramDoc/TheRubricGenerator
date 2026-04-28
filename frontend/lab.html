@@ -3405,10 +3405,11 @@ function toggleSelectAll(checked) {
 }
 
 function getSelectedResultIds() {
+  // Returns DB row ids from search_results, which is what /api/search/import expects.
   var ids = [];
   document.querySelectorAll('.result-check:checked').forEach(function(cb) {
     var idx = parseInt(cb.dataset.idx);
-    if (searchResults[idx] && searchResults[idx].pmid) ids.push(searchResults[idx].pmid);
+    if (searchResults[idx] && searchResults[idx].id != null) ids.push(searchResults[idx].id);
   });
   return ids;
 }
@@ -3450,7 +3451,33 @@ async function exportBibTeX() {
 async function importSelected() {
   var ids = getSelectedResultIds();
   if (!ids.length) { showToast('Select results first', 'info'); return; }
+  if (!_searchSessionId) { showToast('No active search session', 'error'); return; }
   showToast('Importing ' + ids.length + ' results...', 'info');
+  try {
+    var r = await fetch('/api/search/import', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        session_id: _searchSessionId,
+        result_ids: ids,
+        mode: 'metadata',
+      }),
+    });
+    if (!r.ok) {
+      var err = await r.json().catch(function() { return {}; });
+      var msg = typeof err.detail === 'string' ? err.detail
+        : Array.isArray(err.detail) ? err.detail.map(function(d) { return d.msg || JSON.stringify(d); }).join('; ')
+        : 'Import failed';
+      showToast(msg, 'error');
+      return;
+    }
+    var data = await r.json();
+    showToast('Imported: ' + data.imported + ', Skipped: ' + data.skipped + ', Failed: ' + data.failed,
+              data.imported > 0 ? 'success' : 'info');
+  } catch (e) {
+    console.error('importSelected failed:', e);
+    showToast('Import error: ' + (e.message || 'see console'), 'error');
+  }
 }
 
 function renderSearchPagination() {
