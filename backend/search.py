@@ -76,6 +76,33 @@ CREATE TABLE IF NOT EXISTS search_results (
 );
 CREATE INDEX IF NOT EXISTS idx_sr_session ON search_results(session_id);
 CREATE INDEX IF NOT EXISTS idx_sr_session_ver ON search_results(session_id, query_version);
+
+CREATE TABLE IF NOT EXISTS pdf_fetch_runs (
+    id              SERIAL PRIMARY KEY,
+    user_id         INTEGER NOT NULL,
+    session_id      INTEGER NOT NULL,
+    project_id      INTEGER,
+    result_ids_json TEXT    NOT NULL,
+    status          TEXT    NOT NULL DEFAULT 'running',
+    total           INTEGER NOT NULL,
+    succeeded       INTEGER NOT NULL DEFAULT 0,
+    failed          INTEGER NOT NULL DEFAULT 0,
+    refunded        INTEGER NOT NULL DEFAULT 0,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at    TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_pfr_user ON pdf_fetch_runs(user_id);
+CREATE INDEX IF NOT EXISTS idx_pfr_session ON pdf_fetch_runs(session_id);
+
+CREATE TABLE IF NOT EXISTS pdf_fetch_run_events (
+    id          SERIAL PRIMARY KEY,
+    run_id      INTEGER NOT NULL,
+    event_type  TEXT    NOT NULL,
+    message     TEXT,
+    detail_json TEXT,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_pfre_run ON pdf_fetch_run_events(run_id);
 """
 
 
@@ -692,15 +719,119 @@ def select_all_results(conn: sqlite3.Connection, session_id: int,
 # Import
 # ─────────────────────────────────────────────
 
+def _external_url_for(r) -> str | None:
+    """Pick the best click-out URL for a search result (PubMed pointer preferred)."""
+    url = (r["url"] or "").strip() if r["url"] else ""
+    if url:
+        return url
+    if r["pmid"]:
+        return f"https://pubmed.ncbi.nlm.nih.gov/{r['pmid']}/"
+    if r["doi"]:
+        return f"https://doi.org/{r['doi']}"
+    return None
+
+
+def _insert_metadata_paper(conn, r, user_id: int, project_id: int | None) -> int | None:
+    """Create a metadata-only papers row for a search result. Returns paper id."""
+    placeholder = f"pubmed:{r['pmid'] or r['doi'] or r['title'][:50]}"
+    sha256 = hashlib.sha256(placeholder.encode()).hexdigest()
+    filename = f"{r['title'][:80].replace(' ', '_')}.pdf"
+    external_url = _external_url_for(r)
+
+    existing = conn.execute(
+        "SELECT id FROM papers WHERE sha256 = ? AND user_id = ?",
+        (sha256, user_id),
+    ).fetchone()
+    if existing:
+        return existing["id"]
+    try:
+        with conn:
+            cur = conn.execute(
+                """INSERT INTO papers (filename, disk_filename, storage_path, sha256,
+                                       user_id, project_id, source, external_url, pdf_status)
+                   VALUES (?, ?, ?, ?, ?, ?, 'search', ?, 'metadata_only') RETURNING id""",
+                (filename, None, None, sha256, user_id, project_id, external_url),
+            )
+            paper_id = cur.lastrowid
+            conn.commit()
+        return paper_id
+    except Exception as e:
+        logger.error("Failed to insert metadata paper: %s", e)
+        return None
+
+
+def _insert_pdf_paper(conn, r, user_id: int, project_id: int | None,
+                      pdf_result: dict) -> int | None:
+    """Create a PDF-backed papers row from a successful pdf_fetcher result."""
+    sha256 = pdf_result["sha256"]
+    pmcid_pref = r["pmcid"] or "paper"
+    filename = f"{pmcid_pref}_{r['title'][:60].replace(' ', '_')}.pdf"
+    existing = conn.execute(
+        "SELECT id FROM papers WHERE sha256 = ? AND user_id = ?",
+        (sha256, user_id),
+    ).fetchone()
+    if existing:
+        return existing["id"]
+    try:
+        with conn:
+            cur = conn.execute(
+                """INSERT INTO papers (filename, disk_filename, storage_path, sha256,
+                                       user_id, project_id, source, external_url, pdf_status)
+                   VALUES (?, ?, ?, ?, ?, ?, 'search', ?, 'present') RETURNING id""",
+                (
+                    filename,
+                    pdf_result["filename"],
+                    pdf_result.get("storage_path"),
+                    sha256,
+                    user_id,
+                    project_id,
+                    _external_url_for(r),
+                ),
+            )
+            paper_id = cur.lastrowid
+            conn.commit()
+        return paper_id
+    except Exception as e:
+        logger.error("Failed to insert PDF paper: %s", e)
+        return None
+
+
+def _insert_failed_fetch_paper(conn, r, user_id: int,
+                               project_id: int | None) -> int | None:
+    """Same as metadata-only but marks pdf_status='fetch_failed' so the UI can
+    distinguish 'we tried and missed' from 'never asked for a PDF'."""
+    paper_id = _insert_metadata_paper(conn, r, user_id, project_id)
+    if paper_id:
+        try:
+            with conn:
+                conn.execute(
+                    "UPDATE papers SET pdf_status = 'fetch_failed' WHERE id = ?",
+                    (paper_id,),
+                )
+                conn.commit()
+        except Exception:
+            pass
+    return paper_id
+
+
 def import_results(conn: sqlite3.Connection, session_id: int,
                    result_ids: list[int], user_id: int,
                    papers_dir: Path,
-                   project_id: int | None = None) -> dict:
-    """Import selected search results as papers."""
+                   project_id: int | None = None,
+                   mode: str = "metadata") -> dict:
+    """Import selected search results as papers (synchronous, metadata-only).
+
+    For ``mode='fetch'``, the HTTP layer enqueues a background worker
+    (:func:`run_pdf_fetch_job`) instead of calling this function — that path
+    needs progress events and a daemon thread.
+    """
+    if mode != "metadata":
+        raise ValueError("import_results only handles mode='metadata'; use run_pdf_fetch_job for 'fetch'")
+
     imported = 0
     skipped = 0
     failed = 0
-    paper_ids = []
+    paper_ids: list[int] = []
 
     for rid in result_ids:
         r = conn.execute(
@@ -713,53 +844,11 @@ def import_results(conn: sqlite3.Connection, session_id: int,
             skipped += 1
             continue
 
-        pdf_result = None
-        sha256 = None
+        paper_id = _insert_metadata_paper(conn, r, user_id, project_id)
+        if paper_id is None:
+            failed += 1
+            continue
 
-        # Try to download PDF if PMCID available
-        if r["pmcid"]:
-            try:
-                pdf_result = download_pmc_pdf(r["pmcid"], papers_dir)
-            except Exception as e:
-                logger.warning("PDF download failed for %s: %s", r["pmcid"], e)
-
-        if pdf_result:
-            sha256 = pdf_result["sha256"]
-            filename = f"{r['pmcid']}_{r['title'][:60].replace(' ', '_')}.pdf"
-            disk_filename = pdf_result["filename"]
-            storage_path = pdf_result.get("storage_path")
-        else:
-            # No PDF available — create a placeholder record
-            placeholder = f"pubmed:{r['pmid'] or r['doi'] or r['title'][:50]}"
-            sha256 = hashlib.sha256(placeholder.encode()).hexdigest()
-            filename = f"{r['title'][:80].replace(' ', '_')}.pdf"
-            disk_filename = None
-            storage_path = None
-
-        # Check for duplicate
-        existing = conn.execute(
-            "SELECT id FROM papers WHERE sha256 = ? AND user_id = ?",
-            (sha256, user_id),
-        ).fetchone()
-
-        if existing:
-            paper_id = existing["id"]
-        else:
-            try:
-                with conn:
-                    cur = conn.execute(
-                        """INSERT INTO papers (filename, disk_filename, storage_path, sha256, user_id, project_id, source)
-                           VALUES (?, ?, ?, ?, ?, ?, 'search') RETURNING id""",
-                        (filename, disk_filename, storage_path, sha256, user_id, project_id),
-                    )
-                    paper_id = cur.lastrowid
-                    conn.commit()
-            except Exception as e:
-                logger.error("Failed to import paper: %s", e)
-                failed += 1
-                continue
-
-        # Mark as imported
         with conn:
             conn.execute(
                 "UPDATE search_results SET imported = 1, paper_id = ? WHERE id = ?",
@@ -771,6 +860,202 @@ def import_results(conn: sqlite3.Connection, session_id: int,
         imported += 1
 
     return {"imported": imported, "skipped": skipped, "failed": failed, "paper_ids": paper_ids}
+
+
+# ─────────────────────────────────────────────
+# Background PDF-fetch worker
+# ─────────────────────────────────────────────
+
+def log_pdf_fetch_event(conn, run_id: int, event_type: str, message: str,
+                        detail: dict | None = None) -> None:
+    """Append a progress event for a pdf-fetch run. Best-effort — never raises."""
+    try:
+        conn.execute(
+            """INSERT INTO pdf_fetch_run_events (run_id, event_type, message, detail_json)
+               VALUES (?, ?, ?, ?)""",
+            (run_id, event_type, message, json.dumps(detail) if detail else None),
+        )
+        conn.commit()
+    except Exception as e:
+        logger.warning("pdf_fetch_run_event log failed (run=%s type=%s): %s",
+                       run_id, event_type, e)
+
+
+def create_pdf_fetch_run(conn, user_id: int, session_id: int,
+                         result_ids: list[int],
+                         project_id: int | None) -> int:
+    with conn:
+        cur = conn.execute(
+            """INSERT INTO pdf_fetch_runs (user_id, session_id, project_id,
+                                            result_ids_json, total)
+               VALUES (?, ?, ?, ?, ?) RETURNING id""",
+            (user_id, session_id, project_id, json.dumps(result_ids), len(result_ids)),
+        )
+        run_id = cur.lastrowid
+        conn.commit()
+    return run_id
+
+
+def run_pdf_fetch_job(get_conn, run_id: int, papers_dir: Path,
+                      refund_callback=None) -> None:
+    """Background worker for the 'Get PDF' import mode.
+
+    ``get_conn`` is a zero-arg callable that returns a fresh DB connection
+    (so the worker can run on a daemon thread without sharing the request's
+    connection). ``refund_callback(user_id, credits, reason)`` is invoked
+    for each per-paper failure to refund pre-charged credits.
+    """
+    conn = get_conn()
+    try:
+        run = conn.execute("SELECT * FROM pdf_fetch_runs WHERE id = ?", (run_id,)).fetchone()
+        if not run:
+            return
+        user_id = run["user_id"]
+        session_id = run["session_id"]
+        project_id = run["project_id"]
+        result_ids = json.loads(run["result_ids_json"])
+
+        log_pdf_fetch_event(conn, run_id, "run_started",
+                            f"Fetching PDFs for {len(result_ids)} results")
+
+        from . import pdf_fetcher
+
+        succeeded = 0
+        failed = 0
+        refunded = 0
+
+        for rid in result_ids:
+            r = conn.execute(
+                "SELECT * FROM search_results WHERE id = ? AND session_id = ?",
+                (rid, session_id),
+            ).fetchone()
+            if not r:
+                continue
+            if r["imported"]:
+                continue
+
+            log_pdf_fetch_event(conn, run_id, "result_started",
+                                f"Fetching: {r['title'][:80]}",
+                                {"result_id": rid, "pmid": r["pmid"], "doi": r["doi"]})
+
+            try:
+                result_dict = {
+                    "pmcid": r["pmcid"],
+                    "doi": r["doi"],
+                    "url": r["url"],
+                    "pmid": r["pmid"],
+                    "title": r["title"],
+                }
+                pdf_result = pdf_fetcher.fetch_pdf_for_result(result_dict, papers_dir)
+            except Exception as e:
+                logger.exception("pdf_fetcher crashed for result %s: %s", rid, e)
+                pdf_result = None
+
+            if pdf_result:
+                paper_id = _insert_pdf_paper(conn, r, user_id, project_id, pdf_result)
+                if paper_id:
+                    with conn:
+                        conn.execute(
+                            "UPDATE search_results SET imported = 1, paper_id = ? WHERE id = ?",
+                            (paper_id, rid),
+                        )
+                        conn.commit()
+                    succeeded += 1
+                    log_pdf_fetch_event(conn, run_id, "result_done",
+                                        f"PDF fetched: {r['title'][:80]}",
+                                        {"result_id": rid, "paper_id": paper_id})
+                    continue
+                # insert failed → fall through to failed/refund path
+                pdf_result = None
+
+            # Failure path: still create metadata-only row so user gets *something*
+            paper_id = _insert_failed_fetch_paper(conn, r, user_id, project_id)
+            if paper_id:
+                with conn:
+                    conn.execute(
+                        "UPDATE search_results SET imported = 1, paper_id = ? WHERE id = ?",
+                        (paper_id, rid),
+                    )
+                    conn.commit()
+            failed += 1
+            if refund_callback:
+                try:
+                    refund_callback(user_id, 2, f"pdf_fetch_failed_result_{rid}")
+                    refunded += 1
+                except Exception as e:
+                    logger.warning("Refund failed for run=%s result=%s: %s", run_id, rid, e)
+            log_pdf_fetch_event(conn, run_id, "result_failed",
+                                f"PDF unavailable — saved metadata only: {r['title'][:80]}",
+                                {"result_id": rid, "paper_id": paper_id})
+
+        with conn:
+            conn.execute(
+                """UPDATE pdf_fetch_runs
+                   SET status = 'complete', succeeded = ?, failed = ?, refunded = ?,
+                       completed_at = CURRENT_TIMESTAMP
+                   WHERE id = ?""",
+                (succeeded, failed, refunded, run_id),
+            )
+            conn.commit()
+        log_pdf_fetch_event(conn, run_id, "run_complete",
+                            f"Done: {succeeded} fetched, {failed} metadata-only",
+                            {"succeeded": succeeded, "failed": failed, "refunded": refunded})
+    except Exception as e:
+        logger.exception("run_pdf_fetch_job crashed for run=%s: %s", run_id, e)
+        try:
+            with conn:
+                conn.execute(
+                    "UPDATE pdf_fetch_runs SET status = 'failed', completed_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (run_id,),
+                )
+                conn.commit()
+            log_pdf_fetch_event(conn, run_id, "run_complete",
+                                f"Run failed: {e}",
+                                {"error": str(e)})
+        except Exception:
+            pass
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def get_pdf_fetch_run(conn, run_id: int, user_id: int) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM pdf_fetch_runs WHERE id = ? AND user_id = ?",
+        (run_id, user_id),
+    ).fetchone()
+    if not row:
+        return None
+    return dict(row)
+
+
+def get_pdf_fetch_events(conn, run_id: int, user_id: int,
+                         after: int = 0) -> list[dict]:
+    # Auth via the run owner:
+    owner = conn.execute(
+        "SELECT user_id FROM pdf_fetch_runs WHERE id = ?",
+        (run_id,),
+    ).fetchone()
+    if not owner or owner["user_id"] != user_id:
+        return []
+    rows = conn.execute(
+        """SELECT id, event_type, message, detail_json, created_at
+           FROM pdf_fetch_run_events
+           WHERE run_id = ? AND id > ?
+           ORDER BY id ASC""",
+        (run_id, after),
+    ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["detail"] = json.loads(d.pop("detail_json") or "null")
+        except Exception:
+            d["detail"] = None
+        out.append(d)
+    return out
 
 
 # ─────────────────────────────────────────────

@@ -619,6 +619,13 @@ def _migrate_challenge_columns_v2(conn) -> None:
         # Drives the "Source" filter on /library and lets the Library show where each PDF came from.
         if not column_exists(conn, "papers", "source"):
             conn.execute("ALTER TABLE papers ADD COLUMN source TEXT NOT NULL DEFAULT 'upload'")
+        # Papers: external URL for metadata-only imports (search results without an attached PDF).
+        if not column_exists(conn, "papers", "external_url"):
+            conn.execute("ALTER TABLE papers ADD COLUMN external_url TEXT")
+        # Papers: pdf_status — 'present' | 'metadata_only' | 'fetching' | 'fetch_failed'.
+        # Lets the Library + Annotator render rows that don't have a downloaded PDF.
+        if not column_exists(conn, "papers", "pdf_status"):
+            conn.execute("ALTER TABLE papers ADD COLUMN pdf_status TEXT NOT NULL DEFAULT 'present'")
         # lab_documents migration cursor — the id of the papers row this lab_document
         # has been backfilled into. Lets the dual-write be idempotent.
         if not column_exists(conn, "lab_documents", "papers_id"):
@@ -4042,7 +4049,7 @@ def api_library_papers(project: str | None = None,
         # personal libraries up to a few thousand papers.
         rows = conn.execute(
             f"""SELECT p.id, p.filename, p.sha256, p.project_id,
-                       p.created_at, p.source,
+                       p.created_at, p.source, p.external_url, p.pdf_status,
                        a.status     AS ann_status,
                        a.updated_at AS ann_updated_at,
                        (SELECT COUNT(*) FROM rubrics r       WHERE r.paper_id=p.id AND r.user_id=?) AS rubric_count,
@@ -4107,6 +4114,8 @@ def api_library_papers(project: str | None = None,
         d["project_ids"] = [m["id"] for m in membership]
         d["custom_run_count"] = run_count_by_pid.get(d["id"], 0)
         d["source"] = d.get("source") or "upload"
+        d["pdf_status"] = d.get("pdf_status") or "present"
+        d["external_url"] = d.get("external_url")
         # Filters
         if q_lower and q_lower not in (d["filename"] or "").lower():
             continue
@@ -5236,6 +5245,7 @@ class SearchImportPayload(BaseModel):
     session_id: int
     result_ids: list[int]
     project_id: int | None = None
+    mode: str = "metadata"  # 'metadata' (instant) | 'fetch' (background PDF crawl)
 
 class SearchExportPayload(BaseModel):
     session_id: int
@@ -5357,22 +5367,100 @@ def api_update_search_session(session_id: int, body: SearchSessionUpdatePayload,
         conn.close()
 
 
+PDF_FETCH_CREDIT_COST = 2  # per result, refunded on per-result failure
+
+
 @app.post("/api/search/import")
 def api_search_import(body: SearchImportPayload, rubricgen_session: str | None = Cookie(default=None)):
-    """Import selected search results as papers."""
+    """Import selected search results as papers.
+
+    Two modes:
+    - ``metadata`` (default, free, synchronous): stash a metadata-only papers row
+      with an ``external_url`` click-out. No PDF fetch.
+    - ``fetch`` (credit-gated, async): kick off a background worker that crawls
+      PMC / Unpaywall / publisher landing pages for each result. Returns a
+      ``run_id`` the frontend polls for progress. Per-result failures still
+      create a ``pdf_status='fetch_failed'`` row and refund their credit.
+    """
     user = require_user(rubricgen_session)
     require_active_seat(user, "engineer")
+    if body.mode not in ("metadata", "fetch"):
+        raise HTTPException(400, "mode must be 'metadata' or 'fetch'")
+    if not body.result_ids:
+        raise HTTPException(400, "result_ids cannot be empty")
+
     conn = get_db()
     try:
         # Legacy membership PDF limit — only while flag is off (see paper upload).
         if not enterprise_mod.ENTERPRISE_MODE:
-            pdf_status = member_mod.check_pdf_limit(conn, user["id"])
-            if not pdf_status["allowed"]:
-                raise HTTPException(403, f"PDF limit reached ({pdf_status['used']}/{pdf_status['limit']}). Upgrade your membership.")
-        return search_mod.import_results(
-            conn, body.session_id, body.result_ids, user["id"], PAPERS_DIR,
-            project_id=body.project_id,
+            pdf_status_chk = member_mod.check_pdf_limit(conn, user["id"])
+            if not pdf_status_chk["allowed"]:
+                raise HTTPException(
+                    403,
+                    f"PDF limit reached ({pdf_status_chk['used']}/{pdf_status_chk['limit']}). "
+                    f"Upgrade your membership.",
+                )
+
+        if body.mode == "metadata":
+            return search_mod.import_results(
+                conn, body.session_id, body.result_ids, user["id"], PAPERS_DIR,
+                project_id=body.project_id, mode="metadata",
+            )
+
+        # mode == 'fetch' — credit-gate, enqueue, spawn worker
+        total = len(body.result_ids)
+        total_cost = total * PDF_FETCH_CREDIT_COST
+        _annotator_ai_gate(conn, user, total_cost,
+                           f"PDF fetch ({total} results)")
+        run_id = search_mod.create_pdf_fetch_run(
+            conn, user["id"], body.session_id, body.result_ids,
+            body.project_id,
         )
+    finally:
+        conn.close()
+
+    def _refund(uid: int, amt: int, reason: str) -> None:
+        c = get_db()
+        try:
+            bill.refund_credits(c, uid, amt, reason)
+        finally:
+            c.close()
+
+    t = threading.Thread(
+        target=search_mod.run_pdf_fetch_job,
+        args=(get_db, run_id, PAPERS_DIR, _refund),
+        daemon=True,
+        name=f"pdf-fetch-run-{run_id}",
+    )
+    t.start()
+
+    return {"run_id": run_id, "total": total, "credits_charged": total_cost}
+
+
+@app.get("/api/search/pdf-fetch/{run_id}")
+def api_search_pdf_fetch_status(run_id: int,
+                                rubricgen_session: str | None = Cookie(default=None)):
+    """Poll the status of a background PDF-fetch run."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        run = search_mod.get_pdf_fetch_run(conn, run_id, user["id"])
+        if not run:
+            raise HTTPException(404, "PDF fetch run not found")
+        return run
+    finally:
+        conn.close()
+
+
+@app.get("/api/search/pdf-fetch/{run_id}/events")
+def api_search_pdf_fetch_events(run_id: int, after: int = 0,
+                                rubricgen_session: str | None = Cookie(default=None)):
+    """Stream incremental progress events for a PDF-fetch run."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        events = search_mod.get_pdf_fetch_events(conn, run_id, user["id"], after)
+        return {"events": events}
     finally:
         conn.close()
 

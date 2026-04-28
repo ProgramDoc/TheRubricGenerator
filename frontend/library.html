@@ -402,9 +402,21 @@ function buildCard(p) {
   const meta = document.createElement('div');
   meta.className = 'card-meta';
   const when = (p.created_at || '').replace('T', ' ').slice(0, 10);
-  meta.innerHTML = `<span>${escHtml(when || '—')}</span>
-                    <span style="opacity:.5;">·</span>
-                    <span>${escHtml(p.source || 'upload')}</span>`;
+  let metaHtml = `<span>${escHtml(when || '—')}</span>
+                  <span style="opacity:.5;">·</span>
+                  <span>${escHtml(p.source || 'upload')}</span>`;
+  const pdfStatus = p.pdf_status || 'present';
+  if (pdfStatus === 'metadata_only') {
+    metaHtml += ` <span style="opacity:.5;">·</span> <span style="color:#92400e;font-weight:600" title="No PDF attached — metadata only">📋 metadata</span>`;
+  } else if (pdfStatus === 'fetch_failed') {
+    metaHtml += ` <span style="opacity:.5;">·</span> <span style="color:#b45309;font-weight:600" title="PDF fetch failed — metadata kept">⚠ no PDF</span>`;
+  } else if (pdfStatus === 'fetching') {
+    metaHtml += ` <span style="opacity:.5;">·</span> <span style="color:#7c3aed;font-weight:600" title="PDF fetch in progress">▶ fetching</span>`;
+  }
+  if (p.external_url) {
+    metaHtml += ` <a href="${escHtml(p.external_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Open original" style="margin-left:auto;text-decoration:none;color:var(--blue);font-weight:600">↗ External</a>`;
+  }
+  meta.innerHTML = metaHtml;
   card.appendChild(meta);
 
   const projsRow = document.createElement('div');

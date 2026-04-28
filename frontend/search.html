@@ -476,6 +476,41 @@ table.res-table thead th.sortable.sort-desc::after { content: '↓'; opacity: .8
   </div>
 </div>
 
+<!-- Import modal -->
+<div class="modal-overlay" id="import-modal">
+  <div class="modal" style="width:480px">
+    <div class="modal-header">
+      <h3>Import <span id="import-count">0</span> selected results</h3>
+      <button class="modal-close" onclick="closeImportModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <label>How should we save these papers?</label>
+      <div class="import-mode-card" data-mode="metadata" onclick="setImportMode('metadata')" style="border:2px solid var(--blue);background:#f1f5ff;border-radius:6px;padding:12px;margin-bottom:10px;cursor:pointer">
+        <div style="font-weight:700;font-size:12px;color:var(--navy)">📋 Metadata only <span style="color:var(--muted);font-weight:500">— instant, free</span></div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4">
+          Save title, authors, abstract, and a click-out link to the publisher / PubMed page.
+          No PDF download. Best when you only need to organize references.
+        </div>
+      </div>
+      <div class="import-mode-card" data-mode="fetch" onclick="setImportMode('fetch')" style="border:2px solid var(--border);border-radius:6px;padding:12px;margin-bottom:14px;cursor:pointer">
+        <div style="font-weight:700;font-size:12px;color:var(--navy)">📄 Fetch PDF <span style="color:var(--muted);font-weight:500" id="import-fetch-cost">— 0 credits</span></div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4">
+          We'll try PMC → Unpaywall → publisher landing pages to find an open-access PDF.
+          Runs in the background; metadata is always saved as a fallback. Failed fetches refund the credit.
+        </div>
+      </div>
+      <label>Save to project</label>
+      <select id="import-modal-project" style="width:100%;font-family:inherit;font-size:12px;padding:7px 10px;border:1px solid var(--border);border-radius:5px;margin-bottom:14px">
+        <option value="">Unassigned</option>
+      </select>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-secondary" onclick="closeImportModal()">Cancel</button>
+        <button class="btn btn-primary" id="import-modal-submit" onclick="submitImport()">Import</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ── Toast helpers ── */
 function _ensureToastContainer() {
@@ -1230,7 +1265,10 @@ function renderResults() {
   }
 
   res.forEach(r => {
-    const imported = r.imported ? '<span class="res-imported">Imported</span>' : '';
+    let statusBits = '';
+    if (r.imported) statusBits += '<span class="res-imported">Imported</span>';
+    const extUrl = r.url || (r.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${r.pmid}/` : (r.doi ? `https://doi.org/${r.doi}` : ''));
+    if (extUrl) statusBits += ` <a href="${escapeHtml(extUrl)}" target="_blank" rel="noopener" title="Open original" style="text-decoration:none;font-size:11px;margin-left:4px">↗</a>`;
     const dbClass = (r.database_name || 'pubmed').replace(/\s/g, '_');
     html += `<tr>
       <td><input type="checkbox" data-id="${r.id}" ${r.selected ? 'checked' : ''} onchange="toggleSelect(${r.id}, this.checked)"></td>
@@ -1240,7 +1278,7 @@ function renderResults() {
       <td style="font-size:10.5px">${escapeHtml((r.pub_date || '').slice(0, 4))}</td>
       <td style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:600">${r.citation_count || 0}</td>
       <td><span class="db-badge ${dbClass}">${(r.database_name || 'pubmed').replace('_', ' ')}</span></td>
-      <td>${imported}</td>
+      <td>${statusBits}</td>
     </tr>`;
     if (r.abstract) {
       html += `<tr class="res-abstract" id="abs-${r.id}"><td colspan="8" style="padding:10px 16px;font-size:11px;color:var(--muted);line-height:1.5;background:#f8fafc">${escapeHtml(r.abstract).slice(0, 500)}${r.abstract.length > 500 ? '...' : ''}</td></tr>`;
@@ -1290,24 +1328,152 @@ async function toggleSelectAll(checked) {
   document.querySelectorAll('.res-table input[type=checkbox][data-id]').forEach(cb => cb.checked = checked);
 }
 
-async function importSelected() {
-  const ids = [...document.querySelectorAll('.res-table input[type=checkbox][data-id]:checked')]
-    .map(cb => parseInt(cb.dataset.id));
-  if (!ids.length) { alert('Select at least one result to import'); return; }
-  const projectId = document.getElementById('import-project').value || null;
-  const r = await fetch('/api/search/import', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ session_id: currentSessionId, result_ids: ids, project_id: projectId ? parseInt(projectId) : null }),
+/* ── Import flow ──
+   The button now opens a modal that lets the user choose between:
+   - 'metadata' (instant, free) — just stash a paper row + external_url
+   - 'fetch'    (credits, async) — kick off a background PDF crawler
+*/
+const PDF_FETCH_CREDIT_COST = 2;
+let importPendingIds = [];
+let importMode = 'metadata';
+const activeFetchRuns = new Map();  // run_id -> { lastEventId, total }
+
+function importSelected() {
+  try {
+    if (!currentSessionId) {
+      showToast('No active session — please reload', 'error');
+      return;
+    }
+    const ids = [...document.querySelectorAll('.res-table input[type=checkbox][data-id]:checked')]
+      .map(cb => parseInt(cb.dataset.id));
+    if (!ids.length) { alert('Select at least one result to import'); return; }
+    importPendingIds = ids;
+    importMode = 'metadata';
+    document.getElementById('import-count').textContent = ids.length;
+    document.getElementById('import-fetch-cost').textContent = `— ${ids.length * PDF_FETCH_CREDIT_COST} credits`;
+    setImportMode('metadata');
+    // Sync the modal's project select with the toolbar's
+    const toolbarSel = document.getElementById('import-project');
+    const modalSel = document.getElementById('import-modal-project');
+    modalSel.innerHTML = toolbarSel.innerHTML;
+    modalSel.value = toolbarSel.value || '';
+    document.getElementById('import-modal').classList.add('show');
+  } catch (err) {
+    console.error('importSelected failed:', err);
+    showToast('Import error: ' + (err.message || 'see console'), 'error');
+  }
+}
+
+function closeImportModal() {
+  document.getElementById('import-modal').classList.remove('show');
+}
+
+function setImportMode(mode) {
+  importMode = mode;
+  document.querySelectorAll('.import-mode-card').forEach(card => {
+    const active = card.dataset.mode === mode;
+    card.style.borderColor = active ? 'var(--blue)' : 'var(--border)';
+    card.style.background = active ? '#f1f5ff' : '#fff';
   });
-  if (!r.ok) {
-    const e = await r.json();
-    const msg = typeof e.detail === 'string' ? e.detail : Array.isArray(e.detail) ? e.detail.map(d => d.msg || JSON.stringify(d)).join('; ') : 'Import failed';
-    showToast(msg, 'error');
+}
+
+async function submitImport() {
+  const submitBtn = document.getElementById('import-modal-submit');
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Importing…';
+  try {
+    const projectId = document.getElementById('import-modal-project').value || null;
+    const r = await fetch('/api/search/import', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        session_id: currentSessionId,
+        result_ids: importPendingIds,
+        project_id: projectId ? parseInt(projectId) : null,
+        mode: importMode,
+      }),
+    });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      const msg = typeof e.detail === 'string' ? e.detail
+        : Array.isArray(e.detail) ? e.detail.map(d => d.msg || JSON.stringify(d)).join('; ')
+        : (e.detail && e.detail.detail) || 'Import failed';
+      showToast(msg, 'error');
+      return;
+    }
+    const data = await r.json();
+    closeImportModal();
+    if (importMode === 'metadata') {
+      showToast(`Imported: ${data.imported}, Skipped: ${data.skipped}, Failed: ${data.failed}`,
+                data.imported > 0 ? 'success' : 'info');
+      if (currentSessionId) switchSession(currentSessionId);
+    } else {
+      showToast(`Fetching ${data.total} PDFs in the background…`, 'info');
+      startFetchRunPolling(data.run_id, data.total);
+      if (currentSessionId) switchSession(currentSessionId);
+    }
+  } catch (err) {
+    console.error('submitImport failed:', err);
+    showToast('Import error: ' + (err.message || 'see console'), 'error');
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Import';
+  }
+}
+
+function startFetchRunPolling(runId, total) {
+  activeFetchRuns.set(runId, { lastEventId: 0, total });
+  renderFetchPill();
+  pollFetchRun(runId);
+}
+
+function renderFetchPill() {
+  let pill = document.getElementById('fetch-pill');
+  const total = [...activeFetchRuns.values()].reduce((s, r) => s + (r.total || 0), 0);
+  if (!activeFetchRuns.size) {
+    if (pill) pill.remove();
     return;
   }
-  const data = await r.json();
-  showToast(`Imported: ${data.imported}, Skipped: ${data.skipped}, Failed: ${data.failed}`, data.imported > 0 ? 'success' : 'info');
-  if (currentSessionId) switchSession(currentSessionId);
+  if (!pill) {
+    pill = document.createElement('div');
+    pill.id = 'fetch-pill';
+    pill.style.cssText = 'display:inline-flex;align-items:center;gap:6px;background:#7c3aed;color:#fff;border-radius:14px;padding:4px 12px;font-size:11px;font-weight:600;margin-left:8px;cursor:default';
+    const toolbar = document.getElementById('results-toolbar');
+    if (toolbar) toolbar.appendChild(pill);
+  }
+  pill.textContent = `▶ ${total} PDFs fetching`;
+}
+
+async function pollFetchRun(runId) {
+  const state = activeFetchRuns.get(runId);
+  if (!state) return;
+  try {
+    const r = await fetch(`/api/search/pdf-fetch/${runId}/events?after=${state.lastEventId}`);
+    if (r.ok) {
+      const data = await r.json();
+      for (const ev of (data.events || [])) {
+        state.lastEventId = ev.id;
+        if (ev.event_type === 'run_complete') {
+          activeFetchRuns.delete(runId);
+          const d = ev.detail || {};
+          const succeeded = d.succeeded || 0;
+          const failed = d.failed || 0;
+          showToast(
+            `PDF fetch done: ${succeeded} fetched, ${failed} metadata-only` +
+            (failed > 0 ? ` (${d.refunded || 0} credits refunded)` : ''),
+            succeeded > 0 ? 'success' : 'info'
+          );
+          if (currentSessionId) switchSession(currentSessionId);
+          renderFetchPill();
+          return;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Fetch run poll error:', err);
+  }
+  if (activeFetchRuns.has(runId)) {
+    setTimeout(() => pollFetchRun(runId), 3000);
+  }
 }
 
 function getSelectedIds() {

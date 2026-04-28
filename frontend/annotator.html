@@ -2710,9 +2710,46 @@ async function loadPdf(paperId, filename) {
     document.getElementById('page-info').textContent = `/ ${totalPages}`;
     await renderAllPages();
     await loadExistingAnnotation();
+    // Hide any prior metadata-only placeholder
+    const ph = document.getElementById('pdf-metadata-placeholder');
+    if (ph) ph.remove();
   } catch(err) {
-    alert('Failed to load PDF: ' + err.message);
+    // Metadata-only papers have no PDF — render a friendly placeholder instead
+    // of breaking the workflow with an alert. Form pane stays fully functional.
+    renderMetadataOnlyPlaceholder(paperId, filename, err);
+    await loadExistingAnnotation();
   }
+}
+
+function renderMetadataOnlyPlaceholder(paperId, filename, err) {
+  const scroll = document.getElementById('pdf-scroll');
+  if (!scroll) return;
+  scroll.innerHTML = '';
+  // Look up the paper's external_url via the library aggregation endpoint.
+  // (We don't have a single-paper meta endpoint; the row should already be
+  // in this user's library so this filtered call returns it.)
+  fetch(`/api/library/papers?limit=1000`).then(r => r.ok ? r.json() : null).then(data => {
+    const row = (data && data.papers || []).find(p => p.id === paperId);
+    const url = row && row.external_url;
+    const ph = document.createElement('div');
+    ph.id = 'pdf-metadata-placeholder';
+    ph.style.cssText = 'padding:32px;max-width:520px;margin:48px auto;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,.06);';
+    ph.innerHTML = `
+      <div style="font-size:13px;font-weight:700;color:#0f172a;margin-bottom:6px">📋 Metadata-only paper</div>
+      <div style="font-size:12px;color:#64748b;line-height:1.5;margin-bottom:14px">
+        No PDF is attached to this entry — it was imported as metadata from a search result.
+        You can still annotate using fields you fill in by hand from the original source.
+      </div>
+      <div style="font-size:11px;color:#475569;font-weight:600;margin-bottom:4px">Filename</div>
+      <div style="font-size:12px;color:#0f172a;margin-bottom:14px;word-break:break-all">${escHtml(filename || '')}</div>
+      ${url ? `<a href="${escHtml(url)}" target="_blank" rel="noopener" style="display:inline-block;font-size:12px;background:#3b82f6;color:#fff;padding:8px 16px;border-radius:5px;text-decoration:none;font-weight:600">↗ Open original</a>` : ''}
+    `;
+    scroll.appendChild(ph);
+  }).catch(() => {
+    // Fall back to a minimal placeholder if the lookup fails
+    scroll.innerHTML = '<div style="padding:32px;text-align:center;color:#64748b;font-size:12px">PDF unavailable. Use the form to annotate from your own notes.</div>';
+  });
+  document.getElementById('page-info').textContent = '/ —';
 }
 
 async function renderAllPages() {
