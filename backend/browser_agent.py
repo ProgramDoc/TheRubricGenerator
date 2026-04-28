@@ -10,19 +10,24 @@ publishers issue cookies during the landing-page render that gate the
 subsequent PDF request. A real browser session preserves those cookies
 across the click → download chain. ``httpx`` doesn't.
 
-Strategy (all heuristic — no LLM in the loop yet):
+Strategy:
 
 1. Open the landing URL with Playwright. Wait for ``networkidle``.
 2. Read ``citation_pdf_url`` from the rendered DOM (publishers like BMJ,
    Springer, NEJM emit this meta tag — and Playwright sees the post-JS
    version which is often more complete than what ``httpx`` got).
-3. If found, navigate to that URL within the same browser context so
-   cookies + Referer headers tag along.
-4. Capture the resulting PDF response body. If Chromium chooses to render
-   the PDF inline (its default), grab the response bytes.
-5. If no ``citation_pdf_url``, scan visible links for "Download PDF",
+3. If no ``citation_pdf_url``, scan visible links for "Download PDF",
    ``[href$=".pdf"]``, ``[type="application/pdf"]`` and try the first
    plausible match.
+4. **LLM fallback**: if every heuristic misses, harvest the page's visible
+   anchors and ask Claude Haiku 4.5 to pick the PDF download link. The LLM
+   sees only `{href, text, aria-label}` for each link — no screenshot, no
+   page HTML — keeping the call cheap (~$0.0005/page). Decline-aware: the
+   model returns ``null`` for paywalled or login-walled pages.
+5. Navigate to whichever URL we found (heuristic or LLM-picked) within the
+   same browser context so cookies + Referer headers tag along.
+6. Capture the resulting PDF response body. If Chromium chooses to render
+   the PDF inline (its default), grab the response bytes.
 
 Returns ``{sha256, filename, storage_path}`` on success, ``None`` on miss.
 
@@ -79,7 +84,7 @@ def _store_pdf_bytes(data: bytes) -> dict | None:
 
 async def _resolve_pdf_url(page, landing_url: str) -> str | None:
     """Pull a PDF URL out of the rendered page. Tries citation_pdf_url meta
-    tag first, then visible link selectors."""
+    tag first, then visible link selectors, then an LLM fallback."""
     # citation_pdf_url meta tag
     try:
         meta = await page.locator('meta[name="citation_pdf_url"]').first.get_attribute(
@@ -109,7 +114,108 @@ async def _resolve_pdf_url(page, landing_url: str) -> str | None:
                 return href
         except Exception:
             continue
-    return None
+
+    # LLM fallback: gather visible anchors, ask Claude to pick the PDF link.
+    return await _llm_resolve_pdf_url(page, landing_url)
+
+
+async def _gather_anchors(page) -> list[dict]:
+    """Read up to 200 anchor tags off the rendered page with their visible
+    text + aria-label. Used to feed the LLM picker without uploading a
+    screenshot or the full HTML body."""
+    try:
+        return await page.evaluate(
+            """() => Array.from(document.querySelectorAll('a'))
+                .slice(0, 200)
+                .map(a => ({
+                    href: a.href,
+                    text: (a.innerText || '').trim().slice(0, 120),
+                    aria: (a.getAttribute('aria-label') || '').slice(0, 120),
+                    type: a.getAttribute('type') || ''
+                }))
+                .filter(a => a.href && a.href.startsWith('http'))"""
+        )
+    except Exception as e:
+        logger.info("Browser agent: anchor harvest failed: %s", e)
+        return []
+
+
+def _llm_pick_pdf_url(landing_url: str, anchors: list[dict]) -> str | None:
+    """Sync Claude call. Returns a chosen URL or None on decline/error.
+
+    Runs in a worker thread (called via ``asyncio.to_thread``) so the
+    Playwright event loop isn't blocked by a synchronous httpx request.
+    """
+    if not anchors:
+        return None
+    import json
+    try:
+        from . import helpers
+    except Exception as e:
+        logger.info("Browser agent: helpers import failed: %s", e)
+        return None
+    payload = json.dumps(anchors, separators=(",", ":"))[:8000]
+    system = (
+        "You help a librarian download academic PDFs. Given the visible links on "
+        "a publisher's article landing page, identify the URL that downloads the "
+        "full-text PDF. Common patterns: href contains '/pdf/' or ends '.pdf'; "
+        "text or aria-label contains 'Download PDF', 'Full text PDF', 'View PDF'; "
+        "type='application/pdf'. If the page is paywalled, login-walled, or the "
+        "PDF link is genuinely missing, return null and decline. Return ONLY a "
+        "single JSON object with shape "
+        "{\"pdf_url\": <absolute URL string or null>, \"confidence\": <0.0-1.0>, "
+        "\"reason\": <one short sentence>}."
+    )
+    user = (
+        f"Landing URL: {landing_url}\n\n"
+        f"Visible anchors (first 200, JSON):\n{payload}\n\n"
+        "Respond with the JSON object only."
+    )
+    try:
+        raw = helpers.call_anthropic(
+            [{"role": "user", "content": user}],
+            system,
+            max_tokens=256,
+            model="claude-haiku-4-5-20251001",
+        )
+    except Exception as e:
+        logger.info("Browser agent: LLM call failed: %s", e)
+        return None
+    try:
+        parsed = helpers.parse_json_response(raw)
+    except Exception as e:
+        logger.info("Browser agent: LLM JSON parse failed: %s | raw=%s", e, str(raw)[:200])
+        return None
+    pdf_url = parsed.get("pdf_url")
+    confidence = parsed.get("confidence") or 0
+    reason = (parsed.get("reason") or "")[:200]
+    if not pdf_url or pdf_url == "null":
+        logger.info("Browser agent: LLM declined PDF URL for %s — %s",
+                    landing_url[:80], reason)
+        return None
+    if not isinstance(pdf_url, str) or not pdf_url.startswith("http"):
+        logger.info("Browser agent: LLM returned invalid URL '%s'", str(pdf_url)[:120])
+        return None
+    if confidence < 0.5:
+        logger.info("Browser agent: LLM low confidence (%s) — %s",
+                    confidence, reason)
+        return None
+    logger.info("Browser agent: LLM picked %s (conf=%s) — %s",
+                pdf_url[:120], confidence, reason)
+    return pdf_url
+
+
+async def _llm_resolve_pdf_url(page, landing_url: str) -> str | None:
+    """Async wrapper: harvest anchors, run the (sync) LLM call in a worker
+    thread, return the picked URL or None."""
+    anchors = await _gather_anchors(page)
+    if not anchors:
+        return None
+    try:
+        return await asyncio.to_thread(_llm_pick_pdf_url, landing_url, anchors)
+    except Exception as e:
+        logger.info("Browser agent: LLM thread failed: %s", e)
+        return None
 
 
 async def _normalize_url(landing_url: str, candidate: str) -> str:

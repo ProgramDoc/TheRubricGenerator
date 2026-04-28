@@ -5252,7 +5252,9 @@ class SearchImportPayload(BaseModel):
     session_id: int
     result_ids: list[int]
     project_id: int | None = None
-    mode: str = "metadata"  # 'metadata' (instant) | 'fetch' (background PDF crawl)
+    # 'metadata' (instant, free) | 'fetch' (2 cr) | 'firecrawl' (5 cr)
+    # | 'browser' (15 cr) | 'auto' (2-15 cr, tier-priced — recommended default)
+    mode: str = "metadata"
 
 class SearchExportPayload(BaseModel):
     session_id: int
@@ -5377,43 +5379,52 @@ def api_update_search_session(session_id: int, body: SearchSessionUpdatePayload,
 PDF_FETCH_CREDIT_COST = 2  # per result for mode='fetch'
 PDF_FIRECRAWL_CREDIT_COST = 5  # per result for mode='firecrawl' — covers Firecrawl API spend
 PDF_BROWSER_CREDIT_COST = 15  # per result for mode='browser' — Chromium session is slow + RAM-hungry
+PDF_AUTO_CREDIT_COST = PDF_BROWSER_CREDIT_COST  # auto pre-charges max; tier-based refund downstream
 
 
 @app.post("/api/search/import")
 def api_search_import(body: SearchImportPayload, rubricgen_session: str | None = Cookie(default=None)):
     """Import selected search results as papers.
 
-    Four modes:
-    - ``metadata`` (default, free, synchronous): metadata-only papers row +
+    Five modes:
+    - ``metadata`` (free, synchronous): metadata-only papers row +
       ``external_url`` click-out.
+    - ``auto`` (2-15 credits/paper, async — *recommended default*): runs every
+      strategy in order (PMC → Unpaywall → meta-tag → Firecrawl → browser) and
+      charges based on which tier delivered the PDF. Pre-charges the browser-tier
+      max and refunds the difference downstream.
     - ``fetch`` (2 credits/paper, async): background crawler tries
-      PMC → Unpaywall → publisher landing pages with plain ``httpx``.
+      PMC → Unpaywall → publisher landing pages with plain ``httpx``. No
+      Firecrawl or browser fallback.
     - ``firecrawl`` (5 credits/paper, async): same as ``fetch`` but adds a
       JS-rendering Firecrawl fallback for landing pages that block plain
       ``httpx``. Requires ``FIRECRAWL_API_KEY``.
     - ``browser`` (15 credits/paper, async): everything in ``firecrawl``
       plus a final Playwright/Chromium browser-agent fallback that opens the
-      publisher's landing page in a real browser, finds the PDF link, and
-      coerces a download. Requires Playwright + Chromium installed on the
-      server (see DEVELOPMENT.md).
+      publisher's landing page in a real browser, finds the PDF link
+      (heuristics + LLM-driven nav), and coerces a download. Requires
+      Playwright + Chromium installed on the server (see DEVELOPMENT.md).
 
     Per-result failures still create a ``pdf_status='fetch_failed'`` row and
     refund the per-paper credit.
     """
     user = require_user(rubricgen_session)
     require_active_seat(user, "engineer")
-    if body.mode not in ("metadata", "fetch", "firecrawl", "browser"):
+    if body.mode not in ("metadata", "auto", "fetch", "firecrawl", "browser"):
         raise HTTPException(
-            400, "mode must be 'metadata', 'fetch', 'firecrawl', or 'browser'"
+            400, "mode must be 'metadata', 'auto', 'fetch', 'firecrawl', or 'browser'"
         )
     if not body.result_ids:
         raise HTTPException(400, "result_ids cannot be empty")
+    # 'auto' includes Firecrawl as one of its tiers but degrades gracefully
+    # when the key is missing (the Firecrawl strategy returns permanent_error
+    # and the browser tier still runs). Only the explicit Firecrawl/browser
+    # modes hard-require the key — they don't make sense without it.
     if body.mode in ("firecrawl", "browser") and not os.environ.get("FIRECRAWL_API_KEY"):
-        # Firecrawl is part of the browser-mode pipeline too — require the key for both.
         raise HTTPException(
             503,
             f"{body.mode!r} mode requires FIRECRAWL_API_KEY to be configured. "
-            f"Set it in your environment (api.firecrawl.dev) or use 'fetch' mode."
+            f"Set it in your environment (api.firecrawl.dev) or use 'auto' / 'fetch' mode."
         )
 
     conn = get_db()
@@ -5434,11 +5445,14 @@ def api_search_import(body: SearchImportPayload, rubricgen_session: str | None =
                 project_id=body.project_id, mode="metadata",
             )
 
-        # mode in ('fetch', 'firecrawl', 'browser') — credit-gate, enqueue, spawn worker
+        # async modes — credit-gate, enqueue, spawn worker. 'auto' pre-charges
+        # the browser-tier max; backend refunds the excess based on which tier
+        # actually delivered the PDF.
         credit_per_paper = {
             "fetch": PDF_FETCH_CREDIT_COST,
             "firecrawl": PDF_FIRECRAWL_CREDIT_COST,
             "browser": PDF_BROWSER_CREDIT_COST,
+            "auto": PDF_AUTO_CREDIT_COST,
         }[body.mode]
         total = len(body.result_ids)
         total_cost = total * credit_per_paper

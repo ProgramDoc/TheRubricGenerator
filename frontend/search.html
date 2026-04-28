@@ -485,7 +485,16 @@ table.res-table thead th.sortable.sort-desc::after { content: '↓'; opacity: .8
     </div>
     <div class="modal-body">
       <label>How should we save these papers?</label>
-      <div class="import-mode-card" data-mode="metadata" onclick="setImportMode('metadata')" style="border:2px solid var(--blue);background:#f1f5ff;border-radius:6px;padding:12px;margin-bottom:10px;cursor:pointer">
+      <div class="import-mode-card" data-mode="auto" onclick="setImportMode('auto')" style="border:2px solid var(--blue);background:#f1f5ff;border-radius:6px;padding:12px;margin-bottom:10px;cursor:pointer">
+        <div style="font-weight:700;font-size:12px;color:var(--navy)">⚡ Auto (best effort) <span style="color:var(--muted);font-weight:500" id="import-auto-cost">— 0 credits</span></div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4">
+          Tries every strategy in order — PMC, Unpaywall, publisher landing, Firecrawl, then a real
+          Chromium browser session with LLM-driven link picking. You're charged per paper based on
+          which tier won: 2 cr (free), 5 cr (Firecrawl), or 15 cr (browser). Failed fetches refund
+          the full pre-charge. Recommended for most imports.
+        </div>
+      </div>
+      <div class="import-mode-card" data-mode="metadata" onclick="setImportMode('metadata')" style="border:2px solid var(--border);border-radius:6px;padding:12px;margin-bottom:10px;cursor:pointer">
         <div style="font-weight:700;font-size:12px;color:var(--navy)">📋 Metadata only <span style="color:var(--muted);font-weight:500">— instant, free</span></div>
         <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4">
           Save title, authors, abstract, and a click-out link to the publisher / PubMed page.
@@ -1352,8 +1361,10 @@ async function toggleSelectAll(checked) {
 const PDF_FETCH_CREDIT_COST = 2;
 const PDF_FIRECRAWL_CREDIT_COST = 5;
 const PDF_BROWSER_CREDIT_COST = 15;
+const PDF_AUTO_MIN_COST = 2;
+const PDF_AUTO_MAX_COST = 15;
 let importPendingIds = [];
-let importMode = 'metadata';
+let importMode = 'auto';
 const activeFetchRuns = new Map();  // run_id -> { lastEventId, total }
 
 function importSelected() {
@@ -1366,12 +1377,14 @@ function importSelected() {
       .map(cb => parseInt(cb.dataset.id));
     if (!ids.length) { alert('Select at least one result to import'); return; }
     importPendingIds = ids;
-    importMode = 'metadata';
+    importMode = 'auto';
     document.getElementById('import-count').textContent = ids.length;
+    document.getElementById('import-auto-cost').textContent =
+      `— ${ids.length * PDF_AUTO_MIN_COST}–${ids.length * PDF_AUTO_MAX_COST} credits`;
     document.getElementById('import-fetch-cost').textContent = `— ${ids.length * PDF_FETCH_CREDIT_COST} credits`;
     document.getElementById('import-firecrawl-cost').textContent = `— ${ids.length * PDF_FIRECRAWL_CREDIT_COST} credits`;
     document.getElementById('import-browser-cost').textContent = `— ${ids.length * PDF_BROWSER_CREDIT_COST} credits`;
-    setImportMode('metadata');
+    setImportMode('auto');
     // Sync the modal's project select with the toolbar's
     const toolbarSel = document.getElementById('import-project');
     const modalSel = document.getElementById('import-modal-project');

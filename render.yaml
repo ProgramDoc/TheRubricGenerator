@@ -8,9 +8,12 @@ services:
   - type: web
     name: therubricgenerator
     runtime: python
-    # The Playwright install pulls Chromium (~170MB). System libs come from
-    # apt.txt at the repo root. The browser-agent import mode requires this.
-    buildCommand: pip install -r requirements.txt && playwright install chromium
+    # The Playwright install pulls Chromium (~170MB) + Chromium Headless Shell
+    # (~125MB). System libs come from apt.txt. As of Playwright 1.49 the
+    # headless-shell binary is a separate package and `headless=True` defaults
+    # to it — installing only `chromium` causes browser-agent mode to crash
+    # with "Executable doesn't exist at .../chromium_headless_shell-*/...".
+    buildCommand: pip install -r requirements.txt && playwright install chromium chromium-headless-shell
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /
     envVars:

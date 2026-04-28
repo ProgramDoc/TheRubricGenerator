@@ -37,8 +37,8 @@
 | Modify exports | `backend/exports.py` |
 | Modify the daily scheduler | `backend/scheduler.py` + `backend/pubmed.py` |
 | Modify search | `backend/search.py` |
-| Modify search-result PDF import (4 modes) | `backend/search.py` (`import_results`, `run_pdf_fetch_job`, `_upgrade_paper_to_pdf`) + `backend/pdf_fetcher.py` (PMC → Unpaywall → direct → meta-tag → Firecrawl) + `backend/browser_agent.py` (Playwright Chromium fallback). Modal UI mirrored in `frontend/search.html` and `frontend/lab.html`. |
-| Add a new PDF-fetch strategy | `backend/pdf_fetcher.py` — append a new `_try_*` helper, then call it from `fetch_pdf_for_result` in priority order. Each strategy returns `{sha256, filename, storage_path}` or `None`. Validate downloads via the `_is_pdf_bytes` magic-byte check. |
+| Modify search-result PDF import (5 modes) | `backend/search.py` (`import_results`, `run_pdf_fetch_job`, `_upgrade_paper_to_pdf`) + `backend/pdf_fetcher.py` (PMC → Unpaywall → direct → meta-tag → Firecrawl, with per-strategy events + retries + tier-aware return) + `backend/browser_agent.py` (Playwright Chromium + LLM-driven link picker). Modal UI mirrored in `frontend/search.html` and `frontend/lab.html`. **`auto`** is the default — runs every tier, tier-priced 2/5/15 cr. |
+| Add a new PDF-fetch strategy | `backend/pdf_fetcher.py` — write a `_strat_*` helper that returns `(result_or_None, outcome, reason)` where `outcome ∈ {hit, miss, transient_error, permanent_error}`, then call it from `fetch_pdf_for_result` via `_run_with_retry(name, on_event, lambda attempt: _strat_*(...))`. Validate downloads via `_is_pdf_bytes`. Pass `attempts=1` for slow / metadata-driven strategies. Tag the tier when emitting the hit (`_hit(out, "free"|"firecrawl"|"browser")`). |
 | Add organization feature | `backend/organizations.py` |
 | Write Obsidian notes | `backend/obsidian.py` |
 | Run tests | `pytest tests/ -v` (requires Python 3.12 for `str | None` syntax) |
@@ -341,16 +341,21 @@ Registry keys MUST match `annotator.TYPE_FIELD_IDS` keys — the test `TestDispa
 
 **Out of scope for v1**: Quasi-experimental designs (Uncontrolled Before-After, Interrupted Time Series, Difference-in-Differences, Regression Discontinuity) — each needs its own confounding prompt + ROBINS-I adaptation. ROBINS-I effect-of-adherence D4 variant (effect-of-assignment only in v1). AMSTAR-2 (systematic reviews), QUADAS-2 (diagnostic accuracy), PRISMA 2020, STARD. Cluster/crossover/stepped-wedge RCT variants (parallel-trial cribsheet only). Editing / overriding AI judgements in the UI. Full GRADE assessment across inconsistency / indirectness / imprecision / publication bias (requires a body of evidence). Per-outcome user selection (we auto-pick primary).
 
-## Search Strategist — 4-tier PDF Import Pipeline
+## Search Strategist — 5-tier PDF Import Pipeline
 
-Lives at `/search` ([frontend/search.html](frontend/search.html)) and inside the Lab ([frontend/lab.html](frontend/lab.html)). Both surfaces share `/api/search/import` which dispatches into one of four modes via the `mode` field on `SearchImportPayload`:
+Lives at `/search` ([frontend/search.html](frontend/search.html)) and inside the Lab ([frontend/lab.html](frontend/lab.html)). Both surfaces share `/api/search/import` which dispatches into one of five modes via the `mode` field on `SearchImportPayload`:
 
 | Mode | Cost / paper | Sync? | What it does |
 |------|--------------|-------|--------------|
 | `metadata` | free | sync | Stash a `papers` row with title/authors/abstract + `external_url`. Sets `pdf_status='metadata_only'`. No download. |
-| `fetch` | 2 credits | async | Background worker tries: `download_pmc_pdf` → Unpaywall → direct GET → `citation_pdf_url` meta tag. Browser-spoof UA + Referer header so paywall publishers don't 403 us. |
+| **`auto`** (default) | **2–15 credits** | async | Runs every strategy in order — PMC → Unpaywall → meta-tag → Firecrawl → browser+LLM. Pre-charges the browser-tier max (15 cr) and refunds the excess based on which tier won: free chain → 2 cr, Firecrawl → 5 cr, browser → 15 cr. Failures refund the full 15. |
+| `fetch` | 2 credits | async | Background worker tries: `download_pmc_pdf` → Unpaywall → direct GET → `citation_pdf_url` meta tag. Browser-spoof UA + Referer header so paywall publishers don't 403 us. No Firecrawl, no browser. |
 | `firecrawl` | 5 credits | async | Same as `fetch` plus a final Firecrawl JS-render fallback. Crawls the **Unpaywall-resolved publisher landing URL** (not the PubMed URL — PubMed rarely has citation_pdf_url). Requires `FIRECRAWL_API_KEY`. |
-| `browser` | 15 credits | async | Same as `firecrawl` plus a final Playwright/Chromium browser-agent fallback that picks up real session cookies. Requires Playwright + Chromium installed (see [render.yaml](render.yaml) buildCommand + [apt.txt](apt.txt)). |
+| `browser` | 15 credits | async | Same as `firecrawl` plus a final Playwright/Chromium browser-agent fallback that picks up real session cookies. Includes an LLM-driven link picker (Haiku 4.5) when DOM heuristics miss. Requires Playwright + Chromium installed (see [render.yaml](render.yaml) buildCommand + [apt.txt](apt.txt)). |
+
+**Per-strategy event log.** Every strategy attempt emits a `strategy_attempt` event into `pdf_fetch_run_events` with shape `{strategy, outcome, reason, duration_ms, attempt}`. Outcomes: `hit` / `miss` / `transient_error` / `permanent_error`. Strategies that fail on transient HTTP errors (5xx, 429, connect/read timeout) retry up to 2 attempts with 1s/2s backoff; permanent errors and the slow browser tier skip retry. Use this log to debug why a paper failed — the user sees exactly which tier was reached and why each strategy missed.
+
+**Tier-aware return.** [`backend/pdf_fetcher.py:fetch_pdf_for_result`](backend/pdf_fetcher.py) returns `{sha256, filename, storage_path, tier}` where `tier ∈ {"free", "firecrawl", "browser"}`. `backend/search.py:run_pdf_fetch_job` reads `tier` and computes the auto-mode refund.
 
 **Per-result failures are graceful** — the worker creates a `pdf_status='fetch_failed'` paper row with an `external_url` click-out and refunds the per-paper credit. The user gets *something* useful even when no PDF lands.
 
@@ -369,9 +374,10 @@ Lives at `/search` ([frontend/search.html](frontend/search.html)) and inside the
 
 **Browser-agent caveats** ([backend/browser_agent.py](backend/browser_agent.py)):
 - ~500MB RAM during a session. Render Free (512MB) will OOM-kill — **needs Standard ($25/mo) or higher**.
-- `playwright install chromium` adds ~170MB to the build. First deploy after enabling browser mode takes 4–8 minutes.
+- **Playwright ≥1.49 split Chromium into two packages** — `chromium` (full browser) and `chromium-headless-shell` (the lightweight headless binary `headless=True` defaults to). Installing only `chromium` causes `BrowserType.launch: Executable doesn't exist at .../chromium_headless_shell-*/chrome-headless-shell`. The build command in [render.yaml](render.yaml) installs both: `playwright install chromium chromium-headless-shell`. Don't drop the second package.
+- `playwright install chromium chromium-headless-shell` adds ~295MB to the build. First deploy takes 4–8 minutes.
 - Defeats simple bot detection (UA + cookies + Referer) but **not** Cloudflare Turnstile / hCaptcha. Login-walled content needs the user's institutional credentials, which we don't store.
-- We use heuristic link selectors (`citation_pdf_url` → `[href*="/pdf/"]` → "Download PDF" text) — no LLM in the loop yet. The browser agent module is structured so an LLM-driven navigator can be slotted in as a follow-up if heuristics aren't enough.
+- **LLM-driven link picker.** When DOM heuristics miss (`citation_pdf_url` → `[href*="/pdf/"]` → "Download PDF" text), `_llm_resolve_pdf_url` harvests the rendered page's first 200 anchors (href + visible text + aria-label) and asks Claude Haiku 4.5 to pick the PDF download link, returning JSON `{pdf_url, confidence, reason}`. Decline-aware (returns null on paywalls). Sync `call_anthropic` runs in `asyncio.to_thread` so it doesn't block the Playwright event loop. ~$0.0005/page; bundled into the browser tier's 15 cr.
 
 ## Environment Variables
 

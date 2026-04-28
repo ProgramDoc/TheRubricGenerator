@@ -962,17 +962,26 @@ def run_pdf_fetch_job(get_conn, run_id: int, papers_dir: Path,
             credit_per_paper = run["credit_per_paper"] or 2
         except Exception:
             credit_per_paper = 2
-        use_firecrawl = mode in ("firecrawl", "browser")
-        use_browser = (mode == "browser")
+        use_firecrawl = mode in ("firecrawl", "browser", "auto")
+        use_browser = mode in ("browser", "auto")
+        is_auto = (mode == "auto")
 
-        if use_browser:
+        # Auto mode pre-charges 15 cr/paper (browser tier) and refunds the
+        # excess based on which tier actually delivered the PDF. Other modes
+        # are flat per-mode pricing — no tier-based refund.
+        TIER_EFFECTIVE_COST = {"free": 2, "firecrawl": 5, "browser": 15}
+
+        if is_auto:
+            extra = " (auto: free → Firecrawl → browser, tier-priced)"
+        elif use_browser:
             extra = " (Firecrawl + browser-agent fallback)"
         elif use_firecrawl:
             extra = " (Firecrawl fallback enabled)"
         else:
             extra = ""
         log_pdf_fetch_event(conn, run_id, "run_started",
-                            f"Fetching PDFs for {len(result_ids)} results" + extra)
+                            f"Fetching PDFs for {len(result_ids)} results" + extra,
+                            {"mode": mode, "credit_per_paper": credit_per_paper})
 
         from . import pdf_fetcher
 
@@ -1005,6 +1014,19 @@ def run_pdf_fetch_job(get_conn, run_id: int, papers_dir: Path,
                                 {"result_id": rid, "pmid": r["pmid"], "doi": r["doi"],
                                  "upgrading": bool(existing_paper)})
 
+            def _strategy_event_handler(payload, _rid=rid, _title=r["title"]):
+                """Forward each pdf_fetcher per-strategy event into the run log."""
+                strategy = payload.get("strategy", "?")
+                outcome = payload.get("outcome", "?")
+                try:
+                    log_pdf_fetch_event(
+                        conn, run_id, "strategy_attempt",
+                        f"{strategy}: {outcome}",
+                        {"result_id": _rid, **payload},
+                    )
+                except Exception as e:
+                    logger.warning("strategy_event log failed: %s", e)
+
             try:
                 result_dict = {
                     "pmcid": r["pmcid"],
@@ -1017,12 +1039,14 @@ def run_pdf_fetch_job(get_conn, run_id: int, papers_dir: Path,
                     result_dict, papers_dir,
                     use_firecrawl=use_firecrawl,
                     use_browser=use_browser,
+                    on_event=_strategy_event_handler,
                 )
             except Exception as e:
                 logger.exception("pdf_fetcher crashed for result %s: %s", rid, e)
                 pdf_result = None
 
             if pdf_result:
+                tier = pdf_result.get("tier") or "browser"
                 if existing_paper:
                     # Upgrade in place: turn the metadata-only row into a
                     # PDF-backed one without changing its id (which other
@@ -1038,11 +1062,31 @@ def run_pdf_fetch_job(get_conn, run_id: int, papers_dir: Path,
                         )
                         conn.commit()
                     succeeded += 1
+
+                    # Tier-based refund (auto mode only). Pre-charge was 15
+                    # cr/paper; refund the excess so a free-tier hit costs 2 cr
+                    # and a Firecrawl-tier hit costs 5 cr.
+                    tier_refund = 0
+                    if is_auto and refund_callback:
+                        effective = TIER_EFFECTIVE_COST.get(tier, credit_per_paper)
+                        excess = credit_per_paper - effective
+                        if excess > 0:
+                            try:
+                                refund_callback(user_id, excess,
+                                                f"pdf_fetch_tier_{tier}_result_{rid}")
+                                tier_refund = excess
+                            except Exception as e:
+                                logger.warning(
+                                    "Tier refund failed for run=%s result=%s: %s",
+                                    run_id, rid, e)
+
                     log_pdf_fetch_event(conn, run_id, "result_done",
-                                        f"PDF fetched: {r['title'][:80]}"
+                                        f"PDF fetched [{tier}]: {r['title'][:80]}"
                                         + (" (upgraded)" if existing_paper else ""),
                                         {"result_id": rid, "paper_id": paper_id,
-                                         "upgraded": bool(existing_paper)})
+                                         "upgraded": bool(existing_paper),
+                                         "tier": tier,
+                                         "tier_refund": tier_refund})
                     continue
                 # insert/upgrade failed → fall through to failure path
                 pdf_result = None
