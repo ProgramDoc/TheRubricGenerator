@@ -12,12 +12,12 @@
 
 | Component | Files | Lines |
 |-----------|-------|-------|
-| `main.py` | 1 | ~8,600 |
-| `backend/` modules | 39 | ~15,800 |
-| `frontend/` pages | 26 | ~24,500 |
+| `main.py` | 1 | ~8,700 |
+| `backend/` modules | 41 | ~16,500 |
+| `frontend/` pages | 26 | ~25,200 |
 | `frontend/_shared/design.css` | 1 | ~420 |
-| `tests/` | 6 | ~1,900 |
-| **Total** | **73** | **~51,200** |
+| `tests/` | 8 | ~2,500 |
+| **Total** | **77** | **~53,300** |
 
 ### What's Live
 
@@ -461,6 +461,78 @@ A multi-day push that turned the annotator's Results pane into a real summary su
 
 **Tests**: 181/181 pass (was 40 in the pre-April-26 baseline). Coverage spans Competition API, Annotator (~24 cases), Quality Appraisal (~70 cases including ROBINS-I + STROBE), Adjudication (~30 cases for majority logic + needs_review), and the new aggregator unit tests.
 
+### Search Strategist — 4-tier PDF Import Pipeline (April 27, 2026)
+
+The Search Strategist's "Import Selected" was effectively dead — the click handler kicked off a synchronous PMC PDF download (60s timeout × N papers) with no button-disabled state and no toast on the front end, so users saw nothing happen for 30+ seconds. Beyond that, the only resolved-PDF path was PMC; everything else fell back to a silent metadata-only paper row with no UI surface.
+
+This rewrite replaces the entire flow with a four-tier pipeline that the user picks via a modal, gives metadata-only papers a real home in the Library + Annotator, and adds a real headless-browser fallback for paywalled publishers that no User-Agent spoofing alone can defeat.
+
+**Architecture** (each tier includes the previous tier's strategies as fallbacks):
+
+1. **`metadata`** (free, sync) — instant. `papers` row + `external_url` click-out + `pdf_status='metadata_only'`. No download.
+2. **`fetch`** (2 credits/paper, async) — background worker tries `download_pmc_pdf` → Unpaywall (`api.unpaywall.org/v2/{doi}`) → direct GET → `<meta name="citation_pdf_url">` scrape. Browser-style UA + Accept-Language so paywall publishers stop 403'ing us at the door. Retries known PDF URLs with `Referer: <landing>` when the first GET 403s (BMJ/NEJM gate on this).
+3. **`firecrawl`** (5 credits/paper, async) — adds a Firecrawl JS-render fallback for landing pages that block plain `httpx`. Crawls the **Unpaywall-resolved publisher landing URL** (not the PubMed URL — PubMed rarely exposes citation_pdf_url; the publisher page does). Requires `FIRECRAWL_API_KEY`.
+4. **`browser`** (15 credits/paper, async) — final tier. `backend/browser_agent.py` boots a real Chromium session via Playwright, navigates the publisher landing page, picks up cookies + Referer headers from the JS render, locates the PDF via `citation_pdf_url` meta tag or visible "Download PDF" link selectors, grabs the bytes from the same browser context. Slow (5–30s/paper), RAM-hungry (~500MB while running). Requires Playwright + Chromium installed.
+
+**New modules:**
+- `backend/pdf_fetcher.py` — `fetch_pdf_for_result(result, dest_dir, use_firecrawl=False, use_browser=False)`. Each `_try_*` strategy returns `{sha256, filename, storage_path}` or `None`. `_is_pdf_bytes` magic-byte gate rejects HTML disguised as PDFs.
+- `backend/browser_agent.py` — `fetch_pdf_via_browser(landing_url)`. Async Playwright wrapped in a sync entrypoint. Heuristic link selectors only (no LLM in the loop) — the module is structured so an LLM-driven navigator can be slotted in later if heuristics aren't enough.
+
+**Schema:**
+- `papers.external_url TEXT` (NULL for non-search papers).
+- `papers.pdf_status TEXT NOT NULL DEFAULT 'present'` — `'present' | 'metadata_only' | 'fetching' | 'fetch_failed'`.
+- `pdf_fetch_runs` (run container with `mode` + `credit_per_paper` + counters) + `pdf_fetch_run_events` (per-paper progress, polled by the UI). Migrations idempotent in `init_db`.
+
+**Backend orchestration** ([backend/search.py](backend/search.py)):
+- `import_results(..., mode='metadata')` — synchronous metadata-only path; no PMC attempt.
+- `create_pdf_fetch_run(...)` — enqueues a `pdf_fetch_runs` row with mode + per-paper credit cost.
+- `run_pdf_fetch_job(get_conn, run_id, papers_dir, refund_callback)` — daemon-thread worker that iterates results, calls `pdf_fetcher.fetch_pdf_for_result`, and on per-result failure refunds the per-paper credit via `bill.refund_credits`.
+- **Re-runs upgrade in place.** When a search result is already `imported` and its linked paper is `metadata_only` / `fetch_failed`, the worker doesn't skip — it retries the fetch and on success calls `_upgrade_paper_to_pdf(conn, paper_id, r, pdf_result)` which UPDATEs the existing row (same id) to `pdf_status='present'` with the new sha + storage path. Annotations / rubrics on that paper id stay valid. Only `pdf_status='present'` rows are skipped.
+
+**API surface ([main.py](main.py)):**
+- `POST /api/search/import` — accepts `mode='metadata' | 'fetch' | 'firecrawl' | 'browser'`. Sync for metadata; async with `{run_id, total, credits_charged, mode}` for the others.
+- `GET /api/search/pdf-fetch/{run_id}` — current status (running / complete / failed + counts).
+- `GET /api/search/pdf-fetch/{run_id}/events?after=<id>` — incremental polling, mirrors annotator's batch runner.
+- 503 with friendly error if `mode in ('firecrawl', 'browser')` and `FIRECRAWL_API_KEY` is unset.
+
+**Frontend ([frontend/search.html](frontend/search.html), [frontend/lab.html](frontend/lab.html)):**
+- 4-option modal with cost preview per mode (free / 2× / 5× / 15× the selected count). Same UX in the standalone `/search` page and the Lab's search-results pane.
+- Search results table now renders an "↗" external-link icon next to imported rows.
+- Background-fetch progress pill (`▶ N PDFs fetching`) appears in the toolbar while runs are in flight; results refresh on `run_complete`.
+- `toggleWsTab(tab)` replaces `switchWsTab` on tab-button onclicks — clicking the active Results tab now closes it; the next search re-opens it via the unchanged `switchWsTab` (force-opener).
+
+**Library + Annotator graceful degrade:**
+- [frontend/library.html](frontend/library.html) cards render `↗ External` chip when `external_url` is set + status badge: `📋 metadata`, `⚠ no PDF`, `▶ fetching`.
+- [frontend/annotator.html](frontend/annotator.html) `loadPdf` catches the 404 from `/api/papers/{pid}/pdf` and renders a placeholder card with title + external link + "PDF unavailable — annotate from metadata only" instead of alerting. Form pane stays fully functional.
+- `/api/library/papers` aggregation query now includes `external_url` + `pdf_status` columns.
+
+**Bot-detection mitigations** ([backend/pdf_fetcher.py](backend/pdf_fetcher.py)):
+- `BROWSER_USER_AGENT` (Mozilla/Chrome) for the main httpx client. The polite `TheRubricGenerator/1.0` UA is reserved for Unpaywall (where the email contact is required for rate limits).
+- `Accept-Language: en-US,en;q=0.9` header.
+- `_try_direct_with_referer(client, pdf_url, referer)` retry path when a known PDF URL still 403s — many publishers gate on the Referer matching the article landing page.
+
+**Render deploy delta** ([render.yaml](render.yaml), [apt.txt](apt.txt), [requirements.txt](requirements.txt)):
+- `requirements.txt` gains `playwright>=1.46`.
+- `render.yaml` build command becomes `pip install -r requirements.txt && playwright install chromium` — first deploy after this change is 4–8 minutes (Chromium download is ~170MB).
+- `apt.txt` lists Chromium's system libs (libnss3, libatk*, libcups2, libgbm1, libxkbcommon0, libpango-1.0-0, etc.) — Render's Python runtime installs them via apt without root.
+- **Render plan must be Standard ($25/mo) or higher** to use `mode='browser'`. Free tier (512MB RAM) will OOM-kill the Chromium session.
+
+**Critical bug found while wiring this up** — `save_results` previously inserted `search_results` rows but never returned the new IDs. The `articles` list shipped back from `/api/search/execute` had `pmid`, `title`, `authors`, etc. but no `id` field. Frontend checkboxes (`data-id="${r.id}"`) bound to `undefined`, and Import Selected silently sent an empty `result_ids: []` array regardless of selection. Fixed: `save_results` now uses `RETURNING id` and stamps `a["id"] = cur.lastrowid` onto each article before returning. Affects both `/search` and Lab search flows.
+
+**Lab-side wiring** ([frontend/lab.html](frontend/lab.html)) — `importSelected` was a stub that only showed an "Importing N results..." toast and never called the API. `getSelectedResultIds` also returned PMIDs instead of `search_results` row IDs. Both wired now: Lab dispatches into the same modal + `/api/search/import` flow as the standalone `/search` page.
+
+**Tests added:**
+- `tests/test_pdf_fetcher.py` (~13 cases) — mocked httpx fixtures cover the magic-byte gate, Unpaywall lookup, citation_pdf_url scraping, Firecrawl integration, and `use_firecrawl=False` skipping the Firecrawl step.
+- `tests/test_search_import_modes.py` (~7 cases) — metadata import shape, fetch-mode worker creates+completes a run, fetch upgrades metadata-only papers in place (same paper id), already-PDF-backed papers are skipped, events endpoint returns progress.
+
+**Known limitations of `mode='browser'`:**
+- Defeats simple bot detection (UA + cookies + Referer checks) but **not** Cloudflare Turnstile / hCaptcha / rate-limit fingerprinting.
+- Login-walled content still requires user credentials we don't store.
+- `--disable-blink-features=AutomationControlled` masks the most common Playwright detection but not all of it (publishers can still spot us via TLS fingerprint, audio context, etc.).
+- For papers that miss every tier, the metadata-only row + `external_url` lets the user click through and download manually as a fallback.
+
+**Total**: 201 tests pass (was 181). 9 commits across this work, ~3,000 LOC delta, four new files (`backend/pdf_fetcher.py`, `backend/browser_agent.py`, `apt.txt`, two test modules).
+
 ### Annotator Custom Extraction & Analytics (April 16, 2026)
 
 Two long-requested features behind a right-pane tab bar in the annotator.
@@ -747,7 +819,9 @@ User syncs to local machine via Obsidian Sync/iCloud/rsync/git.
 | `STRIPE_PRICE_SEAT_ADMIN` | For enterprise | — | Stripe Price id for the $450/mo Admin seat (set after running `scripts/setup_enterprise_stripe.py`) |
 | `STRIPE_PRICE_SEAT_ENGINEER` | For enterprise | — | Stripe Price id for the $250/mo Engineer seat |
 | `STRIPE_PRICE_SEAT_GENERAL` | For enterprise | — | Stripe Price id for the $100/mo General seat |
+| `FIRECRAWL_API_KEY` | For `mode='firecrawl'` and `mode='browser'` search-import | — | api.firecrawl.dev key. Without it, those modes 503 with a friendly error. `mode='fetch'` and `mode='metadata'` work without it. |
+| `FIRECRAWL_BASE_URL` | No | `https://api.firecrawl.dev` | Override if you self-host Firecrawl. |
 
 ---
 
-**Last updated:** April 20, 2026
+**Last updated:** April 27, 2026

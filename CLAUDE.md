@@ -37,6 +37,8 @@
 | Modify exports | `backend/exports.py` |
 | Modify the daily scheduler | `backend/scheduler.py` + `backend/pubmed.py` |
 | Modify search | `backend/search.py` |
+| Modify search-result PDF import (4 modes) | `backend/search.py` (`import_results`, `run_pdf_fetch_job`, `_upgrade_paper_to_pdf`) + `backend/pdf_fetcher.py` (PMC → Unpaywall → direct → meta-tag → Firecrawl) + `backend/browser_agent.py` (Playwright Chromium fallback). Modal UI mirrored in `frontend/search.html` and `frontend/lab.html`. |
+| Add a new PDF-fetch strategy | `backend/pdf_fetcher.py` — append a new `_try_*` helper, then call it from `fetch_pdf_for_result` in priority order. Each strategy returns `{sha256, filename, storage_path}` or `None`. Validate downloads via the `_is_pdf_bytes` magic-byte check. |
 | Add organization feature | `backend/organizations.py` |
 | Write Obsidian notes | `backend/obsidian.py` |
 | Run tests | `pytest tests/ -v` (requires Python 3.12 for `str | None` syntax) |
@@ -73,7 +75,15 @@ backend/
   ├── code_runner.py    — Sandboxed Python/R code execution
   ├── pubmed.py         — PubMed E-utilities, iCite citations, PMC PDF download
   ├── scheduler.py      — Daily challenge automation (7am PST Mon-Fri); stamps source='pubmed'
-  ├── search.py         — AI search chatbot, PubMed/Europe PMC, import/export; stamps source='search'
+  ├── search.py         — AI search chatbot, PubMed/Europe PMC, import/export; stamps source='search';
+  │                       4-mode PDF import (metadata / fetch / firecrawl / browser) +
+  │                       run_pdf_fetch_job background worker that upgrades metadata-only papers in place
+  ├── pdf_fetcher.py    — Best-effort PDF resolver. Pipeline: PMC → Unpaywall (free OA index) →
+  │                       direct GET → citation_pdf_url meta tag → Firecrawl JS-render fallback.
+  │                       Browser-spoofing UA + Referer header for paywalled publishers (BMJ/NEJM/Wiley).
+  ├── browser_agent.py  — Final-tier Playwright/Chromium fetcher. Opens publisher landing in a real
+  │                       browser, picks up cookies, locates citation_pdf_url or "Download PDF" links,
+  │                       grabs bytes from the same context. Slow + RAM-hungry; opt-in via mode='browser'.
   ├── billing.py        — Stripe credits, cost estimation, refunds
   ├── membership.py     — Free/Pro/Enterprise plans (legacy, deprecated under ENTERPRISE_MODE)
   ├── enterprise.py     — Enterprise seat catalog, Stripe subscription, per-org seat pool
@@ -154,6 +164,9 @@ Challenges run on daemon threads (`threading.Thread`). Progress is logged to `ch
 | **Admin bypass** | Admins skip credit checks on challenge runs. Regular users need credits. |
 | **Column named `timestamp`** | The SQLite compat wrapper in `backend/db.py` case-insensitively rewrites `TIMESTAMP` → `TEXT`, which **also clobbers any column literally named `timestamp`**. Use `updated_at` / `created_at` etc. The annotator's `annotations` table was renamed for exactly this reason. |
 | **Paper file access** | Always go through `backend/paper_files.py:read_paper_bytes(row, PAPERS_DIR)` — it picks S3 or local automatically. Direct `PAPERS_DIR / disk_filename` works for legacy rows only and will fail on new S3-backed uploads. |
+| **Search results need DB ids** | `save_results` in [backend/search.py](backend/search.py) MUST use `RETURNING id` and stamp `a["id"] = cur.lastrowid` onto each article before returning. Frontend checkboxes bind to `data-id="${r.id}"` — without this the IDs are undefined and Import Selected silently sends an empty array (looks like a dead button). |
+| **Browser-agent RAM on Render** | `backend/browser_agent.py` boots Chromium per call (~500MB). Render Free (512MB) will OOM-kill the worker. Need Standard ($25/mo, 2GB) for `mode='browser'` to work in production. Also needs `playwright install chromium` in build command + system libs in [apt.txt](apt.txt) (libnss3, libatk*, libcups2, etc.). |
+| **Bot detection on paywalled publishers** | BMJ / NEJM / Wiley / Springer 403 anything that looks like a bot. [backend/pdf_fetcher.py](backend/pdf_fetcher.py) sends a Chrome User-Agent + Accept-Language for the main httpx client, and retries with `Referer: <landing>` when the first GET still 403s. Don't change the UA back to `TheRubricGenerator/1.0` — that hard-blocks at the door. The polite UA is reserved for Unpaywall (where it's required). |
 | **Annotator iframe chrome** | When the annotator is opened from the Lab it loads in an iframe. Elements tagged `tb-chrome` in the annotator's topbar get hidden via `.in-iframe` CSS. Don't tag annotator-specific action buttons (Batch, Save, Export CSV) with `tb-chrome` or they'll disappear inside the Lab. |
 | **Annotator form tab must stay in DOM** | `renderSpans()` looks up `getElementById('spans-' + fieldName)`. The right-pane tabs use `display: none` to hide inactive panes — do NOT remove them from the DOM or span linking breaks. |
 | **LLM JSON parsing** | Use `backend/helpers.py:parse_json_response(raw)` — it strips markdown fences Claude sometimes wraps JSON in. Don't `json.loads` raw Anthropic output directly. |
@@ -328,13 +341,45 @@ Registry keys MUST match `annotator.TYPE_FIELD_IDS` keys — the test `TestDispa
 
 **Out of scope for v1**: Quasi-experimental designs (Uncontrolled Before-After, Interrupted Time Series, Difference-in-Differences, Regression Discontinuity) — each needs its own confounding prompt + ROBINS-I adaptation. ROBINS-I effect-of-adherence D4 variant (effect-of-assignment only in v1). AMSTAR-2 (systematic reviews), QUADAS-2 (diagnostic accuracy), PRISMA 2020, STARD. Cluster/crossover/stepped-wedge RCT variants (parallel-trial cribsheet only). Editing / overriding AI judgements in the UI. Full GRADE assessment across inconsistency / indirectness / imprecision / publication bias (requires a body of evidence). Per-outcome user selection (we auto-pick primary).
 
+## Search Strategist — 4-tier PDF Import Pipeline
+
+Lives at `/search` ([frontend/search.html](frontend/search.html)) and inside the Lab ([frontend/lab.html](frontend/lab.html)). Both surfaces share `/api/search/import` which dispatches into one of four modes via the `mode` field on `SearchImportPayload`:
+
+| Mode | Cost / paper | Sync? | What it does |
+|------|--------------|-------|--------------|
+| `metadata` | free | sync | Stash a `papers` row with title/authors/abstract + `external_url`. Sets `pdf_status='metadata_only'`. No download. |
+| `fetch` | 2 credits | async | Background worker tries: `download_pmc_pdf` → Unpaywall → direct GET → `citation_pdf_url` meta tag. Browser-spoof UA + Referer header so paywall publishers don't 403 us. |
+| `firecrawl` | 5 credits | async | Same as `fetch` plus a final Firecrawl JS-render fallback. Crawls the **Unpaywall-resolved publisher landing URL** (not the PubMed URL — PubMed rarely has citation_pdf_url). Requires `FIRECRAWL_API_KEY`. |
+| `browser` | 15 credits | async | Same as `firecrawl` plus a final Playwright/Chromium browser-agent fallback that picks up real session cookies. Requires Playwright + Chromium installed (see [render.yaml](render.yaml) buildCommand + [apt.txt](apt.txt)). |
+
+**Per-result failures are graceful** — the worker creates a `pdf_status='fetch_failed'` paper row with an `external_url` click-out and refunds the per-paper credit. The user gets *something* useful even when no PDF lands.
+
+**Re-runs upgrade in place.** When a metadata-only / fetch-failed row already exists for a search result, the worker doesn't skip — it retries the fetch and, on success, **UPDATEs the existing paper row** (same id) via [`backend/search.py:_upgrade_paper_to_pdf`](backend/search.py). Annotations / rubrics on that paper id stay valid. Only `pdf_status='present'` rows are skipped.
+
+**Schema:** `papers.external_url` (TEXT, NULL for non-search papers) + `papers.pdf_status` (`'present' | 'metadata_only' | 'fetching' | 'fetch_failed'`). `pdf_fetch_runs` (run container with `mode` + `credit_per_paper`) + `pdf_fetch_run_events` (per-paper progress for the polling endpoint). All migrations are idempotent in `init_db()`.
+
+**Endpoints** (all `engineer` seat):
+- `POST /api/search/import` — dispatch by mode. For async modes returns `{run_id, total, credits_charged, mode}`.
+- `GET /api/search/pdf-fetch/{run_id}` — current status (running / complete / failed + counts).
+- `GET /api/search/pdf-fetch/{run_id}/events?after=<id>` — incremental polling (mirrors annotator's batch runner pattern in [`backend/annotator.py:147 log_run_event`](backend/annotator.py)).
+
+**UX downstream of metadata-only papers:** [frontend/library.html](frontend/library.html) renders an "↗ External" chip + status badge ("📋 metadata", "⚠ no PDF", "▶ fetching"). [frontend/annotator.html](frontend/annotator.html) `loadPdf` catches the 404 and renders a placeholder card with title + external link + "PDF unavailable — annotate from metadata only" instead of alerting.
+
+**Result fields gotcha:** `save_results` in [backend/search.py](backend/search.py) **must** stamp `a["id"] = cur.lastrowid` after each INSERT. Without it, frontend checkboxes (`data-id="${r.id}"`) bind to `undefined` and Import Selected silently sends an empty array.
+
+**Browser-agent caveats** ([backend/browser_agent.py](backend/browser_agent.py)):
+- ~500MB RAM during a session. Render Free (512MB) will OOM-kill — **needs Standard ($25/mo) or higher**.
+- `playwright install chromium` adds ~170MB to the build. First deploy after enabling browser mode takes 4–8 minutes.
+- Defeats simple bot detection (UA + cookies + Referer) but **not** Cloudflare Turnstile / hCaptcha. Login-walled content needs the user's institutional credentials, which we don't store.
+- We use heuristic link selectors (`citation_pdf_url` → `[href*="/pdf/"]` → "Download PDF" text) — no LLM in the loop yet. The browser agent module is structured so an LLM-driven navigator can be slotted in as a follow-up if heuristics aren't enough.
+
 ## Environment Variables
 
 **Required**: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `ADMIN_SECRET`
 **Database**: `DATABASE_URL` (PostgreSQL connection string — set on Render, omit locally for SQLite fallback)
 **Billing**: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
 **Cloud storage**: `AWS_S3_BUCKET`, `AWS_S3_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (omit all for local fallback)
-**Optional**: `NCBI_API_KEY` (PubMed rate boost), `MOONSHOT_API_KEY` (Kimi), SMTP vars (email)
+**Optional**: `NCBI_API_KEY` (PubMed rate boost), `MOONSHOT_API_KEY` (Kimi), `FIRECRAWL_API_KEY` (search-import `mode='firecrawl'` and `mode='browser'`), SMTP vars (email)
 
 See `DEVELOPMENT.md` for full list.
 
