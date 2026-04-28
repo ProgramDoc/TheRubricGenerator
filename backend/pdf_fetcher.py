@@ -228,7 +228,8 @@ def _try_firecrawl(client: httpx.Client, landing_url: str) -> dict | None:
 
 
 def fetch_pdf_for_result(result: dict, dest_dir: Path,
-                         use_firecrawl: bool = False) -> dict | None:
+                         use_firecrawl: bool = False,
+                         use_browser: bool = False) -> dict | None:
     """Try every strategy in order; return the first PDF we land on, else None.
 
     ``result`` should expose ``pmcid``, ``doi``, ``url`` (any may be missing).
@@ -290,14 +291,27 @@ def fetch_pdf_for_result(result: dict, dest_dir: Path,
             # Unpaywall landing URL (publisher's article page) over the
             # PubMed URL — PubMed rarely exposes citation_pdf_url, but
             # publisher landing pages do.
-            if use_firecrawl:
+            if use_firecrawl or use_browser:
                 landing = (unpaywall_loc or {}).get("url") if unpaywall_loc else None
-                for try_url in (landing, url):
-                    if not try_url:
-                        continue
-                    out = _try_firecrawl(client, try_url)
-                    if out:
-                        return out
+                if use_firecrawl:
+                    for try_url in (landing, url):
+                        if not try_url:
+                            continue
+                        out = _try_firecrawl(client, try_url)
+                        if out:
+                            return out
+                # Last resort: fire up a real Chromium session and try to
+                # coerce the download from the publisher's actual page. Slow
+                # (5–30s/paper) and memory-hungry but bypasses bot detection
+                # that even Firecrawl can't get past.
+                if use_browser:
+                    from . import browser_agent
+                    for try_url in (landing, url):
+                        if not try_url:
+                            continue
+                        out = browser_agent.fetch_pdf_via_browser(try_url)
+                        if out:
+                            return out
 
     return None
 

@@ -1008,12 +1008,21 @@ table.res-table tbody tr:hover { background: #f8fafc; }
         </div>
       </div>
       <div class="import-mode-card" data-mode="firecrawl" onclick="setImportMode('firecrawl')"
-           style="border:2px solid var(--rule, #e2e8f0);border-radius:6px;padding:12px;margin-bottom:14px;cursor:pointer">
+           style="border:2px solid var(--rule, #e2e8f0);border-radius:6px;padding:12px;margin-bottom:10px;cursor:pointer">
         <div style="font-weight:700;font-size:12px;color:var(--ink-1, #0f172a)">🔥 Fetch PDF (aggressive) <span style="color:var(--ink-4, #64748b);font-weight:500" id="import-firecrawl-cost">— 0 credits</span></div>
         <div style="font-size:11px;color:var(--ink-3, #475569);margin-top:4px;line-height:1.4">
           Everything Fetch PDF does, plus a Firecrawl JS-rendered fallback for paywalled landing pages
           that block plain HTTP. Slower and costs more, but lands PDFs the standard pipeline can't.
           Requires FIRECRAWL_API_KEY on the server.
+        </div>
+      </div>
+      <div class="import-mode-card" data-mode="browser" onclick="setImportMode('browser')"
+           style="border:2px solid var(--rule, #e2e8f0);border-radius:6px;padding:12px;margin-bottom:14px;cursor:pointer">
+        <div style="font-weight:700;font-size:12px;color:var(--ink-1, #0f172a)">🤖 Fetch PDF (browser agent) <span style="color:var(--ink-4, #64748b);font-weight:500" id="import-browser-cost">— 0 credits</span></div>
+        <div style="font-size:11px;color:var(--ink-3, #475569);margin-top:4px;line-height:1.4">
+          Final tier. Fires up a real Chromium browser session, navigates the publisher landing page,
+          and clicks through to download the PDF — picks up cookies + Referer headers that Firecrawl can't.
+          Slow (5–30s per paper) and most expensive. Use when Firecrawl still misses.
         </div>
       </div>
     </div>
@@ -3501,6 +3510,7 @@ async function exportBibTeX() {
 */
 var PDF_FETCH_CREDIT_COST = 2;
 var PDF_FIRECRAWL_CREDIT_COST = 5;
+var PDF_BROWSER_CREDIT_COST = 15;
 var importPendingIds = [];
 var importMode = 'metadata';
 var activeFetchRuns = {};  // run_id -> { lastEventId, total }
@@ -3515,6 +3525,7 @@ function importSelected() {
     document.getElementById('import-count').textContent = ids.length;
     document.getElementById('import-fetch-cost').textContent = '— ' + (ids.length * PDF_FETCH_CREDIT_COST) + ' credits';
     document.getElementById('import-firecrawl-cost').textContent = '— ' + (ids.length * PDF_FIRECRAWL_CREDIT_COST) + ' credits';
+    document.getElementById('import-browser-cost').textContent = '— ' + (ids.length * PDF_BROWSER_CREDIT_COST) + ' credits';
     setImportMode('metadata');
     document.getElementById('import-modal').classList.add('open');
   } catch (err) {

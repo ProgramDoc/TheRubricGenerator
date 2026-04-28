@@ -962,11 +962,17 @@ def run_pdf_fetch_job(get_conn, run_id: int, papers_dir: Path,
             credit_per_paper = run["credit_per_paper"] or 2
         except Exception:
             credit_per_paper = 2
-        use_firecrawl = (mode == "firecrawl")
+        use_firecrawl = mode in ("firecrawl", "browser")
+        use_browser = (mode == "browser")
 
+        if use_browser:
+            extra = " (Firecrawl + browser-agent fallback)"
+        elif use_firecrawl:
+            extra = " (Firecrawl fallback enabled)"
+        else:
+            extra = ""
         log_pdf_fetch_event(conn, run_id, "run_started",
-                            f"Fetching PDFs for {len(result_ids)} results"
-                            + (" (Firecrawl fallback enabled)" if use_firecrawl else ""))
+                            f"Fetching PDFs for {len(result_ids)} results" + extra)
 
         from . import pdf_fetcher
 
@@ -1008,7 +1014,9 @@ def run_pdf_fetch_job(get_conn, run_id: int, papers_dir: Path,
                     "title": r["title"],
                 }
                 pdf_result = pdf_fetcher.fetch_pdf_for_result(
-                    result_dict, papers_dir, use_firecrawl=use_firecrawl,
+                    result_dict, papers_dir,
+                    use_firecrawl=use_firecrawl,
+                    use_browser=use_browser,
                 )
             except Exception as e:
                 logger.exception("pdf_fetcher crashed for result %s: %s", rid, e)

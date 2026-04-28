@@ -140,7 +140,7 @@ def test_fetch_mode_creates_run_and_completes(client, test_user, monkeypatch):
     import hashlib
     fake_sha = hashlib.sha256(fake_pdf).hexdigest()
 
-    def fake_fetch(result, dest_dir, use_firecrawl=False):
+    def fake_fetch(result, dest_dir, use_firecrawl=False, use_browser=False):
         # Succeed for the first PMID, fail for the rest
         if result.get("pmid") == "12345":
             return {"sha256": fake_sha, "filename": f"{fake_sha}.pdf",
@@ -229,7 +229,7 @@ def test_fetch_upgrades_metadata_only_paper_to_pdf(client, test_user, monkeypatc
     import hashlib
     fake_pdf = b"%PDF-1.4\nupgraded"
     fake_sha = hashlib.sha256(fake_pdf).hexdigest()
-    def fake_fetch(result, dest_dir, use_firecrawl=False):
+    def fake_fetch(result, dest_dir, use_firecrawl=False, use_browser=False):
         if result.get("pmid") == "12345":
             return {"sha256": fake_sha, "filename": f"{fake_sha}.pdf",
                     "storage_path": f"local/{fake_sha}.pdf"}
@@ -290,7 +290,7 @@ def test_fetch_skips_papers_that_already_have_pdf(client, test_user, monkeypatch
 
     from backend import pdf_fetcher
     fetcher_calls = []
-    def spy(result, dest_dir, use_firecrawl=False):
+    def spy(result, dest_dir, use_firecrawl=False, use_browser=False):
         fetcher_calls.append(result.get("pmid"))
         return None
     monkeypatch.setattr(pdf_fetcher, "fetch_pdf_for_result", spy)

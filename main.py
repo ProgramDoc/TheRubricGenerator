@@ -5376,13 +5376,14 @@ def api_update_search_session(session_id: int, body: SearchSessionUpdatePayload,
 
 PDF_FETCH_CREDIT_COST = 2  # per result for mode='fetch'
 PDF_FIRECRAWL_CREDIT_COST = 5  # per result for mode='firecrawl' — covers Firecrawl API spend
+PDF_BROWSER_CREDIT_COST = 15  # per result for mode='browser' — Chromium session is slow + RAM-hungry
 
 
 @app.post("/api/search/import")
 def api_search_import(body: SearchImportPayload, rubricgen_session: str | None = Cookie(default=None)):
     """Import selected search results as papers.
 
-    Three modes:
+    Four modes:
     - ``metadata`` (default, free, synchronous): metadata-only papers row +
       ``external_url`` click-out.
     - ``fetch`` (2 credits/paper, async): background crawler tries
@@ -5390,21 +5391,29 @@ def api_search_import(body: SearchImportPayload, rubricgen_session: str | None =
     - ``firecrawl`` (5 credits/paper, async): same as ``fetch`` but adds a
       JS-rendering Firecrawl fallback for landing pages that block plain
       ``httpx``. Requires ``FIRECRAWL_API_KEY``.
+    - ``browser`` (15 credits/paper, async): everything in ``firecrawl``
+      plus a final Playwright/Chromium browser-agent fallback that opens the
+      publisher's landing page in a real browser, finds the PDF link, and
+      coerces a download. Requires Playwright + Chromium installed on the
+      server (see DEVELOPMENT.md).
 
     Per-result failures still create a ``pdf_status='fetch_failed'`` row and
     refund the per-paper credit.
     """
     user = require_user(rubricgen_session)
     require_active_seat(user, "engineer")
-    if body.mode not in ("metadata", "fetch", "firecrawl"):
-        raise HTTPException(400, "mode must be 'metadata', 'fetch', or 'firecrawl'")
+    if body.mode not in ("metadata", "fetch", "firecrawl", "browser"):
+        raise HTTPException(
+            400, "mode must be 'metadata', 'fetch', 'firecrawl', or 'browser'"
+        )
     if not body.result_ids:
         raise HTTPException(400, "result_ids cannot be empty")
-    if body.mode == "firecrawl" and not os.environ.get("FIRECRAWL_API_KEY"):
+    if body.mode in ("firecrawl", "browser") and not os.environ.get("FIRECRAWL_API_KEY"):
+        # Firecrawl is part of the browser-mode pipeline too — require the key for both.
         raise HTTPException(
             503,
-            "Firecrawl mode requires FIRECRAWL_API_KEY to be configured. "
-            "Set it in your environment (api.firecrawl.dev) or use 'fetch' mode."
+            f"{body.mode!r} mode requires FIRECRAWL_API_KEY to be configured. "
+            f"Set it in your environment (api.firecrawl.dev) or use 'fetch' mode."
         )
 
     conn = get_db()
@@ -5425,9 +5434,12 @@ def api_search_import(body: SearchImportPayload, rubricgen_session: str | None =
                 project_id=body.project_id, mode="metadata",
             )
 
-        # mode in ('fetch', 'firecrawl') — credit-gate, enqueue, spawn worker
-        credit_per_paper = (PDF_FIRECRAWL_CREDIT_COST if body.mode == "firecrawl"
-                            else PDF_FETCH_CREDIT_COST)
+        # mode in ('fetch', 'firecrawl', 'browser') — credit-gate, enqueue, spawn worker
+        credit_per_paper = {
+            "fetch": PDF_FETCH_CREDIT_COST,
+            "firecrawl": PDF_FIRECRAWL_CREDIT_COST,
+            "browser": PDF_BROWSER_CREDIT_COST,
+        }[body.mode]
         total = len(body.result_ids)
         total_cost = total * credit_per_paper
         _annotator_ai_gate(conn, user, total_cost,
