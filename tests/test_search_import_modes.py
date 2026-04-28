@@ -140,7 +140,7 @@ def test_fetch_mode_creates_run_and_completes(client, test_user, monkeypatch):
     import hashlib
     fake_sha = hashlib.sha256(fake_pdf).hexdigest()
 
-    def fake_fetch(result, dest_dir):
+    def fake_fetch(result, dest_dir, use_firecrawl=False):
         # Succeed for the first PMID, fail for the rest
         if result.get("pmid") == "12345":
             return {"sha256": fake_sha, "filename": f"{fake_sha}.pdf",

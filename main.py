@@ -626,6 +626,13 @@ def _migrate_challenge_columns_v2(conn) -> None:
         # Lets the Library + Annotator render rows that don't have a downloaded PDF.
         if not column_exists(conn, "papers", "pdf_status"):
             conn.execute("ALTER TABLE papers ADD COLUMN pdf_status TEXT NOT NULL DEFAULT 'present'")
+        # pdf_fetch_runs: per-run mode + credit cost so refunds know how much
+        # to give back. Older rows pre-date the firecrawl mode and default to
+        # 'fetch' / 2 credits/paper.
+        if not column_exists(conn, "pdf_fetch_runs", "mode"):
+            conn.execute("ALTER TABLE pdf_fetch_runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'fetch'")
+        if not column_exists(conn, "pdf_fetch_runs", "credit_per_paper"):
+            conn.execute("ALTER TABLE pdf_fetch_runs ADD COLUMN credit_per_paper INTEGER NOT NULL DEFAULT 2")
         # lab_documents migration cursor — the id of the papers row this lab_document
         # has been backfilled into. Lets the dual-write be idempotent.
         if not column_exists(conn, "lab_documents", "papers_id"):
@@ -5367,27 +5374,38 @@ def api_update_search_session(session_id: int, body: SearchSessionUpdatePayload,
         conn.close()
 
 
-PDF_FETCH_CREDIT_COST = 2  # per result, refunded on per-result failure
+PDF_FETCH_CREDIT_COST = 2  # per result for mode='fetch'
+PDF_FIRECRAWL_CREDIT_COST = 5  # per result for mode='firecrawl' — covers Firecrawl API spend
 
 
 @app.post("/api/search/import")
 def api_search_import(body: SearchImportPayload, rubricgen_session: str | None = Cookie(default=None)):
     """Import selected search results as papers.
 
-    Two modes:
-    - ``metadata`` (default, free, synchronous): stash a metadata-only papers row
-      with an ``external_url`` click-out. No PDF fetch.
-    - ``fetch`` (credit-gated, async): kick off a background worker that crawls
-      PMC / Unpaywall / publisher landing pages for each result. Returns a
-      ``run_id`` the frontend polls for progress. Per-result failures still
-      create a ``pdf_status='fetch_failed'`` row and refund their credit.
+    Three modes:
+    - ``metadata`` (default, free, synchronous): metadata-only papers row +
+      ``external_url`` click-out.
+    - ``fetch`` (2 credits/paper, async): background crawler tries
+      PMC → Unpaywall → publisher landing pages with plain ``httpx``.
+    - ``firecrawl`` (5 credits/paper, async): same as ``fetch`` but adds a
+      JS-rendering Firecrawl fallback for landing pages that block plain
+      ``httpx``. Requires ``FIRECRAWL_API_KEY``.
+
+    Per-result failures still create a ``pdf_status='fetch_failed'`` row and
+    refund the per-paper credit.
     """
     user = require_user(rubricgen_session)
     require_active_seat(user, "engineer")
-    if body.mode not in ("metadata", "fetch"):
-        raise HTTPException(400, "mode must be 'metadata' or 'fetch'")
+    if body.mode not in ("metadata", "fetch", "firecrawl"):
+        raise HTTPException(400, "mode must be 'metadata', 'fetch', or 'firecrawl'")
     if not body.result_ids:
         raise HTTPException(400, "result_ids cannot be empty")
+    if body.mode == "firecrawl" and not os.environ.get("FIRECRAWL_API_KEY"):
+        raise HTTPException(
+            503,
+            "Firecrawl mode requires FIRECRAWL_API_KEY to be configured. "
+            "Set it in your environment (api.firecrawl.dev) or use 'fetch' mode."
+        )
 
     conn = get_db()
     try:
@@ -5407,14 +5425,16 @@ def api_search_import(body: SearchImportPayload, rubricgen_session: str | None =
                 project_id=body.project_id, mode="metadata",
             )
 
-        # mode == 'fetch' — credit-gate, enqueue, spawn worker
+        # mode in ('fetch', 'firecrawl') — credit-gate, enqueue, spawn worker
+        credit_per_paper = (PDF_FIRECRAWL_CREDIT_COST if body.mode == "firecrawl"
+                            else PDF_FETCH_CREDIT_COST)
         total = len(body.result_ids)
-        total_cost = total * PDF_FETCH_CREDIT_COST
+        total_cost = total * credit_per_paper
         _annotator_ai_gate(conn, user, total_cost,
-                           f"PDF fetch ({total} results)")
+                           f"PDF {body.mode} ({total} results)")
         run_id = search_mod.create_pdf_fetch_run(
             conn, user["id"], body.session_id, body.result_ids,
-            body.project_id,
+            body.project_id, mode=body.mode, credit_per_paper=credit_per_paper,
         )
     finally:
         conn.close()
@@ -5434,7 +5454,8 @@ def api_search_import(body: SearchImportPayload, rubricgen_session: str | None =
     )
     t.start()
 
-    return {"run_id": run_id, "total": total, "credits_charged": total_cost}
+    return {"run_id": run_id, "total": total, "credits_charged": total_cost,
+            "mode": body.mode}
 
 
 @app.get("/api/search/pdf-fetch/{run_id}")

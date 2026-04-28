@@ -160,6 +160,88 @@ def test_fetch_pdf_for_result_returns_none_when_all_fail(monkeypatch):
     assert out is None
 
 
+def test_firecrawl_skipped_when_api_key_unset(monkeypatch):
+    """_try_firecrawl returns None silently if FIRECRAWL_API_KEY is unset."""
+    monkeypatch.delenv("FIRECRAWL_API_KEY", raising=False)
+    client = MagicMock()
+    out = pdf_fetcher._try_firecrawl(client, "https://example.com/article")
+    assert out is None
+    client.get.assert_not_called()
+
+
+def test_firecrawl_extracts_citation_pdf_url_from_metadata(monkeypatch):
+    """When Firecrawl returns metadata.citation_pdf_url, fetch the PDF directly."""
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "fc-test-key")
+    monkeypatch.setattr(pdf_fetcher.paper_files, "write_paper_file",
+                        lambda b, f: f"local/{f}")
+
+    # Stub the Firecrawl scrape call to return a metadata-laden response
+    fake_scrape_response = MagicMock()
+    fake_scrape_response.status_code = 200
+    fake_scrape_response.json.return_value = {
+        "success": True,
+        "data": {
+            "html": "",
+            "metadata": {"citation_pdf_url": "https://publisher.example/paper.pdf"},
+        },
+    }
+
+    class FakeFCClient:
+        def __init__(self, *a, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def post(self, url, **kw):
+            assert "firecrawl.dev" in url or url.startswith("http")
+            return fake_scrape_response
+
+    monkeypatch.setattr(pdf_fetcher.httpx, "Client", FakeFCClient)
+
+    # Now exercise _try_firecrawl. It calls _firecrawl_scrape (which uses
+    # httpx.Client → FakeFCClient) and then _try_direct on the PDF URL.
+    direct_client = MagicMock()
+    direct_client.get.return_value = _fake_response(
+        content=b"%PDF-1.4\nfirecrawl-fetched", content_type="application/pdf",
+    )
+    out = pdf_fetcher._try_firecrawl(direct_client, "https://publisher.example/article")
+    assert out is not None
+    assert out["sha256"]
+
+
+def test_fetch_pdf_for_result_uses_firecrawl_only_when_opted_in(monkeypatch):
+    """fetch_pdf_for_result(use_firecrawl=False) must not call _try_firecrawl."""
+    monkeypatch.setattr(pdf_fetcher, "_try_pmc", lambda *a, **kw: None)
+
+    fc_calls = []
+    def boom(*a, **kw):
+        fc_calls.append(1)
+        return None
+    monkeypatch.setattr(pdf_fetcher, "_try_firecrawl", boom)
+
+    fake_client = MagicMock()
+    fake_client.get.return_value = _fake_response(
+        status=404, content=b"", content_type="text/html", text=""
+    )
+    class CtxClient:
+        def __init__(self, *a, **kw): self._inner = fake_client
+        def __enter__(self): return self._inner
+        def __exit__(self, *a): return False
+    monkeypatch.setattr(pdf_fetcher.httpx, "Client", CtxClient)
+
+    # use_firecrawl=False → no firecrawl call
+    pdf_fetcher.fetch_pdf_for_result(
+        {"pmcid": None, "doi": None, "url": "https://nope.example/foo", "pmid": None, "title": "x"},
+        Path("/tmp"), use_firecrawl=False,
+    )
+    assert fc_calls == []
+
+    # use_firecrawl=True → _try_firecrawl IS called as a final fallback
+    pdf_fetcher.fetch_pdf_for_result(
+        {"pmcid": None, "doi": None, "url": "https://nope.example/foo", "pmid": None, "title": "x"},
+        Path("/tmp"), use_firecrawl=True,
+    )
+    assert len(fc_calls) == 1
+
+
 def test_fetch_pdf_for_result_pmc_short_circuits(monkeypatch):
     """If PMC succeeds, we never touch httpx — saves a roundtrip."""
     monkeypatch.setattr(pdf_fetcher, "_try_pmc",

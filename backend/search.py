@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS pdf_fetch_runs (
     project_id      INTEGER,
     result_ids_json TEXT    NOT NULL,
     status          TEXT    NOT NULL DEFAULT 'running',
+    mode            TEXT    NOT NULL DEFAULT 'fetch',
+    credit_per_paper INTEGER NOT NULL DEFAULT 2,
     total           INTEGER NOT NULL,
     succeeded       INTEGER NOT NULL DEFAULT 0,
     failed          INTEGER NOT NULL DEFAULT 0,
@@ -887,13 +889,17 @@ def log_pdf_fetch_event(conn, run_id: int, event_type: str, message: str,
 
 def create_pdf_fetch_run(conn, user_id: int, session_id: int,
                          result_ids: list[int],
-                         project_id: int | None) -> int:
+                         project_id: int | None,
+                         mode: str = "fetch",
+                         credit_per_paper: int = 2) -> int:
     with conn:
         cur = conn.execute(
             """INSERT INTO pdf_fetch_runs (user_id, session_id, project_id,
-                                            result_ids_json, total)
-               VALUES (?, ?, ?, ?, ?) RETURNING id""",
-            (user_id, session_id, project_id, json.dumps(result_ids), len(result_ids)),
+                                            result_ids_json, total, mode,
+                                            credit_per_paper)
+               VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id""",
+            (user_id, session_id, project_id, json.dumps(result_ids),
+             len(result_ids), mode, credit_per_paper),
         )
         run_id = cur.lastrowid
         conn.commit()
@@ -918,9 +924,19 @@ def run_pdf_fetch_job(get_conn, run_id: int, papers_dir: Path,
         session_id = run["session_id"]
         project_id = run["project_id"]
         result_ids = json.loads(run["result_ids_json"])
+        try:
+            mode = run["mode"] or "fetch"
+        except Exception:
+            mode = "fetch"
+        try:
+            credit_per_paper = run["credit_per_paper"] or 2
+        except Exception:
+            credit_per_paper = 2
+        use_firecrawl = (mode == "firecrawl")
 
         log_pdf_fetch_event(conn, run_id, "run_started",
-                            f"Fetching PDFs for {len(result_ids)} results")
+                            f"Fetching PDFs for {len(result_ids)} results"
+                            + (" (Firecrawl fallback enabled)" if use_firecrawl else ""))
 
         from . import pdf_fetcher
 
@@ -950,7 +966,9 @@ def run_pdf_fetch_job(get_conn, run_id: int, papers_dir: Path,
                     "pmid": r["pmid"],
                     "title": r["title"],
                 }
-                pdf_result = pdf_fetcher.fetch_pdf_for_result(result_dict, papers_dir)
+                pdf_result = pdf_fetcher.fetch_pdf_for_result(
+                    result_dict, papers_dir, use_firecrawl=use_firecrawl,
+                )
             except Exception as e:
                 logger.exception("pdf_fetcher crashed for result %s: %s", rid, e)
                 pdf_result = None
@@ -984,7 +1002,8 @@ def run_pdf_fetch_job(get_conn, run_id: int, papers_dir: Path,
             failed += 1
             if refund_callback:
                 try:
-                    refund_callback(user_id, 2, f"pdf_fetch_failed_result_{rid}")
+                    refund_callback(user_id, credit_per_paper,
+                                    f"pdf_fetch_failed_result_{rid}")
                     refunded += 1
                 except Exception as e:
                     logger.warning("Refund failed for run=%s result=%s: %s", run_id, rid, e)
