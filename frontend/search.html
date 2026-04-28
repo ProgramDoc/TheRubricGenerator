@@ -393,8 +393,8 @@ table.res-table thead th.sortable.sort-desc::after { content: '↓'; opacity: .8
   <!-- RIGHT: Workspace -->
   <div class="panel-right">
     <div class="ws-tabs">
-      <button class="ws-tab active" onclick="switchWsTab('query')">Query Builder</button>
-      <button class="ws-tab" onclick="switchWsTab('results')" id="results-tab-btn">Results</button>
+      <button class="ws-tab active" onclick="toggleWsTab('query')">Query Builder</button>
+      <button class="ws-tab" onclick="toggleWsTab('results')" id="results-tab-btn">Results</button>
     </div>
 
     <!-- Query Builder -->
@@ -1508,11 +1508,27 @@ async function exportBibTeX() {
 }
 
 // ── Tabs ──
+// switchWsTab is the unconditional opener — used by code paths like runSearch
+// that need to *show* a specific tab regardless of prior state.
 function switchWsTab(tab) {
   document.querySelectorAll('.ws-tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.ws-pane').forEach(p => p.classList.remove('active'));
-  document.querySelector(`.ws-tab[onclick*="${tab}"]`).classList.add('active');
+  document.querySelector(`.ws-tab[onclick*="'${tab}'"]`).classList.add('active');
   document.getElementById('pane-' + tab).classList.add('active');
+}
+
+// toggleWsTab is the user-click handler — clicking the active tab dismisses
+// it (both tabs go inactive). Clicking an inactive tab opens it normally.
+// runSearch keeps using switchWsTab so a search always re-opens Results.
+function toggleWsTab(tab) {
+  const btn = document.querySelector(`.ws-tab[onclick*="'${tab}'"]`);
+  if (btn && btn.classList.contains('active')) {
+    btn.classList.remove('active');
+    const pane = document.getElementById('pane-' + tab);
+    if (pane) pane.classList.remove('active');
+    return;
+  }
+  switchWsTab(tab);
 }
 
 // ── Auto-grow textarea ──
