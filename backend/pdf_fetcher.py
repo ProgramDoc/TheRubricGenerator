@@ -38,7 +38,18 @@ from . import paper_files
 logger = logging.getLogger("rubricgen")
 
 UNPAYWALL_EMAIL = "tomckingsley@gmail.com"
-USER_AGENT = "TheRubricGenerator/1.0 (mailto:tomckingsley@gmail.com)"
+# We send our polite UA when talking to Unpaywall / NCBI etc. — they're fine
+# with bots and Unpaywall actually requires the email contact for rate limits.
+POLITE_USER_AGENT = "TheRubricGenerator/1.0 (mailto:tomckingsley@gmail.com)"
+# Many academic publishers (BMJ, NEJM, Wiley, Springer) hard-403 anything that
+# doesn't look like a real browser. When we're downloading what we believe is
+# a PDF (e.g. ``citation_pdf_url`` Firecrawl found), use a Chrome UA so we get
+# through. Not impersonating users — just speaking the same TLS/headers a
+# librarian's browser would.
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
 HTTP_TIMEOUT = 30.0
 PDF_MAGIC = b"%PDF"
 FIRECRAWL_BASE_URL = os.environ.get("FIRECRAWL_BASE_URL", "https://api.firecrawl.dev")
@@ -208,7 +219,12 @@ def _try_firecrawl(client: httpx.Client, landing_url: str) -> dict | None:
         from urllib.parse import urlparse
         u = urlparse(landing_url)
         pdf_url = f"{u.scheme}://{u.netloc}{pdf_url}"
-    return _try_direct(client, pdf_url)
+    out = _try_direct(client, pdf_url)
+    if out:
+        return out
+    # Browser UA wasn't enough — try once more with the landing URL as
+    # Referer, which is what publishers like BMJ actually check.
+    return _try_direct_with_referer(client, pdf_url, landing_url)
 
 
 def fetch_pdf_for_result(result: dict, dest_dir: Path,
@@ -227,7 +243,14 @@ def fetch_pdf_for_result(result: dict, dest_dir: Path,
         if out:
             return out
 
-    headers = {"User-Agent": USER_AGENT, "Accept": "application/pdf,*/*;q=0.8"}
+    # Browser-style headers so paywalled publishers (BMJ, NEJM, Wiley, Springer)
+    # don't 403 us at the door. The polite bot UA only goes to APIs that
+    # *require* the contact email (Unpaywall) — handled internally there.
+    headers = {
+        "User-Agent": BROWSER_USER_AGENT,
+        "Accept": "application/pdf,text/html;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
     with httpx.Client(
         follow_redirects=True, timeout=HTTP_TIMEOUT, headers=headers
     ) as client:
@@ -242,10 +265,11 @@ def fetch_pdf_for_result(result: dict, dest_dir: Path,
                     out = _try_direct(client, pdf_url)
                     if out:
                         return out
-                    # Direct PDF URL was 403'd — try Firecrawl on it directly,
-                    # which uses a real browser session.
-                    if use_firecrawl:
-                        out = _firecrawl_direct_pdf(pdf_url)
+                    # Some publishers (BMJ, NEJM) require a Referer matching
+                    # their domain. Retry with the landing URL as referer.
+                    referer = unpaywall_loc.get("url")
+                    if referer and referer != pdf_url:
+                        out = _try_direct_with_referer(client, pdf_url, referer)
                         if out:
                             return out
 
@@ -278,41 +302,18 @@ def fetch_pdf_for_result(result: dict, dest_dir: Path,
     return None
 
 
-def _firecrawl_direct_pdf(pdf_url: str) -> dict | None:
-    """Fetch a PDF URL through Firecrawl when plain ``httpx`` gets a 403.
-
-    Firecrawl's scrape endpoint follows JS challenges and bot-protection
-    (Cloudflare, akamai, etc.) for the URL. We ask for the raw HTML output
-    — when the URL is a PDF, Firecrawl returns the PDF bytes encoded in the
-    response body. We then validate %PDF magic bytes.
-    """
-    api_key = os.environ.get("FIRECRAWL_API_KEY")
-    if not api_key:
-        return None
+def _try_direct_with_referer(client: httpx.Client, pdf_url: str,
+                             referer: str) -> dict | None:
+    """Retry a PDF download with a ``Referer`` header. Some publishers (BMJ,
+    NEJM) gate the PDF URL on a referer matching the article landing page —
+    a plain ``GET`` returns 403 even with a browser UA."""
     try:
-        with httpx.Client(timeout=FIRECRAWL_TIMEOUT) as fc:
-            r = fc.post(
-                f"{FIRECRAWL_BASE_URL.rstrip('/')}/v1/scrape",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={"url": pdf_url, "formats": ["rawHtml"]},
-            )
-        if r.status_code != 200:
-            logger.info("Firecrawl direct-PDF failed %s: %s", r.status_code, r.text[:200])
-            return None
-        body = r.json()
-        if not body.get("success"):
-            return None
-        raw = (body.get("data") or {}).get("rawHtml") or ""
-        # Firecrawl base64-encodes binary if it can't render as text. For now
-        # we only accept clear-text %PDF in the rawHtml — most paywall PDFs
-        # come back as text/markdown after rendering, not binary. If this
-        # path proves insufficient we'll add base64 detection.
-        if not raw.startswith("%PDF"):
-            return None
-        return _store_pdf_bytes(raw.encode("latin-1", errors="ignore"))
+        r = client.get(pdf_url, headers={"Referer": referer})
     except Exception as e:
-        logger.warning("Firecrawl direct-PDF crashed for %s: %s", pdf_url, e)
+        logger.info("Direct GET (with referer) failed for %s: %s", pdf_url, e)
         return None
+    if r.status_code != 200:
+        return None
+    if not _is_pdf_bytes(r.content):
+        return None
+    return _store_pdf_bytes(r.content)
