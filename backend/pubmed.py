@@ -9,11 +9,14 @@ Filters:
 All HTTP via urllib.request to avoid adding dependencies.
 """
 
+import gzip
 import hashlib
+import io
 import json
 import logging
 import os
 import re
+import tarfile
 import time
 import urllib.error
 import urllib.parse
@@ -26,9 +29,28 @@ logger = logging.getLogger("rubricgen")
 PUBMED_EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 ICITE_API     = "https://icite.od.nih.gov/api/pubs"
 PMC_PDF_URL   = "https://www.ncbi.nlm.nih.gov/pmc/articles/{pmcid}/pdf/"
+PMC_ARTICLE_URL = "https://www.ncbi.nlm.nih.gov/pmc/articles/{pmcid}/"
+PMC_OA_SERVICE  = "https://www.ncbi.nlm.nih.gov/pmc/utils/oa/oa.fcgi"
 
 NCBI_API_KEY = os.environ.get("NCBI_API_KEY", "")
 USER_AGENT   = "TheAIResearcher/1.0 (mailto:tck936@mail.harvard.edu)"
+# PMC's PDF endpoint now serves a JS proof-of-work interstitial to anything that
+# doesn't pass the challenge — both bot UAs and Chrome UAs. We use the OA
+# package web service as a side door (returns a tarball over HTTPS, no JS
+# needed). When that misses, we fall back to scraping ``citation_pdf_url`` from
+# the article landing page with a Chrome-like UA.
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+META_PDF_RE = re.compile(
+    r'<meta[^>]+name=["\']citation_pdf_url["\'][^>]+content=["\']([^"\']+)["\']',
+    re.IGNORECASE,
+)
+OA_LINK_RE = re.compile(
+    r'<link[^>]+format=["\']tgz["\'][^>]+href=["\']([^"\']+)["\']',
+    re.IGNORECASE,
+)
 
 # Polite throttling: 3 req/sec without key, 10 with. We sleep 0.4s (no key)
 # or 0.15s (key) between eutils calls.
@@ -219,48 +241,191 @@ def _safe_filename(title: str, pmcid: str) -> str:
     return f"{pmcid}_{safe}.pdf"
 
 
-def download_pmc_pdf(pmcid: str, dest_dir: Path) -> dict | None:
-    """Download the PMC PDF if available and persist via storage.py.
+def _is_pdf_bytes(data: bytes) -> bool:
+    return bool(data) and data[:4] == b"%PDF"
 
-    Returns ``{"path", "storage_path", "sha256", "filename"}`` or ``None``.
-    ``path`` is the legacy local file (also written so local tooling still works);
-    ``storage_path`` is the durable S3/local path to record in ``papers.storage_path``.
-    """
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    url = PMC_PDF_URL.format(pmcid=pmcid)
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            content_type = resp.headers.get("Content-Type", "")
-            if "pdf" not in content_type.lower():
-                logger.info("PMC %s did not return a PDF (content-type=%s)", pmcid, content_type)
-                return None
-            data = resp.read()
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return None
-        logger.warning("PMC %s download failed: %s", pmcid, e)
-        return None
-    except Exception as e:
-        logger.warning("PMC %s download error: %s", pmcid, e)
-        return None
 
+def _persist_pdf_bytes(data: bytes, dest_dir: Path, pmcid: str) -> dict | None:
+    """Write PDF bytes to legacy local + durable storage. Returns the standard
+    download_pmc_pdf result dict, or ``None`` on storage failure."""
+    if not _is_pdf_bytes(data):
+        logger.info("PMC %s: bytes did not start with %%PDF magic (size=%d)", pmcid, len(data))
+        return None
     sha256 = hashlib.sha256(data).hexdigest()
     filename = f"{sha256}.pdf"
     path = dest_dir / filename
     try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)  # legacy local copy
     except Exception as e:
         logger.warning("Local write failed for %s: %s", path, e)
-    # Durable storage (S3 if AWS_S3_BUCKET is set, else local uploads/)
     try:
         from . import paper_files
         storage_path = paper_files.write_paper_file(data, filename)
     except Exception as e:
         logger.error("Storage upload failed for PMC %s: %s", pmcid, e)
         storage_path = None
-    time.sleep(1.0)  # polite throttle between PDF downloads
     return {"path": path, "storage_path": storage_path, "sha256": sha256, "filename": filename}
+
+
+def _try_oa_package(pmcid: str) -> bytes | None:
+    """Strategy 1: NCBI's OA web service. Returns the PDF bytes from the
+    archived OA tarball, or ``None`` on miss.
+
+    The ``oa.fcgi`` endpoint returns an XML record pointing to a ``.tar.gz`` on
+    the FTP host; we fetch the tarball over HTTPS (the FTP path is mirrored at
+    ``ftp.ncbi.nlm.nih.gov`` over HTTPS) and extract the first ``.pdf`` member.
+    Bypasses the JS proof-of-work interstitial that gates the cloudpmc viewer.
+    """
+    try:
+        oa_url = f"{PMC_OA_SERVICE}?id={pmcid}"
+        req = urllib.request.Request(oa_url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            xml = resp.read().decode("utf-8", errors="replace")
+    except Exception as e:
+        logger.info("PMC %s OA service lookup failed: %s", pmcid, e)
+        return None
+
+    m = OA_LINK_RE.search(xml)
+    if not m:
+        logger.info("PMC %s not in OA package index", pmcid)
+        return None
+    href = m.group(1)
+    # Convert ftp:// to https:// (NCBI's FTP is also exposed over HTTPS).
+    https_url = href.replace("ftp://ftp.ncbi.nlm.nih.gov/", "https://ftp.ncbi.nlm.nih.gov/", 1)
+    if not https_url.startswith("https://"):
+        logger.info("PMC %s OA href has unexpected scheme: %r", pmcid, href)
+        return None
+
+    # Live `oa_package` was retired; the tarballs now live under
+    # `pub/pmc/deprecated/oa_package/...`. Try the live path first (in case it's
+    # ever restored), then the deprecated mirror.
+    candidates = [https_url]
+    if "/pub/pmc/oa_package/" in https_url:
+        candidates.append(
+            https_url.replace("/pub/pmc/oa_package/", "/pub/pmc/deprecated/oa_package/", 1)
+        )
+
+    tar_bytes: bytes | None = None
+    for candidate in candidates:
+        try:
+            req = urllib.request.Request(candidate, headers={"User-Agent": USER_AGENT})
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                tar_bytes = resp.read()
+            break
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                continue  # try the next candidate
+            logger.info("PMC %s OA tarball fetch failed: %s", pmcid, e)
+            return None
+        except Exception as e:
+            logger.info("PMC %s OA tarball fetch error: %s", pmcid, e)
+            return None
+
+    if not tar_bytes:
+        return None
+    if tar_bytes[:2] != b"\x1f\x8b":
+        logger.info("PMC %s OA tarball is not gzip", pmcid)
+        return None
+    try:
+        decompressed = gzip.decompress(tar_bytes)
+        with tarfile.open(fileobj=io.BytesIO(decompressed)) as tar:
+            for member in tar.getmembers():
+                if not member.name.lower().endswith(".pdf"):
+                    continue
+                f = tar.extractfile(member)
+                if f is None:
+                    continue
+                pdf_data = f.read()
+                if _is_pdf_bytes(pdf_data):
+                    return pdf_data
+    except Exception as e:
+        logger.info("PMC %s OA tarball extract failed: %s", pmcid, e)
+    return None
+
+
+def _try_citation_pdf_url(pmcid: str) -> bytes | None:
+    """Strategy 2: scrape ``citation_pdf_url`` from the article landing page.
+
+    The landing page (`/pmc/articles/{pmcid}/`) renders normally; we read its
+    ``<meta name="citation_pdf_url">`` tag and follow that URL with a Chrome
+    User-Agent + ``Referer`` pointing back at the landing page. Some publishers
+    co-host PDFs at a different origin where the JS gate doesn't apply.
+    """
+    landing = PMC_ARTICLE_URL.format(pmcid=pmcid)
+    try:
+        req = urllib.request.Request(landing, headers={"User-Agent": BROWSER_USER_AGENT})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+            final_url = resp.url
+    except Exception as e:
+        logger.info("PMC %s landing-page fetch failed: %s", pmcid, e)
+        return None
+
+    m = META_PDF_RE.search(html)
+    if not m:
+        return None
+    pdf_url = m.group(1)
+    if pdf_url.startswith("/"):
+        from urllib.parse import urlparse
+        u = urlparse(final_url)
+        pdf_url = f"{u.scheme}://{u.netloc}{pdf_url}"
+
+    try:
+        req = urllib.request.Request(
+            pdf_url,
+            headers={
+                "User-Agent": BROWSER_USER_AGENT,
+                "Accept": "application/pdf,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Referer": final_url,
+            },
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            ct = (resp.headers.get("Content-Type") or "").lower()
+            data = resp.read()
+    except Exception as e:
+        logger.info("PMC %s citation_pdf_url fetch failed: %s", pmcid, e)
+        return None
+
+    if "pdf" not in ct and not _is_pdf_bytes(data):
+        return None
+    if _is_pdf_bytes(data):
+        return data
+    return None
+
+
+def download_pmc_pdf(pmcid: str, dest_dir: Path) -> dict | None:
+    """Download the PMC PDF if available and persist via storage.py.
+
+    Returns ``{"path", "storage_path", "sha256", "filename"}`` or ``None``.
+    ``path`` is the legacy local file (also written so local tooling still works);
+    ``storage_path`` is the durable S3/local path to record in ``papers.storage_path``.
+
+    Strategy:
+        1. Pull the PDF out of the OA package tarball (oa.fcgi). Bypasses the JS
+           proof-of-work gate that PMC put on `/pmc/articles/{pmcid}/pdf/`.
+        2. Fall back to the article-landing ``citation_pdf_url`` meta tag with a
+           Chrome User-Agent + Referer (some PDFs are co-hosted off the gate).
+
+    Returns ``None`` if both strategies miss — caller (scheduler / pdf_fetcher)
+    treats that as "no PMC PDF available" and moves on to its other tiers.
+    """
+    pmcid = (pmcid or "").strip()
+    if not pmcid:
+        return None
+    if not pmcid.upper().startswith("PMC"):
+        pmcid = "PMC" + pmcid
+
+    data = _try_oa_package(pmcid)
+    if data is None:
+        data = _try_citation_pdf_url(pmcid)
+    time.sleep(1.0)  # polite throttle between PDF downloads, regardless of outcome
+    if data is None:
+        logger.info("PMC %s: no PDF found via OA tarball or citation_pdf_url", pmcid)
+        return None
+
+    return _persist_pdf_bytes(data, dest_dir, pmcid)
 
 
 # ─────────────────────────────────────────────
