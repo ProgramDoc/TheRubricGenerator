@@ -14,13 +14,20 @@ layout so pre-migration PDFs still open on machines that still have them.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from fastapi import HTTPException
 
-from .storage import delete_file, download_file, upload_file
+from .storage import delete_file, download_file, is_cloud_storage, upload_file
 
 logger = logging.getLogger("rubricgen")
+
+# When S3 is configured but a write fails, the local-disk fallback is on
+# Render's ephemeral filesystem — every deploy/restart wipes it, orphaning
+# the DB row. Set STRICT_STORAGE=1 to re-raise instead of falling back, so
+# the upload fails loudly rather than silently losing data.
+_STRICT_STORAGE = os.environ.get("STRICT_STORAGE", "").strip() in {"1", "true", "yes"}
 
 
 def _row_key(row, key: str):
@@ -35,18 +42,33 @@ def _row_key(row, key: str):
 def write_paper_file(content: bytes, filename: str) -> str:
     """Persist paper bytes. Returns the storage_path value to store in the DB.
 
-    Prefers S3 (``s3://bucket/key``) when configured. If the S3 write fails
-    for ANY reason — missing IAM permissions, wrong region, network — the
-    exception is logged and we fall back to a local ``uploads/...`` path so
-    the user can still upload. Ephemeral on Render, but at least non-fatal.
+    When S3 is not configured (local dev), ``upload_file`` writes to
+    ``uploads/`` as a first-class store and this function returns normally.
+
+    When S3 IS configured but the put fails (IAM, region, network), behavior
+    depends on ``STRICT_STORAGE``:
+
+    - ``STRICT_STORAGE=1`` (recommended for production) — re-raise so the
+      upload fails loudly. The user retries, ops fixes IAM, no orphaned rows.
+    - default — log a WARNING with explicit ephemerality wording and write
+      to local ``uploads/`` so the user isn't blocked. On Render this disk is
+      wiped on the next deploy/restart, so this path is a stop-gap that masks
+      data loss; the WARNING is your signal to fix the underlying S3 issue.
     """
+    s3_configured = is_cloud_storage()
     try:
         return upload_file(content, filename, "application/pdf")
     except Exception as e:
-        logger.exception(
-            "Primary storage write failed for %s — falling back to local uploads/",
-            filename,
-        )
+        if s3_configured and _STRICT_STORAGE:
+            logger.error(
+                "S3 write failed for %s and STRICT_STORAGE=1 is set — "
+                "refusing to fall back to ephemeral local disk. Fix the S3 "
+                "IAM / network issue and retry the upload. Underlying error: %s",
+                filename,
+                e,
+            )
+            raise
+
         # Import lazily so a truly busted storage module can't stop fallback.
         from pathlib import Path
         import uuid
@@ -55,7 +77,32 @@ def write_paper_file(content: bytes, filename: str) -> str:
         ext = Path(filename).suffix.lower() or ".pdf"
         local_path = local_dir / f"{uuid.uuid4().hex}{ext}"
         local_path.write_bytes(content)
-        logger.info("Local fallback write succeeded: %s (reason=%s)", local_path, e)
+
+        if s3_configured:
+            # S3 was configured but failed — the local write is on an
+            # ephemeral disk in production. Make this loud so it isn't
+            # missed in the log noise.
+            logger.warning(
+                "S3 write failed for %s — falling back to local uploads/ at %s. "
+                "WARNING: on Render the local disk is EPHEMERAL — this file "
+                "WILL BE LOST on the next deploy/restart, orphaning its DB row. "
+                "Fix the S3 IAM / network issue (or set STRICT_STORAGE=1 to "
+                "fail uploads instead). Underlying error: %s",
+                filename,
+                local_path,
+                e,
+            )
+        else:
+            # No S3 configured at all (local dev) — local is the intended
+            # store and this exception path is unexpected. Surface the
+            # traceback so the dev sees what actually broke.
+            logger.exception(
+                "Local storage write via upload_file failed for %s — "
+                "wrote to %s as a last-resort fallback. Underlying error: %s",
+                filename,
+                local_path,
+                e,
+            )
         return str(local_path)
 
 
