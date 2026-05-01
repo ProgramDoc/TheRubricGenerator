@@ -8139,10 +8139,16 @@ class QualityAppraisalTargetPico(BaseModel):
     outcome: str | None = None
 
 
+class QualityAppraisalImprecisionThresholds(BaseModel):
+    mid_benefit: str | None = None
+    mid_harm: str | None = None
+
+
 class QualityAppraisalRunPayload(BaseModel):
     paper_ids: list[int]
     project_id: int | None = None
     target_pico: QualityAppraisalTargetPico | None = None
+    imprecision_thresholds: QualityAppraisalImprecisionThresholds | None = None
 
 
 @app.get("/api/quality-appraisal/supported-types")
@@ -8216,15 +8222,25 @@ def api_qa_run_create(body: QualityAppraisalRunPayload,
             if any(tp.values()):
                 target_pico_json = json.dumps(tp)
 
+        imprecision_thresholds_json = None
+        if body.imprecision_thresholds is not None:
+            it = {
+                "mid_benefit": (body.imprecision_thresholds.mid_benefit or "").strip(),
+                "mid_harm":    (body.imprecision_thresholds.mid_harm    or "").strip(),
+            }
+            if any(it.values()):
+                imprecision_thresholds_json = json.dumps(it)
+
         with conn:
             cur = conn.execute(
                 """INSERT INTO quality_appraisal_runs
                         (user_id, project_id, paper_ids_json, paper_count,
-                         credit_cost, status, target_pico_json)
-                   VALUES (?, ?, ?, ?, ?, 'pending', ?) RETURNING id""",
+                         credit_cost, status, target_pico_json,
+                         imprecision_thresholds_json)
+                   VALUES (?, ?, ?, ?, ?, 'pending', ?, ?) RETURNING id""",
                 (user["id"], body.project_id,
                  json.dumps(paper_ids), len(paper_ids), total_cost,
-                 target_pico_json),
+                 target_pico_json, imprecision_thresholds_json),
             )
             run_id = cur.lastrowid
             conn.commit()
@@ -8268,7 +8284,7 @@ def _load_qa_run(conn, run_id: int, user_id: int, is_admin: bool) -> dict:
     row = conn.execute(
         """SELECT r.id, r.user_id, r.project_id, r.paper_ids_json, r.paper_count,
                   r.status, r.credit_cost, r.credits_refunded, r.error_message,
-                  r.target_pico_json,
+                  r.target_pico_json, r.imprecision_thresholds_json,
                   r.created_at, r.completed_at, r.deleted_at,
                   p.name AS project_name
              FROM quality_appraisal_runs r
@@ -8287,6 +8303,11 @@ def _load_qa_run(conn, run_id: int, user_id: int, is_admin: bool) -> dict:
         d["target_pico"] = json.loads(d.pop("target_pico_json") or "null") or None
     except Exception:
         d["target_pico"] = None
+    try:
+        d["imprecision_thresholds"] = json.loads(
+            d.pop("imprecision_thresholds_json") or "null") or None
+    except Exception:
+        d["imprecision_thresholds"] = None
     return d
 
 
@@ -8310,6 +8331,8 @@ def api_qa_run_get(run_id: int,
                       guideline_adhered, guideline_applicable,
                       indirectness_json, indirectness_overall,
                       indirectness_levels, indirectness_explanation,
+                      imprecision_json, imprecision_overall,
+                      imprecision_levels, imprecision_explanation,
                       initial_grade, updated_grade, grade_explanation,
                       created_at
                  FROM quality_appraisal_results
@@ -8324,7 +8347,8 @@ def api_qa_run_get(run_id: int,
     for r in rows:
         d = dict(r)
         for jkey in ("classification_json", "extracted_fields_json",
-                     "rob_domains_json", "guideline_json", "indirectness_json"):
+                     "rob_domains_json", "guideline_json", "indirectness_json",
+                     "imprecision_json"):
             try:
                 d[jkey.replace("_json", "")] = json.loads(d.pop(jkey) or "{}")
             except Exception:
@@ -8419,6 +8443,10 @@ def _qa_flatten_for_export(run_detail: dict) -> list[dict]:
             "indirectness_overall": r.get("indirectness_overall"),
             "indirectness_levels": r.get("indirectness_levels"),
             "indirectness_explanation": r.get("indirectness_explanation"),
+            "imprecision": r.get("imprecision") or {},
+            "imprecision_overall": r.get("imprecision_overall"),
+            "imprecision_levels": r.get("imprecision_levels"),
+            "imprecision_explanation": r.get("imprecision_explanation"),
             "initial_grade": r.get("initial_grade"),
             "updated_grade": r.get("updated_grade"),
             "grade_explanation": r.get("grade_explanation"),

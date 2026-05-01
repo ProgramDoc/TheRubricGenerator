@@ -485,6 +485,38 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
 .indir-not          { background: oklch(0.92 0.10 25);  border-color: oklch(0.72 0.16 25);  color: oklch(0.30 0.10 25); }
 .indir-na           { background: var(--paper-2); }
 
+/* ── Imprecision subdomain grid (CI / N / events / fragility) ── */
+/* Same grid layout as .indir-grid — only colour palette differs (cyan→red).
+   This keeps imprecision visually distinct from indirectness's green→red. */
+.imprec-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;
+  margin-top: 6px;
+}
+@media (min-width: 720px) {
+  .imprec-grid { grid-template-columns: repeat(4, 1fr); }
+}
+.imprec-cell {
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 10px 12px; background: var(--paper);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.imprec-cell .imprec-head {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted); font-weight: 700;
+}
+.imprec-cell .imprec-judgement {
+  font-size: 12.5px; font-weight: 600;
+}
+.imprec-cell .qrat {
+  font-size: 10.5px; line-height: 1.4; color: var(--text); margin-top: 2px;
+  border-left: 2px solid rgba(0,0,0,.06); padding-left: 6px;
+}
+.imprec-precise        { background: oklch(0.95 0.05 220); border-color: oklch(0.78 0.10 220); }
+.imprec-prob-precise   { background: oklch(0.96 0.05 240); border-color: oklch(0.82 0.10 240); }
+.imprec-prob-not       { background: oklch(0.94 0.08 50);  border-color: oklch(0.78 0.14 50);  }
+.imprec-not            { background: oklch(0.92 0.10 25);  border-color: oklch(0.72 0.16 25);  color: oklch(0.30 0.10 25); }
+.imprec-na             { background: var(--paper-2); color: var(--muted); }
+
 @media (max-width: 900px) {
   .qa-detail-body { flex-direction: column; }
   #qa-pdf-pane { width: 100%; height: 50vh; border-right: 0; border-bottom: 1px solid var(--border); }
@@ -590,7 +622,8 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
         <li>Run the registered risk-of-bias tool (v1: <strong>RoB 2</strong> for RCTs)</li>
         <li>Run the reporting-guideline checklist (v1: <strong>CONSORT 2025</strong> for RCTs)</li>
         <li>Run <strong>GRADE indirectness</strong> across the PICO components</li>
-        <li>Compute initial + updated GRADE certainty (downgrade for RoB and indirectness)</li>
+        <li>Run <strong>GRADE imprecision</strong> (CI width / sample size / events / fragility)</li>
+        <li>Compute initial + updated GRADE certainty (downgrade for RoB, indirectness, and imprecision)</li>
       </ul>
       <p style="margin:0 0 10px;font-size:12px;color:var(--muted);">Papers that aren't a supported study type are skipped. v1 supports RCTs; other study types return "not yet supported".</p>
       <div style="margin:10px 0;">
@@ -613,6 +646,18 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
           <input id="run-pico-comparator" type="text" placeholder="e.g. standard care without SGLT2" style="padding:5px 7px;border-radius:5px;border:1px solid var(--rule-2);background:var(--paper);color:var(--text);font-family:inherit;font-size:12px;" />
           <label for="run-pico-outcome" style="align-self:center;color:var(--muted);font-weight:600;">Outcome</label>
           <input id="run-pico-outcome" type="text" placeholder="e.g. major adverse cardiovascular events" style="padding:5px 7px;border-radius:5px;border:1px solid var(--rule-2);background:var(--paper);color:var(--text);font-family:inherit;font-size:12px;" />
+        </div>
+      </details>
+      <details style="margin:8px 0 4px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;background:var(--paper-2);">
+        <summary style="cursor:pointer;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);">Imprecision thresholds (optional)</summary>
+        <div style="margin-top:8px;font-size:11px;color:var(--muted);line-height:1.45;">
+          GRADE imprecision is judged primarily by whether the 95% CI crosses clinical-decision thresholds. Supplying minimal-important-difference (MID) values for benefit and harm lets the assessor judge against your a-priori thresholds. Leave blank to fall back to the line of no effect plus the assessor's clinical-importance judgement.
+        </div>
+        <div style="display:grid;grid-template-columns:120px 1fr;gap:6px 10px;margin-top:8px;font-size:12px;">
+          <label for="run-imprec-mid-benefit" style="align-self:center;color:var(--muted);font-weight:600;">MID for benefit</label>
+          <input id="run-imprec-mid-benefit" type="text" placeholder="e.g. 5% absolute risk reduction" style="padding:5px 7px;border-radius:5px;border:1px solid var(--rule-2);background:var(--paper);color:var(--text);font-family:inherit;font-size:12px;" />
+          <label for="run-imprec-mid-harm" style="align-self:center;color:var(--muted);font-weight:600;">MID for harm</label>
+          <input id="run-imprec-mid-harm" type="text" placeholder="e.g. 5% absolute risk increase" style="padding:5px 7px;border-radius:5px;border:1px solid var(--rule-2);background:var(--paper);color:var(--text);font-family:inherit;font-size:12px;" />
         </div>
       </details>
       <div style="margin-top:12px;font-size:12px;color:var(--muted);"><span id="run-count">0</span> paper(s) selected.</div>
@@ -653,6 +698,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
         <button data-section="summary"       onclick="scrollDetailTo('summary')">Summary</button>
         <button data-section="rob"           onclick="scrollDetailTo('rob')">RoB 2</button>
         <button data-section="indirectness"  onclick="scrollDetailTo('indirectness')">Indirectness</button>
+        <button data-section="imprecision"   onclick="scrollDetailTo('imprecision')">Imprecision</button>
         <button data-section="consort"       onclick="scrollDetailTo('consort')">CONSORT</button>
         <button data-section="grade"         onclick="scrollDetailTo('grade')">GRADE</button>
         <button data-section="fields"        onclick="scrollDetailTo('fields')">Extracted fields</button>
@@ -1013,6 +1059,13 @@ async function submitRun() {
   if (tp.population || tp.intervention || tp.comparator || tp.outcome) {
     payload.target_pico = tp;
   }
+  const it = {
+    mid_benefit: (document.getElementById('run-imprec-mid-benefit')?.value || '').trim(),
+    mid_harm:    (document.getElementById('run-imprec-mid-harm')?.value    || '').trim(),
+  };
+  if (it.mid_benefit || it.mid_harm) {
+    payload.imprecision_thresholds = it;
+  }
   try {
     const r = await fetch('/api/quality-appraisal/runs', {
       method: 'POST',
@@ -1121,6 +1174,7 @@ function renderResults() {
     '<th>Classification</th>',
     '<th>Risk of bias</th>',
     '<th title="GRADE indirectness — per-trial PICO assessment. Click for full breakdown.">Indirectness</th>',
+    '<th title="GRADE imprecision — CI width / sample size / events / fragility. Click for full breakdown.">Imprecision</th>',
     `<th>${guidelineHeader}</th>`,
     '<th>Initial GRADE</th>',
     '<th>Updated GRADE</th>',
@@ -1177,6 +1231,19 @@ function renderResults() {
         : ''}
     </td>`;
 
+    // Imprecision cell — same severity-badge pattern as indirectness, routed
+    // to the imprecision detail section.
+    const imprecSev = r.imprecision_overall || '';
+    const imprecLvls = Number(r.imprecision_levels || 0);
+    const imprecCls = _indirSevBadge[imprecSev] || 'rob-na';
+    const imprecLabel = _indirSevLabel[imprecSev] || '—';
+    const imprecCell = `<td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'imprecision')" title="Click for CI / sample / events breakdown">
+      <span class="rob-badge ${imprecCls}">${escHtml(imprecLabel)}</span>
+      ${imprecLvls > 0
+        ? `<div style="font-size:10px;margin-top:3px;color:var(--muted);">−${imprecLvls} GRADE</div>`
+        : ''}
+    </td>`;
+
     const consort = (r.guideline_adhered != null && r.guideline_applicable != null)
       ? `${r.guideline_adhered} / ${r.guideline_applicable}` +
         (r.guideline_proportion != null
@@ -1216,6 +1283,7 @@ function renderResults() {
             ? `<div style="font-size:10px;margin-top:3px;color:var(--muted);">dir: ${escHtml(r.rob_direction)}</div>`
             : ''}</td>
       ${indirCell}
+      ${imprecCell}
       <td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'consort')">${consort}</td>
       <td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'grade')"><span class="${gradeCls(r.initial_grade)}">${escHtml(r.initial_grade || '—')}</span></td>
       <td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'grade')"><span class="${gradeCls(r.updated_grade)}">${escHtml(r.updated_grade || '—')}</span></td>
@@ -1448,6 +1516,81 @@ function renderDetailPanel(r, anchor) {
     `}
   </section>`;
 
+  // ── Imprecision section (GRADE single-trial assessment) ──────
+  const imprecision = r.imprecision || {};
+  const imprecSeverity = r.imprecision_overall || 'none';
+  const imprecLevels = Number(r.imprecision_levels || 0);
+  const imprecExpl = r.imprecision_explanation || '';
+  const imprecOutcomeIsBinary = imprecision.outcome_is_binary;
+  const IMPREC_CELL_CLASS = {
+    precise: 'imprec-precise',
+    probably_precise: 'imprec-prob-precise',
+    probably_not_precise: 'imprec-prob-not',
+    not_precise: 'imprec-not',
+  };
+  const IMPREC_CELL_LABEL = {
+    precise: 'Sufficiently precise',
+    probably_precise: 'Probably precise',
+    probably_not_precise: 'Probably not precise',
+    not_precise: 'Not sufficiently precise',
+  };
+  const imprecOrder = [
+    ['ci_width',    'CI width'],
+    ['sample_size', 'Sample size'],
+    ['event_count', 'Event count'],
+    ['fragility',   'Fragility'],
+  ];
+  const imprecCells = imprecOrder.map(([key, label]) => {
+    const item = imprecision[key] || {};
+    const j = item.judgement || '';
+    // Continuous outcomes mark event_count as N/A — render that explicitly.
+    const isEventCountNA = key === 'event_count' && imprecOutcomeIsBinary === false;
+    const cls = isEventCountNA ? 'imprec-na' : (IMPREC_CELL_CLASS[j] || 'imprec-na');
+    const labelText = isEventCountNA
+      ? 'N/A — continuous outcome'
+      : (IMPREC_CELL_LABEL[j] || '—');
+    const rationale = item.rationale || '';
+    const ratClickable = rationale ? 'qa-clickable' : '';
+    const ratAttr = rationale ? ` onclick="jumpToQuote(${escHtml(JSON.stringify(rationale))}, this)" title="Click to locate this passage in the PDF"` : '';
+    return `<div class="imprec-cell ${cls}">
+      <div class="imprec-head">${escHtml(label)}</div>
+      <div class="imprec-judgement">${escHtml(labelText)}</div>
+      ${rationale && !isEventCountNA ? `<div class="qrat ${ratClickable}"${ratAttr}>${escHtml(rationale)}</div>` : ''}
+    </div>`;
+  }).join('');
+  // Sample-size context note — surfaces the trial's N + event count if extracted.
+  const ssContextBits = [];
+  if (imprecision.sample_size_total) ssContextBits.push('total N = ' + imprecision.sample_size_total);
+  if (imprecision.events_total) ssContextBits.push('events = ' + imprecision.events_total);
+  if (imprecision.ci_summary) ssContextBits.push(imprecision.ci_summary);
+  const ssContextNote = ssContextBits.length
+    ? `<div style="margin-top:10px;padding:8px 10px;background:var(--paper-2);border-left:3px solid #06b6d4;border-radius:4px;font-size:11.5px;font-family:var(--mono);">
+        ${escHtml(ssContextBits.join(' · '))}
+      </div>`
+    : '';
+  const imprecError = imprecision.error
+    ? `<div style="color:#b91c1c;padding:8px 10px;background:#fef2f2;border-radius:4px;font-size:12px;">${escHtml(imprecision.error)}</div>`
+    : '';
+  const imprecHtml = `<section id="qa-sec-imprecision"><h3>GRADE imprecision
+      <span style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:8px;">
+        single-trial assessment
+      </span>
+    </h3>
+    ${imprecError || `
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:12px;">
+        <span class="rob-badge ${SEV_BADGE[imprecSeverity] || 'rob-na'}">${escHtml({
+          none: 'No serious imprecision',
+          serious: 'Serious', very_serious: 'Very serious',
+          extremely_serious: 'Extremely serious',
+        }[imprecSeverity] || imprecSeverity)}</span>
+        <span style="color:var(--muted);">→ GRADE downgrade: <strong>${imprecLevels}</strong> level${imprecLevels === 1 ? '' : 's'}</span>
+      </div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px;">${escHtml(imprecExpl || '—')}</div>
+      <div class="imprec-grid">${imprecCells}</div>
+      ${ssContextNote}
+    `}
+  </section>`;
+
   // ── CONSORT section ──────────────────────
   const consortIds = Object.keys(guidelineItems);
   // Group by section for readability
@@ -1499,12 +1642,15 @@ function renderDetailPanel(r, anchor) {
     if (j) judgeCounts[j] = (judgeCounts[j] || 0) + 1;
   });
   const countsLine = detailTool === 'robins_i'
-    ? `Critical: <strong>${judgeCounts['Critical'] || 0}</strong> &middot; Serious: <strong>${judgeCounts['Serious'] || 0}</strong> &middot; Moderate: <strong>${judgeCounts['Moderate'] || 0}</strong>. Per ROBINS-I/GRADE guidance, single-study GRADE downgrades 1 level for Moderate/Serious (2 levels for any Critical, or ≥2 Serious), plus indirectness downgrades (above). Inconsistency, imprecision, and publication bias still require a body of evidence and are not applied here.`
-    : `High-risk domains: <strong>${judgeCounts['High'] || 0}</strong> &middot; Some-concerns domains: <strong>${judgeCounts['Some concerns'] || 0}</strong>. Per GradePro guidance, single-study GRADE downgrades by 1 level for "Some concerns" or any High domain, and 2 levels when ≥2 domains are High, plus the indirectness downgrade (above). Inconsistency, imprecision, and publication bias still require a body of evidence and are not applied here.`;
+    ? `Critical: <strong>${judgeCounts['Critical'] || 0}</strong> &middot; Serious: <strong>${judgeCounts['Serious'] || 0}</strong> &middot; Moderate: <strong>${judgeCounts['Moderate'] || 0}</strong>. Per ROBINS-I/GRADE guidance, single-study GRADE downgrades 1 level for Moderate/Serious (2 levels for any Critical, or ≥2 Serious), plus indirectness and imprecision downgrades (above). Inconsistency and publication bias still require a body of evidence and are not applied here.`
+    : `High-risk domains: <strong>${judgeCounts['High'] || 0}</strong> &middot; Some-concerns domains: <strong>${judgeCounts['Some concerns'] || 0}</strong>. Per GradePro guidance, single-study GRADE downgrades by 1 level for "Some concerns" or any High domain, and 2 levels when ≥2 domains are High, plus the indirectness and imprecision downgrades (above). Inconsistency and publication bias still require a body of evidence and are not applied here.`;
   const initialDescription = detailTool === 'robins_i' ? 'From study type (non-randomized)' : 'From study type (RCT)';
-  const updatedDescription = indirLevels > 0
-    ? `After RoB + indirectness (−${indirLevels})`
-    : 'After RoB downgrade';
+  const updatedDescriptionParts = ['After RoB'];
+  if (indirLevels > 0) updatedDescriptionParts.push(`indirectness (−${indirLevels})`);
+  if (imprecLevels > 0) updatedDescriptionParts.push(`imprecision (−${imprecLevels})`);
+  const updatedDescription = updatedDescriptionParts.length === 1
+    ? 'After RoB downgrade'
+    : updatedDescriptionParts.join(' + ');
   const gradeHtml = `<section id="qa-sec-grade"><h3>GRADE certainty</h3>
     <div class="qa-grade-grid">
       <div class="cell"><div class="lbl">Initial</div><div class="val ${gradeClsOf(r.initial_grade)}">${escHtml(r.initial_grade || '—')}</div><div style="font-size:10px;color:var(--muted);margin-top:3px;">${escHtml(initialDescription)}</div></div>
@@ -1543,7 +1689,7 @@ function renderDetailPanel(r, anchor) {
   </section>`;
 
   document.getElementById('qa-detail-content').innerHTML =
-    summaryHtml + robHtml + indirHtml + consortHtml + gradeHtml + fieldsHtml;
+    summaryHtml + robHtml + indirHtml + imprecHtml + consortHtml + gradeHtml + fieldsHtml;
 
   // Scroll to the anchor if provided
   setTimeout(() => {
@@ -1856,6 +2002,41 @@ function _renderDevIndirectness(indir, sectionNum) {
   </div>`;
 }
 
+function _renderDevImprecision(imprec, sectionNum) {
+  if (!imprec) return '';
+  const subdomains = (imprec.subdomains || []).map(s => `<div style="padding:8px 0;border-bottom:1px dashed var(--rule-2);">
+    <div style="font-weight:600;">${escHtml(s.label)}
+      <span style="font-family:var(--mono);font-size:10.5px;color:var(--muted);font-weight:400;margin-left:6px;">${escHtml(s.id)}</span>
+    </div>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:3px;line-height:1.45;">${escHtml(s.guidance)}</div>
+  </div>`).join('');
+  const downgradeRows = Object.entries(imprec.downgrade_table || {}).map(([sev, desc]) =>
+    `<div class="item-row"><span class="id">${escHtml(sev)}</span><div>${escHtml(desc)}</div></div>`
+  ).join('');
+  const outOfScope = (imprec.out_of_scope || []).map(o =>
+    '<li>' + escHtml(o) + '</li>'
+  ).join('');
+  return `<div class="dev-section"><h3>${escHtml(sectionNum)}. ${escHtml(imprec.tool)}</h3>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:6px;">
+      Single-trial assessment following the GRADE handbook imprecision chapter
+      (book.gradepro.org/guideline/imprecision). Primary tool: 95% CI vs decision
+      thresholds. Secondary checks: sample-size adequacy, event count (binary only),
+      and result fragility.
+    </div>
+    <details><summary>System prompt</summary><pre>${escHtml(imprec.system_prompt)}</pre></details>
+    <details><summary>Judgement options</summary><div style="font-size:11.5px;">${(imprec.judgement_options || []).map(j => '<span class="chip">' + escHtml(j) + '</span>').join(' ')}</div></details>
+    <details><summary>Severity tiers (GRADE downgrade levels)</summary><div style="font-size:11.5px;">${(imprec.severity_levels || []).map(j => '<span class="chip">' + escHtml(j) + '</span>').join(' ')}</div></details>
+    <details open><summary>Subdomains (4)</summary>${subdomains}</details>
+    <details><summary>Prompt template — with MID thresholds</summary><pre>${escHtml(imprec.prompt_template_with_thresholds || '')}</pre></details>
+    <details><summary>Prompt template — line-of-no-effect fallback (no thresholds)</summary><pre>${escHtml(imprec.prompt_template_no_thresholds || '')}</pre></details>
+    <details><summary>Severity decision tree (code)</summary><pre>${escHtml(imprec.severity_decision_tree_code || '')}</pre></details>
+    <details><summary>Severity explanation (code)</summary><pre>${escHtml(imprec.severity_explanation_code || '')}</pre></details>
+    <details><summary>Outcome-type heuristic (code) — binary vs continuous inference</summary><pre>${escHtml(imprec.outcome_type_heuristic_code || '')}</pre></details>
+    <details><summary>Downgrade table</summary>${downgradeRows}</details>
+    <details><summary>Out of scope (deferred)</summary><ul style="font-size:11.5px;margin:4px 0 4px 18px;padding:0;">${outOfScope}</ul></details>
+  </div>`;
+}
+
 function renderDevCatalog(cat) {
   const grade = cat.grade || {};
   const overview = cat.overview || {};
@@ -1877,6 +2058,9 @@ function renderDevCatalog(cat) {
   });
   if (cat.indirectness) {
     out += _renderDevIndirectness(cat.indirectness, sectionNum++);
+  }
+  if (cat.imprecision) {
+    out += _renderDevImprecision(cat.imprecision, sectionNum++);
   }
 
   out += `<div class="dev-section"><h3>${sectionNum}. GRADE logic</h3>

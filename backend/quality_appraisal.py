@@ -34,6 +34,7 @@ from . import annotator as annotator_mod
 from . import billing as bill_mod
 from . import paper_files
 from . import indirectness as indir_mod
+from . import imprecision as imprec_mod
 from .helpers import call_anthropic, parse_json_response
 from .rob_tools import rob2, robins_i
 from .reporting_guidelines import consort2025, strobe
@@ -46,19 +47,20 @@ logger = logging.getLogger("rubricgen")
 # ─────────────────────────────────────────────
 QUALITY_APPRAISAL_TABLES_SQL = """
 CREATE TABLE IF NOT EXISTS quality_appraisal_runs (
-    id               SERIAL PRIMARY KEY,
-    user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    project_id       INTEGER REFERENCES projects(id) ON DELETE SET NULL,
-    paper_ids_json   TEXT    NOT NULL DEFAULT '[]',
-    paper_count      INTEGER NOT NULL DEFAULT 0,
-    status           TEXT    NOT NULL DEFAULT 'pending',
-    credit_cost      INTEGER NOT NULL DEFAULT 0,
-    credits_refunded INTEGER NOT NULL DEFAULT 0,
-    error_message    TEXT,
-    target_pico_json TEXT,
-    created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    completed_at     TIMESTAMP,
-    deleted_at       TIMESTAMP
+    id                          SERIAL PRIMARY KEY,
+    user_id                     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    project_id                  INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+    paper_ids_json              TEXT    NOT NULL DEFAULT '[]',
+    paper_count                 INTEGER NOT NULL DEFAULT 0,
+    status                      TEXT    NOT NULL DEFAULT 'pending',
+    credit_cost                 INTEGER NOT NULL DEFAULT 0,
+    credits_refunded            INTEGER NOT NULL DEFAULT 0,
+    error_message               TEXT,
+    target_pico_json            TEXT,
+    imprecision_thresholds_json TEXT,
+    created_at                  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at                TIMESTAMP,
+    deleted_at                  TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS quality_appraisal_results (
@@ -85,6 +87,10 @@ CREATE TABLE IF NOT EXISTS quality_appraisal_results (
     indirectness_overall     TEXT,
     indirectness_levels      INTEGER NOT NULL DEFAULT 0,
     indirectness_explanation TEXT,
+    imprecision_json         TEXT    NOT NULL DEFAULT '{}',
+    imprecision_overall      TEXT,
+    imprecision_levels       INTEGER NOT NULL DEFAULT 0,
+    imprecision_explanation  TEXT,
     initial_grade            TEXT,
     updated_grade            TEXT,
     grade_explanation        TEXT,
@@ -145,13 +151,14 @@ def dispatch(study_type: str) -> dict[str, str] | None:
 # Credit cost
 # ─────────────────────────────────────────────
 # Per paper: classify (~3) + prefill (~8) + 5 × RoB 2 domain (~3 each) +
-#            CONSORT (~4) + indirectness (~3) ≈ 33.
+#            CONSORT (~4) + indirectness (~3) + imprecision (~3) ≈ 36.
 # Matches the estimate surfaced in the UI before a run.
-CREDIT_COST_QA_PER_PAPER = 33
+CREDIT_COST_QA_PER_PAPER = 36
 
 
 def migrate_qa_columns(conn) -> None:
-    """Idempotent ALTER TABLE migration adding indirectness + target-PICO columns.
+    """Idempotent ALTER TABLE migration adding indirectness + imprecision +
+    target-PICO + imprecision-thresholds columns.
 
     Safe to call from ``init_db`` after ``QUALITY_APPRAISAL_TABLES_SQL`` runs:
     new installs already have the columns, existing installs get them added.
@@ -161,6 +168,9 @@ def migrate_qa_columns(conn) -> None:
         # quality_appraisal_runs.target_pico_json
         if not column_exists(conn, "quality_appraisal_runs", "target_pico_json"):
             conn.execute("ALTER TABLE quality_appraisal_runs ADD COLUMN target_pico_json TEXT")
+        # quality_appraisal_runs.imprecision_thresholds_json
+        if not column_exists(conn, "quality_appraisal_runs", "imprecision_thresholds_json"):
+            conn.execute("ALTER TABLE quality_appraisal_runs ADD COLUMN imprecision_thresholds_json TEXT")
         # quality_appraisal_results.indirectness_*
         if not column_exists(conn, "quality_appraisal_results", "indirectness_json"):
             conn.execute("ALTER TABLE quality_appraisal_results ADD COLUMN indirectness_json TEXT NOT NULL DEFAULT '{}'")
@@ -170,6 +180,15 @@ def migrate_qa_columns(conn) -> None:
             conn.execute("ALTER TABLE quality_appraisal_results ADD COLUMN indirectness_levels INTEGER NOT NULL DEFAULT 0")
         if not column_exists(conn, "quality_appraisal_results", "indirectness_explanation"):
             conn.execute("ALTER TABLE quality_appraisal_results ADD COLUMN indirectness_explanation TEXT")
+        # quality_appraisal_results.imprecision_*
+        if not column_exists(conn, "quality_appraisal_results", "imprecision_json"):
+            conn.execute("ALTER TABLE quality_appraisal_results ADD COLUMN imprecision_json TEXT NOT NULL DEFAULT '{}'")
+        if not column_exists(conn, "quality_appraisal_results", "imprecision_overall"):
+            conn.execute("ALTER TABLE quality_appraisal_results ADD COLUMN imprecision_overall TEXT")
+        if not column_exists(conn, "quality_appraisal_results", "imprecision_levels"):
+            conn.execute("ALTER TABLE quality_appraisal_results ADD COLUMN imprecision_levels INTEGER NOT NULL DEFAULT 0")
+        if not column_exists(conn, "quality_appraisal_results", "imprecision_explanation"):
+            conn.execute("ALTER TABLE quality_appraisal_results ADD COLUMN imprecision_explanation TEXT")
         conn.commit()
 
 
@@ -229,12 +248,14 @@ def compute_grade(initial: str,
                   rob_domain_judgements: list[str] | None = None,
                   indirectness_levels: int = 0,
                   indirectness_explanation: str = "",
+                  imprecision_levels: int = 0,
+                  imprecision_explanation: str = "",
                   ) -> tuple[str, str]:
     """Compute updated GRADE + human-readable explanation.
 
-    Downgrades for **risk of bias** and **indirectness**. Other GRADE domains
-    (inconsistency, imprecision, publication bias) still require a body of
-    evidence and are documented as out of scope in the developer view.
+    Downgrades for **risk of bias**, **indirectness**, and **imprecision**.
+    Other GRADE domains (inconsistency, publication bias) still require a
+    body of evidence and are documented as out of scope in the developer view.
 
     Per GradePro guidance:
       RoB 2     Low             → 0
@@ -246,20 +267,27 @@ def compute_grade(initial: str,
                 Critical        → 2 (always)
                 No information  → 1 (conservative)
       Indirectness  none / serious / very_serious / extremely_serious → 0/1/2/3
+      Imprecision   none / serious / very_serious / extremely_serious → 0/1/2/3
 
-    Total downgrade is the sum of the two, capped at "Very low" (3 levels
+    Total downgrade is the sum of the three, capped at "Very low" (3 levels
     below "High").
     """
     idx = _grade_index(initial)
     rob_levels, rob_reason = _rob_downgrade(rob_overall, rob_domain_judgements)
     indir_levels = max(0, int(indirectness_levels or 0))
-    total = rob_levels + indir_levels
+    imprec_levels = max(0, int(imprecision_levels or 0))
+    total = rob_levels + indir_levels + imprec_levels
     new_idx = min(idx + total, len(GRADE_LEVELS) - 1)
     new_level = GRADE_LEVELS[new_idx]
 
     if total == 0:
-        no_indir = " and no serious indirectness detected" if indir_levels == 0 else ""
-        return new_level, f"No downgrade: overall risk of bias is Low{no_indir}."
+        clean_parts: list[str] = []
+        if indir_levels == 0:
+            clean_parts.append("no serious indirectness")
+        if imprec_levels == 0:
+            clean_parts.append("no serious imprecision")
+        suffix = " and " + ", ".join(clean_parts) + " detected" if clean_parts else ""
+        return new_level, f"No downgrade: overall risk of bias is Low{suffix}."
 
     parts: list[str] = []
     if rob_levels > 0:
@@ -271,6 +299,12 @@ def compute_grade(initial: str,
         unit = "level" if indir_levels == 1 else "levels"
         suffix = f" — {indirectness_explanation}" if indirectness_explanation else ""
         parts.append(f"{indir_levels} {unit} for {sev_label} indirectness{suffix}")
+    if imprec_levels > 0:
+        sev_label = {1: "serious", 2: "very serious",
+                     3: "extremely serious"}.get(imprec_levels, f"{imprec_levels}-level")
+        unit = "level" if imprec_levels == 1 else "levels"
+        suffix = f" — {imprecision_explanation}" if imprecision_explanation else ""
+        parts.append(f"{imprec_levels} {unit} for {sev_label} imprecision{suffix}")
 
     total_unit = "level" if total == 1 else "levels"
     return new_level, f"Downgraded {total} {total_unit}: " + " + ".join(parts) + "."
@@ -336,6 +370,7 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
                    run_id: int, paper_id: int,
                    on_progress: Callable[[str, str], None] | None = None,
                    target_pico: dict[str, str] | None = None,
+                   imprecision_thresholds: dict[str, str] | None = None,
                    ) -> dict[str, Any]:
     """Appraise a single paper end-to-end. Writes one row to
     ``quality_appraisal_results``.
@@ -347,6 +382,10 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
     ``target_pico`` is the user-supplied target PICO for indirectness
     assessment; ``None`` falls back to as-conducted PICO (outcome-surrogacy
     only is meaningful in that case).
+
+    ``imprecision_thresholds`` is the user-supplied 2-threshold MID set for
+    imprecision assessment; ``None`` falls back to line-of-no-effect +
+    LLM-judged clinical importance.
     """
     def _notify(level: str, msg: str) -> None:
         if on_progress:
@@ -513,14 +552,38 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
         _notify("warn", "Indirectness assessment failed — see server logs.")
         indirectness = {"error": "Indirectness assessment failed."}
 
-    # 7. GRADE — combines RoB + indirectness downgrades
+    # 6.5 Imprecision (GRADE single-trial assessment: CI / N / events / fragility)
+    _notify("info", "Assessing GRADE imprecision")
+    imprecision: dict[str, Any] = {}
+    imprecision_overall = "none"
+    imprecision_levels = 0
+    imprecision_expl = ""
+    try:
+        imprecision, imprecision_overall, imprecision_levels, imprecision_expl = (
+            imprec_mod.run(pdf_bytes, fields, classification, primary_outcome,
+                            thresholds=imprecision_thresholds)
+        )
+    except HTTPException as he:
+        msg = f"Imprecision assessment failed: {he.detail}"
+        logger.warning("Imprecision failed (run=%s paper=%s): %s",
+                       run_id, paper_id, msg)
+        _notify("warn", msg)
+        imprecision = {"error": msg}
+    except Exception as e:
+        logger.exception("Imprecision run failed (run=%s paper=%s)", run_id, paper_id)
+        _notify("warn", "Imprecision assessment failed — see server logs.")
+        imprecision = {"error": "Imprecision assessment failed."}
+
+    # 7. GRADE — combines RoB + indirectness + imprecision downgrades
     rob_domain_judgements = [d.get("judgement", "Low")
                               for d in rob_domains.values()]
     initial_grade = cfg["initial_grade"]
     updated_grade, grade_expl = compute_grade(
         initial_grade, rob_overall, rob_domain_judgements,
         indirectness_levels=indirectness_levels,
-        indirectness_explanation=indirectness_expl)
+        indirectness_explanation=indirectness_expl,
+        imprecision_levels=imprecision_levels,
+        imprecision_explanation=imprecision_expl)
 
     # 8. Persist
     _write_result(conn, run_id, paper_id, status="ok", filename=filename,
@@ -538,10 +601,14 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
                    indirectness_overall=indirectness_overall,
                    indirectness_levels=indirectness_levels,
                    indirectness_explanation=indirectness_expl,
+                   imprecision=imprecision,
+                   imprecision_overall=imprecision_overall,
+                   imprecision_levels=imprecision_levels,
+                   imprecision_explanation=imprecision_expl,
                    initial_grade=initial_grade,
                    updated_grade=updated_grade,
                    grade_explanation=grade_expl)
-    _notify("info", f"Done: {filename} — RoB {rob_overall}, indirectness {indirectness_overall}, GRADE {initial_grade}→{updated_grade}")
+    _notify("info", f"Done: {filename} — RoB {rob_overall}, indirectness {indirectness_overall}, imprecision {imprecision_overall}, GRADE {initial_grade}→{updated_grade}")
     return {
         "status": "ok",
         "filename": filename,
@@ -550,6 +617,8 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
         "guideline_proportion": guideline.get("proportion"),
         "indirectness_overall": indirectness_overall,
         "indirectness_levels": indirectness_levels,
+        "imprecision_overall": imprecision_overall,
+        "imprecision_levels": imprecision_levels,
         "initial_grade": initial_grade,
         "updated_grade": updated_grade,
     }
@@ -572,6 +641,10 @@ def _write_result(conn, run_id: int, paper_id: int, *,
                   indirectness_overall: str | None = None,
                   indirectness_levels: int = 0,
                   indirectness_explanation: str | None = None,
+                  imprecision: dict | None = None,
+                  imprecision_overall: str | None = None,
+                  imprecision_levels: int = 0,
+                  imprecision_explanation: str | None = None,
                   initial_grade: str | None = None,
                   updated_grade: str | None = None,
                   grade_explanation: str | None = None) -> None:
@@ -595,8 +668,10 @@ def _write_result(conn, run_id: int, paper_id: int, *,
                      guideline_adhered, guideline_applicable,
                      indirectness_json, indirectness_overall,
                      indirectness_levels, indirectness_explanation,
+                     imprecision_json, imprecision_overall,
+                     imprecision_levels, imprecision_explanation,
                      initial_grade, updated_grade, grade_explanation)
-               VALUES (?, ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?,  ?, ?, ?,  ?, ?,  ?, ?,  ?, ?, ?, ?,  ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?,  ?, ?, ?,  ?, ?,  ?, ?,  ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?)""",
             (run_id, paper_id, status, error, filename,
              study_type, rob_tool, reporting_guideline, primary_outcome,
              json.dumps(classification or {}),
@@ -609,6 +684,10 @@ def _write_result(conn, run_id: int, paper_id: int, *,
              indirectness_overall,
              int(indirectness_levels or 0),
              indirectness_explanation,
+             json.dumps(imprecision or {}),
+             imprecision_overall,
+             int(imprecision_levels or 0),
+             imprecision_explanation,
              initial_grade, updated_grade, grade_explanation),
         )
         conn.commit()
@@ -628,8 +707,10 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
     per_paper_cost = CREDIT_COST_QA_PER_PAPER
     total_refunded = 0
 
-    # Mark run running and load the run-level target PICO once.
+    # Mark run running and load the run-level target PICO + imprecision
+    # thresholds once.
     target_pico: dict[str, str] | None = None
+    imprecision_thresholds: dict[str, str] | None = None
     setup_conn = get_db_fn()
     try:
         with setup_conn:
@@ -640,20 +721,28 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
             setup_conn.commit()
         try:
             row = setup_conn.execute(
-                "SELECT target_pico_json FROM quality_appraisal_runs WHERE id=?",
+                "SELECT target_pico_json, imprecision_thresholds_json "
+                "FROM quality_appraisal_runs WHERE id=?",
                 (run_id,),
             ).fetchone()
             if row and row["target_pico_json"]:
                 tp = json.loads(row["target_pico_json"])
                 if isinstance(tp, dict) and any(tp.get(k) for k in ("population", "intervention", "comparator", "outcome")):
                     target_pico = tp
+            if row and row["imprecision_thresholds_json"]:
+                it = json.loads(row["imprecision_thresholds_json"])
+                if isinstance(it, dict) and any(it.get(k) for k in ("mid_benefit", "mid_harm")):
+                    imprecision_thresholds = it
         except Exception as e:
-            logger.warning("Failed to load target_pico for run %s: %s", run_id, e)
+            logger.warning("Failed to load run params for run %s: %s", run_id, e)
         log_event(setup_conn, run_id, "info",
                    f"Started quality appraisal on {len(paper_ids)} paper(s).")
         if target_pico:
             log_event(setup_conn, run_id, "info",
                        "Indirectness will be assessed against the supplied target PICO.")
+        if imprecision_thresholds:
+            log_event(setup_conn, run_id, "info",
+                       "Imprecision will be assessed against the supplied MID thresholds.")
     finally:
         setup_conn.close()
 
@@ -666,6 +755,7 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
                     on_progress=lambda level, msg, _c=pconn: log_event(
                         _c, run_id, level, msg),
                     target_pico=target_pico,
+                    imprecision_thresholds=imprecision_thresholds,
                 )
             except Exception as e:
                 logger.exception("Unhandled error in appraise_paper (run=%s paper=%s)",
@@ -747,7 +837,8 @@ def prompt_catalog() -> dict[str, Any]:
                 "Run the registered risk-of-bias tool (per-domain LLM calls + pure-Python decision trees)",
                 "Run the registered reporting-guideline checklist (single LLM call over all items)",
                 "Run the GRADE indirectness assessment (per-trial PICO judgement)",
-                "Compute initial GRADE (from study type) and updated GRADE (downgrade for RoB + indirectness)",
+                "Run the GRADE imprecision assessment (CI width / sample size / events / fragility)",
+                "Compute initial GRADE (from study type) and updated GRADE (downgrade for RoB + indirectness + imprecision)",
             ],
         },
         "registry": STUDY_TYPE_REGISTRY,
@@ -761,14 +852,17 @@ def prompt_catalog() -> dict[str, Any]:
             "strobe":      strobe.prompt_catalog(),
         },
         "indirectness": indir_mod.prompt_catalog(),
+        "imprecision": imprec_mod.prompt_catalog(),
         "grade": {
             "levels": GRADE_LEVELS,
             "description": (
-                "Downgrades for risk of bias and indirectness (per-trial PICO "
+                "Downgrades for risk of bias, indirectness (per-trial PICO "
                 "assessment, see Figure 1 of the GRADE handbook indirectness "
-                "chapter). Other GRADE domains (inconsistency, imprecision, "
-                "publication bias) still require a body of evidence and are "
-                "out of scope for this single-study tool."
+                "chapter), and imprecision (single-trial CI / sample size / "
+                "event count / fragility, per the GRADE handbook imprecision "
+                "chapter). Other GRADE domains (inconsistency, publication "
+                "bias) still require a body of evidence and are out of scope "
+                "for this single-study tool."
             ),
             "logic_code": inspect.getsource(compute_grade),
             "rob_downgrade_code": inspect.getsource(_rob_downgrade),
@@ -797,6 +891,7 @@ def flatten_result_row(result_row: dict[str, Any],
     rob_domains = result_row.get("rob_domains") or {}
     guideline = result_row.get("guideline") or {}
     indirectness = result_row.get("indirectness") or {}
+    imprecision = result_row.get("imprecision") or {}
 
     # Study info (column 1) — compact stack of citation details
     title = fields.get("citation_title") or (paper_row or {}).get("filename", "")
@@ -831,6 +926,14 @@ def flatten_result_row(result_row: dict[str, Any],
         "indirectness_comparator":  (indirectness.get("comparator")  or {}).get("judgement", ""),
         "indirectness_outcome":     (indirectness.get("outcome")     or {}).get("judgement", ""),
         "primary_outcome_is_surrogate": indirectness.get("primary_outcome_is_surrogate", ""),
+        "imprecision_overall": result_row.get("imprecision_overall"),
+        "imprecision_levels": result_row.get("imprecision_levels"),
+        "imprecision_explanation": result_row.get("imprecision_explanation"),
+        "imprecision_ci_width":     (imprecision.get("ci_width")     or {}).get("judgement", ""),
+        "imprecision_sample_size":  (imprecision.get("sample_size")  or {}).get("judgement", ""),
+        "imprecision_event_count":  (imprecision.get("event_count")  or {}).get("judgement", ""),
+        "imprecision_fragility":    (imprecision.get("fragility")    or {}).get("judgement", ""),
+        "imprecision_outcome_is_binary": imprecision.get("outcome_is_binary", ""),
         "initial_grade": result_row.get("initial_grade"),
         "updated_grade": result_row.get("updated_grade"),
         "grade_explanation": result_row.get("grade_explanation"),
