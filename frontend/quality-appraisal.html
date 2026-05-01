@@ -455,6 +455,36 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
 }
 .qa-grade-grid .arrow { font-size: 22px; color: var(--muted); }
 
+/* ── Indirectness PICO grid (Figure 2 from GRADE handbook) ── */
+.indir-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;
+  margin-top: 6px;
+}
+@media (min-width: 720px) {
+  .indir-grid { grid-template-columns: repeat(4, 1fr); }
+}
+.indir-cell {
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 10px 12px; background: var(--paper);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.indir-cell .indir-head {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted); font-weight: 700;
+}
+.indir-cell .indir-judgement {
+  font-size: 12.5px; font-weight: 600;
+}
+.indir-cell .qrat {
+  font-size: 10.5px; line-height: 1.4; color: var(--text); margin-top: 2px;
+  border-left: 2px solid rgba(0,0,0,.06); padding-left: 6px;
+}
+.indir-direct       { background: oklch(0.94 0.06 150); border-color: oklch(0.78 0.10 150); }
+.indir-prob-direct  { background: oklch(0.96 0.07 95);  border-color: oklch(0.82 0.12 95);  }
+.indir-prob-not     { background: oklch(0.94 0.10 50);  border-color: oklch(0.78 0.14 50);  }
+.indir-not          { background: oklch(0.92 0.10 25);  border-color: oklch(0.72 0.16 25);  color: oklch(0.30 0.10 25); }
+.indir-na           { background: var(--paper-2); }
+
 @media (max-width: 900px) {
   .qa-detail-body { flex-direction: column; }
   #qa-pdf-pane { width: 100%; height: 50vh; border-right: 0; border-bottom: 1px solid var(--border); }
@@ -559,7 +589,8 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
         <li>Auto-pick the paper's primary outcome</li>
         <li>Run the registered risk-of-bias tool (v1: <strong>RoB 2</strong> for RCTs)</li>
         <li>Run the reporting-guideline checklist (v1: <strong>CONSORT 2025</strong> for RCTs)</li>
-        <li>Compute initial + updated GRADE certainty</li>
+        <li>Run <strong>GRADE indirectness</strong> across the PICO components</li>
+        <li>Compute initial + updated GRADE certainty (downgrade for RoB and indirectness)</li>
       </ul>
       <p style="margin:0 0 10px;font-size:12px;color:var(--muted);">Papers that aren't a supported study type are skipped. v1 supports RCTs; other study types return "not yet supported".</p>
       <div style="margin:10px 0;">
@@ -568,6 +599,22 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
           <option value="">— No project —</option>
         </select>
       </div>
+      <details style="margin:12px 0 4px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;background:var(--paper-2);">
+        <summary style="cursor:pointer;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);">Target PICO for indirectness (optional)</summary>
+        <div style="margin-top:8px;font-size:11px;color:var(--muted);line-height:1.45;">
+          Supplying the review question lets indirectness judge each PICO component (Population / Intervention / Comparator / Outcome) against your target. Leave blank to assess outcome-surrogacy only against the as-conducted PICO.
+        </div>
+        <div style="display:grid;grid-template-columns:80px 1fr;gap:6px 10px;margin-top:8px;font-size:12px;">
+          <label for="run-pico-population" style="align-self:center;color:var(--muted);font-weight:600;">Population</label>
+          <input id="run-pico-population" type="text" placeholder="e.g. adults aged 40–75 with type 2 diabetes" style="padding:5px 7px;border-radius:5px;border:1px solid var(--rule-2);background:var(--paper);color:var(--text);font-family:inherit;font-size:12px;" />
+          <label for="run-pico-intervention" style="align-self:center;color:var(--muted);font-weight:600;">Intervention</label>
+          <input id="run-pico-intervention" type="text" placeholder="e.g. once-daily SGLT2 inhibitor" style="padding:5px 7px;border-radius:5px;border:1px solid var(--rule-2);background:var(--paper);color:var(--text);font-family:inherit;font-size:12px;" />
+          <label for="run-pico-comparator" style="align-self:center;color:var(--muted);font-weight:600;">Comparator</label>
+          <input id="run-pico-comparator" type="text" placeholder="e.g. standard care without SGLT2" style="padding:5px 7px;border-radius:5px;border:1px solid var(--rule-2);background:var(--paper);color:var(--text);font-family:inherit;font-size:12px;" />
+          <label for="run-pico-outcome" style="align-self:center;color:var(--muted);font-weight:600;">Outcome</label>
+          <input id="run-pico-outcome" type="text" placeholder="e.g. major adverse cardiovascular events" style="padding:5px 7px;border-radius:5px;border:1px solid var(--rule-2);background:var(--paper);color:var(--text);font-family:inherit;font-size:12px;" />
+        </div>
+      </details>
       <div style="margin-top:12px;font-size:12px;color:var(--muted);"><span id="run-count">0</span> paper(s) selected.</div>
     </div>
     <div class="modal-foot">
@@ -956,6 +1003,15 @@ async function submitRun() {
   const runProj = document.getElementById('run-project').value;
   const payload = { paper_ids };
   if (runProj) payload.project_id = Number(runProj);
+  const tp = {
+    population:   (document.getElementById('run-pico-population')?.value   || '').trim(),
+    intervention: (document.getElementById('run-pico-intervention')?.value || '').trim(),
+    comparator:   (document.getElementById('run-pico-comparator')?.value   || '').trim(),
+    outcome:      (document.getElementById('run-pico-outcome')?.value      || '').trim(),
+  };
+  if (tp.population || tp.intervention || tp.comparator || tp.outcome) {
+    payload.target_pico = tp;
+  }
   try {
     const r = await fetch('/api/quality-appraisal/runs', {
       method: 'POST',
@@ -1296,6 +1352,77 @@ function renderDetailPanel(r, anchor) {
     }).join('')}
   </section>`;
 
+  // ── Indirectness section (GRADE PICO assessment) ──────
+  const indirectness = r.indirectness || {};
+  const indirSeverity = r.indirectness_overall || 'none';
+  const indirLevels = Number(r.indirectness_levels || 0);
+  const indirExpl = r.indirectness_explanation || '';
+  const SEV_BADGE = {
+    none: 'rob-low', serious: 'rob-some', very_serious: 'rob-high', extremely_serious: 'rob-high',
+  };
+  const SEV_LABEL = {
+    none: 'No serious indirectness',
+    serious: 'Serious',
+    very_serious: 'Very serious',
+    extremely_serious: 'Extremely serious',
+  };
+  const PICO_CELL_CLASS = {
+    direct: 'indir-direct',
+    probably_direct: 'indir-prob-direct',
+    probably_not_direct: 'indir-prob-not',
+    not_direct: 'indir-not',
+  };
+  const PICO_CELL_LABEL = {
+    direct: 'Sufficiently direct',
+    probably_direct: 'Probably direct',
+    probably_not_direct: 'Probably not direct',
+    not_direct: 'Not sufficiently direct',
+  };
+  const picoOrder = [
+    ['population', 'Population'],
+    ['intervention', 'Intervention'],
+    ['comparator', 'Comparator'],
+    ['outcome', 'Outcome'],
+  ];
+  const picoCells = picoOrder.map(([key, label]) => {
+    const item = indirectness[key] || {};
+    const j = item.judgement || '';
+    const cls = PICO_CELL_CLASS[j] || 'indir-na';
+    const labelText = PICO_CELL_LABEL[j] || '—';
+    const rationale = item.rationale || '';
+    const ratClickable = rationale ? 'qa-clickable' : '';
+    const ratAttr = rationale ? ` onclick="jumpToQuote(${escHtml(JSON.stringify(rationale))}, this)" title="Click to locate this passage in the PDF"` : '';
+    return `<div class="indir-cell ${cls}">
+      <div class="indir-head">${escHtml(label)}</div>
+      <div class="indir-judgement">${escHtml(labelText)}</div>
+      ${rationale ? `<div class="qrat ${ratClickable}"${ratAttr}>${escHtml(rationale)}</div>` : ''}
+    </div>`;
+  }).join('');
+  const surrogateNote = indirectness.primary_outcome_is_surrogate
+    ? `<div style="margin-top:10px;padding:8px 10px;background:#fff7ed;border-left:3px solid #f97316;border-radius:4px;font-size:11.5px;">
+        <strong>Surrogate primary outcome detected.</strong>
+        ${escHtml(indirectness.surrogate_rationale || 'See GRADE handbook §Outcomes for surrogate-vs-patient-important guidance.')}
+      </div>`
+    : '';
+  const indirError = indirectness.error
+    ? `<div style="color:#b91c1c;padding:8px 10px;background:#fef2f2;border-radius:4px;font-size:12px;">${escHtml(indirectness.error)}</div>`
+    : '';
+  const indirHtml = `<section id="qa-sec-indirectness"><h3>GRADE indirectness
+      <span style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:8px;">
+        per-PICO judgement
+      </span>
+    </h3>
+    ${indirError || `
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:12px;">
+        <span class="rob-badge ${SEV_BADGE[indirSeverity] || 'rob-na'}">${escHtml(SEV_LABEL[indirSeverity] || indirSeverity)}</span>
+        <span style="color:var(--muted);">→ GRADE downgrade: <strong>${indirLevels}</strong> level${indirLevels === 1 ? '' : 's'}</span>
+      </div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px;">${escHtml(indirExpl || '—')}</div>
+      <div class="indir-grid">${picoCells}</div>
+      ${surrogateNote}
+    `}
+  </section>`;
+
   // ── CONSORT section ──────────────────────
   const consortIds = Object.keys(guidelineItems);
   // Group by section for readability
@@ -1347,14 +1474,17 @@ function renderDetailPanel(r, anchor) {
     if (j) judgeCounts[j] = (judgeCounts[j] || 0) + 1;
   });
   const countsLine = detailTool === 'robins_i'
-    ? `Critical: <strong>${judgeCounts['Critical'] || 0}</strong> &middot; Serious: <strong>${judgeCounts['Serious'] || 0}</strong> &middot; Moderate: <strong>${judgeCounts['Moderate'] || 0}</strong>. Per ROBINS-I/GRADE guidance, single-study GRADE downgrades 1 level for Moderate/Serious (2 levels for any Critical, or ≥2 Serious). Other GRADE domains require a body of evidence and are not applied here.`
-    : `High-risk domains: <strong>${judgeCounts['High'] || 0}</strong> &middot; Some-concerns domains: <strong>${judgeCounts['Some concerns'] || 0}</strong>. Per GradePro guidance, single-study GRADE downgrades by 1 level for "Some concerns" or any High domain, and 2 levels when ≥2 domains are High. Other GRADE domains (inconsistency, indirectness, imprecision, publication bias) require a body of evidence and are not applied here.`;
+    ? `Critical: <strong>${judgeCounts['Critical'] || 0}</strong> &middot; Serious: <strong>${judgeCounts['Serious'] || 0}</strong> &middot; Moderate: <strong>${judgeCounts['Moderate'] || 0}</strong>. Per ROBINS-I/GRADE guidance, single-study GRADE downgrades 1 level for Moderate/Serious (2 levels for any Critical, or ≥2 Serious), plus indirectness downgrades (above). Inconsistency, imprecision, and publication bias still require a body of evidence and are not applied here.`
+    : `High-risk domains: <strong>${judgeCounts['High'] || 0}</strong> &middot; Some-concerns domains: <strong>${judgeCounts['Some concerns'] || 0}</strong>. Per GradePro guidance, single-study GRADE downgrades by 1 level for "Some concerns" or any High domain, and 2 levels when ≥2 domains are High, plus the indirectness downgrade (above). Inconsistency, imprecision, and publication bias still require a body of evidence and are not applied here.`;
   const initialDescription = detailTool === 'robins_i' ? 'From study type (non-randomized)' : 'From study type (RCT)';
+  const updatedDescription = indirLevels > 0
+    ? `After RoB + indirectness (−${indirLevels})`
+    : 'After RoB downgrade';
   const gradeHtml = `<section id="qa-sec-grade"><h3>GRADE certainty</h3>
     <div class="qa-grade-grid">
       <div class="cell"><div class="lbl">Initial</div><div class="val ${gradeClsOf(r.initial_grade)}">${escHtml(r.initial_grade || '—')}</div><div style="font-size:10px;color:var(--muted);margin-top:3px;">${escHtml(initialDescription)}</div></div>
       <div class="arrow">→</div>
-      <div class="cell"><div class="lbl">Updated</div><div class="val ${gradeClsOf(r.updated_grade)}">${escHtml(r.updated_grade || '—')}</div><div style="font-size:10px;color:var(--muted);margin-top:3px;">After RoB downgrade</div></div>
+      <div class="cell"><div class="lbl">Updated</div><div class="val ${gradeClsOf(r.updated_grade)}">${escHtml(r.updated_grade || '—')}</div><div style="font-size:10px;color:var(--muted);margin-top:3px;">${escHtml(updatedDescription)}</div></div>
     </div>
     <div style="padding:10px 12px;background:var(--paper-2);border-radius:6px;font-size:12px;">
       <strong>Explanation:</strong> ${escHtml(r.grade_explanation || 'No explanation available.')}
@@ -1388,7 +1518,7 @@ function renderDetailPanel(r, anchor) {
   </section>`;
 
   document.getElementById('qa-detail-content').innerHTML =
-    summaryHtml + robHtml + consortHtml + gradeHtml + fieldsHtml;
+    summaryHtml + robHtml + indirHtml + consortHtml + gradeHtml + fieldsHtml;
 
   // Scroll to the anchor if provided
   setTimeout(() => {

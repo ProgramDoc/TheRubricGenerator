@@ -401,6 +401,9 @@ def init_db() -> None:
         conn.executescript(ANNOTATOR_TABLES_SQL)
         # Quality Appraisal AI: risk-of-bias + reporting-guideline + GRADE per paper
         conn.executescript(QUALITY_APPRAISAL_TABLES_SQL)
+        # Idempotent ALTER TABLEs for indirectness + target-PICO columns added
+        # in the GRADE-indirectness rollout. Safe on both new and existing DBs.
+        qa_mod.migrate_qa_columns(conn)
         # 3-judge adjudication: human-review queue for grade disagreements
         conn.executescript(GRADE_REVIEWS_TABLES_SQL)
         # Project invitations (for unregistered users)
@@ -8129,9 +8132,17 @@ def api_import_ground_truth(body: GroundTruthImportPayload, request: Request,
 # Quality Appraisal AI — risk-of-bias + reporting-guideline + GRADE
 # ─────────────────────────────────────────────
 
+class QualityAppraisalTargetPico(BaseModel):
+    population: str | None = None
+    intervention: str | None = None
+    comparator: str | None = None
+    outcome: str | None = None
+
+
 class QualityAppraisalRunPayload(BaseModel):
     paper_ids: list[int]
     project_id: int | None = None
+    target_pico: QualityAppraisalTargetPico | None = None
 
 
 @app.get("/api/quality-appraisal/supported-types")
@@ -8194,14 +8205,26 @@ def api_qa_run_create(body: QualityAppraisalRunPayload,
         _annotator_ai_gate(conn, user, total_cost,
                            f"Quality Appraisal run ({len(paper_ids)} papers)")
 
+        target_pico_json = None
+        if body.target_pico is not None:
+            tp = {
+                "population":   (body.target_pico.population   or "").strip(),
+                "intervention": (body.target_pico.intervention or "").strip(),
+                "comparator":   (body.target_pico.comparator   or "").strip(),
+                "outcome":      (body.target_pico.outcome      or "").strip(),
+            }
+            if any(tp.values()):
+                target_pico_json = json.dumps(tp)
+
         with conn:
             cur = conn.execute(
                 """INSERT INTO quality_appraisal_runs
                         (user_id, project_id, paper_ids_json, paper_count,
-                         credit_cost, status)
-                   VALUES (?, ?, ?, ?, ?, 'pending') RETURNING id""",
+                         credit_cost, status, target_pico_json)
+                   VALUES (?, ?, ?, ?, ?, 'pending', ?) RETURNING id""",
                 (user["id"], body.project_id,
-                 json.dumps(paper_ids), len(paper_ids), total_cost),
+                 json.dumps(paper_ids), len(paper_ids), total_cost,
+                 target_pico_json),
             )
             run_id = cur.lastrowid
             conn.commit()
@@ -8245,6 +8268,7 @@ def _load_qa_run(conn, run_id: int, user_id: int, is_admin: bool) -> dict:
     row = conn.execute(
         """SELECT r.id, r.user_id, r.project_id, r.paper_ids_json, r.paper_count,
                   r.status, r.credit_cost, r.credits_refunded, r.error_message,
+                  r.target_pico_json,
                   r.created_at, r.completed_at, r.deleted_at,
                   p.name AS project_name
              FROM quality_appraisal_runs r
@@ -8258,7 +8282,12 @@ def _load_qa_run(conn, run_id: int, user_id: int, is_admin: bool) -> dict:
         raise HTTPException(403, "access denied")
     if row["deleted_at"]:
         raise HTTPException(404, "run not found")
-    return dict(row)
+    d = dict(row)
+    try:
+        d["target_pico"] = json.loads(d.pop("target_pico_json") or "null") or None
+    except Exception:
+        d["target_pico"] = None
+    return d
 
 
 @app.get("/api/quality-appraisal/runs/{run_id}")
@@ -8279,6 +8308,8 @@ def api_qa_run_get(run_id: int,
                       rob_domains_json, rob_overall, rob_direction,
                       guideline_json, guideline_proportion,
                       guideline_adhered, guideline_applicable,
+                      indirectness_json, indirectness_overall,
+                      indirectness_levels, indirectness_explanation,
                       initial_grade, updated_grade, grade_explanation,
                       created_at
                  FROM quality_appraisal_results
@@ -8293,7 +8324,7 @@ def api_qa_run_get(run_id: int,
     for r in rows:
         d = dict(r)
         for jkey in ("classification_json", "extracted_fields_json",
-                     "rob_domains_json", "guideline_json"):
+                     "rob_domains_json", "guideline_json", "indirectness_json"):
             try:
                 d[jkey.replace("_json", "")] = json.loads(d.pop(jkey) or "{}")
             except Exception:
@@ -8384,6 +8415,10 @@ def _qa_flatten_for_export(run_detail: dict) -> list[dict]:
             "guideline_proportion": r.get("guideline_proportion"),
             "guideline_adhered": r.get("guideline_adhered"),
             "guideline_applicable": r.get("guideline_applicable"),
+            "indirectness": r.get("indirectness") or {},
+            "indirectness_overall": r.get("indirectness_overall"),
+            "indirectness_levels": r.get("indirectness_levels"),
+            "indirectness_explanation": r.get("indirectness_explanation"),
             "initial_grade": r.get("initial_grade"),
             "updated_grade": r.get("updated_grade"),
             "grade_explanation": r.get("grade_explanation"),

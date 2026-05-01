@@ -33,6 +33,7 @@ from fastapi import HTTPException
 from . import annotator as annotator_mod
 from . import billing as bill_mod
 from . import paper_files
+from . import indirectness as indir_mod
 from .helpers import call_anthropic, parse_json_response
 from .rob_tools import rob2, robins_i
 from .reporting_guidelines import consort2025, strobe
@@ -54,35 +55,40 @@ CREATE TABLE IF NOT EXISTS quality_appraisal_runs (
     credit_cost      INTEGER NOT NULL DEFAULT 0,
     credits_refunded INTEGER NOT NULL DEFAULT 0,
     error_message    TEXT,
+    target_pico_json TEXT,
     created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     completed_at     TIMESTAMP,
     deleted_at       TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS quality_appraisal_results (
-    id                    SERIAL PRIMARY KEY,
-    run_id                INTEGER NOT NULL REFERENCES quality_appraisal_runs(id) ON DELETE CASCADE,
-    paper_id              INTEGER NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
-    status                TEXT    NOT NULL DEFAULT 'pending',
-    error_message         TEXT,
-    filename              TEXT,
-    study_type            TEXT,
-    rob_tool              TEXT,
-    reporting_guideline   TEXT,
-    primary_outcome       TEXT,
-    classification_json   TEXT    NOT NULL DEFAULT '{}',
-    extracted_fields_json TEXT    NOT NULL DEFAULT '{}',
-    rob_domains_json      TEXT    NOT NULL DEFAULT '{}',
-    rob_overall           TEXT,
-    rob_direction         TEXT,
-    guideline_json        TEXT    NOT NULL DEFAULT '{}',
-    guideline_proportion  REAL,
-    guideline_adhered     INTEGER,
-    guideline_applicable  INTEGER,
-    initial_grade         TEXT,
-    updated_grade         TEXT,
-    grade_explanation     TEXT,
-    created_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    id                       SERIAL PRIMARY KEY,
+    run_id                   INTEGER NOT NULL REFERENCES quality_appraisal_runs(id) ON DELETE CASCADE,
+    paper_id                 INTEGER NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+    status                   TEXT    NOT NULL DEFAULT 'pending',
+    error_message            TEXT,
+    filename                 TEXT,
+    study_type               TEXT,
+    rob_tool                 TEXT,
+    reporting_guideline      TEXT,
+    primary_outcome          TEXT,
+    classification_json      TEXT    NOT NULL DEFAULT '{}',
+    extracted_fields_json    TEXT    NOT NULL DEFAULT '{}',
+    rob_domains_json         TEXT    NOT NULL DEFAULT '{}',
+    rob_overall              TEXT,
+    rob_direction            TEXT,
+    guideline_json           TEXT    NOT NULL DEFAULT '{}',
+    guideline_proportion     REAL,
+    guideline_adhered        INTEGER,
+    guideline_applicable     INTEGER,
+    indirectness_json        TEXT    NOT NULL DEFAULT '{}',
+    indirectness_overall     TEXT,
+    indirectness_levels      INTEGER NOT NULL DEFAULT 0,
+    indirectness_explanation TEXT,
+    initial_grade            TEXT,
+    updated_grade            TEXT,
+    grade_explanation        TEXT,
+    created_at               TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS quality_appraisal_events (
@@ -138,9 +144,33 @@ def dispatch(study_type: str) -> dict[str, str] | None:
 # ─────────────────────────────────────────────
 # Credit cost
 # ─────────────────────────────────────────────
-# Per paper: classify (~3) + prefill (~8) + 5 × RoB 2 domain (~3 each) + CONSORT (~4) ≈ 30.
+# Per paper: classify (~3) + prefill (~8) + 5 × RoB 2 domain (~3 each) +
+#            CONSORT (~4) + indirectness (~3) ≈ 33.
 # Matches the estimate surfaced in the UI before a run.
-CREDIT_COST_QA_PER_PAPER = 30
+CREDIT_COST_QA_PER_PAPER = 33
+
+
+def migrate_qa_columns(conn) -> None:
+    """Idempotent ALTER TABLE migration adding indirectness + target-PICO columns.
+
+    Safe to call from ``init_db`` after ``QUALITY_APPRAISAL_TABLES_SQL`` runs:
+    new installs already have the columns, existing installs get them added.
+    """
+    from .db import column_exists  # local import to avoid circular at module load
+    with conn:
+        # quality_appraisal_runs.target_pico_json
+        if not column_exists(conn, "quality_appraisal_runs", "target_pico_json"):
+            conn.execute("ALTER TABLE quality_appraisal_runs ADD COLUMN target_pico_json TEXT")
+        # quality_appraisal_results.indirectness_*
+        if not column_exists(conn, "quality_appraisal_results", "indirectness_json"):
+            conn.execute("ALTER TABLE quality_appraisal_results ADD COLUMN indirectness_json TEXT NOT NULL DEFAULT '{}'")
+        if not column_exists(conn, "quality_appraisal_results", "indirectness_overall"):
+            conn.execute("ALTER TABLE quality_appraisal_results ADD COLUMN indirectness_overall TEXT")
+        if not column_exists(conn, "quality_appraisal_results", "indirectness_levels"):
+            conn.execute("ALTER TABLE quality_appraisal_results ADD COLUMN indirectness_levels INTEGER NOT NULL DEFAULT 0")
+        if not column_exists(conn, "quality_appraisal_results", "indirectness_explanation"):
+            conn.execute("ALTER TABLE quality_appraisal_results ADD COLUMN indirectness_explanation TEXT")
+        conn.commit()
 
 
 # ─────────────────────────────────────────────
@@ -156,15 +186,55 @@ def _grade_index(level: str) -> int:
         return 0
 
 
+def _rob_downgrade(rob_overall: str,
+                   rob_domain_judgements: list[str] | None = None
+                   ) -> tuple[int, str]:
+    """Compute RoB-driven downgrade levels and a human-readable reason fragment.
+
+    Returns ``(levels, reason)``. ``levels`` is 0/1/2; ``reason`` is the noun
+    phrase that follows "for ..." in the explanation (e.g. "Some concerns in
+    risk of bias").
+    """
+    judgements = rob_domain_judgements or []
+    if rob_overall == "Low":
+        return 0, "Low risk of bias"
+
+    # RoB 2 branches
+    if rob_overall == "Some concerns":
+        return 1, "Some concerns in risk of bias"
+    if rob_overall == "High":
+        high_count = sum(1 for j in judgements if j == "High")
+        if high_count >= 2:
+            return 2, f"High risk of bias in {high_count} domains"
+        return 1, "High risk of bias"
+
+    # ROBINS-I branches
+    if rob_overall == "Moderate":
+        return 1, "Moderate risk of bias (ROBINS-I)"
+    if rob_overall == "Serious":
+        serious_count = sum(1 for j in judgements if j == "Serious")
+        if serious_count >= 2:
+            return 2, f"Serious risk of bias in {serious_count} ROBINS-I domains"
+        return 1, "Serious risk of bias (ROBINS-I)"
+    if rob_overall == "Critical":
+        return 2, "Critical risk of bias (ROBINS-I)"
+    if rob_overall == "No information":
+        return 1, "No information in one or more ROBINS-I domains (conservative)"
+
+    return 1, f"risk of bias ({rob_overall})"
+
+
 def compute_grade(initial: str,
                   rob_overall: str,
-                  rob_domain_judgements: list[str] | None = None
+                  rob_domain_judgements: list[str] | None = None,
+                  indirectness_levels: int = 0,
+                  indirectness_explanation: str = "",
                   ) -> tuple[str, str]:
     """Compute updated GRADE + human-readable explanation.
 
-    v1 downgrades for risk of bias only. Other GRADE domains (inconsistency,
-    indirectness, imprecision, publication bias) require a body of evidence
-    and are documented as out of scope in the developer view.
+    Downgrades for **risk of bias** and **indirectness**. Other GRADE domains
+    (inconsistency, imprecision, publication bias) still require a body of
+    evidence and are documented as out of scope in the developer view.
 
     Per GradePro guidance:
       RoB 2     Low             → 0
@@ -175,50 +245,35 @@ def compute_grade(initial: str,
                 Serious         → 1 (2 if ≥2 domains are Serious)
                 Critical        → 2 (always)
                 No information  → 1 (conservative)
+      Indirectness  none / serious / very_serious / extremely_serious → 0/1/2/3
+
+    Total downgrade is the sum of the two, capped at "Very low" (3 levels
+    below "High").
     """
     idx = _grade_index(initial)
-    judgements = rob_domain_judgements or []
+    rob_levels, rob_reason = _rob_downgrade(rob_overall, rob_domain_judgements)
+    indir_levels = max(0, int(indirectness_levels or 0))
+    total = rob_levels + indir_levels
+    new_idx = min(idx + total, len(GRADE_LEVELS) - 1)
+    new_level = GRADE_LEVELS[new_idx]
 
-    if rob_overall == "Low":
-        return initial, "No downgrade: overall risk of bias is Low."
+    if total == 0:
+        no_indir = " and no serious indirectness detected" if indir_levels == 0 else ""
+        return new_level, f"No downgrade: overall risk of bias is Low{no_indir}."
 
-    # RoB 2 branches
-    if rob_overall == "Some concerns":
-        new_idx = min(idx + 1, len(GRADE_LEVELS) - 1)
-        return GRADE_LEVELS[new_idx], "Downgraded 1 level for Some concerns in risk of bias."
-    if rob_overall == "High":
-        high_count = sum(1 for j in judgements if j == "High")
-        if high_count >= 2:
-            new_idx = min(idx + 2, len(GRADE_LEVELS) - 1)
-            return GRADE_LEVELS[new_idx], (
-                f"Downgraded 2 levels for High risk of bias in {high_count} domains."
-            )
-        new_idx = min(idx + 1, len(GRADE_LEVELS) - 1)
-        return GRADE_LEVELS[new_idx], "Downgraded 1 level for High risk of bias."
+    parts: list[str] = []
+    if rob_levels > 0:
+        unit = "level" if rob_levels == 1 else "levels"
+        parts.append(f"{rob_levels} {unit} for {rob_reason}")
+    if indir_levels > 0:
+        sev_label = {1: "serious", 2: "very serious",
+                     3: "extremely serious"}.get(indir_levels, f"{indir_levels}-level")
+        unit = "level" if indir_levels == 1 else "levels"
+        suffix = f" — {indirectness_explanation}" if indirectness_explanation else ""
+        parts.append(f"{indir_levels} {unit} for {sev_label} indirectness{suffix}")
 
-    # ROBINS-I branches
-    if rob_overall == "Moderate":
-        new_idx = min(idx + 1, len(GRADE_LEVELS) - 1)
-        return GRADE_LEVELS[new_idx], "Downgraded 1 level for Moderate risk of bias (ROBINS-I)."
-    if rob_overall == "Serious":
-        serious_count = sum(1 for j in judgements if j == "Serious")
-        if serious_count >= 2:
-            new_idx = min(idx + 2, len(GRADE_LEVELS) - 1)
-            return GRADE_LEVELS[new_idx], (
-                f"Downgraded 2 levels for Serious risk of bias in {serious_count} ROBINS-I domains."
-            )
-        new_idx = min(idx + 1, len(GRADE_LEVELS) - 1)
-        return GRADE_LEVELS[new_idx], "Downgraded 1 level for Serious risk of bias (ROBINS-I)."
-    if rob_overall == "Critical":
-        new_idx = min(idx + 2, len(GRADE_LEVELS) - 1)
-        return GRADE_LEVELS[new_idx], "Downgraded 2 levels for Critical risk of bias (ROBINS-I)."
-    if rob_overall == "No information":
-        new_idx = min(idx + 1, len(GRADE_LEVELS) - 1)
-        return GRADE_LEVELS[new_idx], "Downgraded 1 level for No information in one or more ROBINS-I domains (conservative)."
-
-    # Fallback for any unexpected vocabulary
-    new_idx = min(idx + 1, len(GRADE_LEVELS) - 1)
-    return GRADE_LEVELS[new_idx], f"Downgraded 1 level for risk of bias ({rob_overall})."
+    total_unit = "level" if total == 1 else "levels"
+    return new_level, f"Downgraded {total} {total_unit}: " + " + ".join(parts) + "."
 
 
 # ─────────────────────────────────────────────
@@ -279,7 +334,8 @@ def _row_to_dict(row) -> dict[str, Any]:
 
 def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
                    run_id: int, paper_id: int,
-                   on_progress: Callable[[str, str], None] | None = None
+                   on_progress: Callable[[str, str], None] | None = None,
+                   target_pico: dict[str, str] | None = None,
                    ) -> dict[str, Any]:
     """Appraise a single paper end-to-end. Writes one row to
     ``quality_appraisal_results``.
@@ -287,6 +343,10 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
     Returns a summary dict for tests / callers. Raises nothing for
     paper-level failures — the failure is recorded on the row; the caller
     looks at ``status`` to decide whether to refund.
+
+    ``target_pico`` is the user-supplied target PICO for indirectness
+    assessment; ``None`` falls back to as-conducted PICO (outcome-surrogacy
+    only is meaningful in that case).
     """
     def _notify(level: str, msg: str) -> None:
         if on_progress:
@@ -431,14 +491,38 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
                           "total": 0, "proportion": 0.0,
                           "note": "Reporting-guideline check failed — see server logs."}
 
-    # 6. GRADE
+    # 6. Indirectness (GRADE PICO assessment for this single trial)
+    _notify("info", "Assessing GRADE indirectness")
+    indirectness: dict[str, Any] = {}
+    indirectness_overall = "none"
+    indirectness_levels = 0
+    indirectness_expl = ""
+    try:
+        indirectness, indirectness_overall, indirectness_levels, indirectness_expl = (
+            indir_mod.run(pdf_bytes, fields, classification, primary_outcome,
+                          target_pico=target_pico)
+        )
+    except HTTPException as he:
+        msg = f"Indirectness assessment failed: {he.detail}"
+        logger.warning("Indirectness failed (run=%s paper=%s): %s",
+                       run_id, paper_id, msg)
+        _notify("warn", msg)
+        indirectness = {"error": msg}
+    except Exception as e:
+        logger.exception("Indirectness run failed (run=%s paper=%s)", run_id, paper_id)
+        _notify("warn", "Indirectness assessment failed — see server logs.")
+        indirectness = {"error": "Indirectness assessment failed."}
+
+    # 7. GRADE — combines RoB + indirectness downgrades
     rob_domain_judgements = [d.get("judgement", "Low")
                               for d in rob_domains.values()]
     initial_grade = cfg["initial_grade"]
     updated_grade, grade_expl = compute_grade(
-        initial_grade, rob_overall, rob_domain_judgements)
+        initial_grade, rob_overall, rob_domain_judgements,
+        indirectness_levels=indirectness_levels,
+        indirectness_explanation=indirectness_expl)
 
-    # 7. Persist
+    # 8. Persist
     _write_result(conn, run_id, paper_id, status="ok", filename=filename,
                    study_type=study_type,
                    rob_tool=cfg["rob_tool"],
@@ -450,16 +534,22 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
                    rob_overall=rob_overall,
                    rob_direction=rob_direction,
                    guideline=guideline,
+                   indirectness=indirectness,
+                   indirectness_overall=indirectness_overall,
+                   indirectness_levels=indirectness_levels,
+                   indirectness_explanation=indirectness_expl,
                    initial_grade=initial_grade,
                    updated_grade=updated_grade,
                    grade_explanation=grade_expl)
-    _notify("info", f"Done: {filename} — RoB {rob_overall}, GRADE {initial_grade}→{updated_grade}")
+    _notify("info", f"Done: {filename} — RoB {rob_overall}, indirectness {indirectness_overall}, GRADE {initial_grade}→{updated_grade}")
     return {
         "status": "ok",
         "filename": filename,
         "study_type": study_type,
         "rob_overall": rob_overall,
         "guideline_proportion": guideline.get("proportion"),
+        "indirectness_overall": indirectness_overall,
+        "indirectness_levels": indirectness_levels,
         "initial_grade": initial_grade,
         "updated_grade": updated_grade,
     }
@@ -478,6 +568,10 @@ def _write_result(conn, run_id: int, paper_id: int, *,
                   rob_overall: str | None = None,
                   rob_direction: str | None = None,
                   guideline: dict | None = None,
+                  indirectness: dict | None = None,
+                  indirectness_overall: str | None = None,
+                  indirectness_levels: int = 0,
+                  indirectness_explanation: str | None = None,
                   initial_grade: str | None = None,
                   updated_grade: str | None = None,
                   grade_explanation: str | None = None) -> None:
@@ -499,8 +593,10 @@ def _write_result(conn, run_id: int, paper_id: int, *,
                      rob_domains_json, rob_overall, rob_direction,
                      guideline_json, guideline_proportion,
                      guideline_adhered, guideline_applicable,
+                     indirectness_json, indirectness_overall,
+                     indirectness_levels, indirectness_explanation,
                      initial_grade, updated_grade, grade_explanation)
-               VALUES (?, ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?,  ?, ?, ?,  ?, ?,  ?, ?,  ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?,  ?, ?, ?,  ?, ?,  ?, ?,  ?, ?, ?, ?,  ?, ?, ?)""",
             (run_id, paper_id, status, error, filename,
              study_type, rob_tool, reporting_guideline, primary_outcome,
              json.dumps(classification or {}),
@@ -509,6 +605,10 @@ def _write_result(conn, run_id: int, paper_id: int, *,
              rob_overall, rob_direction,
              json.dumps(guideline or {}), proportion,
              guideline.get("adhered"), guideline.get("applicable"),
+             json.dumps(indirectness or {}),
+             indirectness_overall,
+             int(indirectness_levels or 0),
+             indirectness_explanation,
              initial_grade, updated_grade, grade_explanation),
         )
         conn.commit()
@@ -528,7 +628,8 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
     per_paper_cost = CREDIT_COST_QA_PER_PAPER
     total_refunded = 0
 
-    # Mark run running
+    # Mark run running and load the run-level target PICO once.
+    target_pico: dict[str, str] | None = None
     setup_conn = get_db_fn()
     try:
         with setup_conn:
@@ -537,8 +638,22 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
                 (run_id,),
             )
             setup_conn.commit()
+        try:
+            row = setup_conn.execute(
+                "SELECT target_pico_json FROM quality_appraisal_runs WHERE id=?",
+                (run_id,),
+            ).fetchone()
+            if row and row["target_pico_json"]:
+                tp = json.loads(row["target_pico_json"])
+                if isinstance(tp, dict) and any(tp.get(k) for k in ("population", "intervention", "comparator", "outcome")):
+                    target_pico = tp
+        except Exception as e:
+            logger.warning("Failed to load target_pico for run %s: %s", run_id, e)
         log_event(setup_conn, run_id, "info",
                    f"Started quality appraisal on {len(paper_ids)} paper(s).")
+        if target_pico:
+            log_event(setup_conn, run_id, "info",
+                       "Indirectness will be assessed against the supplied target PICO.")
     finally:
         setup_conn.close()
 
@@ -550,6 +665,7 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
                     pconn, papers_dir, user_id, is_admin, run_id, pid,
                     on_progress=lambda level, msg, _c=pconn: log_event(
                         _c, run_id, level, msg),
+                    target_pico=target_pico,
                 )
             except Exception as e:
                 logger.exception("Unhandled error in appraise_paper (run=%s paper=%s)",
@@ -630,7 +746,8 @@ def prompt_catalog() -> dict[str, Any]:
                 "Auto-pick the primary outcome",
                 "Run the registered risk-of-bias tool (per-domain LLM calls + pure-Python decision trees)",
                 "Run the registered reporting-guideline checklist (single LLM call over all items)",
-                "Compute initial GRADE (from study type) and updated GRADE (downgrade for RoB)",
+                "Run the GRADE indirectness assessment (per-trial PICO judgement)",
+                "Compute initial GRADE (from study type) and updated GRADE (downgrade for RoB + indirectness)",
             ],
         },
         "registry": STUDY_TYPE_REGISTRY,
@@ -643,14 +760,18 @@ def prompt_catalog() -> dict[str, Any]:
             "consort2025": consort2025.prompt_catalog(),
             "strobe":      strobe.prompt_catalog(),
         },
+        "indirectness": indir_mod.prompt_catalog(),
         "grade": {
             "levels": GRADE_LEVELS,
             "description": (
-                "v1 downgrades for risk of bias only. Other GRADE domains "
-                "(inconsistency, indirectness, imprecision, publication bias) require a "
-                "body of evidence, not a single study."
+                "Downgrades for risk of bias and indirectness (per-trial PICO "
+                "assessment, see Figure 1 of the GRADE handbook indirectness "
+                "chapter). Other GRADE domains (inconsistency, imprecision, "
+                "publication bias) still require a body of evidence and are "
+                "out of scope for this single-study tool."
             ),
             "logic_code": inspect.getsource(compute_grade),
+            "rob_downgrade_code": inspect.getsource(_rob_downgrade),
         },
         "primary_outcome_picker": {
             "description": "Reads primary_outcome_definition → primary_outcome_measurement → population_outcomes from extracted fields.",
@@ -675,6 +796,7 @@ def flatten_result_row(result_row: dict[str, Any],
     fields = result_row.get("extracted_fields") or {}
     rob_domains = result_row.get("rob_domains") or {}
     guideline = result_row.get("guideline") or {}
+    indirectness = result_row.get("indirectness") or {}
 
     # Study info (column 1) — compact stack of citation details
     title = fields.get("citation_title") or (paper_row or {}).get("filename", "")
@@ -701,6 +823,14 @@ def flatten_result_row(result_row: dict[str, Any],
         "consort_proportion": result_row.get("guideline_proportion"),
         "consort_adhered": result_row.get("guideline_adhered"),
         "consort_applicable": result_row.get("guideline_applicable"),
+        "indirectness_overall": result_row.get("indirectness_overall"),
+        "indirectness_levels": result_row.get("indirectness_levels"),
+        "indirectness_explanation": result_row.get("indirectness_explanation"),
+        "indirectness_population":  (indirectness.get("population")  or {}).get("judgement", ""),
+        "indirectness_intervention":(indirectness.get("intervention")or {}).get("judgement", ""),
+        "indirectness_comparator":  (indirectness.get("comparator")  or {}).get("judgement", ""),
+        "indirectness_outcome":     (indirectness.get("outcome")     or {}).get("judgement", ""),
+        "primary_outcome_is_surrogate": indirectness.get("primary_outcome_is_surrogate", ""),
         "initial_grade": result_row.get("initial_grade"),
         "updated_grade": result_row.get("updated_grade"),
         "grade_explanation": result_row.get("grade_explanation"),
