@@ -29,15 +29,18 @@
 | Read/write paper PDF bytes | `backend/paper_files.py` (handles `storage_path` + legacy `disk_filename` fallback) |
 | Modify the annotator | `backend/annotator.py` (tables, field catalog, prompts, analytics) + `frontend/annotator.html` (3-pane UI + tabbed right pane) |
 | Add an annotator field group / type-specific / modifier constant | `backend/annotator.py` — `FIELD_GROUPS`, `TYPE_FIELD_IDS`, `DESIGN_MODIFIER_COLS`, `NUMERIC_FIELDS`, `CATEGORICAL_FIELDS` |
-| Modify Quality Appraisal AI | `backend/quality_appraisal.py` (registry, orchestrator, GRADE, DDL) + `backend/rob_tools/*.py` (RoB tools) + `backend/reporting_guidelines/*.py` (checklists) + `frontend/quality-appraisal.html` |
+| Modify Quality Appraisal AI | `backend/quality_appraisal.py` (registry, orchestrator, GRADE combine, DDL) + `backend/rob_tools/*.py` (RoB tools) + `backend/reporting_guidelines/*.py` (checklists) + `backend/indirectness.py` (GRADE indirectness PICO assessment) + `frontend/quality-appraisal.html` |
 | Add a new risk-of-bias tool (ROBINS-I, QUADAS-2, AMSTAR-2, …) | New `backend/rob_tools/<tool>.py` exposing `run(pdf_bytes, fields, classification, primary_outcome, progress)` and `prompt_catalog()`, then register in `backend/quality_appraisal.py:STUDY_TYPE_REGISTRY` + `_TOOL_RUNNERS` |
 | Add a new reporting guideline (STROBE, PRISMA, STARD, …) | New `backend/reporting_guidelines/<guide>.py` exposing `run(pdf_bytes, fields, classification)` and `prompt_catalog()`, then register in `backend/quality_appraisal.py:_GUIDELINE_RUNNERS` |
+| Modify GRADE indirectness logic | `backend/indirectness.py` (PICO subdomains, severity decision tree, prompts) + `backend/quality_appraisal.py:compute_grade` (combines RoB + indirectness downgrades) |
+| Reference: RoB 2 + ROBINS-I prompts + decision trees | `docs/quality_appraisal_rob_reference.md` — verbatim transcription of every signaling question, elaboration, and pure-Python decision tree from `prompt_catalog()`. For sharing without cloning. |
 | Add a new lab agent | `backend/agents/lab_agents.py` + `backend/skills.py` (prompt) + `backend/lab.py` (routing) |
 | Modify lab chat/sessions | `backend/lab.py` |
 | Modify exports | `backend/exports.py` |
 | Modify the daily scheduler | `backend/scheduler.py` + `backend/pubmed.py` |
 | Modify search | `backend/search.py` |
-| Modify search-result PDF import (5 modes) | `backend/search.py` (`import_results`, `run_pdf_fetch_job`, `_upgrade_paper_to_pdf`) + `backend/pdf_fetcher.py` (PMC → Unpaywall → direct → meta-tag → Firecrawl, with per-strategy events + retries + tier-aware return) + `backend/browser_agent.py` (Playwright Chromium + LLM-driven link picker). Modal UI mirrored in `frontend/search.html` and `frontend/lab.html`. **`auto`** is the default — runs every tier, tier-priced 2/5/15 cr. |
+| Modify search-result PDF import (6 modes) | `backend/search.py` (`import_results`, `import_results_extension`, `run_pdf_fetch_job`, `_upgrade_paper_to_pdf`) + `backend/pdf_fetcher.py` (PMC → Unpaywall → direct → meta-tag → Firecrawl, with per-strategy events + retries + tier-aware return) + `backend/browser_agent.py` (Playwright Chromium + LLM-driven link picker). Modal UI mirrored in `frontend/search.html` and `frontend/lab.html`. **`auto`** is the default — runs every tier, tier-priced 2/5/15 cr. **`extension`** queues for the user's paired Chrome extension (free). |
+| Modify Chrome extension (PDF fetch via authenticated browser) | `backend/extension.py` (pairing, queue, upload, skip, status) + `backend/pdf_link_picker.py` (shared LLM picker — also used by `browser_agent.py`) + extension/ dir (`manifest.json`, `background.js`, `content.js`, `popup.html|js|css`). Pair via `/developers`. Tests in `tests/test_extension.py`. |
 | Add a new PDF-fetch strategy | `backend/pdf_fetcher.py` — write a `_strat_*` helper that returns `(result_or_None, outcome, reason)` where `outcome ∈ {hit, miss, transient_error, permanent_error}`, then call it from `fetch_pdf_for_result` via `_run_with_retry(name, on_event, lambda attempt: _strat_*(...))`. Validate downloads via `_is_pdf_bytes`. Pass `attempts=1` for slow / metadata-driven strategies. Tag the tier when emitting the hit (`_hit(out, "free"|"firecrawl"|"browser")`). |
 | Add organization feature | `backend/organizations.py` |
 | Write Obsidian notes | `backend/obsidian.py` |
@@ -93,7 +96,8 @@ backend/
   ├── skills.py         — Agent skill versioning (10 agent types)
   ├── self_improve.py   — Autoresearch experiment loop
   ├── obsidian.py       — Markdown vault writer
-  ├── quality_appraisal.py — RoB + reporting-guideline + GRADE pipeline (registry, orchestrator)
+  ├── quality_appraisal.py — RoB + reporting-guideline + indirectness + GRADE pipeline (registry, orchestrator, compute_grade combiner)
+  ├── indirectness.py   — GRADE indirectness — single-trial PICO assessment (4 subdomains, severity decision tree)
   ├── rob_tools/
   │   ├── rob2.py       — RoB 2 (RCTs)
   │   └── robins_i.py   — ROBINS-I (cohort, case-control, non-randomized trial, etc.)
@@ -107,8 +111,9 @@ frontend/ — ~26 self-contained HTML files (inline CSS + JS, no build step).
             Notable additions: library.html (personal PDF library),
             community-library.html (formerly library.html, moved on /community-library),
             review.html (3-judge adjudication review queue UI).
-tests/    — pytest suite — 181 cases across Competition API, Annotator, Quality Appraisal,
-            Adjudication. Run with `pytest tests/ -v` (Python 3.12+).
+tests/    — pytest suite — 271 cases across Competition API, Annotator, Quality Appraisal,
+            Adjudication, Indirectness (42 new in `tests/test_indirectness.py`).
+            Run with `pytest tests/ -v` (Python 3.12+).
 ```
 
 ## Critical Patterns
@@ -309,15 +314,16 @@ Three small but production-meaningful changes shipped in the rubric generator or
 
 ## Quality Appraisal AI
 
-Lives at `/quality-appraisal` ([route in main.py](main.py), UI in [frontend/quality-appraisal.html](frontend/quality-appraisal.html), backend in [backend/quality_appraisal.py](backend/quality_appraisal.py) + [backend/rob_tools/](backend/rob_tools/) + [backend/reporting_guidelines/](backend/reporting_guidelines/)). Reuses the annotator's `classify_study_design`, `prefill_fields`, `_call_with_pdf` (3-stage oversize fallback), `load_paper_pdf`, credits, and `require_active_seat` — no parallel user/paper system.
+Lives at `/quality-appraisal` ([route in main.py](main.py), UI in [frontend/quality-appraisal.html](frontend/quality-appraisal.html), backend in [backend/quality_appraisal.py](backend/quality_appraisal.py) + [backend/rob_tools/](backend/rob_tools/) + [backend/reporting_guidelines/](backend/reporting_guidelines/) + [backend/indirectness.py](backend/indirectness.py)). Reuses the annotator's `classify_study_design`, `prefill_fields`, `_call_with_pdf` (3-stage oversize fallback), `load_paper_pdf`, credits, and `require_active_seat` — no parallel user/paper system.
 
-**Pipeline per paper** (≈ 8 LLM calls for RCTs, ≈ 10 for non-randomized designs — 7 domain calls + classify + prefill + guideline; flat **30 credits** per paper):
+**Pipeline per paper** (≈ 9 LLM calls for RCTs, ≈ 11 for non-randomized designs — 5–7 RoB domain calls + classify + prefill + guideline + indirectness; flat **33 credits** per paper):
 1. Classify study design via annotator.
 2. Extract universal + type-specific + modifier fields via annotator.
 3. Auto-pick primary outcome from `primary_outcome_definition` → `primary_outcome_measurement` → `population_outcomes`.
 4. Per-domain LLM calls for the registered RoB tool — **pure-Python decision trees** map Y/PY/PN/N/NI signal answers to tool-specific judgements (RoB 2 is 3-level Low/Some concerns/High; ROBINS-I is 5-level Low/Moderate/Serious/Critical/No information). Trees live in code (not prompts) so the developer view can show the exact logic via `inspect.getsource`.
 5. Single-call adherence check against the registered reporting guideline.
-6. Compute initial GRADE (from registry) + updated GRADE after RoB. Downgrades only for RoB in v1 (other GRADE domains need a body of evidence, not a single study).
+6. **GRADE indirectness** — single LLM call via `backend/indirectness.py` judging each PICO subdomain (population/intervention/comparator/outcome) on a 4-level scale, then a pure-Python severity decision tree → 0/1/2/3 GRADE downgrade levels. Conditioned on the user's optional target PICO; falls back to outcome-surrogacy assessment when not supplied.
+7. Compute initial GRADE (from registry) + updated GRADE after RoB **and indirectness** (sum of downgrade levels, capped at "Very low"). Other GRADE domains (inconsistency, imprecision, publication bias) still require a body of evidence and are out of scope.
 
 **Extensibility contract** — [backend/quality_appraisal.py:STUDY_TYPE_REGISTRY](backend/quality_appraisal.py) is the single source of truth mapping `{study_type → (rob_tool, reporting_guideline, initial_grade)}`. v1 supports:
 - **Randomized Controlled Trial → RoB 2 (2019) + CONSORT 2025 + High initial GRADE**
@@ -331,15 +337,79 @@ Registry keys MUST match `annotator.TYPE_FIELD_IDS` keys — the test `TestDispa
 
 **Developer view** (🔧 icon in topbar, visible to every signed-in user) — `GET /api/quality-appraisal/prompts` returns the full prompt templates, signaling questions, and `inspect.getsource` output for every decision tree + GRADE logic. Transparency by default: reviewers can see exactly how a judgement was produced.
 
-**DB tables** (initialised from `QUALITY_APPRAISAL_TABLES_SQL`): `quality_appraisal_runs`, `quality_appraisal_results`, `quality_appraisal_events`. All date columns use `created_at` / `completed_at` (no `timestamp` column per the SQLite compat-wrapper gotcha). Runs are soft-deleted via `deleted_at`.
+**DB tables** (initialised from `QUALITY_APPRAISAL_TABLES_SQL` + idempotent `migrate_qa_columns(conn)` for the post-launch indirectness columns): `quality_appraisal_runs` (incl. `target_pico_json` for the user-supplied PICO), `quality_appraisal_results` (incl. `indirectness_json`, `indirectness_overall`, `indirectness_levels`, `indirectness_explanation`), `quality_appraisal_events`. All date columns use `created_at` / `completed_at` (no `timestamp` column per the SQLite compat-wrapper gotcha). Runs are soft-deleted via `deleted_at`.
 
-**Endpoints** (seat tiers match the annotator's): `GET /api/quality-appraisal/supported-types` (general), `GET /api/quality-appraisal/prompts` (general, the dev view), `POST /api/quality-appraisal/runs` (engineer), `GET /api/quality-appraisal/runs` (general), `GET /api/quality-appraisal/runs/{id}` (general), `GET /api/quality-appraisal/runs/{id}/events?after=<id>` (general, incremental poll), `GET /api/quality-appraisal/runs/{id}.csv|.xlsx` (general), `DELETE /api/quality-appraisal/runs/{id}` (general, soft delete).
+**Endpoints** (seat tiers match the annotator's): `GET /api/quality-appraisal/supported-types` (general), `GET /api/quality-appraisal/prompts` (general, the dev view — also surfaces the indirectness `prompt_catalog`), `POST /api/quality-appraisal/runs` (engineer; body accepts optional `target_pico: {population, intervention, comparator, outcome}` for indirectness assessment), `GET /api/quality-appraisal/runs` (general), `GET /api/quality-appraisal/runs/{id}` (general — response now includes `target_pico` on the run + `indirectness_*` fields per result), `GET /api/quality-appraisal/runs/{id}/events?after=<id>` (general, incremental poll), `GET /api/quality-appraisal/runs/{id}.csv|.xlsx` (general — exports include 8 indirectness columns), `DELETE /api/quality-appraisal/runs/{id}` (general, soft delete).
 
-**Detail view** — each row in the results grid is clickable (📋 icon on the study cell, plus each RoB domain / CONSORT / GRADE cell). Opens a full-screen split modal: **PDF.js viewer on the left** (loaded from `/api/papers/{pid}/pdf`, canvas + text layer per page) and a scrollable **detail panel on the right** with Summary → RoB (5 collapsible RoB 2 domains or 7 ROBINS-I domains depending on the row's tool) → Reporting guideline (CONSORT 2025 or STROBE 2007, grouped by section, ✓/✗/N-A) → GRADE (initial → updated with downgrade explanation and domain breakdown) → Extracted fields. Clicking any rationale or evidence chip **searches the live PDF text layer** for the first ~80 chars of the quote (with a longest-matching word n-gram fallback for paraphrased quotes) and flash-highlights the match. Prior highlight clears on next click; the clicked chip gets a yellow "active" marker. Quote-to-highlight is best-effort — we never asked the LLM for PDF coordinates, so the fallback may miss for heavily paraphrased quotes (toast surfaces the miss). The frontend looks up `domainMetaFor(r.rob_tool)` to pick between `ROB2_DOMAIN_META` (5 domains) and `ROBINS_I_DOMAIN_META` (7 domains); `robBadgeCls(j)` maps any judgement (3-level RoB 2 or 5-level ROBINS-I) to a badge CSS class. See [frontend/quality-appraisal.html](frontend/quality-appraisal.html) `openDetailModal`, `renderDetailPanel`, `loadDetailPdf`, `jumpToQuote`.
+**Detail view** — each row in the results grid is clickable (📋 icon on the study cell, plus each RoB domain / Indirectness / CONSORT / GRADE cell). The grid carries a dedicated **Indirectness column** between RoB and the reporting-guideline column, showing the severity badge (`None` / `Serious` / `Very serious` / `Extremely serious`) plus a `−N GRADE` subtext when the run downgraded. Clicking opens a full-screen split modal: **PDF.js viewer on the left** (loaded from `/api/papers/{pid}/pdf`, canvas + text layer per page) and a scrollable **detail panel on the right** with Summary → RoB (5 collapsible RoB 2 domains or 7 ROBINS-I domains) → **Indirectness** (`qa-sec-indirectness` — severity badge + 4-cell PICO grid with green/yellow/orange/red Figure-2-style colouring + per-subdomain rationale + surrogate-outcome callout) → Reporting guideline (CONSORT 2025 or STROBE 2007, grouped by section, ✓/✗/N-A) → GRADE (initial → updated with combined RoB+indirectness downgrade explanation and domain breakdown) → Extracted fields. Clicking any rationale or evidence chip **searches the live PDF text layer** for the first ~80 chars of the quote (with a longest-matching word n-gram fallback for paraphrased quotes) and flash-highlights the match. Prior highlight clears on next click; the clicked chip gets a yellow "active" marker. Quote-to-highlight is best-effort — we never asked the LLM for PDF coordinates, so the fallback may miss for heavily paraphrased quotes (toast surfaces the miss). The frontend looks up `domainMetaFor(r.rob_tool)` to pick between `ROB2_DOMAIN_META` (5 domains) and `ROBINS_I_DOMAIN_META` (7 domains); `robBadgeCls(j)` maps any judgement (3-level RoB 2 or 5-level ROBINS-I) to a badge CSS class. See [frontend/quality-appraisal.html](frontend/quality-appraisal.html) `openDetailModal`, `renderDetailPanel`, `loadDetailPdf`, `jumpToQuote`.
 
 **Mixed-tool runs** — if a run includes papers of different study types (some RCT + some Cohort), the results grid column set is taken from the first successful row's tool. Other rows with a different tool still render correctly; domain cells for non-matching domain IDs show `—`. Single-design runs are the common case, so this trade-off is intentional for v1.
 
-**Out of scope for v1**: Quasi-experimental designs (Uncontrolled Before-After, Interrupted Time Series, Difference-in-Differences, Regression Discontinuity) — each needs its own confounding prompt + ROBINS-I adaptation. ROBINS-I effect-of-adherence D4 variant (effect-of-assignment only in v1). AMSTAR-2 (systematic reviews), QUADAS-2 (diagnostic accuracy), PRISMA 2020, STARD. Cluster/crossover/stepped-wedge RCT variants (parallel-trial cribsheet only). Editing / overriding AI judgements in the UI. Full GRADE assessment across inconsistency / indirectness / imprecision / publication bias (requires a body of evidence). Per-outcome user selection (we auto-pick primary).
+**Out of scope for v1**: Quasi-experimental designs (Uncontrolled Before-After, Interrupted Time Series, Difference-in-Differences, Regression Discontinuity) — each needs its own confounding prompt + ROBINS-I adaptation. ROBINS-I effect-of-adherence D4 variant (effect-of-assignment only in v1). AMSTAR-2 (systematic reviews), QUADAS-2 (diagnostic accuracy), PRISMA 2020, STARD. Cluster/crossover/stepped-wedge RCT variants (parallel-trial cribsheet only). Editing / overriding AI judgements in the UI. Other GRADE domains beyond RoB and indirectness — inconsistency, imprecision, publication bias — still require a body of evidence and are deferred. Per-outcome user selection (we auto-pick primary).
+
+## GRADE Indirectness — single-trial PICO assessment
+
+Lives in [backend/indirectness.py](backend/indirectness.py). Follows the GRADE handbook indirectness chapter (Schünemann et al., book.gradepro.org/guideline/indirectness — Figure 1 explicitly supports per-trial indirectness tables, so single-study assessment is methodologically sound).
+
+**4 PICO subdomains, 4-level judgement scale:**
+- `direct` (sufficiently direct), `probably_direct` (probably sufficiently direct), `probably_not_direct` (probably not sufficiently direct), `not_direct` (not sufficiently direct).
+- One LLM call per paper judges all four subdomains at once + flags whether the primary outcome is a surrogate.
+
+**Severity decision tree** ([backend/indirectness.py:_judgement_severity](backend/indirectness.py)) — pure-Python aggregation, mirrors the GRADE downgrade convention:
+- `none` (0 levels) — all subdomains direct or probably_direct (≤ 1 borderline orange allowed).
+- `serious` (−1 level) — exactly 1 `not_direct`, OR ≥ 2 `probably_not_direct`.
+- `very_serious` (−2 levels) — 2 `not_direct`.
+- `extremely_serious` (−3 levels) — 3 or more `not_direct`.
+
+**Surrogate-outcome rule** (verbatim from the GRADE handbook, baked into the system prompt): "surrogate outcomes should be rated down for indirectness unless there is a strong and well-established correlation with meaningful, patient-important outcomes — a criterion that is rarely fulfilled." Surrogates default to `probably_not_direct` or worse.
+
+**Target PICO** — optional. Supplied via the run-create modal as `{population, intervention, comparator, outcome}` text fields. When provided, the prompt asks the LLM to judge each subdomain *against* the user's review question. When blank, falls back to outcome-surrogacy assessment only — the prompt explicitly tells the LLM to default the other 3 subdomains to `probably_direct` unless the as-conducted PICO is unusually narrow.
+
+**GRADE combination** — `compute_grade(initial, rob_overall, rob_domain_judgements, indirectness_levels, indirectness_explanation)` in `backend/quality_appraisal.py` sums RoB + indirectness downgrade levels and caps at "Very low" (3 below initial). The `_rob_downgrade(rob_overall, rob_domain_judgements)` helper is extracted so the developer view can show it separately. Explanation text mentions both contributors when both fire (e.g. "Downgraded 2 levels: 1 level for Some concerns in risk of bias + 1 level for serious indirectness — surrogate primary outcome (HbA1c)").
+
+**Out of scope for v1 indirectness**: indirect comparisons / network meta-analysis (body-of-evidence only — not applicable to a single trial), baseline-risk indirectness (needs external longitudinal data to model alternative baselines), ICEMAN credibility check for subgroup effects.
+
+**Reference doc**: [docs/quality_appraisal_rob_reference.md](docs/quality_appraisal_rob_reference.md) is a separate self-contained markdown transcribing every RoB 2 + ROBINS-I signaling question, elaboration, and decision tree verbatim from `prompt_catalog()` — useful for sharing the methodology without cloning the repo. Indirectness is documented via the developer view (`GET /api/quality-appraisal/prompts` → `cat.indirectness`) rather than in that markdown.
+
+## Chrome extension for authenticated PDF fetch
+
+Lives at `extension/` (Chrome MV3 — `manifest.json`, `background.js`, `content.js`, `popup.html|js|css`). Pair via `/developers`; once paired, the user can pick "🧩 Via my Chrome extension" in any import modal and the extension processes the queue inside their authenticated browser session.
+
+**Why this exists.** Server-side PDF fetching can't reach paywalled publishers (BMJ, NEJM, Wiley, Annals) — Render's IP isn't on the user's institutional VPN. The extension runs in the user's logged-in browser, so cookies / SSO / VPN-IP gating all work transparently. Auth never touches our server.
+
+**Pairing flow.** One-per-user dedicated `rg_ext_*` token, separate from the developer `rg_user_*` API key so revoking one doesn't break the other:
+1. User clicks "Generate pairing code" in `/developers` → backend mints `EX-XXXX-YYYY` (10-min TTL, ~38 bits of entropy, confusion-resistant alphabet without 0/O/1/I/L)
+2. User pastes code into the extension popup → extension POSTs `/api/extension/pair {code}` (no auth needed — code is the auth) → backend mints `rg_ext_<token_urlsafe(32)>`, stores in `users.extension_token`, marks the pairing row consumed, returns the token
+3. Extension stashes token in `chrome.storage.local`; subsequent calls use `X-API-Key: rg_ext_*`
+
+**Auth check.** [`main.py:_get_user_by_api_key`](main.py) accepts both `rg_user_*` (`users.api_key`) and `rg_ext_*` (`users.extension_token`) — both grant the same user identity. Revoke = clear the column.
+
+**Endpoints** (all in [`backend/extension.py`](backend/extension.py); routes in [`main.py`](main.py)):
+- `POST /api/extension/pair-code` (cookie auth) — mint a pairing code; invalidates any prior unconsumed code
+- `POST /api/extension/pair` (no auth) — exchange code for `rg_ext_*` token. 404/410/409 on not-found / expired / already-consumed
+- `DELETE /api/extension/token` (cookie auth) — revoke the calling user's extension token (idempotent)
+- `GET /api/extension/status` (cookie or `rg_ext_*`) — `{paired, paired_at, queue_count}`
+- `GET /api/extension/queue?limit=50` (cookie or `rg_ext_*`) — papers where `pdf_status='extension_pending'` and `user_id=me`, oldest-first
+- `POST /api/extension/papers/{paper_id}/pdf` (`rg_ext_*`) — body `{pdf_b64}`. Validates `%PDF` magic + ownership + size cap (50 MB) → calls `paper_files.write_paper_file` + `search._upgrade_paper_to_pdf` (atomic in-place upgrade preserving paper id, so annotations / rubrics keep their references)
+- `POST /api/extension/papers/{paper_id}/skip` (`rg_ext_*`) — mark as `fetch_failed`, idempotent on terminal status
+- `POST /api/extension/resolve-pdf-url` (cookie or `rg_ext_*`) — LLM-pick a PDF link from rendered anchors (mirrors `browser_agent.py`)
+- `POST /api/papers/{paper_id}/queue-for-extension` (cookie auth) — Library page "Send to extension" bulk action: re-queue an existing metadata-only / fetch_failed paper without going through the search-import path
+
+**Search-import dispatch.** `mode='extension'` in `api_search_import` ⇒ free, synchronous, requires pairing (412 if not paired). Calls [`search.import_results_extension`](backend/search.py) which mirrors `import_results` but stamps `pdf_status='extension_pending'` and re-queues existing metadata-only / fetch_failed rows.
+
+**Schema:** [`backend/extension.py:EXTENSION_TABLES_SQL`](backend/extension.py) creates `extension_pairings(code PK, user_id, created_at, expires_at, consumed_at, consumed_token)` + idempotent ALTER TABLEs adding `users.extension_token` and `users.extension_paired_at` via `migrate_user_columns(conn)` (called from `init_db`). New `papers.pdf_status` value: `'extension_pending'`. Cleanup: `purge_expired_pairings(conn, max_age_days=7)` is provided but not yet wired to a periodic task.
+
+**Extension architecture (MV3):**
+- `manifest.json` — `permissions: storage, tabs, scripting, activeTab`; `host_permissions: <all_urls>`; content scripts run at `document_idle` on every page
+- `background.js` — service worker. Owns token storage + server URL. Processes queue: GET queue → for each paper, `chrome.tabs.create({ url, active: false })`, wait ≤45s for content script to message back, POST PDF bytes (or skip), close tab, throttle 3s between papers. Long-lived port to popup for streaming progress events
+- `content.js` — runs on every page, dormant unless background is awaiting a tab. After 1.5s settle, finds PDF link via meta tag → common selectors (`a[href*="/pdf/"]`, `a[type="application/pdf"]`, anchor text matches "Download PDF" / "Full text PDF" / "View PDF" / "Get PDF" / "PDF") → LLM fallback (asks background to call `/api/extension/resolve-pdf-url`). Fetches the URL with `credentials: 'include'`, validates `%PDF` magic, base64-encodes (chunked to dodge call-stack limits on large PDFs), sends back via `chrome.runtime.sendMessage`. If nothing found within 30s, sends `pdf_not_found`
+- `popup.html|js|css` — two views: pair (paste code + server URL) / connected (queue count + Process queue button + live event log + unpair). Long-lived port to background for real-time progress
+
+**Privacy contract.** The extension only fetches URLs that came from the user's queue on the paired server. It never reads other tabs (the content script does run on every page but only does anything if the background is processing that exact tab). PDF bytes are never persisted locally — they're streamed to the server and dropped from memory.
+
+**Loading the extension** (until it's published to the Web Store): `chrome://extensions` → toggle Developer mode → Load unpacked → select `extension/`. Icons aren't included in v0.1.0 (Chrome shows a generic puzzle-piece icon — drop PNGs into `extension/icons/` and re-add the icon refs in `manifest.json` to customize).
+
+**Tests** ([`tests/test_extension.py`](tests/test_extension.py)) — 24 tests covering: pairing-code lifecycle (mint, consume, expiry, already-consumed, not-found, mint-invalidates-prior), `rg_ext_*` token auth, queue ordering + filtering by user, upload (validates magic / ownership / already-present 409 / cross-user 404), skip (idempotent), search-import `mode='extension'` (412 unpaired / queues when paired), library `queue-for-extension` endpoint, resolve-pdf-url (auth gate + delegation to picker).
 
 ## Search Strategist — 5-tier PDF Import Pipeline
 

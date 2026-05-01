@@ -6,7 +6,7 @@
 
 ---
 
-## Current State (April 27, 2026)
+## Current State (April 30, 2026)
 
 ### Codebase Summary
 
@@ -532,6 +532,65 @@ This rewrite replaces the entire flow with a four-tier pipeline that the user pi
 - For papers that miss every tier, the metadata-only row + `external_url` lets the user click through and download manually as a fallback.
 
 **Total**: 201 tests pass (was 181). 9 commits across this work, ~3,000 LOC delta, four new files (`backend/pdf_fetcher.py`, `backend/browser_agent.py`, `apt.txt`, two test modules).
+
+### GRADE Indirectness — Single-Study PICO Assessment (April 28–30, 2026)
+
+The Quality Appraisal pipeline only downgraded GRADE for risk of bias. Indirectness, the second of the five GRADE downgrade domains, was listed as out-of-scope on the assumption it required a body of evidence. But the GRADE handbook indirectness chapter (Schünemann et al., book.gradepro.org/guideline/indirectness) explicitly endorses **per-trial** indirectness tables (Figure 1) — single-study assessment is methodologically sound when the reviewer specifies a target PICO, and outcome-surrogacy can be assessed cold. This sprint added the second domain end-to-end: backend module + schema migration + GRADE combiner + frontend Target PICO inputs + indirectness detail card + new results-grid column + developer-view section.
+
+**New module** `backend/indirectness.py`:
+- 4 PICO subdomains (population / intervention / comparator / outcome). 4-level judgement scale (`direct` / `probably_direct` / `probably_not_direct` / `not_direct`) — mirrors the green/yellow/orange/red colour scheme from the GRADE handbook's Figure 2.
+- Pure-Python severity decision tree (`_judgement_severity`): `none` / `serious` (−1) / `very_serious` (−2) / `extremely_serious` (−3). Rule: 0 reds + ≤1 orange = none; 1 red OR ≥2 oranges = serious; 2 reds = very serious; ≥3 reds = extremely serious. Caps at 3 levels per GRADE convention.
+- `_normalize_judgement` coerces LLM output to one of the 4 allowed values (handles aliases like `sufficiently_direct`, `Yes`, `not-direct`); defaults to `probably_direct` on garbage so noise doesn't invent a downgrade.
+- Two prompt templates (with target PICO + outcome-surrogacy fallback when none supplied). Surrogate-outcome rule baked into the system prompt verbatim from the GRADE handbook: surrogates (HbA1c, LDL, bone density, progression-free survival, etc.) default to `probably_not_direct` or worse.
+- `prompt_catalog()` exposes everything for the developer view.
+
+**Schema migration** (`migrate_qa_columns(conn)` in `backend/quality_appraisal.py`, called from `init_db`, idempotent on both PostgreSQL and SQLite):
+- `quality_appraisal_runs.target_pico_json TEXT` — stores the user-supplied PICO.
+- `quality_appraisal_results.{indirectness_json, indirectness_overall, indirectness_levels, indirectness_explanation}` — per-paper indirectness payload + severity tier + downgrade levels (0/1/2/3) + 1-sentence explanation.
+
+**`compute_grade` refactor**:
+- New signature: `compute_grade(initial, rob_overall, rob_domain_judgements=None, indirectness_levels=0, indirectness_explanation="")`.
+- `_rob_downgrade(rob_overall, rob_domain_judgements)` extracted as a helper returning `(levels, reason)`. RoB and indirectness levels are summed; total is capped at "Very low" (3 below initial). Default `indirectness_levels=0` keeps existing call sites working.
+- Explanation text mentions both contributors when both fire (e.g. "Downgraded 2 levels: 1 level for Some concerns in risk of bias + 1 level for serious indirectness — surrogate primary outcome (HbA1c)").
+- Production verification (Render logs, paper 64): `RoB Some concerns, indirectness extremely_serious, GRADE High→Very low` — the cap kicked in correctly (1 + 3 = 4 levels, capped at 3).
+
+**Pipeline wiring** in `appraise_paper`:
+- New step 6 (between reporting-guideline and GRADE): `indirectness.run(pdf_bytes, fields, classification, primary_outcome, target_pico=...)`. Loads the run-level `target_pico` once at batch start, threads through every per-paper call. Errors degrade gracefully (the result row gets an `indirectness.error`, GRADE still computes with `indirectness_levels=0`).
+- Credit cost bumped 30 → 33 per paper (one extra LLM call). Refunds preserved.
+
+**Backend persistence + export**:
+- `_write_result` writes the 4 new columns. `flatten_result_row` adds 8 indirectness fields to the CSV/XLSX export (severity, downgrade levels, explanation, per-subdomain judgements P/I/C/O, surrogate flag).
+- `prompt_catalog` includes the indirectness sub-catalog and updates the GRADE description.
+
+**API**:
+- `POST /api/quality-appraisal/runs` body: new optional `target_pico: {population, intervention, comparator, outcome}` field on `QualityAppraisalRunPayload` (Pydantic). Non-empty values are persisted to `target_pico_json` on the run row.
+- `GET /api/quality-appraisal/runs/{id}` SELECT extended with the 4 indirectness columns; JSON parser includes `indirectness_json` in the parse loop. `_load_qa_run` parses `target_pico_json` back into a dict on the response.
+
+**Frontend** (`frontend/quality-appraisal.html`):
+- Run-create modal: new collapsed `<details>` block "Target PICO for indirectness (optional)" with 4 inputs (`run-pico-population` / `run-pico-intervention` / `run-pico-comparator` / `run-pico-outcome`) and example placeholders. `submitRun()` collects them and adds `target_pico` to the payload only when at least one field is non-empty.
+- Detail modal: new `qa-sec-indirectness` section between RoB and CONSORT — severity badge + downgrade levels + 4-cell PICO grid with `.indir-direct` / `.indir-prob-direct` / `.indir-prob-not` / `.indir-not` classes (oklch greens/yellows/oranges/reds matching the GRADE handbook Figure 2). Each cell carries the per-subdomain rationale, click-to-highlight in the PDF (reuses `jumpToQuote`). Surrogate-outcome callout when the LLM flags the primary outcome as a surrogate.
+- Detail-modal subnav: new "Indirectness" button between RoB and CONSORT.
+- Results grid: new "Indirectness" column between Risk of bias and the reporting-guideline column. Cell shows the severity badge (None/Serious/Very serious/Extremely serious) plus a "−N GRADE" subtext when the run downgraded. Clicking opens the detail modal scrolled to `qa-sec-indirectness`.
+- Developer view: new section 6 between reporting guidelines and GRADE rendering the system prompt, judgement options, severity tiers, all 4 subdomains with guidance, both prompt templates (with target PICO + outcome-surrogacy fallback), severity decision tree code, severity explanation code, downgrade table, out-of-scope notes. GRADE section also surfaces the new `_rob_downgrade` helper alongside `compute_grade`.
+
+**Reference markdown** — `docs/quality_appraisal_rob_reference.md` (855 lines): self-contained transcription of every RoB 2 + ROBINS-I signaling question, elaboration, and pure-Python decision tree verbatim from `prompt_catalog()`. Mirrors the developer-view JSON as static markdown so the methodology can be shared without cloning the repo. Covers section structure: header → RoB 2 (overview / system prompt / per-domain prompt template / JSON shape / 5 domains × signals + decision trees / overall algorithm) → ROBINS-I (same structure × 7 domains) → orchestrator wiring appendix.
+
+**Tests** — 42 new cases in `tests/test_indirectness.py`:
+- `TestSeverityTree` — every branch of the count-based decision tree (0 reds + ≤1 orange / 2 oranges / 1 red / 2 reds / 3+ reds / 4 reds capped at extremely_serious).
+- `TestSeverityExplanation` — none/serious/very_serious explanation strings name the right drivers.
+- `TestNormalizeJudgement` — alias coverage (`sufficiently_direct`, `Yes`, `not-direct`, etc.) + unknown-defaults-to-probably_direct.
+- `TestPromptBuilder` — no target PICO falls back to as-conducted, target PICO renders verbatim, blank target treated as none, partial target marks unspecified, all 4 subdomains listed.
+- `TestPromptCatalog` — catalog shape including both prompt templates + decision-tree source.
+- `TestGradeWithIndirectness` — 8 cases combining RoB and indirectness levels (Low+none, Low+serious, Some-concerns+serious, very_serious alone, extremely_serious capping at Very low, Critical ROBINS-I + serious indirectness, default `indirectness_levels=0` preserves back-compat).
+- `TestFlattenWithIndirectness` — flatten passthrough includes 8 indirectness columns; missing-indirectness rows don't crash.
+- 2 module-level smoke tests: `test_indirectness_in_qa_prompt_catalog` (catalog shape) + `test_credit_cost_bumped_for_indirectness` (the 30→33 bump).
+
+**Total**: 271 tests pass (was 201). 3 commits across this work (`9c1295c` core feature, `85f1b85` reference markdown, `5fe1af5` dev-view + results-column), 5 files touched, 1 new module + 1 new test module + 1 new doc, ~2,400 LOC delta.
+
+**Out of scope**:
+- Indirect comparisons / network meta-analysis — body-of-evidence only, not applicable to a single trial.
+- Baseline-risk indirectness — needs external longitudinal data to model alternative baselines.
+- ICEMAN credibility check for subgroup effects.
 
 ### Annotator Custom Extraction & Analytics (April 16, 2026)
 
