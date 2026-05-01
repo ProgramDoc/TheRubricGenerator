@@ -650,11 +650,12 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
     </div>
     <div id="qa-detail-pane">
       <nav id="qa-detail-subnav">
-        <button data-section="summary"  onclick="scrollDetailTo('summary')">Summary</button>
-        <button data-section="rob"      onclick="scrollDetailTo('rob')">RoB 2</button>
-        <button data-section="consort"  onclick="scrollDetailTo('consort')">CONSORT</button>
-        <button data-section="grade"    onclick="scrollDetailTo('grade')">GRADE</button>
-        <button data-section="fields"   onclick="scrollDetailTo('fields')">Extracted fields</button>
+        <button data-section="summary"       onclick="scrollDetailTo('summary')">Summary</button>
+        <button data-section="rob"           onclick="scrollDetailTo('rob')">RoB 2</button>
+        <button data-section="indirectness"  onclick="scrollDetailTo('indirectness')">Indirectness</button>
+        <button data-section="consort"       onclick="scrollDetailTo('consort')">CONSORT</button>
+        <button data-section="grade"         onclick="scrollDetailTo('grade')">GRADE</button>
+        <button data-section="fields"        onclick="scrollDetailTo('fields')">Extracted fields</button>
       </nav>
       <div id="qa-detail-content">Loading…</div>
     </div>
@@ -1119,6 +1120,7 @@ function renderResults() {
     '<th class="col-study">Study</th>',
     '<th>Classification</th>',
     '<th>Risk of bias</th>',
+    '<th title="GRADE indirectness — per-trial PICO assessment. Click for full breakdown.">Indirectness</th>',
     `<th>${guidelineHeader}</th>`,
     '<th>Initial GRADE</th>',
     '<th>Updated GRADE</th>',
@@ -1153,6 +1155,28 @@ function renderResults() {
       .map(k => fields[k] ? `<span class="chip mod">${escHtml(fields[k])}</span>` : '').join('');
 
     const robCls = robBadgeCls(r.rob_overall);
+
+    // Indirectness cell — severity badge + downgrade levels. Click opens the
+    // detail modal scrolled to the indirectness section.
+    const _indirSevBadge = {
+      none: 'rob-low', serious: 'rob-some',
+      very_serious: 'rob-high', extremely_serious: 'rob-high',
+    };
+    const _indirSevLabel = {
+      none: 'None', serious: 'Serious',
+      very_serious: 'Very serious', extremely_serious: 'Extremely serious',
+    };
+    const indirSev = r.indirectness_overall || '';
+    const indirLvls = Number(r.indirectness_levels || 0);
+    const indirCls = _indirSevBadge[indirSev] || 'rob-na';
+    const indirLabel = _indirSevLabel[indirSev] || '—';
+    const indirCell = `<td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'indirectness')" title="Click for full PICO breakdown">
+      <span class="rob-badge ${indirCls}">${escHtml(indirLabel)}</span>
+      ${indirLvls > 0
+        ? `<div style="font-size:10px;margin-top:3px;color:var(--muted);">−${indirLvls} GRADE</div>`
+        : ''}
+    </td>`;
+
     const consort = (r.guideline_adhered != null && r.guideline_applicable != null)
       ? `${r.guideline_adhered} / ${r.guideline_applicable}` +
         (r.guideline_proportion != null
@@ -1191,6 +1215,7 @@ function renderResults() {
           ${r.rob_direction && r.rob_direction !== 'NA'
             ? `<div style="font-size:10px;margin-top:3px;color:var(--muted);">dir: ${escHtml(r.rob_direction)}</div>`
             : ''}</td>
+      ${indirCell}
       <td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'consort')">${consort}</td>
       <td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'grade')"><span class="${gradeCls(r.initial_grade)}">${escHtml(r.initial_grade || '—')}</span></td>
       <td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'grade')"><span class="${gradeCls(r.updated_grade)}">${escHtml(r.updated_grade || '—')}</span></td>
@@ -1799,6 +1824,38 @@ function _renderDevGuideline(g, sectionNum) {
   </div>`;
 }
 
+function _renderDevIndirectness(indir, sectionNum) {
+  if (!indir) return '';
+  const subdomains = (indir.subdomains || []).map(s => `<div style="padding:8px 0;border-bottom:1px dashed var(--rule-2);">
+    <div style="font-weight:600;">${escHtml(s.label)}
+      <span style="font-family:var(--mono);font-size:10.5px;color:var(--muted);font-weight:400;margin-left:6px;">${escHtml(s.id)}</span>
+    </div>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:3px;line-height:1.45;">${escHtml(s.guidance)}</div>
+  </div>`).join('');
+  const downgradeRows = Object.entries(indir.downgrade_table || {}).map(([sev, desc]) =>
+    `<div class="item-row"><span class="id">${escHtml(sev)}</span><div>${escHtml(desc)}</div></div>`
+  ).join('');
+  const outOfScope = (indir.out_of_scope || []).map(o =>
+    '<li>' + escHtml(o) + '</li>'
+  ).join('');
+  return `<div class="dev-section"><h3>${escHtml(sectionNum)}. ${escHtml(indir.tool)}</h3>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:6px;">
+      Per-trial PICO assessment following the GRADE handbook
+      (book.gradepro.org/guideline/indirectness).
+    </div>
+    <details><summary>System prompt</summary><pre>${escHtml(indir.system_prompt)}</pre></details>
+    <details><summary>Judgement options</summary><div style="font-size:11.5px;">${(indir.judgement_options || []).map(j => '<span class="chip">' + escHtml(j) + '</span>').join(' ')}</div></details>
+    <details><summary>Severity tiers (GRADE downgrade levels)</summary><div style="font-size:11.5px;">${(indir.severity_levels || []).map(j => '<span class="chip">' + escHtml(j) + '</span>').join(' ')}</div></details>
+    <details open><summary>PICO subdomains (4)</summary>${subdomains}</details>
+    <details><summary>Prompt template — with target PICO</summary><pre>${escHtml(indir.prompt_template_with_target_pico || '')}</pre></details>
+    <details><summary>Prompt template — outcome-surrogacy fallback (no target PICO)</summary><pre>${escHtml(indir.prompt_template_no_target_pico || '')}</pre></details>
+    <details><summary>Severity decision tree (code)</summary><pre>${escHtml(indir.severity_decision_tree_code || '')}</pre></details>
+    <details><summary>Severity explanation (code)</summary><pre>${escHtml(indir.severity_explanation_code || '')}</pre></details>
+    <details><summary>Downgrade table</summary>${downgradeRows}</details>
+    <details><summary>Out of scope (deferred)</summary><ul style="font-size:11.5px;margin:4px 0 4px 18px;padding:0;">${outOfScope}</ul></details>
+  </div>`;
+}
+
 function renderDevCatalog(cat) {
   const grade = cat.grade || {};
   const overview = cat.overview || {};
@@ -1818,11 +1875,15 @@ function renderDevCatalog(cat) {
   Object.values(cat.reporting_guidelines || {}).forEach(g => {
     out += _renderDevGuideline(g, sectionNum++);
   });
+  if (cat.indirectness) {
+    out += _renderDevIndirectness(cat.indirectness, sectionNum++);
+  }
 
   out += `<div class="dev-section"><h3>${sectionNum}. GRADE logic</h3>
     <p style="font-size:12px;">${escHtml(grade.description || '')}</p>
     <div style="font-size:11.5px;">Levels: ${(grade.levels || []).map(l => '<span class="chip">' + escHtml(l) + '</span>').join(' ')}</div>
-    <details open><summary>Code</summary><pre>${escHtml(grade.logic_code || '')}</pre></details>
+    <details open><summary>compute_grade (code)</summary><pre>${escHtml(grade.logic_code || '')}</pre></details>
+    ${grade.rob_downgrade_code ? `<details><summary>_rob_downgrade helper (code)</summary><pre>${escHtml(grade.rob_downgrade_code)}</pre></details>` : ''}
   </div>`;
 
   return out;
