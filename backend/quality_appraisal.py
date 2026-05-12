@@ -36,8 +36,8 @@ from . import paper_files
 from . import indirectness as indir_mod
 from . import imprecision as imprec_mod
 from .helpers import call_anthropic, parse_json_response
-from .rob_tools import rob2, robins_i
-from .reporting_guidelines import consort2025, strobe
+from .rob_tools import rob2, robins_i, quadas3
+from .reporting_guidelines import consort2025, strobe, stard
 
 logger = logging.getLogger("rubricgen")
 
@@ -58,6 +58,8 @@ CREATE TABLE IF NOT EXISTS quality_appraisal_runs (
     error_message               TEXT,
     target_pico_json            TEXT,
     imprecision_thresholds_json TEXT,
+    quadas3_review_context      TEXT,
+    paper_estimates_json        TEXT NOT NULL DEFAULT '{}',
     created_at                  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     completed_at                TIMESTAMP,
     deleted_at                  TIMESTAMP
@@ -79,6 +81,9 @@ CREATE TABLE IF NOT EXISTS quality_appraisal_results (
     rob_domains_json         TEXT    NOT NULL DEFAULT '{}',
     rob_overall              TEXT,
     rob_direction            TEXT,
+    applicability_overall    TEXT,
+    estimate_id              INTEGER,
+    estimate_json            TEXT    NOT NULL DEFAULT '{}',
     guideline_json           TEXT    NOT NULL DEFAULT '{}',
     guideline_proportion     REAL,
     guideline_adhered        INTEGER,
@@ -118,7 +123,7 @@ CREATE INDEX IF NOT EXISTS idx_qa_events_run ON quality_appraisal_events(run_id,
 # Keys MUST match annotator.TYPE_FIELD_IDS keys so classification results
 # drop straight in. Unsupported types return None from dispatch() → result
 # gets status='skipped' and the per-paper charge is refunded.
-STUDY_TYPE_REGISTRY: dict[str, dict[str, str]] = {
+STUDY_TYPE_REGISTRY: dict[str, dict[str, Any]] = {
     "Randomized Controlled Trial":  {"rob_tool": "rob2",     "reporting_guideline": "consort2025", "initial_grade": "High"},
     "Cohort Study":                 {"rob_tool": "robins_i", "reporting_guideline": "strobe",      "initial_grade": "Low"},
     "Case-Control":                 {"rob_tool": "robins_i", "reporting_guideline": "strobe",      "initial_grade": "Low"},
@@ -134,20 +139,44 @@ STUDY_TYPE_REGISTRY: dict[str, dict[str, str]] = {
     # variant; MTD/DLT/RP2D-specific bias considerations are not modeled.
     "Single-Arm Trial":             {"rob_tool": "robins_i", "reporting_guideline": "strobe",      "initial_grade": "Very low"},
     "Dose-Escalation Study":        {"rob_tool": "robins_i", "reporting_guideline": "strobe",      "initial_grade": "Very low"},
+    "Diagnostic Accuracy":          {
+        "rob_tool":             "quadas3",
+        "reporting_guideline":  "stard",
+        "initial_grade":        "High",   # GRADE handbook: cross-sectional
+                                          # accuracy designs start at High;
+                                          # case-control accuracy designs are
+                                          # downgraded for participant-selection
+                                          # bias inside QUADAS-3 D1 instead.
+        "skip_grade_extras":    True,     # Skip indirectness + imprecision —
+                                          # those modules assume PICO/treatment
+                                          # trials, not PIRT diagnostic accuracy.
+        "supports_estimates":   True,     # Multiple sens/spec estimates per
+                                          # paper. Each estimate produces a
+                                          # separate quality_appraisal_results
+                                          # row (same paper_id, distinct
+                                          # estimate_id).
+    },
     # Future (not wired yet — classification skips + refunds):
     # "Cluster Randomized Trial":    {"rob_tool": "rob2_cluster",    "reporting_guideline": "consort_cluster",    "initial_grade": "High"},
     # "Crossover Trial":             {"rob_tool": "rob2_crossover",  "reporting_guideline": "consort_crossover",  "initial_grade": "High"},
     # "SR with Meta-Analysis":       {"rob_tool": "amstar2",         "reporting_guideline": "prisma2020",         "initial_grade": "High"},
-    # "Diagnostic Accuracy":         {"rob_tool": "quadas2",         "reporting_guideline": "stard",              "initial_grade": "Low"},
 }
 
 _TOOL_RUNNERS: dict[str, Callable] = {
     "rob2":     rob2.run,
     "robins_i": robins_i.run,
+    "quadas3":  quadas3.run,
 }
 _GUIDELINE_RUNNERS: dict[str, Callable] = {
     "consort2025": consort2025.run,
     "strobe":      strobe.run,
+    "stard":       stard.run,
+}
+# Tools that support Phase-4 estimate extraction. Used by the run-create modal
+# to pre-populate per-paper estimate selectors. Each value MUST be a callable
+# of signature ``(pdf_bytes, extracted_fields) -> list[dict]``.
+_ESTIMATE_EXTRACTORS: dict[str, Callable] = {
+    "quadas3": quadas3.extract_estimates,
 }
 
 
@@ -163,6 +192,9 @@ def dispatch(study_type: str) -> dict[str, str] | None:
 # RCTs, or 1 preflight + 6 ROBINS-I V2 domains for non-randomized — same
 # total LLM call count) + reporting guideline (~4) + indirectness (~3) +
 # imprecision (~3) ≈ 36. Matches the estimate surfaced in the UI before a run.
+# QUADAS-3 paths use the same 36-credit budget but charge per-estimate
+# (cfg.supports_estimates=True) and skip indirectness + imprecision
+# (cfg.skip_grade_extras=True).
 CREDIT_COST_QA_PER_PAPER = 36
 
 
@@ -199,6 +231,17 @@ def migrate_qa_columns(conn) -> None:
             conn.execute("ALTER TABLE quality_appraisal_results ADD COLUMN imprecision_levels INTEGER NOT NULL DEFAULT 0")
         if not column_exists(conn, "quality_appraisal_results", "imprecision_explanation"):
             conn.execute("ALTER TABLE quality_appraisal_results ADD COLUMN imprecision_explanation TEXT")
+        # QUADAS-3 v1.2 — applicability + per-estimate columns
+        if not column_exists(conn, "quality_appraisal_runs", "quadas3_review_context"):
+            conn.execute("ALTER TABLE quality_appraisal_runs ADD COLUMN quadas3_review_context TEXT")
+        if not column_exists(conn, "quality_appraisal_runs", "paper_estimates_json"):
+            conn.execute("ALTER TABLE quality_appraisal_runs ADD COLUMN paper_estimates_json TEXT NOT NULL DEFAULT '{}'")
+        if not column_exists(conn, "quality_appraisal_results", "applicability_overall"):
+            conn.execute("ALTER TABLE quality_appraisal_results ADD COLUMN applicability_overall TEXT")
+        if not column_exists(conn, "quality_appraisal_results", "estimate_id"):
+            conn.execute("ALTER TABLE quality_appraisal_results ADD COLUMN estimate_id INTEGER")
+        if not column_exists(conn, "quality_appraisal_results", "estimate_json"):
+            conn.execute("ALTER TABLE quality_appraisal_results ADD COLUMN estimate_json TEXT NOT NULL DEFAULT '{}'")
         conn.commit()
 
 
@@ -229,11 +272,12 @@ def _rob_downgrade(rob_overall: str,
       ROBINS-I V2    Low / Moderate / Serious / Critical (4 levels — V2 dropped
                      the V1 "No information" overall judgement, though stored
                      V1 runs still resolve via the legacy branch below).
+      QUADAS-3       Low / High / Insufficient information (3 levels).
 
-    Domain 1's "Low (except for concerns about uncontrolled confounding)"
-    label is normalized to plain "Low" by the ROBINS-I V2 overall aggregator
-    before it reaches this function, so the count of Serious domains below
-    is unaffected.
+    Domain 1's "Low (except for concerns about uncontrolled confounding)" and
+    "Low (except for concerns about uncontrolled benchmarking)" labels are
+    normalized to plain "Low" by the ROBINS-I V2 overall aggregator before
+    they reach this function.
     """
     judgements = rob_domain_judgements or []
     if rob_overall == "Low":
@@ -262,6 +306,11 @@ def _rob_downgrade(rob_overall: str,
     # Legacy V1 stored results — V2 no longer produces "No information" overall
     if rob_overall == "No information":
         return 1, "No information in one or more ROBINS-I domains (conservative; legacy V1 result)"
+
+    # QUADAS-3 branches (Low / High / Insufficient information). "Low" is
+    # already handled at the top; "High" matches the RoB 2 branch above.
+    if rob_overall == "Insufficient information":
+        return 1, "Insufficient information in one or more QUADAS-3 domains (conservative)"
 
     return 1, f"risk of bias ({rob_overall})"
 
@@ -389,14 +438,171 @@ def _row_to_dict(row) -> dict[str, Any]:
         return dict(row)
 
 
+def _appraise_paper_with_estimates(conn, run_id: int, paper_id: int,
+                                    filename: str, pdf_bytes: bytes,
+                                    fields: dict[str, str],
+                                    classification: dict[str, str],
+                                    primary_outcome: str,
+                                    cfg: dict[str, Any],
+                                    *,
+                                    paper_estimates: list[dict[str, Any]],
+                                    review_context: str | None,
+                                    notify: Callable[[str, str], None],
+                                    ) -> dict[str, Any]:
+    """QUADAS-3 / per-estimate path. Runs the registered reporting guideline
+    once per paper, then loops over estimates running the per-estimate RoB +
+    applicability + GRADE pass and writing one ``quality_appraisal_results``
+    row per (paper, estimate). Indirectness + imprecision are skipped per
+    ``cfg.skip_grade_extras``.
+
+    If ``paper_estimates`` is empty, falls back to a single-estimate
+    assessment against the paper's primary / headline accuracy estimate.
+
+    Returns a summary dict with aggregate fields across all estimates plus
+    ``estimates_done`` / ``estimates_errored`` counts; the caller can refund
+    per-estimate unit credits based on ``estimates_errored``.
+    """
+    study_type = classification.get("study_type", "Diagnostic Accuracy")
+    rob_runner = _TOOL_RUNNERS.get(cfg["rob_tool"])
+    if rob_runner is None:
+        msg = f"RoB tool '{cfg['rob_tool']}' is registered but not yet implemented."
+        _write_result(conn, run_id, paper_id, status="skipped",
+                       error=msg, filename=filename,
+                       study_type=study_type, classification=classification,
+                       extracted_fields=fields)
+        notify("warn", msg)
+        return {"status": "skipped", "error": msg, "estimates_done": 0,
+                "estimates_errored": 1}
+
+    # Reporting guideline (once per paper)
+    guide_runner = _GUIDELINE_RUNNERS.get(cfg["reporting_guideline"])
+    if guide_runner is None:
+        guideline = {"items": {}, "adhered": 0, "applicable": 0,
+                      "total": 0, "proportion": 0.0,
+                      "note": f"Guideline '{cfg['reporting_guideline']}' not implemented."}
+    else:
+        notify("info", f"Checking reporting guideline ({cfg['reporting_guideline']})")
+        try:
+            guideline = guide_runner(pdf_bytes, fields, classification)
+        except HTTPException as he:
+            msg = f"Reporting-guideline check failed: {he.detail}"
+            logger.warning("Guideline check failed (run=%s paper=%s): %s",
+                           run_id, paper_id, msg)
+            guideline = {"items": {}, "adhered": 0, "applicable": 0,
+                          "total": 0, "proportion": 0.0, "note": msg}
+            notify("warn", msg)
+        except Exception:
+            logger.exception("Guideline run failed (run=%s paper=%s)", run_id, paper_id)
+            guideline = {"items": {}, "adhered": 0, "applicable": 0,
+                          "total": 0, "proportion": 0.0,
+                          "note": "Reporting-guideline check failed — see server logs."}
+
+    # Estimate list — fallback to single primary-estimate iteration if none supplied
+    estimates_to_run: list[dict[str, Any] | None] = list(paper_estimates) if paper_estimates else [None]
+
+    estimates_done = 0
+    estimates_errored = 0
+    last_summary: dict[str, Any] = {}
+
+    for est in estimates_to_run:
+        est_label = (est or {}).get("description", "primary estimate")
+        notify("info", f"Running QUADAS-3 ({cfg['rob_tool']}) for: {est_label[:80]}")
+        try:
+            rob_domains, rob_overall, rob_direction, app_overall = rob_runner(
+                pdf_bytes, fields, classification, primary_outcome,
+                progress=lambda domain_id, _e=est_label: notify(
+                    "progress", f"QUADAS-3 domain {domain_id} ({_e[:50]})"),
+                estimate=est, review_context=review_context,
+            )
+        except HTTPException as he:
+            msg = f"QUADAS-3 assessment failed for '{est_label}': {he.detail}"
+            _write_result(conn, run_id, paper_id, status="error",
+                           error=msg, filename=filename,
+                           study_type=study_type, classification=classification,
+                           extracted_fields=fields,
+                           estimate_id=(est or {}).get("id"),
+                           estimate=est)
+            notify("error", msg)
+            estimates_errored += 1
+            continue
+        except Exception:
+            logger.exception("QUADAS-3 run failed (run=%s paper=%s)", run_id, paper_id)
+            msg = f"QUADAS-3 assessment failed for '{est_label}' — see server logs."
+            _write_result(conn, run_id, paper_id, status="error",
+                           error=msg, filename=filename,
+                           study_type=study_type, classification=classification,
+                           extracted_fields=fields,
+                           estimate_id=(est or {}).get("id"),
+                           estimate=est)
+            notify("error", msg)
+            estimates_errored += 1
+            continue
+
+        # GRADE for this estimate (skip indirectness + imprecision per cfg)
+        # ROBINS-I V2 stores preflight metadata under rob_domains["preflight"];
+        # filter to dicts that actually carry a domain judgement.
+        rob_domain_judgements = [
+            d.get("judgement", "Low")
+            for k, d in rob_domains.items()
+            if k != "preflight" and isinstance(d, dict) and "judgement" in d
+        ]
+        initial_grade = cfg["initial_grade"]
+        updated_grade, grade_expl = compute_grade(
+            initial_grade, rob_overall, rob_domain_judgements,
+            indirectness_levels=0, indirectness_explanation="",
+            imprecision_levels=0, imprecision_explanation="")
+
+        _write_result(conn, run_id, paper_id, status="ok", filename=filename,
+                       study_type=study_type,
+                       rob_tool=cfg["rob_tool"],
+                       reporting_guideline=cfg["reporting_guideline"],
+                       primary_outcome=primary_outcome,
+                       classification=classification,
+                       extracted_fields=fields,
+                       rob_domains=rob_domains,
+                       rob_overall=rob_overall,
+                       rob_direction=rob_direction,
+                       applicability_overall=app_overall,
+                       estimate_id=(est or {}).get("id"),
+                       estimate=est,
+                       guideline=guideline,
+                       initial_grade=initial_grade,
+                       updated_grade=updated_grade,
+                       grade_explanation=grade_expl)
+        notify("info",
+                f"Done: {filename} — {est_label[:50]} — RoB {rob_overall}, "
+                f"applicability {app_overall}, GRADE {initial_grade}→{updated_grade}")
+        estimates_done += 1
+        last_summary = {
+            "rob_overall": rob_overall,
+            "applicability_overall": app_overall,
+            "initial_grade": initial_grade,
+            "updated_grade": updated_grade,
+        }
+
+    overall_status = "ok" if estimates_done > 0 else "error"
+    return {
+        "status": overall_status,
+        "filename": filename,
+        "study_type": study_type,
+        "estimates_done": estimates_done,
+        "estimates_errored": estimates_errored,
+        "guideline_proportion": guideline.get("proportion"),
+        **last_summary,
+    }
+
+
 def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
                    run_id: int, paper_id: int,
                    on_progress: Callable[[str, str], None] | None = None,
                    target_pico: dict[str, str] | None = None,
                    imprecision_thresholds: dict[str, str] | None = None,
+                   paper_estimates: list[dict[str, Any]] | None = None,
+                   quadas3_review_context: str | None = None,
                    ) -> dict[str, Any]:
     """Appraise a single paper end-to-end. Writes one row to
-    ``quality_appraisal_results``.
+    ``quality_appraisal_results`` per estimate (QUADAS-3 supports multiple
+    estimates per paper; everything else writes exactly one row).
 
     Returns a summary dict for tests / callers. Raises nothing for
     paper-level failures — the failure is recorded on the row; the caller
@@ -409,6 +615,15 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
     ``imprecision_thresholds`` is the user-supplied 2-threshold MID set for
     imprecision assessment; ``None`` falls back to line-of-no-effect +
     LLM-judged clinical importance.
+
+    ``paper_estimates`` is the user-selected list of QUADAS-3 Phase-4
+    estimate descriptors for this paper. Only consulted when the dispatched
+    tool is ``quadas3``. Empty / None falls back to a single-estimate
+    assessment against the paper's primary / headline accuracy estimate.
+
+    ``quadas3_review_context`` is the user-supplied review-level context
+    (Phases 1+2 — synthesis question + ideal test accuracy trial) for
+    diagnostic-accuracy applicability assessment. Threaded into prompts.
     """
     def _notify(level: str, msg: str) -> None:
         if on_progress:
@@ -492,6 +707,19 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
 
     primary_outcome = pick_primary_outcome(fields)
     _notify("info", f"Primary outcome: {primary_outcome[:80]}")
+
+    # 3.5 QUADAS-3 / per-estimate path. Diagnostic-accuracy papers can have
+    # multiple Phase-4 estimates and produce one result row per estimate.
+    # Indirectness + imprecision are skipped per cfg.skip_grade_extras (the
+    # existing modules assume PICO/treatment trials, not PIRT diagnostic
+    # accuracy).
+    if cfg.get("supports_estimates"):
+        return _appraise_paper_with_estimates(
+            conn, run_id, paper_id, filename, pdf_bytes, fields,
+            classification, primary_outcome, cfg,
+            paper_estimates=paper_estimates or [],
+            review_context=quadas3_review_context,
+            notify=_notify)
 
     # 4. Risk of bias
     rob_runner = _TOOL_RUNNERS.get(cfg["rob_tool"])
@@ -664,6 +892,9 @@ def _write_result(conn, run_id: int, paper_id: int, *,
                   rob_domains: dict | None = None,
                   rob_overall: str | None = None,
                   rob_direction: str | None = None,
+                  applicability_overall: str | None = None,
+                  estimate_id: int | None = None,
+                  estimate: dict | None = None,
                   guideline: dict | None = None,
                   indirectness: dict | None = None,
                   indirectness_overall: str | None = None,
@@ -692,6 +923,7 @@ def _write_result(conn, run_id: int, paper_id: int, *,
                      study_type, rob_tool, reporting_guideline, primary_outcome,
                      classification_json, extracted_fields_json,
                      rob_domains_json, rob_overall, rob_direction,
+                     applicability_overall, estimate_id, estimate_json,
                      guideline_json, guideline_proportion,
                      guideline_adhered, guideline_applicable,
                      indirectness_json, indirectness_overall,
@@ -699,13 +931,16 @@ def _write_result(conn, run_id: int, paper_id: int, *,
                      imprecision_json, imprecision_overall,
                      imprecision_levels, imprecision_explanation,
                      initial_grade, updated_grade, grade_explanation)
-               VALUES (?, ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?,  ?, ?, ?,  ?, ?,  ?, ?,  ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?,  ?, ?, ?,  ?, ?, ?,  ?, ?,  ?, ?,  ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?)""",
             (run_id, paper_id, status, error, filename,
              study_type, rob_tool, reporting_guideline, primary_outcome,
              json.dumps(classification or {}),
              json.dumps(extracted_fields or {}),
              json.dumps(rob_domains or {}),
              rob_overall, rob_direction,
+             applicability_overall,
+             estimate_id,
+             json.dumps(estimate or {}),
              json.dumps(guideline or {}), proportion,
              guideline.get("adhered"), guideline.get("applicable"),
              json.dumps(indirectness or {}),
@@ -735,10 +970,11 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
     per_paper_cost = CREDIT_COST_QA_PER_PAPER
     total_refunded = 0
 
-    # Mark run running and load the run-level target PICO + imprecision
-    # thresholds once.
+    # Mark run running and load the run-level params once.
     target_pico: dict[str, str] | None = None
     imprecision_thresholds: dict[str, str] | None = None
+    quadas3_review_context: str | None = None
+    paper_estimates_map: dict[str, list[dict[str, Any]]] = {}
     setup_conn = get_db_fn()
     try:
         with setup_conn:
@@ -749,7 +985,8 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
             setup_conn.commit()
         try:
             row = setup_conn.execute(
-                "SELECT target_pico_json, imprecision_thresholds_json "
+                "SELECT target_pico_json, imprecision_thresholds_json, "
+                "       quadas3_review_context, paper_estimates_json "
                 "FROM quality_appraisal_runs WHERE id=?",
                 (run_id,),
             ).fetchone()
@@ -761,6 +998,21 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
                 it = json.loads(row["imprecision_thresholds_json"])
                 if isinstance(it, dict) and any(it.get(k) for k in ("mid_benefit", "mid_harm")):
                     imprecision_thresholds = it
+            if row and row["quadas3_review_context"]:
+                rc = (row["quadas3_review_context"] or "").strip()
+                if rc:
+                    quadas3_review_context = rc
+            if row and row["paper_estimates_json"]:
+                try:
+                    pe = json.loads(row["paper_estimates_json"])
+                    if isinstance(pe, dict):
+                        # Normalise to {str(paper_id): [estimate_dict, ...]}
+                        for pid_key, est_list in pe.items():
+                            if isinstance(est_list, list):
+                                paper_estimates_map[str(pid_key)] = [
+                                    e for e in est_list if isinstance(e, dict)]
+                except Exception as e:
+                    logger.warning("Failed to parse paper_estimates_json for run %s: %s", run_id, e)
         except Exception as e:
             logger.warning("Failed to load run params for run %s: %s", run_id, e)
         log_event(setup_conn, run_id, "info",
@@ -771,12 +1023,20 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
         if imprecision_thresholds:
             log_event(setup_conn, run_id, "info",
                        "Imprecision will be assessed against the supplied MID thresholds.")
+        if quadas3_review_context:
+            log_event(setup_conn, run_id, "info",
+                       "QUADAS-3 applicability will be judged against the supplied review context.")
+        if paper_estimates_map:
+            total_estimates = sum(len(v) for v in paper_estimates_map.values())
+            log_event(setup_conn, run_id, "info",
+                       f"QUADAS-3 will run against {total_estimates} estimate(s) across {len(paper_estimates_map)} paper(s).")
     finally:
         setup_conn.close()
 
     for pid in paper_ids:
         pconn = get_db_fn()
         try:
+            paper_estimates = paper_estimates_map.get(str(pid)) or []
             try:
                 summary = appraise_paper(
                     pconn, papers_dir, user_id, is_admin, run_id, pid,
@@ -784,6 +1044,8 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
                         _c, run_id, level, msg),
                     target_pico=target_pico,
                     imprecision_thresholds=imprecision_thresholds,
+                    paper_estimates=paper_estimates,
+                    quadas3_review_context=quadas3_review_context,
                 )
             except Exception as e:
                 logger.exception("Unhandled error in appraise_paper (run=%s paper=%s)",
@@ -796,18 +1058,37 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
                 except Exception:
                     pass
 
-            # Refund per-paper on error or skipped
-            if summary.get("status") in ("error", "skipped") and not is_admin:
-                try:
-                    bill_mod.refund_credits(
-                        pconn, user_id, per_paper_cost,
-                        f"Refund: Quality Appraisal run {run_id} paper {pid}",
-                    )
-                    total_refunded += per_paper_cost
-                    log_event(pconn, run_id, "info",
-                               f"Refunded {per_paper_cost} credits for paper {pid} ({summary.get('status')}).")
-                except Exception as e:
-                    logger.warning("Refund failed (run=%s paper=%s): %s", run_id, pid, e)
+            # Refund: 1 unit-cost per failed/skipped (paper, estimate) tuple.
+            # Non-QUADAS papers have at most 1 unit; QUADAS-3 papers have one
+            # unit per estimate. The per_paper_cost is the unit cost.
+            if not is_admin:
+                if "estimates_errored" in summary:
+                    # QUADAS-3 path — refund per failed estimate
+                    failed = int(summary.get("estimates_errored") or 0)
+                    if failed > 0:
+                        try:
+                            refund_amt = per_paper_cost * failed
+                            bill_mod.refund_credits(
+                                pconn, user_id, refund_amt,
+                                f"Refund: QA run {run_id} paper {pid} ({failed} failed estimate(s))",
+                            )
+                            total_refunded += refund_amt
+                            log_event(pconn, run_id, "info",
+                                       f"Refunded {refund_amt} credits for paper {pid} ({failed} failed estimate(s)).")
+                        except Exception as e:
+                            logger.warning("Refund failed (run=%s paper=%s): %s", run_id, pid, e)
+                elif summary.get("status") in ("error", "skipped"):
+                    # Non-QUADAS path — refund the single per-paper cost
+                    try:
+                        bill_mod.refund_credits(
+                            pconn, user_id, per_paper_cost,
+                            f"Refund: Quality Appraisal run {run_id} paper {pid}",
+                        )
+                        total_refunded += per_paper_cost
+                        log_event(pconn, run_id, "info",
+                                   f"Refunded {per_paper_cost} credits for paper {pid} ({summary.get('status')}).")
+                    except Exception as e:
+                        logger.warning("Refund failed (run=%s paper=%s): %s", run_id, pid, e)
         finally:
             pconn.close()
 
@@ -874,10 +1155,12 @@ def prompt_catalog() -> dict[str, Any]:
         "rob_tools": {
             "rob2":     rob2.prompt_catalog(),
             "robins_i": robins_i.prompt_catalog(),
+            "quadas3":  quadas3.prompt_catalog(),
         },
         "reporting_guidelines": {
             "consort2025": consort2025.prompt_catalog(),
             "strobe":      strobe.prompt_catalog(),
+            "stard":       stard.prompt_catalog(),
         },
         "indirectness": indir_mod.prompt_catalog(),
         "imprecision": imprec_mod.prompt_catalog(),
@@ -966,13 +1249,33 @@ def flatten_result_row(result_row: dict[str, Any],
         "updated_grade": result_row.get("updated_grade"),
         "grade_explanation": result_row.get("grade_explanation"),
     }
-    # Per-domain judgements + all signaling-question answers. Dispatch the
-    # DOMAINS list by rob_tool so ROBINS-I rows get 6 domains (V2) not 5.
-    tool = result_row.get("rob_tool")
-    domains_for_tool = robins_i.DOMAINS if tool == "robins_i" else rob2.DOMAINS
+    # QUADAS-3-specific columns. Empty strings for non-QUADAS rows.
+    estimate = result_row.get("estimate") or {}
+    row["estimate_id"] = result_row.get("estimate_id")
+    row["estimate_description"] = estimate.get("description", "")
+    row["estimate_subgroup"] = estimate.get("subgroup", "")
+    row["estimate_index_test"] = estimate.get("index_test", "")
+    row["estimate_threshold"] = estimate.get("threshold", "")
+    row["estimate_reference_standard"] = estimate.get("reference_standard", "")
+    row["estimate_unit_of_analysis"] = estimate.get("unit_of_analysis", "")
+    row["estimate_sensitivity"] = estimate.get("sensitivity", "")
+    row["estimate_specificity"] = estimate.get("specificity", "")
+    row["estimate_n"] = estimate.get("n", "")
+    row["applicability_overall"] = result_row.get("applicability_overall") or ""
 
-    # ROBINS-I V2 preflight columns (B1/B2/B3/C4 + variant + screening decision).
-    # Empty for RoB 2 rows.
+    # Per-domain judgements + all signaling-question answers. Dispatch the
+    # DOMAINS list by rob_tool so ROBINS-I V2 rows get 6 domains, QUADAS-3
+    # rows get 4, and the rest fall back to RoB 2's 5.
+    tool = result_row.get("rob_tool")
+    if tool == "robins_i":
+        domains_for_tool = robins_i.DOMAINS
+    elif tool == "quadas3":
+        domains_for_tool = quadas3.DOMAINS
+    else:
+        domains_for_tool = rob2.DOMAINS
+
+    # ROBINS-I V2 preflight columns (B1/B2/B3/C4 + variant + screening
+    # decision). Empty for RoB 2 / QUADAS-3 rows.
     if tool == "robins_i":
         preflight = rob_domains.get("preflight") or {}
         row["robins_b1"] = preflight.get("B1", "")
@@ -986,6 +1289,9 @@ def flatten_result_row(result_row: dict[str, Any],
     for dom in domains_for_tool:
         d = rob_domains.get(str(dom["id"])) or {}
         row[f"rob_d{dom['id']}_judgement"] = d.get("judgement", "")
+        # QUADAS-3 — also dump per-domain applicability (3 of 4 domains have it)
+        if tool == "quadas3" and dom.get("has_applicability"):
+            row[f"rob_d{dom['id']}_applicability"] = d.get("applicability_judgement", "")
         for sig in dom["signals"]:
             row[f"rob_{sig['id']}"] = (d.get("signals") or {}).get(sig["id"], "")
     return row

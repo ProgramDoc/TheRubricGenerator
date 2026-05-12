@@ -910,9 +910,10 @@ class TestDispatch:
         assert cfg["initial_grade"] == "High"
 
     def test_unsupported_returns_none(self):
-        # Types still not wired (registry stubs remain commented)
+        # Types still not wired (registry stubs remain commented).
+        # Diagnostic Accuracy IS wired locally (→ QUADAS-3 + STARD).
         assert qa.dispatch("SR with Meta-Analysis") is None
-        assert qa.dispatch("Diagnostic Accuracy") is None
+        assert qa.dispatch("Cluster Randomized Trial") is None
         assert qa.dispatch("") is None
         assert qa.dispatch("Not A Real Study Type") is None
 

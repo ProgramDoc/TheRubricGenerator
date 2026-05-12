@@ -660,6 +660,21 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
           <input id="run-imprec-mid-harm" type="text" placeholder="e.g. 5% absolute risk increase" style="padding:5px 7px;border-radius:5px;border:1px solid var(--rule-2);background:var(--paper);color:var(--text);font-family:inherit;font-size:12px;" />
         </div>
       </details>
+      <details style="margin:8px 0 4px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;background:var(--paper-2);">
+        <summary style="cursor:pointer;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);">QUADAS-3 / diagnostic accuracy (optional)</summary>
+        <div style="margin-top:8px;font-size:11px;color:var(--muted);line-height:1.45;">
+          For diagnostic test accuracy papers (QUADAS-3 v1.2): supply a free-text description of your review's synthesis question + ideal test accuracy trial (Phases 1+2 of QUADAS-3). Applicability concerns are then judged against this context. You can also pre-extract numerical accuracy estimates from each paper (Phase 4) and pick which ones to appraise — each estimate produces its own RoB + applicability + GRADE row.
+        </div>
+        <div style="margin-top:8px;">
+          <label for="run-quadas3-context" style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px;">Review-level context (synthesis question + ideal trial)</label>
+          <textarea id="run-quadas3-context" rows="4" placeholder="e.g. In adults with suspected appendicitis presenting to the emergency department, what is the accuracy of point-of-care ultrasound (vs CT or surgical pathology as the reference standard) for identifying acute appendicitis? The ideal trial would prospectively enrol consecutive ED patients with abdominal pain, blind operators to clinical history, and use surgical pathology or 30-day follow-up as the reference standard." style="width:100%;padding:6px 8px;border-radius:5px;border:1px solid var(--rule-2);background:var(--paper);color:var(--text);font-family:inherit;font-size:12px;resize:vertical;"></textarea>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <button type="button" class="tb-btn" onclick="extractEstimatesForSelectedPapers()" id="extract-estimates-btn" style="background:var(--paper);border-color:var(--rule-2);color:var(--text);font-size:11px;">Extract Phase-4 estimates</button>
+          <span style="font-size:11px;color:var(--muted);">3 cr / paper. Optional — without this, QUADAS-3 runs against each paper's primary / headline estimate.</span>
+        </div>
+        <div id="run-estimates-list" style="margin-top:10px;display:none;"></div>
+      </details>
       <div style="margin-top:12px;font-size:12px;color:var(--muted);"><span id="run-count">0</span> paper(s) selected.</div>
     </div>
     <div class="modal-foot">
@@ -766,15 +781,22 @@ const ROBINS_I_SA_DOMAIN_META = [
   { id: 5, short: 'D5: Outcome measure', full: 'Bias arising from measurement of the outcome' },
   { id: 6, short: 'D6: Reported result', full: 'Bias in selection of the reported result' },
 ];
+const QUADAS3_DOMAIN_META = [
+  { id: 1, short: 'D1: Participants',     full: 'Participants',     hasApplicability: true  },
+  { id: 2, short: 'D2: Index Test',       full: 'Index Test',       hasApplicability: true  },
+  { id: 3, short: 'D3: Target Condition', full: 'Target Condition', hasApplicability: true  },
+  { id: 4, short: 'D4: Analysis',         full: 'Analysis',         hasApplicability: false },
+];
 // domainMetaFor returns the appropriate domain-meta table. For ROBINS-I, the
 // optional second argument is the variant ('A' | 'B' | 'single_arm') read
 // from result.rob_domains.preflight.variant; only 'single_arm' swaps the meta.
 function domainMetaFor(tool, variant) {
-  if (tool !== 'robins_i') return ROB2_DOMAIN_META;
-  return variant === 'single_arm' ? ROBINS_I_SA_DOMAIN_META : ROBINS_I_DOMAIN_META;
+  if (tool === 'quadas3')  return QUADAS3_DOMAIN_META;
+  if (tool === 'robins_i') return variant === 'single_arm' ? ROBINS_I_SA_DOMAIN_META : ROBINS_I_DOMAIN_META;
+  return ROB2_DOMAIN_META;
 }
 // Extract the variant string from a result row's rob_domains. Returns
-// undefined when missing (e.g. RoB 2 rows, legacy V1 ROBINS-I rows).
+// undefined when missing (e.g. RoB 2 rows, legacy V1 ROBINS-I rows, QUADAS-3 rows).
 function variantOf(result) {
   return result && result.rob_domains && result.rob_domains.preflight
     ? result.rob_domains.preflight.variant
@@ -790,6 +812,7 @@ const ROB_BADGE_CLS = {
   'Some concerns': 'rob-some', 'High': 'rob-high',
   'Moderate': 'rob-moderate', 'Serious': 'rob-high', 'Critical': 'rob-critical',
   'No information': 'rob-ni',  // legacy V1 only
+  'Insufficient information': 'rob-ni',  // QUADAS-3
 };
 function robBadgeCls(j) { return ROB_BADGE_CLS[j] || ''; }
 let _detailResult = null;      // the result row currently open in the detail modal
@@ -1061,6 +1084,9 @@ async function deleteRun(runId) {
 }
 
 /* ── Run modal ───────────────────────────────────────────────────────── */
+// {paperId: [{id, description, sensitivity, specificity, ..., _selected: true|false}]}
+let _quadas3Estimates = {};
+
 function openRunModal() {
   const n = selectedPaperIds.size;
   if (!n) return;
@@ -1069,9 +1095,98 @@ function openRunModal() {
   const runProj = document.getElementById('run-project');
   if (projectFilter && projectFilter !== '0') runProj.value = projectFilter;
   else runProj.value = '';
+  // Reset QUADAS-3 estimate panel — selection only persists for this open
+  _quadas3Estimates = {};
+  const list = document.getElementById('run-estimates-list');
+  if (list) { list.innerHTML = ''; list.style.display = 'none'; }
   document.getElementById('run-modal').classList.add('open');
 }
 function closeRunModal() { document.getElementById('run-modal').classList.remove('open'); }
+
+async function extractEstimatesForSelectedPapers() {
+  const ids = Array.from(selectedPaperIds);
+  if (!ids.length) { toast('Select papers first.', true); return; }
+  const btn = document.getElementById('extract-estimates-btn');
+  const list = document.getElementById('run-estimates-list');
+  btn.disabled = true; btn.textContent = 'Extracting…';
+  list.style.display = '';
+  list.innerHTML = ids.map(id => {
+    const p = papers.find(pp => pp.id === id);
+    const name = p ? (p.filename || ('paper ' + id)) : ('paper ' + id);
+    return `<div class="est-card" data-pid="${id}" style="margin-bottom:8px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;background:var(--paper);">
+      <div style="font-weight:600;font-size:12px;">${escHtml(name)}</div>
+      <div class="est-status" style="font-size:11px;color:var(--muted);margin-top:4px;">⏳ extracting estimates…</div>
+    </div>`;
+  }).join('');
+
+  // Fire all extraction calls in parallel
+  await Promise.all(ids.map(async (pid) => {
+    const card = list.querySelector(`.est-card[data-pid="${pid}"]`);
+    try {
+      const r = await fetch('/api/quality-appraisal/extract-estimates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paper_id: pid }),
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        let detail = txt;
+        try { detail = (JSON.parse(txt).detail || txt).toString(); } catch {}
+        card.querySelector('.est-status').innerHTML = `<span style="color:var(--err);">⚠ ${escHtml(detail.slice(0, 200))}</span>`;
+        return;
+      }
+      const j = await r.json();
+      const estimates = j.estimates || [];
+      _quadas3Estimates[pid] = estimates.map((e, idx) => ({ ...e, _selected: idx === 0 }));
+      renderEstimateCard(pid);
+    } catch (e) {
+      card.querySelector('.est-status').innerHTML = `<span style="color:var(--err);">⚠ ${escHtml(e.message)}</span>`;
+    }
+  }));
+
+  btn.disabled = false; btn.textContent = 'Re-extract Phase-4 estimates';
+}
+
+function renderEstimateCard(pid) {
+  const list = document.getElementById('run-estimates-list');
+  const card = list.querySelector(`.est-card[data-pid="${pid}"]`);
+  if (!card) return;
+  const p = papers.find(pp => pp.id === pid);
+  const name = p ? (p.filename || ('paper ' + pid)) : ('paper ' + pid);
+  const ests = _quadas3Estimates[pid] || [];
+  if (ests.length === 0) {
+    card.innerHTML = `<div style="font-weight:600;font-size:12px;">${escHtml(name)}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px;">No numerical accuracy estimates extracted — QUADAS-3 will run against the paper's primary / headline estimate when assigned.</div>`;
+    return;
+  }
+  const checks = ests.map((e, idx) => {
+    const desc = e.description || ('Estimate ' + (idx + 1));
+    const detail = [
+      e.sensitivity && ('sens ' + e.sensitivity),
+      e.specificity && ('spec ' + e.specificity),
+      e.threshold && ('threshold ' + e.threshold),
+      e.reference_standard && ('vs ' + e.reference_standard),
+      e.subgroup && e.subgroup !== 'overall' && ('subgroup ' + e.subgroup),
+      e.n && ('n=' + e.n),
+    ].filter(Boolean).join(' · ');
+    return `<label style="display:flex;gap:6px;align-items:flex-start;font-size:12px;padding:4px 0;cursor:pointer;">
+      <input type="checkbox" ${e._selected ? 'checked' : ''} onchange="toggleEstimate(${pid},${idx},this.checked)" style="margin-top:2px;flex-shrink:0;" />
+      <span style="min-width:0;flex:1;">
+        <span style="font-weight:600;">${escHtml(desc)}</span>
+        ${detail ? `<span style="display:block;font-size:11px;color:var(--muted);">${escHtml(detail)}</span>` : ''}
+      </span>
+    </label>`;
+  }).join('');
+  card.innerHTML = `<div style="font-weight:600;font-size:12px;">${escHtml(name)}</div>
+    <div style="font-size:11px;color:var(--muted);margin:2px 0 6px;">${ests.length} estimate(s) found — uncheck any you don't want assessed.</div>
+    ${checks}`;
+}
+
+function toggleEstimate(pid, idx, checked) {
+  const ests = _quadas3Estimates[pid];
+  if (!ests || !ests[idx]) return;
+  ests[idx]._selected = !!checked;
+}
 
 async function submitRun() {
   const btn = document.getElementById('submit-run-btn');
@@ -1096,6 +1211,20 @@ async function submitRun() {
   };
   if (it.mid_benefit || it.mid_harm) {
     payload.imprecision_thresholds = it;
+  }
+  // QUADAS-3 / diagnostic-accuracy fields
+  const review = (document.getElementById('run-quadas3-context')?.value || '').trim();
+  if (review) payload.quadas3_review_context = review;
+  const paperEstimates = {};
+  for (const [pidStr, ests] of Object.entries(_quadas3Estimates)) {
+    const selected = (ests || []).filter(e => e._selected).map(e => {
+      const { _selected, ...clean } = e;
+      return clean;
+    });
+    if (selected.length > 0) paperEstimates[pidStr] = selected;
+  }
+  if (Object.keys(paperEstimates).length > 0) {
+    payload.paper_estimates = paperEstimates;
   }
   try {
     const r = await fetch('/api/quality-appraisal/runs', {
@@ -1199,19 +1328,28 @@ function renderResults() {
   const robDomainIds = firstOk && firstOk.rob_domains
     ? Object.keys(firstOk.rob_domains).sort((a, b) => Number(a) - Number(b))
     : runDomainMeta.map(m => String(m.id));
-  const guidelineHeader = runTool === 'robins_i' ? 'STROBE adherence' : 'CONSORT adherence';
+  const guidelineHeader =
+    runTool === 'robins_i' ? 'STROBE adherence' :
+    runTool === 'quadas3'  ? 'STARD adherence' :
+    'CONSORT adherence';
+  // Show Applicability column only when at least one row uses QUADAS-3.
+  // Skip indirectness + imprecision columns on QUADAS-3-only runs (those
+  // modules are skipped per cfg.skip_grade_extras).
+  const anyQuadas3 = results.some(r => r.rob_tool === 'quadas3');
+  const allQuadas3 = anyQuadas3 && results.every(r => r.status !== 'ok' || r.rob_tool === 'quadas3');
 
-  const headerCols = [
-    '<th class="col-study">Study</th>',
-    '<th>Classification</th>',
-    '<th>Risk of bias</th>',
-    '<th title="GRADE indirectness — per-trial PICO assessment. Click for full breakdown.">Indirectness</th>',
-    '<th title="GRADE imprecision — CI width / sample size / events / fragility. Click for full breakdown.">Imprecision</th>',
-    `<th>${guidelineHeader}</th>`,
-    '<th>Initial GRADE</th>',
-    '<th>Updated GRADE</th>',
-    '<th>GRADE explanation</th>',
-  ];
+  const headerCols = ['<th class="col-study">Study</th>', '<th>Classification</th>', '<th>Risk of bias</th>'];
+  if (anyQuadas3) {
+    headerCols.push('<th title="QUADAS-3 applicability — concern that the as-conducted study does not match the ideal test accuracy trial. Click for full per-domain breakdown.">Applicability</th>');
+  }
+  if (!allQuadas3) {
+    headerCols.push('<th title="GRADE indirectness — per-trial PICO assessment. Click for full breakdown.">Indirectness</th>');
+    headerCols.push('<th title="GRADE imprecision — CI width / sample size / events / fragility. Click for full breakdown.">Imprecision</th>');
+  }
+  headerCols.push(`<th>${guidelineHeader}</th>`);
+  headerCols.push('<th>Initial GRADE</th>');
+  headerCols.push('<th>Updated GRADE</th>');
+  headerCols.push('<th>GRADE explanation</th>');
   robDomainIds.forEach(did => {
     const meta = runDomainMeta.find(m => String(m.id) === String(did));
     const short = meta ? meta.short : ('RoB Domain ' + did);
@@ -1239,8 +1377,18 @@ function renderResults() {
     const year = fields.citation_year || '';
     const modChips = ['clinical_trial_phase', 'industry_sponsored', 'adaptive_design', 'pragmatic_vs_explanatory']
       .map(k => fields[k] ? `<span class="chip mod">${escHtml(fields[k])}</span>` : '').join('');
+    // QUADAS-3 estimate descriptor — shown in the study cell when present.
+    const estimate = r.estimate || {};
+    const estChip = (r.rob_tool === 'quadas3' && (estimate.description || estimate.sensitivity || estimate.specificity))
+      ? `<div class="chip" style="margin-top:4px;background:#eef6ff;border-color:#cfe3ff;color:#1e40af;">📊 ${escHtml(
+          (estimate.description || '') +
+          (estimate.sensitivity ? ' · sens ' + estimate.sensitivity : '') +
+          (estimate.specificity ? ' · spec ' + estimate.specificity : '')
+        ).slice(0, 120)}</div>`
+      : '';
 
     const robCls = robBadgeCls(r.rob_overall);
+    const isQuadas3Row = (r.rob_tool === 'quadas3');
 
     // Indirectness cell — severity badge + downgrade levels. Click opens the
     // detail modal scrolled to the indirectness section.
@@ -1256,12 +1404,14 @@ function renderResults() {
     const indirLvls = Number(r.indirectness_levels || 0);
     const indirCls = _indirSevBadge[indirSev] || 'rob-na';
     const indirLabel = _indirSevLabel[indirSev] || '—';
-    const indirCell = `<td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'indirectness')" title="Click for full PICO breakdown">
-      <span class="rob-badge ${indirCls}">${escHtml(indirLabel)}</span>
-      ${indirLvls > 0
-        ? `<div style="font-size:10px;margin-top:3px;color:var(--muted);">−${indirLvls} GRADE</div>`
-        : ''}
-    </td>`;
+    const indirCell = isQuadas3Row
+      ? `<td class="cell-clickable" title="Indirectness is skipped for diagnostic-accuracy assessments — see CLAUDE.md."><span style="color:var(--muted);font-size:11px;">N/A</span></td>`
+      : `<td class="cell-clickable" onclick="openDetailModalById(${r.id}, 'indirectness')" title="Click for full PICO breakdown">
+        <span class="rob-badge ${indirCls}">${escHtml(indirLabel)}</span>
+        ${indirLvls > 0
+          ? `<div style="font-size:10px;margin-top:3px;color:var(--muted);">−${indirLvls} GRADE</div>`
+          : ''}
+      </td>`;
 
     // Imprecision cell — same severity-badge pattern as indirectness, routed
     // to the imprecision detail section.
@@ -1269,12 +1419,24 @@ function renderResults() {
     const imprecLvls = Number(r.imprecision_levels || 0);
     const imprecCls = _indirSevBadge[imprecSev] || 'rob-na';
     const imprecLabel = _indirSevLabel[imprecSev] || '—';
-    const imprecCell = `<td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'imprecision')" title="Click for CI / sample / events breakdown">
-      <span class="rob-badge ${imprecCls}">${escHtml(imprecLabel)}</span>
-      ${imprecLvls > 0
-        ? `<div style="font-size:10px;margin-top:3px;color:var(--muted);">−${imprecLvls} GRADE</div>`
-        : ''}
-    </td>`;
+    const imprecCell = isQuadas3Row
+      ? `<td class="cell-clickable" title="Imprecision is skipped for diagnostic-accuracy assessments — see CLAUDE.md."><span style="color:var(--muted);font-size:11px;">N/A</span></td>`
+      : `<td class="cell-clickable" onclick="openDetailModalById(${r.id}, 'imprecision')" title="Click for CI / sample / events breakdown">
+        <span class="rob-badge ${imprecCls}">${escHtml(imprecLabel)}</span>
+        ${imprecLvls > 0
+          ? `<div style="font-size:10px;margin-top:3px;color:var(--muted);">−${imprecLvls} GRADE</div>`
+          : ''}
+      </td>`;
+
+    // Applicability cell (QUADAS-3 only). For non-QUADAS rows in a mixed run,
+    // shows '—'.
+    const applCell = anyQuadas3
+      ? (isQuadas3Row
+          ? `<td class="cell-clickable" onclick="openDetailModalById(${r.id}, 'applicability')" title="Click for per-domain applicability breakdown">
+              <span class="rob-badge ${robBadgeCls(r.applicability_overall)}">${escHtml(r.applicability_overall || '—')}</span>
+            </td>`
+          : `<td><span style="color:var(--muted);font-size:11px;">—</span></td>`)
+      : '';
 
     const consort = (r.guideline_adhered != null && r.guideline_applicable != null)
       ? `${r.guideline_adhered} / ${r.guideline_applicable}` +
@@ -1293,7 +1455,7 @@ function renderResults() {
         ? Object.keys(d.signals).sort().map(sid =>
             `<span class="chip">${escHtml(sid)}=${escHtml(d.signals[sid])}</span>`).join(' ')
         : '';
-      return `<td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'rob-d${escHtml(did)}')">
+      return `<td class="cell-clickable" onclick="openDetailModalById(${r.id}, 'rob-d${escHtml(did)}')">
         <span class="rob-badge ${jCls}">${escHtml(j)}</span>
         <div style="margin-top:4px;">${signalsHtml}</div>
       </td>`;
@@ -1303,23 +1465,25 @@ function renderResults() {
       <td class="col-study">
         <div class="study-title">${escHtml(title)}</div>
         <div class="study-meta">${escHtml(authors)}${authors ? ' &middot; ' : ''}${escHtml(journal)}${journal ? ' &middot; ' : ''}${escHtml(year)}</div>
-        <button class="detail-btn" onclick="openDetailModal(${r.paper_id}, 'summary')" title="Open detailed review">📋 Detail</button>
+        ${estChip}
+        <button class="detail-btn" onclick="openDetailModalById(${r.id}, 'summary')" title="Open detailed review">📋 Detail</button>
       </td>
-      <td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'summary')">
+      <td class="cell-clickable" onclick="openDetailModalById(${r.id}, 'summary')">
         <div><strong>${escHtml(r.study_type || '')}</strong></div>
         <div style="font-size:10px;color:var(--muted);">${escHtml(classification.subcategory || '')}</div>
         <div style="margin-top:4px;">${modChips || '<span class="chip">no modifiers</span>'}</div>
       </td>
-      <td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'rob')"><span class="rob-badge ${robCls}">${escHtml(r.rob_overall || '—')}</span>
+      <td class="cell-clickable" onclick="openDetailModalById(${r.id}, 'rob')"><span class="rob-badge ${robCls}">${escHtml(r.rob_overall || '—')}</span>
           ${r.rob_direction && r.rob_direction !== 'NA'
             ? `<div style="font-size:10px;margin-top:3px;color:var(--muted);">dir: ${escHtml(r.rob_direction)}</div>`
             : ''}</td>
-      ${indirCell}
-      ${imprecCell}
-      <td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'consort')">${consort}</td>
-      <td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'grade')"><span class="${gradeCls(r.initial_grade)}">${escHtml(r.initial_grade || '—')}</span></td>
-      <td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'grade')"><span class="${gradeCls(r.updated_grade)}">${escHtml(r.updated_grade || '—')}</span></td>
-      <td class="cell-clickable" onclick="openDetailModal(${r.paper_id}, 'grade')" style="max-width:240px;font-size:10.5px;color:var(--muted);">${escHtml(r.grade_explanation || '')}</td>
+      ${applCell}
+      ${(!allQuadas3) ? indirCell : ''}
+      ${(!allQuadas3) ? imprecCell : ''}
+      <td class="cell-clickable" onclick="openDetailModalById(${r.id}, 'consort')">${consort}</td>
+      <td class="cell-clickable" onclick="openDetailModalById(${r.id}, 'grade')"><span class="${gradeCls(r.initial_grade)}">${escHtml(r.initial_grade || '—')}</span></td>
+      <td class="cell-clickable" onclick="openDetailModalById(${r.id}, 'grade')"><span class="${gradeCls(r.updated_grade)}">${escHtml(r.updated_grade || '—')}</span></td>
+      <td class="cell-clickable" onclick="openDetailModalById(${r.id}, 'grade')" style="max-width:240px;font-size:10.5px;color:var(--muted);">${escHtml(r.grade_explanation || '')}</td>
       ${domainCells}
       <td style="max-width:220px;font-size:10.5px;">${escHtml(r.primary_outcome || '')}</td>
     </tr>`;
@@ -1344,7 +1508,26 @@ function _normalizeQuote(s) {
 }
 function _resultByPaperId(paperId) {
   const results = (currentRun && currentRun.results) || [];
-  return results.find(r => Number(r.paper_id) === Number(paperId)) || null;
+  // First successful result for the paper (legacy callers; QUADAS-3 callers
+  // should use openDetailModalById instead since one paper can have multiple
+  // result rows, one per estimate).
+  return results.find(r => Number(r.paper_id) === Number(paperId) && r.status === 'ok')
+      || results.find(r => Number(r.paper_id) === Number(paperId))
+      || null;
+}
+function _resultByRowId(rowId) {
+  const results = (currentRun && currentRun.results) || [];
+  return results.find(r => Number(r.id) === Number(rowId)) || null;
+}
+
+async function openDetailModalById(rowId, anchor) {
+  const r = _resultByRowId(rowId);
+  if (!r) { toast('Result not found — refresh the page.', true); return; }
+  if (r.status !== 'ok') {
+    toast('This paper has no detailed results (' + r.status + ').', true);
+    return;
+  }
+  return _openDetailModalForResult(r, anchor);
 }
 
 async function openDetailModal(paperId, anchor) {
@@ -1354,6 +1537,10 @@ async function openDetailModal(paperId, anchor) {
     toast('This paper has no detailed results (' + r.status + ').', true);
     return;
   }
+  return _openDetailModalForResult(r, anchor);
+}
+
+async function _openDetailModalForResult(r, anchor) {
   _detailResult = r;
   // Header
   const fields = r.extracted_fields || {};
@@ -1432,7 +1619,10 @@ function renderDetailPanel(r, anchor) {
       <div>${escHtml(r.primary_outcome || '—')}</div>
       <div style="color:var(--muted);font-weight:600;">Overall RoB</div>
       <div><span class="rob-badge ${robCls}">${escHtml(r.rob_overall || '—')}</span>${r.rob_direction && r.rob_direction !== 'NA' ? ' <span style="color:var(--muted);font-size:11px;">(direction: ' + escHtml(r.rob_direction) + ')</span>' : ''}</div>
-      <div style="color:var(--muted);font-weight:600;">${escHtml(detailTool === 'robins_i' ? 'STROBE adherence' : 'CONSORT adherence')}</div>
+      <div style="color:var(--muted);font-weight:600;">${escHtml(
+        detailTool === 'robins_i' ? 'STROBE adherence' :
+        detailTool === 'quadas3'  ? 'STARD adherence' :
+        'CONSORT adherence')}</div>
       <div>${(guideline.adhered != null && guideline.applicable != null) ? escHtml(guideline.adhered) + ' / ' + escHtml(guideline.applicable) + (guideline.proportion != null ? ' <span style="color:var(--muted);">(' + (guideline.proportion * 100).toFixed(0) + '%)</span>' : '') : '—'}</div>
       <div style="color:var(--muted);font-weight:600;">GRADE</div>
       <div><span class="${gradeClsOf(r.initial_grade)}">${escHtml(r.initial_grade || '—')}</span> → <span class="${gradeClsOf(r.updated_grade)}">${escHtml(r.updated_grade || '—')}</span></div>
@@ -1441,7 +1631,10 @@ function renderDetailPanel(r, anchor) {
 
   // ── RoB section ──────────────────────────
   const domainIds = Object.keys(robDomains).sort((a, b) => Number(a) - Number(b));
-  const robHeader = detailTool === 'robins_i' ? 'Risk of Bias (ROBINS-I V2)' : 'Risk of Bias (RoB 2)';
+  const robHeader =
+    detailTool === 'robins_i' ? 'Risk of Bias (ROBINS-I V2)' :
+    detailTool === 'quadas3'  ? 'Risk of Bias (QUADAS-3 v1.2)' :
+    'Risk of Bias (RoB 2)';
   const robHtml = `<section id="qa-sec-rob"><h3>${escHtml(robHeader)}</h3>
     ${domainIds.length === 0 ? '<div style="color:var(--muted);">No RoB data.</div>' : domainIds.map(did => {
       const d = robDomains[did] || {};
@@ -1477,6 +1670,68 @@ function renderDetailPanel(r, anchor) {
       </details>`;
     }).join('')}
   </section>`;
+
+  // ── Applicability section (QUADAS-3 only) ──────────────
+  let applicabilityHtml = '';
+  if (detailTool === 'quadas3') {
+    const appOverall = r.applicability_overall || '—';
+    const appCls = robBadgeCls(appOverall);
+    const appDomains = detailMeta.filter(m => m.hasApplicability);
+    const appCells = appDomains.map(m => {
+      const d = robDomains[String(m.id)] || {};
+      const j = d.applicability_judgement || '—';
+      const jCls = robBadgeCls(j);
+      const rationale = d.applicability_rationale || '';
+      const ratClickable = rationale ? 'qa-clickable' : '';
+      const ratAttr = rationale ? ` onclick="jumpToQuote(${escHtml(JSON.stringify(rationale))}, this)" title="Click to locate this passage in the PDF"` : '';
+      return `<div style="padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--paper);">
+        <div style="font-weight:700;font-size:11.5px;">${escHtml(m.short)}</div>
+        <div style="margin-top:6px;"><span class="rob-badge ${jCls}">${escHtml(j)}</span></div>
+        ${rationale ? `<div class="qrat ${ratClickable}" style="margin-top:6px;display:block;"${ratAttr}>${escHtml(rationale)}</div>` : ''}
+      </div>`;
+    }).join('');
+    applicabilityHtml = `<section id="qa-sec-applicability"><h3>Applicability concerns
+        <span style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:8px;">QUADAS-3 Phase 5/6 — concern that the as-conducted study does not match the ideal test accuracy trial</span>
+      </h3>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:12px;">
+        <span class="rob-badge ${appCls}">Overall: ${escHtml(appOverall)}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;">${appCells}</div>
+      <div style="margin-top:10px;font-size:11px;color:var(--muted);">N/A — the Analysis domain has no applicability assessment in QUADAS-3.</div>
+    </section>`;
+  }
+
+  // ── Estimate section (QUADAS-3 only) ──────────────
+  let estimateHtml = '';
+  if (detailTool === 'quadas3') {
+    const est = r.estimate || {};
+    const estRows = [
+      ['Description',        est.description],
+      ['Subgroup',           est.subgroup],
+      ['Index test',         est.index_test],
+      ['Threshold',          est.threshold],
+      ['Reference standard', est.reference_standard],
+      ['Unit of analysis',   est.unit_of_analysis],
+      ['Sensitivity',        est.sensitivity],
+      ['Specificity',        est.specificity],
+      ['N',                  est.n],
+    ].filter(([_, v]) => v && String(v).trim());
+    if (estRows.length > 0) {
+      estimateHtml = `<section id="qa-sec-estimate"><h3>Phase-4 estimate being assessed</h3>
+        <div style="display:grid;grid-template-columns:160px 1fr;gap:6px 12px;font-size:12px;padding:10px;background:var(--paper-2);border-radius:6px;">
+          ${estRows.map(([k, v]) =>
+            `<div style="color:var(--muted);font-weight:600;">${escHtml(k)}</div><div>${escHtml(v)}</div>`
+          ).join('')}
+        </div>
+      </section>`;
+    } else {
+      estimateHtml = `<section id="qa-sec-estimate"><h3>Phase-4 estimate being assessed</h3>
+        <div style="font-size:12px;color:var(--muted);padding:10px;background:var(--paper-2);border-radius:6px;">
+          QUADAS-3 ran against the paper's primary / headline accuracy estimate. Re-run with the "Extract Phase-4 estimates" step in the run modal to assess specific estimates.
+        </div>
+      </section>`;
+    }
+  }
 
   // ── Indirectness section (GRADE PICO assessment) ──────
   const indirectness = r.indirectness || {};
@@ -1639,12 +1894,18 @@ function renderDetailPanel(r, anchor) {
     if (na !== nb) return na - nb;
     return a.id.localeCompare(b.id);
   };
-  const guidelineHeading = detailTool === 'robins_i' ? 'STROBE 2007 checklist' : 'CONSORT 2025 checklist';
+  const guidelineHeading =
+    detailTool === 'robins_i' ? 'STROBE 2007 checklist' :
+    detailTool === 'quadas3'  ? 'STARD 2015 checklist' :
+    'CONSORT 2025 checklist';
   const consortHtml = `<section id="qa-sec-consort"><h3>${escHtml(guidelineHeading)}
     <span style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:8px;">
       ${(guideline.adhered != null) ? escHtml(guideline.adhered) + ' / ' + escHtml(guideline.applicable) + ' applicable' : ''}
     </span></h3>
-    ${consortIds.length === 0 ? `<div style="color:var(--muted);">No ${detailTool === 'robins_i' ? 'STROBE' : 'CONSORT'} data.</div>` :
+    ${consortIds.length === 0 ? `<div style="color:var(--muted);">No ${
+        detailTool === 'robins_i' ? 'STROBE' :
+        detailTool === 'quadas3'  ? 'STARD' :
+        'CONSORT'} data.</div>` :
       Object.keys(groups).map(sec => `<div class="qa-consort-group">
         <h4>${escHtml(sec)}</h4>
         ${groups[sec].sort(idSort).map(it => {
@@ -1674,13 +1935,21 @@ function renderDetailPanel(r, anchor) {
     const j = (robDomains[id] || {}).judgement || '';
     if (j) judgeCounts[j] = (judgeCounts[j] || 0) + 1;
   });
-  const countsLine = detailTool === 'robins_i'
-    ? `Critical: <strong>${judgeCounts['Critical'] || 0}</strong> &middot; Serious: <strong>${judgeCounts['Serious'] || 0}</strong> &middot; Moderate: <strong>${judgeCounts['Moderate'] || 0}</strong>. Per ROBINS-I V2 / GRADE guidance, single-study GRADE downgrades 1 level for Moderate/Serious (2 levels for any Critical, or ≥2 Serious domains), plus indirectness and imprecision downgrades (above). Inconsistency and publication bias still require a body of evidence and are not applied here. ROBINS-I V2 uses a 4-level scale (Low/Moderate/Serious/Critical) — V1's separate "No information" judgement was retired.`
-    : `High-risk domains: <strong>${judgeCounts['High'] || 0}</strong> &middot; Some-concerns domains: <strong>${judgeCounts['Some concerns'] || 0}</strong>. Per GradePro guidance, single-study GRADE downgrades by 1 level for "Some concerns" or any High domain, and 2 levels when ≥2 domains are High, plus the indirectness and imprecision downgrades (above). Inconsistency and publication bias still require a body of evidence and are not applied here.`;
-  const initialDescription = detailTool === 'robins_i' ? 'From study type (non-randomized)' : 'From study type (RCT)';
+  let countsLine;
+  if (detailTool === 'robins_i') {
+    countsLine = `Critical: <strong>${judgeCounts['Critical'] || 0}</strong> &middot; Serious: <strong>${judgeCounts['Serious'] || 0}</strong> &middot; Moderate: <strong>${judgeCounts['Moderate'] || 0}</strong>. Per ROBINS-I V2 / GRADE guidance, single-study GRADE downgrades 1 level for Moderate/Serious (2 levels for any Critical, or ≥2 Serious domains), plus indirectness and imprecision downgrades (above). Inconsistency and publication bias still require a body of evidence and are not applied here. ROBINS-I V2 uses a 4-level scale (Low/Moderate/Serious/Critical) — V1's separate "No information" judgement was retired.`;
+  } else if (detailTool === 'quadas3') {
+    countsLine = `High-risk domains: <strong>${judgeCounts['High'] || 0}</strong> &middot; Insufficient-information domains: <strong>${judgeCounts['Insufficient information'] || 0}</strong>. Per QUADAS-3 / GRADE guidance for single-study diagnostic accuracy, GRADE downgrades 1 level for any High domain (2 levels when ≥2 domains are High) or any Insufficient-information domain (conservative). Indirectness and imprecision are skipped for diagnostic-accuracy assessments because the existing GRADE-extra modules assume PICO/treatment trials, not PIRT — see CLAUDE.md.`;
+  } else {
+    countsLine = `High-risk domains: <strong>${judgeCounts['High'] || 0}</strong> &middot; Some-concerns domains: <strong>${judgeCounts['Some concerns'] || 0}</strong>. Per GradePro guidance, single-study GRADE downgrades by 1 level for "Some concerns" or any High domain, and 2 levels when ≥2 domains are High, plus the indirectness and imprecision downgrades (above). Inconsistency and publication bias still require a body of evidence and are not applied here.`;
+  }
+  const initialDescription =
+    detailTool === 'robins_i' ? 'From study type (non-randomized)' :
+    detailTool === 'quadas3'  ? 'From study type (diagnostic accuracy, cross-sectional default)' :
+    'From study type (RCT)';
   const updatedDescriptionParts = ['After RoB'];
-  if (indirLevels > 0) updatedDescriptionParts.push(`indirectness (−${indirLevels})`);
-  if (imprecLevels > 0) updatedDescriptionParts.push(`imprecision (−${imprecLevels})`);
+  if (indirLevels > 0 && detailTool !== 'quadas3') updatedDescriptionParts.push(`indirectness (−${indirLevels})`);
+  if (imprecLevels > 0 && detailTool !== 'quadas3') updatedDescriptionParts.push(`imprecision (−${imprecLevels})`);
   const updatedDescription = updatedDescriptionParts.length === 1
     ? 'After RoB downgrade'
     : updatedDescriptionParts.join(' + ');
@@ -1721,8 +1990,53 @@ function renderDetailPanel(r, anchor) {
     </details>
   </section>`;
 
+  // QUADAS-3 papers skip indirectness + imprecision (those modules assume
+  // PICO/treatment trials, not PIRT diagnostic accuracy — see CLAUDE.md).
+  const skipGradeExtras = (detailTool === 'quadas3');
+  const indirSection  = skipGradeExtras ? '' : indirHtml;
+  const imprecSection = skipGradeExtras ? '' : imprecHtml;
   document.getElementById('qa-detail-content').innerHTML =
-    summaryHtml + robHtml + indirHtml + imprecHtml + consortHtml + gradeHtml + fieldsHtml;
+    summaryHtml + robHtml + applicabilityHtml + estimateHtml +
+    indirSection + imprecSection + consortHtml + gradeHtml + fieldsHtml;
+  // Toggle subnav buttons that don't apply to this tool.
+  const navRoot = document.getElementById('qa-detail-subnav');
+  if (navRoot) {
+    const buttons = navRoot.querySelectorAll('button[data-section]');
+    buttons.forEach(b => {
+      const sec = b.dataset.section;
+      let show = true;
+      if (sec === 'indirectness' || sec === 'imprecision') show = !skipGradeExtras;
+      if (sec === 'applicability' || sec === 'estimate')   show = (detailTool === 'quadas3');
+      b.style.display = show ? '' : 'none';
+    });
+    // Inject Applicability + Estimate buttons if missing (one-time per page load)
+    if (detailTool === 'quadas3' && !navRoot.querySelector('button[data-section="applicability"]')) {
+      const applBtn = document.createElement('button');
+      applBtn.dataset.section = 'applicability';
+      applBtn.textContent = 'Applicability';
+      applBtn.onclick = () => scrollDetailTo('applicability');
+      const estBtn = document.createElement('button');
+      estBtn.dataset.section = 'estimate';
+      estBtn.textContent = 'Estimate';
+      estBtn.onclick = () => scrollDetailTo('estimate');
+      const robBtn = navRoot.querySelector('button[data-section="rob"]');
+      if (robBtn && robBtn.nextSibling) {
+        navRoot.insertBefore(applBtn, robBtn.nextSibling);
+        navRoot.insertBefore(estBtn, applBtn.nextSibling);
+      } else {
+        navRoot.appendChild(applBtn);
+        navRoot.appendChild(estBtn);
+      }
+    }
+    // Update RoB button label to reflect the tool.
+    const robBtn = navRoot.querySelector('button[data-section="rob"]');
+    if (robBtn) {
+      robBtn.textContent =
+        detailTool === 'robins_i' ? 'ROBINS-I' :
+        detailTool === 'quadas3'  ? 'QUADAS-3' :
+        'RoB 2';
+    }
+  }
 
   // Scroll to the anchor if provided
   setTimeout(() => {

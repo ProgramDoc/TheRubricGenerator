@@ -1,14 +1,18 @@
-# Quality Appraisal — RoB 2 + ROBINS-I V2 Reference
+# Quality Appraisal — RoB 2 + ROBINS-I V2 + QUADAS-3 Reference
 
 Reference for the LLM prompts and Python decision-tree rules used by The Rubric Generator's Quality Appraisal AI. Transcribed from source.
 
 **Sources:**
 - **RoB 2** — Sterne JAC, Savović J, Page MJ, Higgins JPT, et al. *RoB 2: a revised tool for assessing risk of bias in randomised trials.* BMJ 2019; 366:l4898. Signaling-question text and elaborations transcribed from `20190814_RoB_2.0_cribsheet_parallel_trial.pdf`.
 - **ROBINS-I V2** — ROBINS-I V2 development group (Sterne JA, Brandt Mathur M, Elbers R, Hróbjartsson A, McAleenan A, Reeves B, Shrier I, Tilling K, et al.). *The Risk Of Bias In Non-randomized Studies — of Interventions, Version 2 (ROBINS-I V2) assessment tool, 20 November 2025.* riskofbias.info. Published explicitly for follow-up (cohort) studies; supersedes ROBINS-I V1 (Sterne et al. BMJ 2016;355:i4919).
+- **QUADAS-3 v1.2** — Whiting et al., University of Bristol. The successor to QUADAS-2 (2011), restructured around four domains and parallel risk-of-bias + applicability judgements per domain. Signaling-question text and elaborations transcribed from `QUADAS-3 1.2.docx` (May 2026).
+- **STARD 2015** — Bossuyt PM, Reitsma JB, Bruns DE, Gatsonis CA, Glasziou PP, Irwig L, et al. *STARD 2015: An Updated List of Essential Items for Reporting Diagnostic Accuracy Studies.* BMJ 2015; 351:h5527. https://doi.org/10.1136/bmj.h5527
 
 **Source files in repo:**
 - [backend/rob_tools/rob2.py](../backend/rob_tools/rob2.py)
 - [backend/rob_tools/robins_i.py](../backend/rob_tools/robins_i.py)
+- [backend/rob_tools/quadas3.py](../backend/rob_tools/quadas3.py)
+- [backend/reporting_guidelines/stard.py](../backend/reporting_guidelines/stard.py)
 - [backend/rob_tools/__init__.py](../backend/rob_tools/__init__.py)
 
 **Tool contract (from `backend/rob_tools/__init__.py`):**
@@ -1074,16 +1078,310 @@ def _no_info(ans: str) -> bool:     return ans == "NI"
 
 ---
 
+# Section 3 — QUADAS-3 v1.2 (diagnostic test accuracy)
+
+## 3.1 Overview
+
+- **Scope (v1):** single-test diagnostic accuracy reviews (one index test vs one reference standard). QUADAS-C — the separate tool for comparative-accuracy reviews of two index tests — is out of scope.
+- **Domains:** 4
+  1. Participants
+  2. Index Test
+  3. Target Condition
+  4. Analysis
+- **Dual assessment:** every paper gets **two** parallel Phase-6 aggregates:
+  1. an overall **risk of bias** (`overall_rob`) across all 4 domains, and
+  2. an overall **applicability concern** (`overall_applicability`) across domains 1–3 only. Domain 4 (Analysis) is RoB-only — it has no applicability question.
+- **Judgement scale:** 3-level — `Low` / `High` / `Insufficient information` (II). Mapped to a new badge class on the frontend (`Insufficient information → rob-ni`, reusing the No-information greyscale from ROBINS-I).
+- **Per-estimate path:** unlike RoB 2 and ROBINS-I, QUADAS-3 is per-estimate, not per-paper. A single DTA paper can produce many sensitivity/specificity estimates from different subgroups × thresholds × reference standards, and each estimate gets its own row in `quality_appraisal_results`. See section 3.8 below.
+
+## 3.2 Signal options + judgement levels
+
+```python
+SIGNAL_OPTIONS = ("Y", "PY", "PN", "N", "NI")
+# Y = Yes, PY = Probably yes, PN = Probably no, N = No, NI = No information
+
+JUDGEMENTS            = ("Low", "High", "Insufficient information")
+APPLICABILITY_OPTIONS = ("Low", "High", "Insufficient information")
+```
+
+Domain RoB judgements and per-domain applicability judgements both use the same 3-level scale.
+
+## 3.3 System prompt
+
+```text
+You are an evidence-synthesis methodologist assessing a diagnostic test accuracy study using the QUADAS-3 v1.2 tool (Whiting et al., University of Bristol). For each domain, read the PDF carefully and answer the signaling questions with one of: Y (yes), PY (probably yes), PN (probably no), N (no), NI (no information). When the domain has an applicability assessment, also rate concern that the as-conducted study matches the ideal test accuracy trial as: Low / High / Insufficient information. Provide a short rationale (1-2 sentences, quoting the paper where possible) for every answer. Return ONLY a valid JSON object — no preamble, no markdown fences.
+```
+
+## 3.4 Per-domain prompt template
+
+The prompt is built per domain by `build_domain_prompt(domain, study_type, primary_outcome, extracted_fields, estimate=None, review_context=None)`. The same template covers all 4 domains; for D1–D3 it also asks for an applicability judgement against the optional user-supplied review context (Phases 1+2 — synthesis question + ideal test accuracy trial).
+
+```text
+Assess **Domain {id} — {name}** of QUADAS-3 v1.2 for the diagnostic test accuracy study described in the attached PDF.
+
+Study type: {study_type}
+Primary outcome (target condition): {primary_outcome}
+
+Estimate being assessed:
+{estimate_block}   # one of N estimates extracted from the paper, or "primary / headline estimate" fallback
+
+Context (fields already extracted from the paper):
+{relevant_fields_as_json}
+
+Signaling questions:
+{questions_block}   # verbatim signaling-question text + elaborations from the docx
+
+**Applicability assessment** (only shown for D1–D3; rate as Low / High / Insufficient information):
+{applicability_question}
+Elaboration: {applicability_elaboration}
+
+**Review-level context** (use this to judge applicability):
+{review_context}   # user's Phases 1+2 free-text input, or a fallback line when not supplied
+
+Return a JSON object with exactly this shape: {shape}
+
+Answer N (or PN) only when the paper gives enough information to rule out adherence; answer NI only when the paper is silent. Rationales must be short (1-2 sentences) and quote the paper verbatim where possible.
+```
+
+## 3.5 Expected JSON output shape
+
+For domains with an applicability assessment (D1, D2, D3):
+
+```json
+{
+  "1.1": "Y|PY|PN|N|NI",
+  "1.1_rationale": "...",
+  "1.2": "...",  "1.2_rationale": "...",
+  "1.3": "...",  "1.3_rationale": "...",
+  "1.4": "...",  "1.4_rationale": "...",
+  "applicability_judgement": "Low|High|Insufficient information",
+  "applicability_rationale": "..."
+}
+```
+
+For Domain 4 (Analysis, RoB-only), the same shape minus the two applicability fields.
+
+## 3.6 Domain definitions
+
+The docx Tables 6–9 transcribed verbatim into `DOMAINS` in [backend/rob_tools/quadas3.py](../backend/rob_tools/quadas3.py).
+
+### Domain 1 — Participants (4 signals + applicability)
+
+- **1.1** Was a single-gate design used?
+  - Elaboration: A single-gate design enrols one group of participants in whom the diagnosis is not yet known (this could include multiple groups from different locations, e.g. different hospitals). A multi-gate design (case-control) enrols participants with known diagnosis and is at higher risk of spectrum bias. Answer 'Yes' for single-gate; 'No' for multi-gate / case-control.
+- **1.2** Were participants prospectively enrolled?
+  - Elaboration: Prospective enrolment lets investigators standardise the test workflow and minimises differential verification. Retrospective enrolment from medical records or stored samples increases the risk that participants entered the two-by-two table for reasons related to the test result.
+- **1.3** Was a consecutive or random sample of participants included?
+  - Elaboration: Consecutive enrolment of all eligible participants in a defined window, or random sampling from the eligible pool, minimises selection bias. 'No' for convenience samples or selection on test-related criteria.
+- **1.4** Is the study group a representative sample of the intended-use population?
+  - Elaboration: Compare the enrolled spectrum (presentation, prior tests, comorbidity, prevalence) to the population in which the index test would be deployed. 'No' if cases or controls are unusually severe / mild / pre-screened relative to the intended-use population.
+
+**Applicability concern:** *Concern that the included participants do not match those in the ideal test accuracy trial.* Describe how differences between the included participants (presentation, prior testing, setting, intended use of index test) and the ideal trial defined for the review have led to this judgement.
+
+### Domain 2 — Index Test (4 signals + applicability)
+
+- **2.1** Was the index test conducted and interpreted according to the recommended instructions?
+  - Elaboration: Following manufacturer's instructions, published protocols, or accepted standard clinical methods. 'No' for ad-hoc modifications or undocumented procedure.
+- **2.2** Were the index test results interpreted without knowledge of the reference standard results?
+  - Elaboration: Blinding of the index-test interpreter to the reference standard prevents review bias. For automated reads or tests interpreted before the reference standard is known, this is naturally satisfied.
+- **2.3** Were the index test results interpreted with the same information as would be available when the test is used in practice?
+  - Elaboration: Interpretation should be representative of clinical use. 'No' if interpreters had extra information (e.g., MRI for a screening mammogram) or were deprived of routinely available context (e.g., clinical history).
+- **2.4** If an index test threshold was used, was it standard or pre-specified?
+  - Elaboration: Thresholds derived post-hoc from the data ('data-driven') are at high risk of optimistic bias. Pre-specified or standard manufacturer thresholds are preferable. Mark 'NI' if no threshold was used (continuous test reported as AUC only).
+
+**Applicability concern:** *Concern that the index test, its conduct, or interpretation does not match the ideal test accuracy trial.*
+
+### Domain 3 — Target Condition (8 signals + applicability)
+
+- **3.1** Does the reference standard adequately identify those with and without the target condition?
+  - Elaboration: The reference standard should correctly classify all participants. 'No' if the reference standard is known to be inaccurate (low-sensitivity gold standard, imperfect composite) or substantially different from the accepted diagnostic criterion.
+- **3.2** Was the target condition assessed in all participants?
+  - Elaboration: Partial verification — applying the reference standard only to a subset (e.g., index-positive participants) — biases sensitivity and specificity estimates. 'No' if verification was selective.
+- **3.3** Was the target condition assessed in the same way in all participants?
+  - Elaboration: Differential verification — different reference standards for index-positive vs index-negative — introduces bias. 'No' if multiple reference standards were used non-randomly.
+- **3.4** Did the reference standard avoid incorporating the index test?
+  - Elaboration: Incorporation bias arises when the index test is part of a composite reference standard, inflating apparent accuracy. 'No' for any composite reference that uses the index test as a component.
+- **3.5** Was the reference standard conducted and interpreted according to the recommended instructions?
+  - Elaboration: Same standard as the index-test version of this question but applied to the reference. Followed protocols, manufacturer's instructions, or accepted clinical criteria → 'Yes'. Ad-hoc reading or undocumented procedure → 'No'.
+- **3.6** Were the reference standard results interpreted without knowledge of the index test results?
+  - Elaboration: Blinding of the reference-standard interpreter to the index test prevents review bias.
+- **3.7** If a reference standard threshold was used, was it standard or pre-specified?
+  - Elaboration: Same logic as for the index test: data-driven thresholds introduce optimistic bias; standard or pre-specified thresholds are preferable. 'NI' if no threshold was used.
+- **3.8** Was there an appropriate time interval between index test and reference standard?
+  - Elaboration: The interval must be short enough that the disease state could not have changed between tests. Long delays introduce disease-progression bias. The appropriate duration is condition-specific (hours for stroke, weeks for a slow-growing tumour).
+
+**Applicability concern:** *Concern that the target condition as defined by the reference standard does not match the ideal test accuracy trial.*
+
+### Domain 4 — Analysis (4 signals; RoB-only, **no applicability**)
+
+- **4.1** Were all participants included in the analysis?
+  - Elaboration: Per the flow diagram (Phase 3): every enrolled participant should appear in the two-by-two table or have a documented reason for exclusion. 'No' if participants disappear from the analysis without explanation.
+- **4.2** Were missing data handled appropriately?
+  - Elaboration: Missing index test, missing reference standard, and uninterpretable results should be reported and handled transparently. Indeterminate results coded as test-positive or test-negative without justification introduces bias. 'No' if missing data are silently dropped or default-coded.
+- **4.3** Does the unit of analysis match the ideal test accuracy trial?
+  - Elaboration: Unit of analysis should match the clinical decision (participant, lesion, sample, image, etc.). 'No' if the paper reports per-lesion accuracy when per-participant would be the clinically relevant unit, or vice versa.
+- **4.4** Were the estimates of sensitivity and specificity calculated appropriately?
+  - Elaboration: Standard 2×2 sensitivity and specificity formulas, exact or score CIs, no improper pooling across non-independent observations. 'No' for non-standard or unjustified statistical methods.
+
+## 3.7 Per-domain decision tree (Phase 5)
+
+The QUADAS-3 docx Phase 5 narrative explicitly allows reviewer judgement to keep a domain at Low even when one or more signaling questions are answered N/PN. Baking that judgement into a deterministic tree would be arbitrary, so we take the **conservative** interpretation: any flagged signal forces High. Rationales are preserved verbatim so reviewers can override in their own write-up.
+
+All four domains use the **same** judge function (registered identically in `DOMAIN_JUDGES`):
+
+```python
+def quadas3_domain_judge(signals: dict[str, str]) -> str:
+    """Map signaling-question answers (Y/PY/PN/N/NI) to a domain-level RoB
+    judgement (Low / High / Insufficient information) per QUADAS-3 Phase 5.
+
+    Rule:
+      - All signals Y or PY → "Low"
+      - Any N or PN → "High"
+      - Any NI without N/PN → "Insufficient information"
+      - All NI (or empty) → "Insufficient information"
+    """
+    answered = [v for v in signals.values()]
+    if not answered:
+        return "Insufficient information"
+    if any(_no(v) for v in answered):
+        return "High"
+    if all(_yes(v) for v in answered):
+        return "Low"
+    # Mixed Y/PY + NI → Insufficient information per Phase 5
+    return "Insufficient information"
+```
+
+Helpers (`_yes`, `_no`) are identical to those used by RoB 2 and ROBINS-I.
+
+## 3.8 Phase 6 — overall judgements
+
+The same Phase 6 rule applies to both the RoB aggregate (all 4 domains) and the applicability aggregate (3 domains — Analysis is excluded). Run as `quadas3_overall(judgements)` and `quadas3_applicability_overall(judgements)` respectively (the second is just an alias that wraps the same function, called with the 3-element list).
+
+```python
+def quadas3_overall(domain_judgements: list[str]) -> str:
+    """Aggregate per QUADAS-3 Phase 6.
+
+    - Any domain High → "High"
+    - All domains Low → "Low"
+    - Otherwise (any II, none High) → "Insufficient information"
+    """
+    if not domain_judgements:
+        return "Insufficient information"
+    if any(j == "High" for j in domain_judgements):
+        return "High"
+    if all(j == "Low" for j in domain_judgements):
+        return "Low"
+    return "Insufficient information"
+```
+
+`run()` returns a **4-tuple** rather than the 3-tuple used by RoB 2 / ROBINS-I:
+
+```python
+def run(pdf_bytes, extracted_fields, classification, primary_outcome,
+        progress=None, *, estimate=None, review_context=None):
+    """Returns (domain_results, overall_rob, "NA", overall_applicability)."""
+```
+
+The 3rd slot (direction-of-bias / direction-of-effect) is always literal `"NA"` for diagnostic accuracy — direction is a treatment-trial concept that doesn't apply to sensitivity/specificity.
+
+## 3.9 Per-estimate Phase-4 path
+
+Diagnostic-accuracy papers often report multiple sens/spec estimates (subgroup × index test × threshold × reference standard × unit of analysis). The QUADAS-3 docx Phase 4 instructs reviewers to extract every estimate relevant to the synthesis question and assess each one separately. The orchestrator implements this:
+
+1. **`extract_estimates(pdf_bytes, extracted_fields) → list[dict]`** in `backend/rob_tools/quadas3.py` runs a single LLM call returning every numerical accuracy estimate the paper reports. Synthetic ids 1..N are assigned in Python. Each estimate carries `description`, `subgroup`, `index_test`, `threshold`, `reference_standard`, `unit_of_analysis`, `sensitivity`, `specificity`, `n`.
+2. Surfaced as `POST /api/quality-appraisal/extract-estimates` (engineer seat, 3 cr/paper, auto-refund on error).
+3. The run-create modal calls this endpoint per selected paper and renders a checkbox card per paper. User selects 0+ estimates per paper; selections go into `payload.paper_estimates`.
+4. In `appraise_paper`, when `cfg.get("supports_estimates")` is true the per-estimate helper `_appraise_paper_with_estimates` runs classify + prefill + STARD **once per paper**, then loops over estimates running QUADAS-3 + GRADE **once per estimate**. Each estimate produces a separate `quality_appraisal_results` row (same `paper_id`, distinct `estimate_id`).
+5. Cost: one "unit of work" (36 cr) per (paper, estimate) tuple. Refunds are also per-unit — `summary["estimates_errored"]` tells `run_batch` how many units to refund.
+
+When no estimates are supplied for a diagnostic-accuracy paper, the path falls back to a **single-estimate iteration** against the paper's primary / headline estimate (same idiom as the RCT primary-outcome auto-pick).
+
+## 3.10 Phases 1+2 — review-level context
+
+The docx asks reviewers to specify, once per review, the synthesis question (Phase 1) and the ideal test accuracy trial design (Phase 2). In v1 we collect both as a single optional free-text textarea on the run-create modal (`quadas3_review_context` on the run row). This text is threaded into the D1/D2/D3 applicability prompts so the LLM can judge "concern that the as-conducted study does not match the ideal trial" against the reviewer's stated synthesis question + ideal-trial design. Without this context, applicability is judged against a generic intended-use baseline; the prompt explicitly tells the LLM to default to that.
+
+## 3.11 GRADE for diagnostic accuracy
+
+`STUDY_TYPE_REGISTRY["Diagnostic Accuracy"]` sets `initial_grade="High"` (GRADE handbook default for cross-sectional accuracy designs) and `skip_grade_extras=True`. `_rob_downgrade(rob_overall, rob_domain_judgements)` handles the QUADAS-3 outcome scale:
+
+| `rob_overall`             | Downgrade | Notes |
+|---------------------------|-----------|-------|
+| Low                       | 0         | No risk-of-bias downgrade |
+| High (1 domain High)      | 1         | Standard single-domain downgrade |
+| High (≥2 domains High)    | 2         | Multi-domain downgrade |
+| Insufficient information  | 1         | Conservative — same as ROBINS-I "No information" |
+
+`compute_grade` is called with `indirectness_levels=0, imprecision_levels=0` because `cfg.skip_grade_extras=True` — the existing modules in `backend/indirectness.py` and `backend/imprecision.py` assume PICO/treatment trials, not PIRT (Patient / Index test / Reference standard / Target condition), so we defer them rather than produce subtly wrong outputs. PIRT-aware versions are deferred to v2.
+
+## 3.12 Out of scope for v1 QUADAS-3
+
+- Per-estimate domain-difference shortcut from the docx ("After the first estimate, only domains where characteristics are different need to be assessed" — every estimate runs all 4 domains in v1).
+- PIRT-aware indirectness + imprecision for diagnostic accuracy.
+- Structured Phase 1 + Phase 2 inputs (collected as one free-text field in v1, not the tables in the docx).
+- QUADAS-C — separate tool for comparative-accuracy reviews of two index tests.
+- Editing / overriding AI judgements in the UI.
+
+---
+
+# Section 4 — STARD 2015 reporting checklist (for diagnostic accuracy)
+
+Paired with QUADAS-3 in `STUDY_TYPE_REGISTRY["Diagnostic Accuracy"]`. Single LLM call per paper, same shape as STROBE / CONSORT. 34 entries total (30 numbered items with a/b sub-items at 10, 12, 13, 21):
+
+- **1** Title — Identification as a study of diagnostic accuracy using at least one measure of accuracy.
+- **2** Abstract — Structured summary of study design, methods, results, and conclusions.
+- **3** Introduction (Background) — Scientific and clinical background, including the intended use and clinical role of the index test.
+- **4** Introduction (Objectives) — Study objectives and hypotheses.
+- **5** Methods (Study design) — Prospective vs retrospective.
+- **6** Methods (Participants — Eligibility) — Eligibility criteria.
+- **7** Methods (Participants — Identification) — Basis for identifying potentially eligible participants.
+- **8** Methods (Participants — Sampling) — Where and when potentially eligible participants were identified.
+- **9** Methods (Participants — Recruitment) — Consecutive, random, or convenience series.
+- **10a / 10b** Methods (Test methods — Index test / Reference standard) — In sufficient detail to allow replication.
+- **11** Methods (Test methods — Rationale) — Rationale for choosing the reference standard.
+- **12a / 12b** Methods (Test methods — Index / Reference thresholds) — Definition + rationale, distinguishing pre-specified from exploratory.
+- **13a / 13b** Methods (Test methods — Blinding) — Whether clinical information / opposite-test results were available to readers.
+- **14** Methods (Analysis — Estimates) — Methods for estimating or comparing measures of diagnostic accuracy.
+- **15** Methods (Analysis — Indeterminate results) — How indeterminate results were handled.
+- **16** Methods (Analysis — Missing data) — How missing data were handled.
+- **17** Methods (Analysis — Subgroups) — Any analyses of variability in accuracy, distinguishing pre-specified from exploratory.
+- **18** Methods (Analysis — Sample size) — Intended sample size + derivation.
+- **19** Results (Participants — Flow) — Flow diagram.
+- **20** Results (Participants — Baseline) — Baseline demographic and clinical characteristics.
+- **21a / 21b** Results (Participants — Distribution by reference standard / Alternative diagnoses).
+- **22** Results (Participants — Time interval) — Time interval and any clinical interventions between index test and reference standard.
+- **23** Results (Test results — Cross-tabulation) — 2×2 table or its distribution.
+- **24** Results (Test results — Estimates) — Estimates of accuracy and precision (e.g. 95% CIs).
+- **25** Results (Test results — Adverse events) — Any adverse events from performing the index test or reference standard. **Often N/A for non-invasive imaging.**
+- **26** Discussion (Limitations) — Including sources of potential bias, statistical uncertainty, generalisability.
+- **27** Discussion (Implications) — Implications for practice including intended use and clinical role of the index test.
+- **28** Other (Registration) — Registry name and number. **Often N/A for retrospective records reviews.**
+- **29** Other (Protocol) — Where the full study protocol can be accessed.
+- **30** Other (Funding) — Sources of funding and role of funders.
+
+Items marked N/A by the LLM (`adhered=null`) are excluded from the proportion denominator so the adherence rate isn't deflated by structurally non-applicable items.
+
+
+---
+
 # Appendix — How the orchestrator wires these together
 
-For each paper, [backend/quality_appraisal.py](../backend/quality_appraisal.py) classifies the study type, picks the matching tool from `STUDY_TYPE_REGISTRY` (RCT → RoB 2 + CONSORT 2025; Cohort / Case-Control / Case-Crossover / Non-Randomized Trial / Cross-Sectional → ROBINS-I V2 + STROBE 2007), and calls `tool.run(pdf_bytes, fields, classification, primary_outcome, progress)`. Inside ROBINS-I V2's `run()`:
+For each paper, [backend/quality_appraisal.py](../backend/quality_appraisal.py) classifies the study type, picks the matching tool from `STUDY_TYPE_REGISTRY`:
 
-1. **Preflight** — one LLM call answers B1 / B2 / B3 + C4. If B2=Y/PY or B3=Y/PY → return `Critical` and skip the rest. Otherwise C4 dispatches Domain 1 to **Variant A** (ITT, baseline confounding only) or **Variant B** (per-protocol, baseline + time-varying).
-2. For each `domain` in `DOMAINS`, build a per-domain prompt via `build_domain_prompt(domain, variant, ...)` (variant is used to pick Variant A or B signaling questions for Domain 1).
-3. Send PDF + prompt to the LLM via `backend/annotator.py:_call_with_pdf` (3-stage oversize fallback: PDF-as-document → pypdf text → chunked map-reduce).
-4. Parse JSON; coerce each signal answer into the per-question allowed token set (`Y / PY / PN / N / NI / WN / SN / WY / SY`), defaulting to `NI`.
-5. Map signals → domain judgement via `DOMAIN_JUDGES_VARIANT_A[domain_id](signals)` or `DOMAIN_JUDGES_VARIANT_B[domain_id](signals)` (the pure-Python decision tree — never the LLM).
-6. After all domains: aggregate via `rob2_overall(...)` or `robins_i_overall(...)`. The latter normalizes Domain 1's `"Low (except for concerns about uncontrolled confounding)"` label to `Low` for aggregation.
-7. Return `(domain_results, overall_judgement, overall_direction)`. `domain_results["preflight"]` carries the B1/B2/B3/C4 answers + rationales + the variant decision; per-domain entries are keyed by string domain id (`"1"` … `"6"`).
+| Study type                                                                              | RoB tool   | Reporting guideline | Initial GRADE | Extras                                       |
+|-----------------------------------------------------------------------------------------|------------|---------------------|---------------|----------------------------------------------|
+| Randomized Controlled Trial                                                             | rob2       | consort2025         | High          | indirectness + imprecision                   |
+| Cohort / Case-Control / Non-Randomized Trial / Cross-Sectional (Analytical) / Case-Crossover | robins_i   | strobe              | Low           | indirectness + imprecision                   |
+| Diagnostic Accuracy                                                                     | quadas3    | stard               | High          | `skip_grade_extras=True`, `supports_estimates=True` |
 
-The orchestrator then computes initial GRADE (from the registry) and an updated GRADE downgraded for RoB + indirectness + imprecision. The full prompt catalog and decision-tree source — including the preflight prompt + both Domain 1 variant trees — are exposed via `prompt_catalog()` for the developer-view UI (any signed-in user can inspect the prompts and decision trees behind a judgement).
+Inside `tool.run()` for treatment-trial designs:
+
+1. For each `domain` in `DOMAINS`, build a per-domain prompt via `build_domain_prompt(...)`.
+2. Send PDF + prompt to the LLM via `backend/annotator.py:_call_with_pdf` (3-stage oversize fallback: PDF-as-document → pypdf text → chunked map-reduce).
+3. Parse JSON; coerce each signal answer into `Y/PY/PN/N/NI` (default `NI`).
+4. Map signals → domain judgement via `DOMAIN_JUDGES[domain_id](signals)` (the pure-Python decision tree — never the LLM).
+5. After all domains: aggregate via `rob2_overall(...)` or `robins_i_overall(...)`.
+6. Return `(domain_results, overall_judgement, overall_direction)`.
+
+For QUADAS-3, `appraise_paper` branches on `cfg.get("supports_estimates")` and routes through `_appraise_paper_with_estimates`. Each domain LLM call returns both signal answers (RoB) and applicability judgement+rationale (where applicable) in one JSON payload. `run()` returns a 4-tuple including the overall applicability aggregate. One `quality_appraisal_results` row is written per (paper, estimate) tuple.
+
+The orchestrator then computes initial GRADE (from the registry) and an updated GRADE downgraded for RoB (+ indirectness + imprecision for non-QUADAS-3 tools). The full prompt catalog, signaling questions, and decision-tree source for **every** tool are exposed via `prompt_catalog()` for the developer-view UI at `GET /api/quality-appraisal/prompts` — readers can verify the exact logic behind any judgement.

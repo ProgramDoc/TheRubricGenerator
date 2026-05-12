@@ -6,18 +6,18 @@
 
 ---
 
-## Current State (April 30, 2026)
+## Current State (May 12, 2026)
 
 ### Codebase Summary
 
 | Component | Files | Lines |
 |-----------|-------|-------|
-| `main.py` | 1 | ~8,700 |
-| `backend/` modules | 41 | ~16,500 |
-| `frontend/` pages | 26 | ~25,200 |
+| `main.py` | 1 | ~9,100 |
+| `backend/` modules | 43 | ~17,200 |
+| `frontend/` pages | 26 | ~25,500 |
 | `frontend/_shared/design.css` | 1 | ~420 |
-| `tests/` | 8 | ~2,500 |
-| **Total** | **77** | **~53,300** |
+| `tests/` | 9 | ~2,900 |
+| **Total** | **80** | **~55,100** |
 
 ### What's Live
 
@@ -87,6 +87,7 @@
 - **Chain-of-thought reasoning per paper:** `call_anthropic(thinking_budget=N)` enables Claude extended thinking and returns `(answer, thinking)`. Plumbed through `_call_with_pdf` → `extract_custom_fields`. `CustomSchemaRunPayload.thinking_enabled: bool` toggles it (~50% credit bump per paper); thinking text is captured in `paper_thinking` events and rendered as collapsible blocks in the batch modal. Chunked-text fallback returns empty thinking (multi-chunk reasoning would be misleading to merge)
 - **3-judge adjudication pipeline:** Replaces the single-judge + shadow-regrade flow. Judge 1 (Anthropic) → Judge 2 (OpenAI w/ Claude fallback) → Judge 3 (Gemini), with majority-of-3 vote per question. 3-way splits drop into a human review queue (`backend/review.py` + `frontend/review.html`). The `shadow_regrade` name is preserved as a thin alias for un-migrated call sites
 - **Quality Appraisal — non-randomized study designs:** Extends the v1 RCT-only pipeline to also handle Cohort, Case-Control, Non-Randomized Trial, Cross-Sectional (Analytical), and Case-Crossover designs. Each maps to ROBINS-I (2016) + STROBE 2007 + Low initial GRADE. New tools: `backend/rob_tools/robins_i.py` (7 domains, 5-level Low/Moderate/Serious/Critical/No information judgement) and `backend/reporting_guidelines/strobe.py` (22-item checklist). Mixed-tool runs render the column set from the first successful row's tool; non-matching domain cells show `—`
+- **Quality Appraisal — diagnostic test accuracy (QUADAS-3 v1.2):** Adds the Diagnostic Accuracy classification to the pipeline. New tool `backend/rob_tools/quadas3.py` (4 domains × 20 signaling questions transcribed verbatim from the docx + dual RoB and applicability assessment + 3-level Low/High/Insufficient information scale) and `backend/reporting_guidelines/stard.py` (STARD 2015, 34 entries). Per-estimate path — a single paper can produce multiple `quality_appraisal_results` rows, one per Phase-4 sensitivity/specificity estimate, surfaced via a new `POST /api/quality-appraisal/extract-estimates` endpoint + run-create modal estimate selector. Optional review-level context (Phases 1+2 — synthesis question + ideal trial) threaded into applicability prompts. GRADE indirectness and imprecision are skipped for diagnostic-accuracy assessments (cfg.`skip_grade_extras=True`) since the existing modules assume PICO/treatment trials, not PIRT
 - **Rubric Generator hardening (April 26):** Default model bumped to `claude-sonnet-4-6` (env-overridable). 3-attempt retry with 1s/2s backoff on the batched generator (`_generator_with_retry`) — skips retry on permanent errors (400, 401, 403, 413). Domain composition split per batch via largest-remainder allocation (`_split_composition_for_batches`) so per-key totals are exact across batches
 
 ---
@@ -591,6 +592,79 @@ The Quality Appraisal pipeline only downgraded GRADE for risk of bias. Indirectn
 - Indirect comparisons / network meta-analysis — body-of-evidence only, not applicable to a single trial.
 - Baseline-risk indirectness — needs external longitudinal data to model alternative baselines.
 - ICEMAN credibility check for subgroup effects.
+
+### QUADAS-3 v1.2 — Diagnostic Test Accuracy (May 12, 2026)
+
+The Quality Appraisal pipeline supported RCTs and 5 non-randomized study types but had no path for **diagnostic test accuracy** studies — a meaningful gap, since DTA reviews are a substantial fraction of clinical-evidence work. QUADAS-3 v1.2 (University of Bristol; Whiting et al., the successor to QUADAS-2) fills that gap. The integration is the largest extensibility test of the RoB-tool contract so far: QUADAS-3 has 4 domains (vs RoB 2's 5 / ROBINS-I's 7), a 3-level Low/High/Insufficient-information scale (not 3-level Low/Some/High or 5-level), **dual RoB + applicability** judgements per domain, and is structured around **per-estimate** assessment — one paper can produce many sensitivity/specificity estimates from different subgroups × thresholds × reference standards, each scored independently.
+
+**Architectural decisions** (locked with the user up-front via AskUserQuestion):
+- **v1 scope:** full pipeline (RoB + applicability + STARD + GRADE), not RoB-only. Reviewer gets everything in one run.
+- **GRADE extras:** skip indirectness + imprecision for diagnostic accuracy via `cfg.skip_grade_extras=True`. The existing modules assume PICO/treatment trials, not PIRT (Patient / Index test / Reference standard / Target condition) — running them as-is would produce subtly wrong outputs. Deferred to v2 with proper PIRT-aware versions.
+- **Multi-estimate:** add per-estimate UI to the run modal — not the simpler auto-pick-primary path. User explicitly chose this. Changes the result-row cardinality from one-per-paper to one-per-(paper, estimate).
+- **Phases 1+2 inputs:** optional free-text textarea in the run modal, not structured Phase 1/2 tables. Same idiom as the existing Target PICO / MID-thresholds optional sections.
+
+**New module** `backend/rob_tools/quadas3.py` (~570 lines):
+- `SIGNAL_OPTIONS = ("Y", "PY", "PN", "N", "NI")` (per Phase 5 of the docx).
+- `JUDGEMENTS = ("Low", "High", "Insufficient information")` — 3-level scale; "II" (Insufficient information) is a new value the existing detail modal had to learn (`Insufficient information → rob-ni` badge).
+- `DOMAINS` data structure with 4 entries × 20 signaling questions transcribed verbatim from the QUADAS-3 v1.2 docx (Tables 6–9): D1 Participants (4 signals), D2 Index Test (4), D3 Target Condition (8 — the largest), D4 Analysis (4, RoB-only). The first 3 also carry `applicability_question` + `applicability_elaboration`.
+- `quadas3_domain_judge(signals)` — single pure-Python decision tree (registered for all 4 domains in `DOMAIN_JUDGES`): all Y/PY → Low; any N/PN → High; otherwise → Insufficient information. The docx narratively allows reviewer override of an N/PN to keep a domain at Low, but baking that into a deterministic tree would be arbitrary — we take the conservative interpretation and surface rationales so reviewers can override in their write-up.
+- `quadas3_overall(domain_judgements)` + `quadas3_applicability_overall(...)` — Phase 6 rule (any High → High; all Low → Low; otherwise II), applied to all 4 RoB judgements and to the 3 applicability-bearing domains separately.
+- `run(...)` returns a **4-tuple** `(domain_results, overall_rob, "NA", overall_applicability)` — the 3rd slot (direction-of-effect) is always "NA" for DTA. New optional kwargs `estimate=` and `review_context=`. The single LLM call per domain returns both signal answers (RoB) AND applicability judgement+rationale (where applicable) in one JSON payload, so we don't double the LLM call count.
+- `extract_estimates(pdf_bytes, fields)` — single LLM call returning every numerical sens/spec estimate the paper reports (subgroup × index test × threshold × reference standard × unit of analysis × n). Synthetic ids 1..N assigned in Python.
+- `prompt_catalog()` exposes all 20 signaling questions + applicability prompts + decision-tree source + extract-estimates prompt for the developer view.
+
+**New reporting guideline** `backend/reporting_guidelines/stard.py`:
+- STARD 2015 (Bossuyt et al., BMJ 2015;351:h5527). 34 entries — 30 numbered items with a/b sub-items at 10/12/13/21. Same one-LLM-call-per-paper pattern as STROBE/CONSORT. N/A items (e.g., item 25 "adverse events" for non-invasive imaging, item 28 "registration" for retrospective records reviews) excluded from the adherence proportion denominator.
+
+**Registry + orchestrator** (`backend/quality_appraisal.py`):
+- New `STUDY_TYPE_REGISTRY["Diagnostic Accuracy"]` with `rob_tool="quadas3"`, `reporting_guideline="stard"`, `initial_grade="High"` (GRADE handbook default for cross-sectional accuracy), `skip_grade_extras=True`, `supports_estimates=True`.
+- New `_ESTIMATE_EXTRACTORS = {"quadas3": quadas3.extract_estimates}` — a parallel registry to `_TOOL_RUNNERS` for tools that need per-estimate iteration.
+- `_rob_downgrade` extended to handle `"Insufficient information"` → 1 level conservatively (with reason text mentioning QUADAS-3).
+- `appraise_paper` branches when `cfg.get("supports_estimates")` is true and dispatches to a new helper `_appraise_paper_with_estimates(...)`. That helper runs classify + prefill + STARD **once per paper**, then loops over estimates running QUADAS-3 + GRADE once per estimate, writing a separate `quality_appraisal_results` row per (paper, estimate). Falls back to a single-estimate iteration against the paper's primary / headline estimate when no estimates were supplied. Returns `estimates_done` / `estimates_errored` counts so `run_batch` can refund credits per failed unit.
+
+**Schema migration** (idempotent ALTER TABLE in `migrate_qa_columns(conn)`):
+- `quality_appraisal_runs.quadas3_review_context TEXT NULL` — user's free-text Phase 1+2 context.
+- `quality_appraisal_runs.paper_estimates_json TEXT NOT NULL DEFAULT '{}'` — map of `{paper_id: [estimate_dict, ...]}` captured at run-create.
+- `quality_appraisal_results.applicability_overall TEXT NULL` — Phase 6 applicability aggregate.
+- `quality_appraisal_results.estimate_id INTEGER NULL` — synthetic 1..N within the paper; NULL for non-QUADAS rows.
+- `quality_appraisal_results.estimate_json TEXT NOT NULL DEFAULT '{}'` — the parsed estimate descriptor (subgroup, sens, spec, threshold, etc.).
+
+**API**:
+- `POST /api/quality-appraisal/extract-estimates` (engineer seat, 3 cr/paper, auto-refund on error) — body `{paper_id}`, returns `{estimates: [{id, description, subgroup, index_test, threshold, reference_standard, unit_of_analysis, sensitivity, specificity, n}, ...]}`. Used by the run-create modal step 2.
+- `POST /api/quality-appraisal/runs` extended: new optional `quadas3_review_context: str` + `paper_estimates: {paper_id: [estimate, ...]}` on `QualityAppraisalRunPayload`. Cost model becomes **36 cr per "unit of work"** where a unit = a paper for non-QUADAS, or a (paper, estimate) tuple for QUADAS-3 — so a multi-estimate diagnostic paper costs more than a single-estimate run but each estimate refunds independently on failure.
+- `GET /api/quality-appraisal/runs/{id}` SELECT extended with the 3 new result columns + 2 new run columns; JSON parser includes `estimate_json` in the parse loop; `_load_qa_run` parses `paper_estimates_json` back into a dict.
+- Export endpoints (`.csv` / `.xlsx`) carry the applicability + estimate columns through `flatten_result_row`.
+
+**Frontend** (`frontend/quality-appraisal.html`):
+- `QUADAS3_DOMAIN_META` (4 entries with `hasApplicability` flag), dispatched via `domainMetaFor(tool)`. `Insufficient information` added to `ROB_BADGE_CLS` → `rob-ni` (reuses the existing No-information greyscale).
+- New run-modal section "QUADAS-3 / diagnostic accuracy (optional)" with a free-text review-context textarea + an "Extract Phase-4 estimates" button. Clicking the button parallel-fires `/extract-estimates` for every selected paper and renders per-paper estimate-checkbox cards; the first estimate is preselected. `submitRun()` collects selections into `payload.paper_estimates`.
+- Results grid: new **Applicability** column shown only when at least one row uses QUADAS-3. On QUADAS-3-only runs the Indirectness + Imprecision columns are hidden (those modules are skipped). For multi-estimate diagnostic papers the grid shows multiple rows for the same paper, each with a per-row 📊 estimate descriptor chip in the study cell.
+- Detail navigation refactored to `openDetailModalById(rowId, anchor)` because `paper_id` is ambiguous when one paper has many result rows. The legacy `openDetailModal(paperId, ...)` is kept for back-compat.
+- Detail-modal additions: new `qa-sec-applicability` section between RoB and STARD (overall applicability badge + 3-cell grid with per-domain badges + click-to-highlight rationales) and `qa-sec-estimate` section (label/value rows for the estimate descriptor, or a fallback "primary estimate" note when no estimate was supplied). The subnav dynamically adds Applicability + Estimate buttons when the tool is QUADAS-3; Indirectness + Imprecision buttons are hidden. RoB-section header label switches to "Risk of Bias (QUADAS-3 v1.2)"; guideline-section header switches to "STARD 2015 checklist"; GRADE counts-line explains why indirectness + imprecision were skipped.
+
+**Tests** — `tests/test_quadas3.py` (54 new cases):
+- `TestQuadas3DomainJudge` (8) — all Y/PY → Low; single N or PN → High at every signal slot; all NI → II; mixed Y+NI → II; N overrides NI; empty signals → II.
+- `TestQuadas3Overall` (6) — Phase 6 rule: any High → High at any slot; High over II; all Low; II without High; all II; empty.
+- `TestQuadas3ApplicabilityOverall` (3) — same rule applied to 3-domain list.
+- `TestQuadas3Domains` (6) — 4 domains; sequential ids; D1–D3 have applicability and D4 doesn't; signal counts 4/4/8/4; signal options match the docx; signal ids match domain numbering.
+- `TestExtractEstimates` (6) — list returned + synthetic ids + description synthesis from subgroup/threshold + empty case + missing-key case + non-dict entries dropped.
+- `TestQuadas3Registry` (5) — Diagnostic Accuracy is registered with the right cfg; tool/guideline/estimate-extractor runners are wired up; registry key is a valid `annotator.TYPE_FIELD_IDS` member.
+- `TestQuadas3GradeDowngrade` (6) — Low → 0; single High → 1 level; 2 High → 2 levels; Insufficient info → 1 level (conservative).
+- `TestStard` (4) — item count is 34; all required published-checklist ids present; prompt covers every item; proportion math excludes N/A.
+- `TestQuadas3PromptCatalog` (4) — full structure; decision-tree source surfaced via `inspect.getsource`; main `qa.prompt_catalog()` includes quadas3 + stard sub-catalogs.
+- `TestDomainJudges` (3) — registry has all 4 entries; all callable; all use the same conservative logic.
+- `TestQuadas3Run` (3) — end-to-end mocked-LLM smoke: 4-tuple return shape with all-Low → Low + Low applicability; any-domain-High → High overall; `review_context` is threaded into the first 3 (applicability-bearing) domain prompts.
+
+**Reference doc** — `docs/quality_appraisal_rob_reference.md` gets a new Section 3 transcribing QUADAS-3 v1.2 in the same style as the existing RoB 2 + ROBINS-I sections: overview, signal options, system prompt, per-domain prompt template, JSON output shape, 4 domains × signaling questions + decision tree, Phase 6 overall algorithm, plus a STARD 2015 appendix. Mirrors the developer-view JSON as static markdown so the methodology can be shared without cloning the repo.
+
+**Total**: 390 tests pass (was 336). One commit's worth of work, 2 new modules (`backend/rob_tools/quadas3.py` + `backend/reporting_guidelines/stard.py`) + 1 new test module + ~600 LOC across frontend + ~120 LOC across `backend/quality_appraisal.py` orchestrator changes + ~95 LOC across `main.py` for the new endpoint and run-create extension. Schema migration verified idempotent on SQLite (will run on Render's PostgreSQL the same way via the column_exists guards).
+
+**Out of scope (deferred to v2)**:
+- Per-estimate domain-difference shortcut from the docx ("After the first estimate, only domains where characteristics are different need to be assessed" — every estimate runs all 4 domains in v1).
+- PIRT-aware indirectness + imprecision for diagnostic accuracy — existing modules are PICO/treatment-trial-shaped.
+- Structured Phase 1 + Phase 2 inputs (collected as one free-text field in v1, not the tables in the docx).
+- QUADAS-C — separate tool from QUADAS-3, for comparative-accuracy reviews of two index tests.
+- Editing / overriding AI judgements in the UI (consistent with the rest of Quality Appraisal v1).
 
 ### Annotator Custom Extraction & Analytics (April 16, 2026)
 
