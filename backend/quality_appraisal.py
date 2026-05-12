@@ -125,6 +125,15 @@ STUDY_TYPE_REGISTRY: dict[str, dict[str, str]] = {
     "Non-Randomized Trial":         {"rob_tool": "robins_i", "reporting_guideline": "strobe",      "initial_grade": "Low"},
     "Cross-Sectional (Analytical)": {"rob_tool": "robins_i", "reporting_guideline": "strobe",      "initial_grade": "Low"},
     "Case-Crossover":               {"rob_tool": "robins_i", "reporting_guideline": "strobe",      "initial_grade": "Low"},
+    # Single-arm / uncontrolled designs — route to ROBINS-I V2's single_arm
+    # variant of D1/D2 (D3-D6 reused unchanged). Initial GRADE is "Very low"
+    # since absence of a comparator is a more severe limitation than confounded
+    # comparison; compute_grade clamps further downgrades at "Very low".
+    # STROBE is reused pragmatically; a phase2_singlearm guideline module
+    # may be added in a follow-up. Dose-Escalation shares the single-arm
+    # variant; MTD/DLT/RP2D-specific bias considerations are not modeled.
+    "Single-Arm Trial":             {"rob_tool": "robins_i", "reporting_guideline": "strobe",      "initial_grade": "Very low"},
+    "Dose-Escalation Study":        {"rob_tool": "robins_i", "reporting_guideline": "strobe",      "initial_grade": "Very low"},
     # Future (not wired yet — classification skips + refunds):
     # "Cluster Randomized Trial":    {"rob_tool": "rob2_cluster",    "reporting_guideline": "consort_cluster",    "initial_grade": "High"},
     # "Crossover Trial":             {"rob_tool": "rob2_crossover",  "reporting_guideline": "consort_crossover",  "initial_grade": "High"},

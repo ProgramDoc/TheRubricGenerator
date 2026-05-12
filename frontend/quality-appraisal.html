@@ -753,14 +753,40 @@ const ROBINS_I_DOMAIN_META = [
   { id: 5, short: 'D5: Outcome measure', full: 'Bias arising from measurement of the outcome' },
   { id: 6, short: 'D6: Reported result', full: 'Bias in selection of the reported result' },
 ];
-function domainMetaFor(tool) {
-  return tool === 'robins_i' ? ROBINS_I_DOMAIN_META : ROB2_DOMAIN_META;
+// ROBINS-I V2 (adapted) — single-arm / uncontrolled designs (Single-Arm Trial,
+// Dose-Escalation Study). D1 and D2 are reframed for the absence of a
+// comparator: D1 assesses benchmark adequacy + prognostic-mix comparability,
+// D2 collapses to intervention fidelity + intent-vs-received cohort definition.
+// D3-D6 reuse cohort domain labels unchanged.
+const ROBINS_I_SA_DOMAIN_META = [
+  { id: 1, short: 'D1: Benchmarking',    full: 'Bias due to confounding — benchmark adequacy + prognostic-mix comparability (single-arm)' },
+  { id: 2, short: 'D2: Intervention',    full: 'Bias in classification of interventions — intervention fidelity + cohort-definition (single-arm)' },
+  { id: 3, short: 'D3: Selection',       full: 'Bias in selection of participants into the study (or analysis)' },
+  { id: 4, short: 'D4: Missing data',    full: 'Bias due to missing data' },
+  { id: 5, short: 'D5: Outcome measure', full: 'Bias arising from measurement of the outcome' },
+  { id: 6, short: 'D6: Reported result', full: 'Bias in selection of the reported result' },
+];
+// domainMetaFor returns the appropriate domain-meta table. For ROBINS-I, the
+// optional second argument is the variant ('A' | 'B' | 'single_arm') read
+// from result.rob_domains.preflight.variant; only 'single_arm' swaps the meta.
+function domainMetaFor(tool, variant) {
+  if (tool !== 'robins_i') return ROB2_DOMAIN_META;
+  return variant === 'single_arm' ? ROBINS_I_SA_DOMAIN_META : ROBINS_I_DOMAIN_META;
+}
+// Extract the variant string from a result row's rob_domains. Returns
+// undefined when missing (e.g. RoB 2 rows, legacy V1 ROBINS-I rows).
+function variantOf(result) {
+  return result && result.rob_domains && result.rob_domains.preflight
+    ? result.rob_domains.preflight.variant
+    : undefined;
 }
 const ROB_BADGE_CLS = {
   'Low': 'rob-low',
   // ROBINS-I V2: Domain 1 substitutes this label for "Low" per the cribsheet
   // footnote — uncontrolled confounding cannot be ruled out observationally.
   'Low (except for concerns about uncontrolled confounding)': 'rob-low',
+  // ROBINS-I V2 single-arm variant: D1 "Low" label for uncontrolled designs.
+  'Low (except for concerns about uncontrolled benchmarking)': 'rob-low',
   'Some concerns': 'rob-some', 'High': 'rob-high',
   'Moderate': 'rob-moderate', 'Serious': 'rob-high', 'Critical': 'rob-critical',
   'No information': 'rob-ni',  // legacy V1 only
@@ -1168,7 +1194,8 @@ function renderResults() {
   // Build the column list from the first successful result's tool + RoB domains.
   const firstOk = results.find(r => r.status === 'ok');
   const runTool = (firstOk && firstOk.rob_tool) || 'rob2';
-  const runDomainMeta = domainMetaFor(runTool);
+  const runVariant = variantOf(firstOk);
+  const runDomainMeta = domainMetaFor(runTool, runVariant);
   const robDomainIds = firstOk && firstOk.rob_domains
     ? Object.keys(firstOk.rob_domains).sort((a, b) => Number(a) - Number(b))
     : runDomainMeta.map(m => String(m.id));
@@ -1392,7 +1419,8 @@ function renderDetailPanel(r, anchor) {
 
   const robCls = robBadgeCls(r.rob_overall);
   const detailTool = r.rob_tool || 'rob2';
-  const detailMeta = domainMetaFor(detailTool);
+  const detailVariant = variantOf(r);
+  const detailMeta = domainMetaFor(detailTool, detailVariant);
 
   let summaryHtml = `<section id="qa-sec-summary"><h3>Summary</h3>
     <div style="display:grid;grid-template-columns:140px 1fr;gap:6px 12px;font-size:12px;">

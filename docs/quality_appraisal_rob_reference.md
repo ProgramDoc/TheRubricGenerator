@@ -903,6 +903,135 @@ def domain6_judge(signals: dict[str, str]) -> str:
 
 ---
 
+### 2.7.1 Single-Arm Trial / Dose-Escalation adaptation
+
+V2 is published for cohort/follow-up studies. We extend it to **single-arm** (uncontrolled) designs — Single-Arm Trial, Dose-Escalation Study — via a third variant of Domain 1 and Domain 2. D3–D6 reuse cohort signals + judges unchanged. Selected at the top of `run()` based on `classification["study_type"]` (BEFORE preflight), NOT via C4. C4 is still asked but recorded as metadata; the variant is pinned to `"single_arm"` for these designs.
+
+**Per-domain disposition:**
+
+| Domain | Disposition |
+|---|---|
+| D1 Confounding | **Replaced.** No comparator → confounding-by-indication N/A. Reframed as benchmark adequacy + prognostic-mix comparability. |
+| D2 Classification | **Replaced (degenerate, 3 questions).** Only one arm, but intent-vs-received cohort definition still matters. |
+| D3 Selection | Reused unchanged — most-relevant domain for single-arm (eligibility creep, prevalent-user bias, immortal-time all transfer). |
+| D4 Missing data | Reused unchanged. |
+| D5 Outcome measurement | Reused unchanged. |
+| D6 Reported result | Reused unchanged. |
+
+**Registry entries:** `Single-Arm Trial` and `Dose-Escalation Study` both map to `rob_tool="robins_i"` (the runner internally selects the single_arm variant) + `reporting_guideline="strobe"` + `initial_grade="Very low"` (conservative — uncontrolled designs start at the lowest GRADE level; `compute_grade` clamps further downgrades at Very low).
+
+**Dose-Escalation caveat:** MTD/DLT/RP2D-specific bias considerations (e.g. selection of the expansion cohort based on DLT observation) are intentionally not modeled in v1. Dose-Escalation reuses the single-arm variant wholesale.
+
+**Preflight (single-arm variant)** — the cohort B1/B2 (confounding control) are replaced with benchmark-pre-specification questions. B3 (outcome measurement) is comparator-agnostic and reused verbatim. C4 (ITT vs per-protocol) is still asked but recorded as metadata only — single-arm trials can still have protocol deviations; the answer informs interpretation of D2-single-arm question 2S.3 but does NOT swap variants.
+
+- **B1-SA** — Did the authors pre-specify a quantitative benchmark (historical control rate, performance criterion, or null hypothesis with a statistical decision rule) against which the single-arm result is being judged? `(Y / PY / PN / N)`
+- **B2-SA** — (If N/PN to B1-SA) Is the absence of any pre-specified benchmark severe enough that the single-arm proportion is uninterpretable for causal inference? `(Y / PY / PN / N / NA)` — Y/PY short-circuits to **Critical**.
+- **B3** — Reused verbatim. Y/PY short-circuits to **Critical**.
+- **C4** — Reused verbatim. Recorded as metadata. Variant stays `"single_arm"` regardless of answer.
+
+#### Domain 1 (single-arm variant) — signaling questions
+
+**Relevant extracted fields:** `confounders_measured`, `adjustment_method`, `comparator_historical_reference`, `primary_endpoint_prespecified`, `consecutive_enrolment`, `outcome_definition`.
+
+**1S.1** — Was the implied benchmark (historical control rate, pre-specified performance criterion, or null hypothesis with a quantitative decision rule) pre-specified before data collection? `(Y / PY / PN / N)`
+> Examples of pre-specified benchmarks: a Simon two-stage design with a numeric response-rate threshold; an FDA accelerated-approval ORR threshold cited in the protocol; a published historical control rate that the trial was powered against. Answer Y/PY if such a benchmark is clearly identifiable in the protocol/SAP/methods. Answer N/PN if no benchmark is stated, or if the benchmark looks post-hoc.
+
+**1S.2** — Is the implied benchmark reasonable given current standard of care and the patient population being studied? `(Y / PY / PN / N / NI)`
+> Answer Y/PY if the benchmark is consistent with contemporary published control-arm rates in comparable patients. Answer N/PN if implausibly low (inflates apparent benefit) or implausibly high (forces a near-impossible bar).
+
+**1S.3** — Is the cohort's measured baseline prognostic profile (stage, prior lines, ECOG / performance status, biomarker status, key comorbidities) comparable to that of the benchmark population? `(NA / Y / PY / WN / SN / NI)`
+> WN when most-but-not-all prognostic factors look comparable. SN when at least one important prognostic factor is materially more favourable in this cohort. NA only when no benchmark was identified at 1S.1.
+
+**1S.4** — Did the authors address residual prognostic-mix differences quantitatively (sensitivity analyses, propensity-score adjustment to external controls, prognostic-score stratification, or similar)? `(NA / Y / PY / PN / N / NI)`
+> Examples: propensity-score weighting against an external real-world cohort, MAIC, pre-specified sensitivity analyses.
+
+**1S.5** — Do negative / falsification controls, external-validity considerations, or other quantitative bias analyses suggest serious uncontrolled selection-prognostic bias? `(Y / PY / PN / N)`
+> Analogous to 1A.4 / 1B.5 in the cohort variants. Answer N when no such consideration suggests substantial bias — the typical answer.
+
+**Judgement scale:** `Low (except for concerns about uncontrolled benchmarking)` / `Moderate` / `Serious` / `Critical` — Domain 1's "Low" gets the SA-specific label since benchmark-mismatch confounding can never be fully ruled out without a comparator.
+
+**Decision tree:**
+
+```python
+def domain1_variant_single_arm_judge(signals: dict[str, str]) -> str:
+    """D1 Variant single_arm (uncontrolled — no comparator)."""
+    q1 = signals.get("1S.1", "NI")  # benchmark pre-specified?
+    q2 = signals.get("1S.2", "NI")  # benchmark reasonable?
+    q3 = signals.get("1S.3", "NI")  # prognostic profile comparable?
+    q4 = signals.get("1S.4", "NI")  # quantitative adjustment?
+    q5 = signals.get("1S.5", "NI")  # negative/falsification controls?
+
+    # 1S.5 dominates — falsification hit → Critical regardless
+    if _yes(q5):
+        return "Critical"
+
+    # No pre-specified benchmark + no quantitative adjustment → Critical
+    if _strict_no(q1):
+        if _strict_no(q4):
+            return "Critical"
+        return "Serious"
+    if _no_info(q1):
+        return "Serious"
+
+    # Benchmark pre-specified (Y/PY)
+    if _strict_yes(q1):
+        if _strict_yes(q3):
+            return LOW_D1_SA if _strict_yes(q2) else "Moderate"
+        if _weak_no(q3):
+            return "Moderate"
+        if _strong_no(q3) or _no_info(q3):
+            return "Moderate" if _strict_yes(q4) else "Serious"
+
+    return "Serious"
+```
+
+#### Domain 2 (single-arm variant) — signaling questions
+
+**Relevant extracted fields:** `exposure_definition`, `intervention_classification`, `escalation_scheme`, `dose_levels`, `expansion_cohort`.
+
+**2S.1** — Was the intervention well-defined (dose, schedule, duration, dose-modifications protocol) at the start of follow-up? `(Y / PY / PN / N / NI)`
+> Answer N/PN when the intervention is described only at high level (e.g. "standard chemotherapy").
+
+**2S.2** — Were dose reductions, holds, and discontinuations recorded and reported? `(Y / PY / WN / SN / NI)`
+> WN if most exposure modifications were recorded; SN if material exposure detail is missing such that the analyzed "intervention" is effectively undefined.
+
+**2S.3** — Was the analyzed cohort defined by intended treatment (everyone enrolled, ITT-like) or by received treatment (only those completing ≥X cycles / responding to treatment)? `(NA / SY / WY / PN / N / NI)`
+> SY (strong yes) when the primary analysis is explicitly restricted to completers or responders. WY (weak yes) when the analyzed cohort excludes some enrolled patients for treatment-related reasons but not dominantly. N/PN when all enrolled (or modified ITT) are analyzed.
+
+**Decision tree:**
+
+```python
+def domain2_variant_single_arm_judge(signals: dict[str, str]) -> str:
+    """D2 Variant single_arm — degenerate classification (one intervention)."""
+    q1 = signals.get("2S.1", "NI")  # intervention well-defined?
+    q2 = signals.get("2S.2", "NI")  # modifications recorded?
+    q3 = signals.get("2S.3", "NI")  # ITT-like vs received-treatment cohort?
+
+    # 2S.3 SY = strongly responder-restricted analysis → Critical
+    if _strong_yes(q3):
+        return "Critical"
+    if _weak_yes(q3) or _no_info(q3):
+        return "Serious"
+
+    # q3 in (PN, N): cohort defined by intended treatment
+    if _strict_yes(q1):
+        if _strict_yes(q2):
+            return "Low"
+        if _weak_no(q2):
+            return "Moderate"
+        if _strong_no(q2):
+            return "Serious"
+        return "Moderate"  # NI on 2S.2
+
+    if _strict_no(q1):
+        return "Serious"
+    return "Moderate"  # NI on 2S.1
+```
+
+The `LOW_D1_SA` label is normalized to `"Low"` by `robins_i_overall()` so single-arm + cohort runs aggregate consistently.
+
+---
+
 ## 2.8 Overall ROBINS-I V2 algorithm
 
 Worst-domain aggregation per cribsheet p48. The user may override upward when multiple Serious domains compound, but the algorithm default is the worst single-domain judgement. Domain 1's special `"Low (except for concerns about uncontrolled confounding)"` label is normalized to `"Low"` for aggregation.

@@ -301,6 +301,58 @@ class TestRobinsIPreflight:
         # B2/B3 normalized away from Y/PY → proceed
         assert out["screening_decision"] == "proceed"
 
+    # ── Single-arm preflight ──────────────────────────────
+    def test_single_arm_study_type_pins_variant_to_single_arm(self, monkeypatch):
+        # Even with C4=Yes (per-protocol), single-arm study type keeps variant
+        self._stub_call(monkeypatch, {
+            "B1": "Y", "B2": "NA", "B3": "N", "C4": "Yes",
+        })
+        out = robins_i.run_preflight(b"", "Single-Arm Trial", "outcome", {})
+        assert out["variant"] == "single_arm"
+        assert out["screening_decision"] == "proceed"
+
+    def test_dose_escalation_also_routes_to_single_arm(self, monkeypatch):
+        self._stub_call(monkeypatch, {
+            "B1": "Y", "B2": "NA", "B3": "N", "C4": "No",
+        })
+        out = robins_i.run_preflight(b"", "Dose-Escalation Study", "outcome", {})
+        assert out["variant"] == "single_arm"
+
+    def test_single_arm_b2_sa_yes_short_circuits_critical(self, monkeypatch):
+        # B2-SA Y/PY in single-arm preflight still routes to Critical
+        self._stub_call(monkeypatch, {
+            "B1": "N", "B2": "Y", "B3": "N", "C4": "No",
+        })
+        out = robins_i.run_preflight(b"", "Single-Arm Trial", "outcome", {})
+        assert out["screening_decision"] == "critical"
+        assert "benchmark" in out["screening_reason"].lower()
+        assert out["variant"] == "single_arm"  # variant still pinned
+
+    def test_single_arm_b3_yes_short_circuits_critical(self, monkeypatch):
+        # B3 Y/PY in single-arm preflight short-circuits — outcome-measurement
+        # appropriateness is comparator-agnostic
+        self._stub_call(monkeypatch, {
+            "B1": "Y", "B2": "NA", "B3": "Y", "C4": "No",
+        })
+        out = robins_i.run_preflight(b"", "Single-Arm Trial", "outcome", {})
+        assert out["screening_decision"] == "critical"
+        assert "B3" in out["screening_reason"]
+        assert out["variant"] == "single_arm"
+
+    def test_single_arm_preflight_prompt_mentions_benchmark_not_confounding(self):
+        # Prompt builder branches by study type — single-arm prompt should
+        # frame B1 around benchmark pre-specification.
+        sa_prompt = robins_i._build_preflight_prompt_single_arm(
+            "Single-Arm Trial", "ORR", {})
+        assert "benchmark" in sa_prompt.lower()
+        assert "no comparator group" in sa_prompt.lower()
+        assert "B1-SA" in sa_prompt
+        # Cohort prompt should still frame B1 around confounding control
+        cohort_prompt = robins_i._build_preflight_prompt_cohort(
+            "Cohort Study", "mortality", {})
+        assert "confounding" in cohort_prompt.lower()
+        assert "B1-SA" not in cohort_prompt
+
 
 # ─────────────────────────────────────────────
 # ROBINS-I V2 — Domain 1 (confounding)
@@ -396,6 +448,121 @@ class TestRobinsIDomain1VariantB:
         assert robins_i.domain1_variant_b_judge({
             "1B.1": "Y", "1B.2": "SN", "1B.5": "Y",
         }) == "Critical"
+
+
+class TestRobinsIDomain1VariantSingleArm:
+    """V2 Domain 1 variant single_arm — uncontrolled designs (no comparator).
+    Adapts confounding to benchmark-adequacy + prognostic-mix comparability.
+
+    Signaling questions:
+      1S.1  Implied benchmark pre-specified before data collection?
+      1S.2  Implied benchmark reasonable for population?
+      1S.3  Cohort baseline prognostic profile comparable to benchmark?
+      1S.4  Quantitative adjustment to external controls?
+      1S.5  Negative / falsification controls suggest serious bias?
+
+    Returns the LOW_D1_SA label on clean assessments (since uncontrolled-
+    confounding-by-benchmarking can never be ruled out observationally)."""
+
+    def test_clean_benchmark_and_prognostic_match_is_low_sa(self):
+        # 1S.1 Y (benchmark pre-specified), 1S.2 Y (reasonable), 1S.3 Y
+        # (prognostic profile comparable), 1S.5 N (no falsification hit)
+        assert robins_i.domain1_variant_single_arm_judge({
+            "1S.1": "Y", "1S.2": "Y", "1S.3": "Y", "1S.4": "NA", "1S.5": "N",
+        }) == robins_i.LOW_D1_SA
+
+    def test_falsification_control_hit_is_critical(self):
+        # 1S.5 Y dominates → Critical regardless of upstream
+        assert robins_i.domain1_variant_single_arm_judge({"1S.5": "Y"}) == "Critical"
+        assert robins_i.domain1_variant_single_arm_judge({
+            "1S.1": "Y", "1S.2": "Y", "1S.3": "Y", "1S.5": "PY",
+        }) == "Critical"
+
+    def test_no_benchmark_no_adjustment_is_critical(self):
+        # 1S.1 N (no benchmark) + 1S.4 N (no quantitative adjustment) → Critical
+        assert robins_i.domain1_variant_single_arm_judge({
+            "1S.1": "N", "1S.4": "N", "1S.5": "N",
+        }) == "Critical"
+
+    def test_no_benchmark_with_adjustment_is_serious(self):
+        # 1S.1 N (no benchmark) but 1S.4 Y (quantitative adjustment) → Serious
+        assert robins_i.domain1_variant_single_arm_judge({
+            "1S.1": "N", "1S.4": "Y", "1S.5": "N",
+        }) == "Serious"
+
+    def test_wn_prognostic_match_is_moderate(self):
+        # 1S.1 Y, 1S.2 Y, 1S.3 WN (most-but-not-all prognostic factors comparable),
+        # 1S.5 N → Moderate (floor for WN on prognostic comparability)
+        assert robins_i.domain1_variant_single_arm_judge({
+            "1S.1": "Y", "1S.2": "Y", "1S.3": "WN", "1S.5": "N",
+        }) == "Moderate"
+
+    def test_unreasonable_benchmark_is_moderate(self):
+        # 1S.1 Y + 1S.2 N (benchmark unreasonable for population) + 1S.3 Y
+        # + 1S.5 N → Moderate
+        assert robins_i.domain1_variant_single_arm_judge({
+            "1S.1": "Y", "1S.2": "N", "1S.3": "Y", "1S.5": "N",
+        }) == "Moderate"
+
+    def test_sn_prognostic_mismatch_rescued_by_adjustment(self):
+        # 1S.1 Y, 1S.3 SN (substantial prognostic mismatch) but 1S.4 Y
+        # (quantitative external-control adjustment) → Moderate
+        assert robins_i.domain1_variant_single_arm_judge({
+            "1S.1": "Y", "1S.2": "Y", "1S.3": "SN", "1S.4": "Y", "1S.5": "N",
+        }) == "Moderate"
+
+    def test_sn_prognostic_mismatch_no_adjustment_is_serious(self):
+        # 1S.1 Y, 1S.3 SN, 1S.4 N, 1S.5 N → Serious
+        assert robins_i.domain1_variant_single_arm_judge({
+            "1S.1": "Y", "1S.2": "Y", "1S.3": "SN", "1S.4": "N", "1S.5": "N",
+        }) == "Serious"
+
+
+class TestRobinsIDomain2VariantSingleArm:
+    """V2 Domain 2 variant single_arm — degenerate classification (no comparator).
+    Focuses on intervention fidelity + intent-vs-received cohort definition.
+
+    Signaling questions:
+      2S.1  Intervention well-defined at start of follow-up?
+      2S.2  Dose reductions / holds / discontinuations recorded?
+      2S.3  Cohort defined by intended (ITT-like) or received (selection-on-
+            completers) treatment?"""
+
+    def test_well_defined_itt_cohort_recorded_modifications_low(self):
+        # 2S.1 Y, 2S.2 Y, 2S.3 N (intended-treatment cohort) → Low
+        assert robins_i.domain2_variant_single_arm_judge({
+            "2S.1": "Y", "2S.2": "Y", "2S.3": "N",
+        }) == "Low"
+
+    def test_strong_yes_received_treatment_filter_is_critical(self):
+        # 2S.3 SY (strongly responder-restricted analysis) → Critical
+        assert robins_i.domain2_variant_single_arm_judge({"2S.3": "SY"}) == "Critical"
+        # Even with otherwise-clean intervention definition
+        assert robins_i.domain2_variant_single_arm_judge({
+            "2S.1": "Y", "2S.2": "Y", "2S.3": "SY",
+        }) == "Critical"
+
+    def test_weak_yes_received_treatment_filter_is_serious(self):
+        # 2S.3 WY (some completer-filtering, not dominant) → Serious
+        assert robins_i.domain2_variant_single_arm_judge({"2S.3": "WY"}) == "Serious"
+
+    def test_undefined_intervention_is_serious(self):
+        # 2S.1 N (intervention not well-defined) + ITT-like cohort → Serious
+        assert robins_i.domain2_variant_single_arm_judge({
+            "2S.1": "N", "2S.3": "N",
+        }) == "Serious"
+
+    def test_wn_recording_fidelity_is_moderate(self):
+        # Well-defined intervention but most-but-not-all modifications recorded
+        assert robins_i.domain2_variant_single_arm_judge({
+            "2S.1": "Y", "2S.2": "WN", "2S.3": "N",
+        }) == "Moderate"
+
+    def test_sn_recording_fidelity_is_serious(self):
+        # Well-defined intervention but material recording gaps
+        assert robins_i.domain2_variant_single_arm_judge({
+            "2S.1": "Y", "2S.2": "SN", "2S.3": "N",
+        }) == "Serious"
 
 
 # ─────────────────────────────────────────────
@@ -627,6 +794,12 @@ class TestRobinsIOverall:
             [robins_i.LOW_D1, "Low", "Low", "Low", "Low", "Low"]
         ) == "Low"
 
+    def test_d1_single_arm_low_label_is_treated_as_low(self):
+        # The single-arm LOW_D1_SA label must also normalize to Low.
+        assert robins_i.robins_i_overall(
+            [robins_i.LOW_D1_SA, "Low", "Low", "Low", "Low", "Low"]
+        ) == "Low"
+
     def test_any_critical_is_critical(self):
         assert robins_i.robins_i_overall(
             ["Low", "Moderate", "Critical", "Serious", "Low", "Low"]
@@ -771,6 +944,24 @@ class TestDispatch:
         assert cfg is not None
         assert cfg["rob_tool"] == "robins_i"
 
+    def test_single_arm_trial_is_registered(self):
+        cfg = qa.dispatch("Single-Arm Trial")
+        assert cfg is not None
+        # Routes to ROBINS-I (internal single_arm variant selected by study_type)
+        assert cfg["rob_tool"] == "robins_i"
+        # STROBE reused pragmatically
+        assert cfg["reporting_guideline"] == "strobe"
+        # Conservative: uncontrolled designs start at Very low
+        assert cfg["initial_grade"] == "Very low"
+
+    def test_dose_escalation_is_registered(self):
+        cfg = qa.dispatch("Dose-Escalation Study")
+        assert cfg is not None
+        # Shares the single-arm variant with Single-Arm Trial
+        assert cfg["rob_tool"] == "robins_i"
+        assert cfg["reporting_guideline"] == "strobe"
+        assert cfg["initial_grade"] == "Very low"
+
     def test_registry_keys_match_annotator_types(self):
         """Registry keys must be valid annotator study types so classification
         output drops straight into dispatch()."""
@@ -910,22 +1101,33 @@ class TestPromptCatalog:
         assert set(robins_cat["judgements"]) == {
             "Low", "Moderate", "Serious", "Critical",
         }
-        # V2 catalog surfaces preflight prompt + D1 special label
+        # V2 catalog surfaces preflight prompt(s) + Domain 1 special labels
+        # for both the cohort and single-arm variants.
         assert "preflight_prompt_template" in robins_cat
-        assert robins_cat["preflight_prompt_template"].strip()
-        assert "B1" in robins_cat["preflight_prompt_template"]
-        assert "C4" in robins_cat["preflight_prompt_template"]
+        # Now a dict keyed by 'cohort' / 'single_arm' since SA has its own
+        # preflight prompt (B1-SA/B2-SA replacing B1/B2).
+        assert isinstance(robins_cat["preflight_prompt_template"], dict)
+        assert "cohort" in robins_cat["preflight_prompt_template"]
+        assert "single_arm" in robins_cat["preflight_prompt_template"]
+        assert "B1" in robins_cat["preflight_prompt_template"]["cohort"]
+        assert "C4" in robins_cat["preflight_prompt_template"]["cohort"]
+        assert "B1-SA" in robins_cat["preflight_prompt_template"]["single_arm"]
+        assert "benchmark" in robins_cat["preflight_prompt_template"]["single_arm"].lower()
         assert robins_cat["domain_1_low_label"].startswith("Low (except")
+        assert robins_cat["domain_1_low_label_single_arm"].startswith("Low (except")
+        assert "benchmarking" in robins_cat["domain_1_low_label_single_arm"].lower()
+        # Single-arm study types surfaced for the developer view
+        assert "Single-Arm Trial" in robins_cat["single_arm_study_types"]
+        assert "Dose-Escalation Study" in robins_cat["single_arm_study_types"]
 
         for d in robins_cat["domains"]:
-            if d["id"] == 1:
-                # Domain 1 has two variants — both prompts + both trees
-                assert "A" in d["prompt_template"] and "B" in d["prompt_template"]
-                assert "A" in d["decision_tree_code"] and "B" in d["decision_tree_code"]
-                assert "def " in d["decision_tree_code"]["A"]
-                assert "def " in d["decision_tree_code"]["B"]
-                # Variant signal lists exposed
-                assert "A" in d["signals"] and "B" in d["signals"]
+            if d["id"] in (1, 2):
+                # Variant-aware domains — three variants (A, B, single_arm)
+                for v in ("A", "B", "single_arm"):
+                    assert v in d["prompt_template"], f"D{d['id']} missing prompt for variant {v}"
+                    assert v in d["decision_tree_code"]
+                    assert "def " in d["decision_tree_code"][v]
+                    assert v in d["signals"]
             else:
                 assert "def " in d["decision_tree_code"]
                 assert d["prompt_template"].strip()
