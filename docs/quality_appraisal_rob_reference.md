@@ -1,10 +1,10 @@
-# Quality Appraisal — RoB 2 + ROBINS-I Reference
+# Quality Appraisal — RoB 2 + ROBINS-I V2 Reference
 
-Reference for the LLM prompts and Python decision-tree rules used by The Rubric Generator's Quality Appraisal AI. Transcribed verbatim from source on 2026-04-28.
+Reference for the LLM prompts and Python decision-tree rules used by The Rubric Generator's Quality Appraisal AI. Transcribed from source.
 
 **Sources:**
 - **RoB 2** — Sterne JAC, Savović J, Page MJ, Higgins JPT, et al. *RoB 2: a revised tool for assessing risk of bias in randomised trials.* BMJ 2019; 366:l4898. Signaling-question text and elaborations transcribed from `20190814_RoB_2.0_cribsheet_parallel_trial.pdf`.
-- **ROBINS-I** — Sterne JA, Hernán MA, Reeves BC, Savović J, Berkman ND, Viswanathan M, et al. *ROBINS-I: a tool for assessing risk of bias in non-randomised studies of interventions.* BMJ 2016; 355:i4919. https://doi.org/10.1136/bmj.i4919
+- **ROBINS-I V2** — ROBINS-I V2 development group (Sterne JA, Brandt Mathur M, Elbers R, Hróbjartsson A, McAleenan A, Reeves B, Shrier I, Tilling K, et al.). *The Risk Of Bias In Non-randomized Studies — of Interventions, Version 2 (ROBINS-I V2) assessment tool, 20 November 2025.* riskofbias.info. Published explicitly for follow-up (cohort) studies; supersedes ROBINS-I V1 (Sterne et al. BMJ 2016;355:i4919).
 
 **Source files in repo:**
 - [backend/rob_tools/rob2.py](../backend/rob_tools/rob2.py)
@@ -390,53 +390,78 @@ def _no(ans: str) -> bool:
 
 ---
 
-# Section 2 — ROBINS-I (2016, non-randomized studies of interventions)
+# Section 2 — ROBINS-I V2 (20 November 2025, follow-up cohort studies)
 
 ## 2.1 Overview
 
-- **Scope (v1):** non-randomized studies of interventions — Cohort, Case-Control, Case-Crossover, Non-Randomized Trial, and analytical Cross-Sectional studies. Quasi-experimental designs (before-after, ITS, DiD, regression discontinuity) need their own confounding-prompt adaptations and are deferred.
-- **D4 variant:** **effect-of-assignment** only (effect-of-adherence variant deferred).
-- **Domains:** 7
-  1. Confounding
-  2. Selection of participants into the study
-  3. Classification of interventions
-  4. Deviations from intended interventions (effect of assignment)
-  5. Missing data
-  6. Measurement of outcomes
-  7. Selection of the reported result
-- **Judgement scale:** 5-level — `Low` / `Moderate` / `Serious` / `Critical` / `No information`.
+- **Scope (V2):** published explicitly for **follow-up (cohort) studies**. V2 removes V1's "Bias due to deviations from intended interventions" domain; protocol-deviation issues are folded into Domain 1 Variant B (time-varying confounding). Quasi-experimental designs (before-after, ITS, DiD, regression discontinuity) need their own adaptations and are deferred.
+- **Domains:** 6 (vs V1's 7 — D4 "deviations" is gone)
+  1. Bias due to confounding (two variants — see below)
+  2. Bias in classification of interventions
+  3. Bias in selection of participants into the study (or analysis)
+  4. Bias due to missing data
+  5. Bias arising from measurement of the outcome
+  6. Bias in selection of the reported result
+- **Domain 1 variants** chosen per paper at the preflight stage:
+  - **Variant A** — analysis estimates the intention-to-treat effect; only **baseline** confounding needs addressing (4 signaling questions).
+  - **Variant B** — analysis estimates the per-protocol effect; **baseline + time-varying** confounding need addressing (5 signaling questions).
+- **Judgement scale:** 4-level — `Low` / `Moderate` / `Serious` / `Critical`. V1's separate "No information" judgement is **retired** in V2 (NI is still a valid *signal* answer; the algorithms route NI through the trees rather than producing a distinct judgement). **Domain 1's "Low" is labelled "Low (except for concerns about uncontrolled confounding)"** per the cribsheet footnote on page 4 — confounding cannot be eliminated in an observational study, so the best achievable confidence is "Low except…".
+- **Repo scope caveat:** other non-randomized designs (Case-Control, Case-Crossover, analytical Cross-Sectional, Non-Randomized Trial) still dispatch to this tool from `STUDY_TYPE_REGISTRY` and run V2 as a best-available approximation. A pure assessment for those designs would require V1 ROBINS-I or a design-specific tool.
 
-## 2.2 Signal options + judgement levels
+## 2.2 Signal vocabulary + judgement levels
 
 ```python
-SIGNAL_OPTIONS = ("Y", "PY", "PN", "N", "NI")
-JUDGEMENTS = ("Low", "Moderate", "Serious", "Critical", "No information")
+# Union of all V2 tokens — per-question subsets are declared on each signal entry.
+SIGNAL_OPTIONS_ALL = ("Y", "PY", "PN", "N", "NI", "WN", "SN", "WY", "SY")
+JUDGEMENTS = ("Low", "Moderate", "Serious", "Critical")
+LOW_D1 = "Low (except for concerns about uncontrolled confounding)"
 ```
+
+**Signal token semantics:**
+
+| Token | Meaning |
+|-------|---------|
+| `Y` / `PY` | Yes / Probably yes |
+| `N` / `PN` | No / Probably no |
+| `NI` | No information |
+| `WN` | Weak no — direction is no but magnitude is uncertain (e.g. "most-but-not-all important confounders controlled") |
+| `SN` | Strong no — magnitude clearly substantial (e.g. "at least one important confounder not controlled, likely material impact") |
+| `WY` | Weak yes — direction is yes but magnitude is small (e.g. "knowledge could have influenced assessment, small impact") |
+| `SY` | Strong yes — magnitude clearly substantial (e.g. "knowledge influenced assessment, large impact") |
+
+Different signaling questions accept different subsets. The per-question allowed list is declared on each `signal` entry in `DOMAINS` and surfaced in the prompt's "Response options:" line so the LLM picks only legal tokens.
 
 ## 2.3 System prompt
 
 ```text
-You are an evidence-synthesis methodologist assessing risk of bias in a non-randomized study of an intervention using the Cochrane ROBINS-I tool. Read the PDF carefully. Answer each signaling question with one of: Y (yes), PY (probably yes), PN (probably no), N (no), NI (no information). Provide a 1-2 sentence rationale for each answer, quoting the paper where possible. Return ONLY a valid JSON object — no preamble, no markdown fences.
+You are an evidence-synthesis methodologist assessing risk of bias in a non-randomized study of an intervention using the Cochrane ROBINS-I V2 tool (20 November 2025 cribsheet). Read the PDF carefully. Answer each signaling question with one of the allowed tokens for that question — Y (yes), PY (probably yes), PN (probably no), N (no), NI (no information), and where indicated WN (weak no), SN (strong no), WY (weak yes), SY (strong yes). Provide a 1-2 sentence rationale for each answer, quoting the paper where possible. Return ONLY a valid JSON object — no preamble, no markdown fences.
 ```
 
 ## 2.4 Per-domain prompt template
 
 ```text
-Assess **Domain {id} — {name}** for the study described in the attached PDF.
+Assess **Domain {id} — {name}** (Variant A|B for Domain 1) for the study described in the attached PDF using the ROBINS-I V2 tool.
 
 Study type: {study_type}
 Outcome being assessed: {primary_outcome}
+
+Target PICO (user-supplied):
+{target_pico_block — optional}
 
 Context (fields already extracted from the paper):
 {ctx_json}
 
 Signaling questions:
-{questions_block}
+{questions_block}    # each declares its allowed response-option subset
 
 Return a JSON object with exactly this shape:
 {shape}
 
-ROBINS-I answers carry different meaning than RoB 2: the judgement scale is Low / Moderate / Serious / Critical / No information (code maps your signal answers to this judgement). Answer N (or PN) when the paper gives enough information to rule out the problem, and NI only when the paper is silent. Rationales must be short (1-2 sentences) and quote the paper verbatim where possible.
+Notes on ROBINS-I V2:
+- The judgement scale is Low / Moderate / Serious / Critical (4 levels). Code maps your signal answers to the judgement — answer the signaling questions only.
+- Some questions allow WN / SN (weak / strong no) or WY / SY (weak / strong yes). Use the strong version only when the magnitude is clearly substantial; use the weak version when the direction is right but the magnitude is uncertain.
+- Answer N (or PN) when the paper gives enough information to rule out the problem; NI only when the paper is silent.
+- Rationales must be short (1-2 sentences) and quote the paper verbatim where possible.
 ```
 
 ## 2.5 Expected JSON output shape
@@ -445,411 +470,491 @@ For each domain, the LLM returns:
 
 ```json
 {
-  "1.1": "Y|PY|PN|N|NI",
-  "1.1_rationale": "1-2 sentences quoting the paper",
-  "1.2": "Y|PY|PN|N|NI",
-  "1.2_rationale": "1-2 sentences quoting the paper",
+  "<sig_id>": "<one of the per-question allowed tokens>",
+  "<sig_id>_rationale": "1-2 sentences quoting the paper",
   "...": "...",
-  "direction_of_bias": "NA|Favours experimental|Favours comparator|Towards null|Away from null|Unpredictable"
+  "direction_of_bias": "NA|Favours intervention|Favours comparator|Towards null|Away from null|Unpredictable"
 }
 ```
 
-## 2.6 Domain definitions
+Signal ids for Domain 1 are prefixed with the variant: `1A.1` / `1A.2` / … or `1B.1` / `1B.2` / …. All other domains use plain numeric ids (`2.1`, `3.4`, etc).
+
+## 2.6 Preflight — preliminary considerations (B1 / B2 / B3 + C4)
+
+Before any per-domain assessment, V2 runs a **preliminary considerations** screen as a single LLM call. The orchestrator answers four questions:
+
+- **B1** — Did the authors make any attempt to control for confounding? (`Y / PY / PN / N`)
+- **B2** (only if N/PN to B1) — Is there sufficient potential for confounding that an unadjusted result should not be considered further? (`Y / PY / PN / N`)
+- **B3** — Was the method of measuring the outcome inappropriate? (`Y / PY / PN / N`)
+- **C4** — Did the analysis account for switches / protocol deviations during follow-up? (`No` → ITT → Domain 1 Variant A; `Yes` → per-protocol → Domain 1 Variant B)
+
+**Short-circuit rule (cribsheet p9):** if **B2 = Y/PY** *or* **B3 = Y/PY**, the result is at **Critical risk of bias** and no further per-domain assessment is required. This saves 6 domain LLM calls per shorted paper.
+
+```text
+Preflight prompt (excerpt):
+
+You are performing the Preliminary Considerations screen of ROBINS-I V2 on a non-randomized study.
+
+Answer four preliminary-consideration questions:
+
+B1. Did the authors make any attempt to control for confounding in the result being assessed?
+B2. (Only if N/PN to B1) Is there sufficient potential for confounding that an unadjusted result should not be considered further?
+B3. Was the method of measuring the outcome inappropriate?
+C4. Did the analysis account for switches during follow-up between the intervention strategies being compared, or for other protocol deviations during follow-up?
+     - No  → the analysis is estimating the intention-to-treat effect (Variant A)
+     - Yes → the analysis is estimating the per-protocol effect (Variant B)
+```
+
+## 2.7 Domain definitions
 
 ### Domain 1 — Bias due to confounding
 
 **Relevant extracted fields:** `confounders_measured`, `adjustment_method`, `exposure_definition`, `comparator_group`, `immortal_time_bias`, `confounding_control`.
 
-**1.1** — Is there potential for confounding of the effect of intervention in this study?
-> Confounding is expected in almost all non-randomized studies. Answer 'No' or 'Probably no' only when randomization or strong quasi-experimental design rules it out (e.g., if the intervention is truly unrelated to participant characteristics).
+V2 splits Domain 1 into two variants, chosen per-paper at the preflight stage by C4 (whether the analysis estimates ITT or per-protocol). Only the chosen variant's signaling questions are answered for a given paper.
 
-**1.2** — Was the analysis based on splitting participants' follow up time according to intervention received?
-> Time-split analyses compare time on vs off treatment within participants. They avoid some selection issues but require handling of time-varying confounding.
+**Domain 1 produces the special label** `"Low (except for concerns about uncontrolled confounding)"` rather than plain `"Low"` — confounding cannot be ruled out observationally.
 
-**1.3** — If Y/PY to 1.2: Were intervention discontinuations or switches likely to be related to factors that are prognostic for the outcome?
-> If people stopped/switched intervention for reasons related to outcome prognosis (e.g., side effects, worsening disease), the time-split comparison is confounded.
+#### Variant A — ITT effect (C4 = No, baseline confounding only)
 
-**1.4** — Did the authors use an appropriate analysis method that controlled for all the important confounding domains?
-> The paper should identify important confounding domains (baseline characteristics associated with both intervention and outcome) and use multivariable adjustment, stratification, matching, propensity scores, or similar. 'No' if no adjustment is attempted or key domains are omitted.
+**1A.1** — Did the authors control for all the important confounding factors for which this was necessary? (`Y / PY / WN / SN / NI`)
+> Y/PY if all important confounders identified at the preliminary stage were appropriately controlled (stratification, regression, matching, standardization, propensity scores, IPTW). WN if most were controlled and uncontrolled confounding was probably not substantial. SN if at least one important confounder should have been controlled but was not, and the failure is likely to have a material impact.
 
-**1.5** — If Y/PY to 1.4: Were confounding domains that were controlled for measured validly and reliably by the variables available in this study?
-> Adjustment only helps if the confounders were measured well. Self-report of important variables, missing data on confounders, or measurement at the wrong time point weakens adjustment.
+**1A.2** — Were confounding factors that were controlled for measured validly and reliably by the variables available in this study? (`NA / Y / PY / WN / SN / NI`)
+> Adjustment helps only if confounders were measured well. WN if measurement error was probably not substantial; SN if there was at least one important confounder measured poorly enough that the extent of measurement error was probably substantial.
 
-**1.6** — Did the authors control for any post-intervention variables that could have been affected by the intervention?
-> Adjusting for variables on the causal pathway between intervention and outcome biases the effect estimate. Classic example: adjusting for a biomarker that the intervention changes.
+**1A.3** — Did the authors control for any post-intervention variables that could have been affected by the intervention? (`NA / Y / PY / PN / N / NI`)
+> Controlling for variables on the causal pathway between intervention and outcome (over-adjustment) biases the effect estimate. Classic example: adjusting for a biomarker that the intervention changes.
 
-**1.7** — Did the authors use an appropriate analysis method that controlled for time-varying confounding?
-> Applies when confounders change over time and intervention decisions depend on those time-varying values (e.g., clinicians adjusting dose based on disease progression). Methods like marginal structural models or g-estimation are appropriate; standard regression is not.
+**1A.4** — Did the use of negative controls, quantitative bias analysis, or other considerations suggest serious uncontrolled confounding? (`Y / PY / PN / N`)
+> If the study did not use negative controls and no other considerations suggest uncontrolled confounding, answer N. Y/PY if negative controls indicate the result being assessed suffers from material bias due to confounding.
 
-**1.8** — Were there important time-varying confounding effects that the analysis did not account for?
-> Answer 'Yes' only if you have clear evidence of unaddressed time-varying confounding; 'No' when not relevant or appropriately handled.
-
-**Decision tree (ROBINS-I §4.2):**
+**Decision tree (cribsheet p20):**
 
 ```python
-def robins_i_domain1_judge(signals: dict[str, str]) -> str:
-    """Domain 1 (confounding) — ROBINS-I guidance §4.2.
+def domain1_variant_a_judge(signals: dict[str, str]) -> str:
+    """D1 Variant A (ITT effect, baseline confounding only). Cribsheet p20."""
+    q1 = signals.get("1A.1", "NI")
+    q2 = signals.get("1A.2", "NI")
+    q3 = signals.get("1A.3", "NI")
+    q4 = signals.get("1A.4", "NI")
 
-    1.1 potential for confounding    → if N/PN, result = Low (no confounding expected).
-    1.4 appropriate analysis         → if N/PN, result = Serious/Critical.
-    1.5 confounders measured validly → downgrades 1.4-Y to Serious if poor.
-    1.6 adjustment for post-intervention variables → if Y/PY, result = Serious
-                                                     (adjustment on causal pathway biases the estimate).
-    1.8 time-varying confounding     → if Y/PY unaddressed, worst-case Serious.
-    """
-    q11 = signals.get("1.1", "NI")
-    q14 = signals.get("1.4", "NI")
-    q15 = signals.get("1.5", "NI")
-    q16 = signals.get("1.6", "NI")
-    q18 = signals.get("1.8", "NI")
+    # 1.1 SN or NI: nothing further to redeem the result
+    if _strong_no(q1) or _no_info(q1):
+        return "Critical" if _yes(q4) else "Serious"
 
-    # No potential for confounding → Low (rare for observational data)
-    if _no(q11):
-        return "Low"
-    # Adjusted for a post-intervention variable → causal-pathway bias → Serious
-    if _yes(q16):
+    # 1.1 Y/PY: well-controlled
+    if _strict_yes(q1):
+        if _yes(q3):  # over-adjusted for post-intervention vars → causal-pathway bias
+            if _yes(q4):
+                return "Critical"
+            if _strict_yes(q2):
+                return "Serious"
+            return "Critical"
+        # 1.3 N/PN/NI: no over-adjustment
+        if _strict_yes(q2) or _weak_no(q2):
+            return "Serious" if _yes(q4) else LOW_D1
+        return "Serious"  # 1.2 SN/NI
+
+    # 1.1 WN: most-but-not-all controlled (floor is Moderate, not Low)
+    if _weak_no(q1):
+        if _yes(q3):
+            if _yes(q4):
+                return "Critical"
+            if _strict_yes(q2):
+                return "Serious"
+            return "Critical"
+        if _strict_yes(q2) or _weak_no(q2):
+            return "Serious" if _yes(q4) else "Moderate"
         return "Serious"
-    # No adjustment attempted at all → Critical
-    if _no(q14):
+
+    return "Serious"
+```
+
+#### Variant B — Per-protocol effect (C4 = Yes, baseline + time-varying confounding)
+
+**1B.1** — Did the authors use an analysis method that was appropriate to control for time-varying as well as baseline confounding? (`Y / PY / PN / N / NI`)
+> Appropriate "g-methods" include inverse probability weighting based on baseline + time-varying confounding factors with adjustment for censoring weights. Standard regression including time-varying confounders may be problematic when those confounders are affected by prior intervention (treatment-confounder feedback).
+
+**1B.2** — Did the authors control for all the important baseline and time-varying confounding factors for which this was necessary? (`NA / Y / PY / WN / SN / NI`)
+> Same WN / SN semantics as Variant A 1A.1, applied to baseline + time-varying confounders.
+
+**1B.3** — Were confounding factors that were controlled for measured validly and reliably by the variables available in this study? (`NA / Y / PY / WN / SN / NI`)
+> Same measurement-validity question as Variant A 1A.2, applied to the broader factor set.
+
+**1B.4** — Did the authors control for time-varying factors or other variables measured after the start of intervention? (`NA / Y / PY / PN / N / NI`)
+> Asked when 1B.1 is N/PN/NI. Conditioning on time-varying factors measured after intervention start is likely to bias the result when those factors are on the causal pathway from intervention to outcome.
+
+**1B.5** — Did the use of negative controls, or other considerations, suggest serious uncontrolled confounding? (`Y / PY / PN / N`)
+> Same as Variant A 1A.4.
+
+**Decision tree (cribsheet p24):**
+
+```python
+def domain1_variant_b_judge(signals: dict[str, str]) -> str:
+    """D1 Variant B (per-protocol effect, baseline + time-varying). Cribsheet p24."""
+    q1 = signals.get("1B.1", "NI")
+    q2 = signals.get("1B.2", "NI")
+    q3 = signals.get("1B.3", "NI")
+    q4 = signals.get("1B.4", "NI")
+    q5 = signals.get("1B.5", "NI")
+
+    # 1.1 N/PN/NI: wrong analysis method
+    if _strict_no(q1) or _no_info(q1):
+        if _yes(q4):
+            return "Critical"
+        return "Critical" if _yes(q5) else "Serious"
+
+    # 1.1 Y/PY: appropriate g-methods etc. used
+    if _strict_yes(q1):
+        if _strict_yes(q2):
+            if _strict_yes(q3) or _weak_no(q3):
+                return "Serious" if _yes(q5) else LOW_D1
+            return "Serious"  # SN / NI on 1.3
+        if _weak_no(q2):
+            if _strict_yes(q3) or _weak_no(q3):
+                return "Serious" if _yes(q5) else "Moderate"
+            return "Serious"
+        return "Critical" if _yes(q5) else "Serious"  # 1.2 SN/NI
+
+    return "Serious"
+```
+
+---
+
+### Domain 2 — Bias in classification of interventions
+
+**Relevant extracted fields:** `exposure_definition`, `exposure_measurement`, `exposure_ascertainment`, `intervention_classification`.
+
+**2.1** — Were the intervention strategies distinguishable at the time when follow-up would have started in the target trial? (`Y / PY / PN / N / NI`)
+> Some strategies (e.g. "surgery within 6 months of diagnosis" vs "delay surgery until clinical progression") cannot be distinguished at follow-up start, creating an "immortal time" period during which the outcome cannot occur for some groups.
+
+**2.2** — Did all or nearly all outcome events occur after the intervention and comparator strategies could be distinguished? (`NA / Y / PY / PN / N / NI`)
+> Asked only if 2.1 was N/PN/NI. If the indistinguishable period is short relative to total follow-up, misclassification bias may be small.
+
+**2.3** — Did the analysis avoid problems arising from intervention strategies that are not distinguishable at the start of follow-up? (`NA / SY / WY / PN / N / NI`)
+> SY (fully) if clone-censor-weighting, g-formula, or a landmark analysis was used with predictors of treatment during follow-up measured and used appropriately. WY (partially) if appropriate but unlikely to have fully adjusted.
+
+**2.4** — Was classification of intervention status influenced by knowledge of the outcome or risk of the outcome? (`SY / WY / PN / N / NI`)
+> Differential misclassification — outcome (or its causes other than intervention) influences how interventions are classified. SY = yes, substantial impact; WY = yes, impact not substantial.
+
+**2.5** — Were further classification errors (not influenced by knowledge of the outcome or risk of the outcome) likely? (`Y / PY / PN / N / NI`)
+> Non-differential misclassification — receipt of intervention not recorded for some participants. Usually biases towards the null.
+
+**Decision tree (cribsheet p28) — linear-tier model:**
+
+```python
+def domain2_judge(signals: dict[str, str]) -> str:
+    """D2 Bias in classification of interventions. Cribsheet p28."""
+    q1, q2, q3, q4, q5 = (signals.get(k, "NI") for k in ("2.1","2.2","2.3","2.4","2.5"))
+
+    # Tier from upstream (2.1 → 2.2 → 2.3 cascade)
+    if _yes(q1) or _yes(q2):
+        tier = 0  # best — top matrix
+    elif _strong_yes(q3) or _weak_yes(q3) or _no_info(q3):
+        tier = 1  # middle matrix
+    else:
+        tier = 2  # worst — 2.3 N/PN: analysis did not address
+
+    # 2.4 differential misclassification bump
+    bump4 = 0 if _strict_no(q4) else (1 if _weak_yes(q4) or _no_info(q4) else 2)
+    # 2.5 non-differential misclassification bump
+    bump5 = 0 if _strict_no(q5) else 1
+
+    # Tier 2 + 2.4 SY/WY/NI → Critical directly
+    if tier == 2 and (_yes(q4) or _no_info(q4)):
         return "Critical"
-    if q14 == "NI":
-        return "No information"
-    # 1.4 Y/PY: analysis attempted. Quality of measurement matters.
-    if _no(q15):
-        return "Serious"
-    if q15 == "NI":
-        return "Moderate"
-    # Time-varying confounding unaddressed → bump to Serious
-    if _yes(q18):
-        return "Serious"
-    # Best case for a well-adjusted observational study
-    return "Moderate"
+
+    idx = min(tier + bump4 + bump5, 3)
+    return JUDGEMENTS[idx]
 ```
 
 ---
 
-### Domain 2 — Bias in selection of participants into the study
+### Domain 3 — Bias in selection of participants into the study (or analysis)
 
-**Relevant extracted fields:** `case_source`, `control_selection`, `matching`, `sampling_method`, `loss_to_follow_up`, `immortal_time_bias`.
+**Relevant extracted fields:** `case_source`, `control_selection`, `sampling_method`, `loss_to_follow_up`, `immortal_time_bias`.
 
-**2.1** — Was selection of participants into the study (or analysis) based on participant characteristics observed after the start of intervention?
-> Examples: restricting the analytic sample to people who completed treatment; selecting cases based on events observed during follow-up; excluding early deaths.
+V2 D3 has three sub-sections — **A** (prevalent-user bias / immortal time), **B** (other selection bias), and **C** (analysis / sensitivity / severity).
 
-**2.2** — If Y/PY to 2.1: Were the post-intervention variables that influenced selection likely to be associated with intervention?
-> If selection variables are associated with intervention (e.g., completers differ between arms), selection can bias the effect estimate.
+#### A. Prevalent-user bias and immortal time
 
-**2.3** — If Y/PY to 2.1 and 2.2: Were the post-intervention variables that influenced selection likely to be influenced by the outcome or a cause of the outcome?
-> Selection linked to intervention AND to outcome (or its causes) produces collider/selection bias.
+**3.1** — Did follow-up in the analysis begin at the start of the intervention strategies being compared? (`Y / PY / WN / SN / NI`)
+> Y/PY if all outcome events and follow-up time after intervention start were included in the analysis. WN if not substantial; SN if leading to a substantial risk of bias.
 
-**2.4** — Do start of follow-up and start of intervention coincide for most participants?
-> Answer 'No' if participants accrue person-time before intervention start (immortal time) or after (lag). Mis-timed follow-up usually inflates apparent protective effects of treatment.
+**3.2** — Were outcome events during a period of follow-up after the start of the interventions excluded from the analysis? (`Y / PY / PN / N / NI`)
+> Only asked if 3.1 was Y/PY. Such exclusion creates "immortal time" during which events cannot occur and biases the effect estimate.
 
-**2.5** — Were adjustment techniques used that are likely to correct for the presence of selection biases?
-> Inverse-probability-of-selection weighting, exclusion of the immortal period, or landmark analysis can correct selection bias. Simple multivariable adjustment typically does not.
+#### B. Other selection bias
 
-**Decision tree (ROBINS-I §4.3):**
+**3.3** — Was selection of participants into the study (or analysis) based on participant characteristics observed after the start of intervention, additional to the situations addressed in 3.1 and 3.2? (`Y / PY / PN / N / NI`)
+> N/PN if selection was based only on pre-intervention characteristics — that's baseline confounding (Domain 1), not selection bias.
+
+**3.4** — Were the post-intervention variables that influenced selection likely to be associated with intervention? (`NA / Y / PY / PN / N / NI`)
+> Only asked if 3.3 was Y/PY. Selection bias requires selection related to BOTH intervention and outcome.
+
+**3.5** — Were the post-intervention variables that influenced selection likely to be influenced by the outcome or a cause of the outcome? (`NA / Y / PY / PN / N / NI`)
+> Only asked if 3.4 was Y/PY. Collider-style selection bias.
+
+#### C. Analysis / sensitivity / severity
+
+**3.6** — Is it likely that the analysis corrected for all of the potential selection biases identified above? (`NA / Y / PY / PN / N / NI`)
+> Only asked if A or B raised concerns. IPW can create a pseudo-population without the selection bias if assumptions are justified.
+
+**3.7** — Did sensitivity analyses demonstrate that the likely impact of the potential selection biases was minimal? (`NA / Y / PY / PN / N / NI`)
+> Only asked if 3.6 was N/PN/NI.
+
+**3.8** — Were potential selection biases identified above sufficiently severe that the result should not be included in a quantitative synthesis? (`NA / Y / PY / PN / N / NI`)
+> Distinguishes Serious from Critical. Answer N/PN/NI unless there is clear evidence that the selection biases were severe.
+
+**Decision tree (cribsheet p32):**
 
 ```python
-def robins_i_domain2_judge(signals: dict[str, str]) -> str:
-    """Domain 2 (selection of participants) — ROBINS-I guidance §4.3.
+def domain3_judge(signals: dict[str, str]) -> str:
+    """D3 Bias in selection of participants. Cribsheet p32."""
+    q1, q2, q3, q4, q5, q6, q7, q8 = (
+        signals.get(k, "NI")
+        for k in ("3.1","3.2","3.3","3.4","3.5","3.6","3.7","3.8")
+    )
 
-    2.1 selection based on post-intervention characteristics?
-    2.2 post-intervention selection associated with intervention?
-    2.3 post-intervention selection influenced by outcome?
-    2.4 follow-up start coincides with intervention start?
-    2.5 adjustment methods used that correct selection bias?
-    """
-    q21 = signals.get("2.1", "NI")
-    q22 = signals.get("2.2", "NI")
-    q23 = signals.get("2.3", "NI")
-    q24 = signals.get("2.4", "NI")
-    q25 = signals.get("2.5", "NI")
+    # Subsection A: prevalent-user / immortal time
+    if _strict_yes(q1):
+        a_judgement = "Low" if _strict_no(q2) or _no_info(q2) else "Moderate"
+    elif _weak_no(q1) or _no_info(q1):
+        a_judgement = "Moderate"
+    elif _strong_no(q1):
+        a_judgement = "Serious"
+    else:
+        a_judgement = "Moderate"
 
-    # Clean case: no post-intervention selection AND follow-up aligns
-    if _no(q21) and _yes(q24):
-        return "Low"
-    # Post-intervention selection linked to both intervention and outcome
-    if _yes(q21) and _yes(q22) and _yes(q23):
-        return "Moderate" if _yes(q25) else "Serious"
-    # Post-intervention selection linked to intervention only
-    if _yes(q21) and _yes(q22):
-        return "Moderate" if _yes(q25) else "Serious"
-    # Immortal-time-bias risk (follow-up doesn't coincide)
-    if _no(q24):
-        return "Moderate" if _yes(q25) else "Serious"
-    return "Moderate"
+    # Subsection B: other selection bias
+    if _strict_no(q3):
+        b_judgement = "Low"
+    elif _yes(q3):
+        if _strict_no(q4) or _no_info(q4):
+            b_judgement = "Low"
+        elif _yes(q4):
+            b_judgement = "Serious" if _yes(q5) else "Moderate"
+        else:
+            b_judgement = "Moderate"
+    else:
+        b_judgement = "Moderate"  # NI to 3.3
+
+    rank = {"Low": 0, "Moderate": 1, "Serious": 2, "Critical": 3}
+    worst = max(rank[a_judgement], rank[b_judgement])
+    if worst == 0: return "Low"
+    if worst == 1: return "Moderate"
+
+    # Subsection C only applies when A or B is Serious
+    if _yes(q6): return "Moderate"      # analysis corrected
+    if _yes(q7): return "Moderate"      # sensitivity minimal impact
+    if _yes(q8): return "Critical"      # severe → exclude from synthesis
+    return "Serious"
 ```
 
 ---
 
-### Domain 3 — Bias in classification of interventions
-
-**Relevant extracted fields:** `exposure_definition`, `exposure_measurement`, `exposure_ascertainment`.
-
-**3.1** — Were intervention groups clearly defined?
-> Clear definitions specify the intervention(s) under study, its dose/duration/route, and an explicit comparator.
-
-**3.2** — Was the information used to define intervention groups recorded at the start of the intervention?
-> Prospective recording of intervention status prevents recall/memory-based misclassification. Retrospective ascertainment from medical records at a later time is weaker.
-
-**3.3** — Could classification of intervention status have been affected by knowledge of the outcome or risk of the outcome?
-> Differential misclassification — e.g., exposure recorded after the event occurred, case-control studies reconstructing exposure history — inflates or distorts effect estimates.
-
-**Decision tree (ROBINS-I §4.4):**
-
-```python
-def robins_i_domain3_judge(signals: dict[str, str]) -> str:
-    """Domain 3 (classification of interventions) — ROBINS-I guidance §4.4.
-
-    3.1 intervention groups clearly defined?
-    3.2 information recorded at the start of the intervention?
-    3.3 classification affected by knowledge of the outcome?
-    """
-    q31 = signals.get("3.1", "NI")
-    q32 = signals.get("3.2", "NI")
-    q33 = signals.get("3.3", "NI")
-
-    if _yes(q33):
-        return "Serious"
-    if _no(q31) or _no(q32):
-        return "Moderate"
-    if q31 == "NI" or q32 == "NI":
-        return "No information"
-    return "Low"
-```
-
----
-
-### Domain 4 — Bias due to deviations from intended interventions (effect of assignment)
-
-**Relevant extracted fields:** `blinding`, `allocation_mechanism`, `baseline_comparability`, `analysis_framework`.
-
-**4.1** — Were there deviations from the intended intervention beyond what would be expected in usual practice?
-> Usual-practice deviations (treatment stopped for side effects, patient preference changes) are acceptable. Trial-context deviations (unblinded providers altering care, protocol-mandated changes not planned for routine use) are concerning.
-
-**4.2** — If Y/PY to 4.1: Were these deviations from intended intervention unbalanced between groups and likely to have affected the outcome?
-> Balanced deviations bias less than unbalanced. Judge substantial effect on the outcome of interest.
-
-**4.3** — Were important co-interventions balanced between intervention groups?
-> Co-interventions (other treatments received alongside the intervention) that differ between groups can confound the effect estimate.
-
-**4.4** — Was the intervention implemented as intended, with fidelity?
-> Was each participant in the intervention group actually exposed to (a dose of) the intended intervention? Poor fidelity (low adherence, wrong dose) attenuates observed effects.
-
-**4.5** — Was an appropriate analysis used to estimate the effect of assignment to intervention?
-> ITT or intention-equivalent analyses (using the intervention as assigned rather than as received) estimate the effect of assignment. Per-protocol or as-treated analyses estimate something different and can be biased.
-
-**Decision tree (ROBINS-I §4.5, effect-of-assignment variant):**
-
-```python
-def robins_i_domain4_judge(signals: dict[str, str]) -> str:
-    """Domain 4 (deviations from intended interventions, effect-of-assignment
-    variant) — ROBINS-I guidance §4.5.
-
-    4.1 deviations beyond usual care?
-    4.2 unbalanced deviations likely to have affected outcome?
-    4.3 important co-interventions balanced between groups?
-    4.4 intervention implemented correctly?
-    4.5 appropriate analysis for effect of assignment?
-    """
-    q41 = signals.get("4.1", "NI")
-    q42 = signals.get("4.2", "NI")
-    q43 = signals.get("4.3", "NI")
-    q44 = signals.get("4.4", "NI")
-    q45 = signals.get("4.5", "NI")
-
-    # Best case: no unusual deviations, correct implementation, balanced co-interventions
-    if _no(q41) and _yes(q44) and _yes(q43):
-        return "Low"
-    # Unbalanced deviations likely to affect outcome
-    if _yes(q41) and _yes(q42):
-        return "Moderate" if _yes(q45) else "Serious"
-    # Intervention not correctly implemented → Serious
-    if _no(q44):
-        return "Serious"
-    # Co-interventions unbalanced → Moderate at least
-    if _no(q43):
-        return "Moderate"
-    return "Moderate"
-```
-
----
-
-### Domain 5 — Bias due to missing data
+### Domain 4 — Bias due to missing data
 
 **Relevant extracted fields:** `loss_to_follow_up`, `missing_data_handling`, `attrition_rate`.
 
-**5.1** — Were outcome data available for all, or nearly all, participants?
-> 'Nearly all' means missingness is small enough that it could not meaningfully change the effect estimate. Judge by proportion AND by whether missing participants differ from available ones.
+The tree branches by how the analysis handled missingness: **complete-case**, **imputation**, or **alternative method**.
 
-**5.2** — Were participants excluded from the analysis due to missing data on the intervention status?
-> Excluding people with unknown intervention status can introduce bias if their outcomes differ systematically.
+**4.1** — Were complete data on intervention status available for all, or nearly all, participants? (`Y / PY / PN / N / NI`)
+**4.2** — Were complete data on the outcome available for all, or nearly all, participants? (`Y / PY / PN / N / NI`)
+**4.3** — Were complete data on important confounding variables available for all, or nearly all, participants? (`Y / PY / PN / N / NI`)
+> "Nearly all" = number excluded so small it could not have made an important difference. For continuous outcomes, 95% (or 90%) is often sufficient. For dichotomous outcomes, the threshold depends on event rate.
 
-**5.3** — Were participants excluded from the analysis due to missing data on other variables needed for the analysis?
-> Complete-case analysis on confounders/effect modifiers may bias the estimate when missingness is not completely at random.
+**4.4** — Is the result based on a complete case analysis? (`NA / Y / PY / PN / N / NI`)
+**4.5** — Was exclusion from the analysis because of missing data likely to be related to the true value of the outcome? (`NA / Y / PY / PN / N / NI`)
+**4.6** — Is the relationship between the outcome and missingness likely to be explained by the variables in the analysis model? (`NA / Y / PY / WN / SN / NI`)
+> If all variables that plausibly explain the outcome-missingness relationship are included in the complete-case analysis, bias is low. WN if not substantial; SN if bias is likely substantial.
 
-**Decision tree (ROBINS-I §4.6):**
+**4.7** — Was the analysis based on imputing missing values? (`NA / Y / PY / PN / NI`)
+**4.8** — Is it reasonable to assume data were MAR or MCAR? (`NA / Y / PY / PN / N / NI`)
+**4.9** — Was imputation performed appropriately? (`NA / Y / PY / WN / SN / NI`)
+> WN/SN if simple methods (LOCF, mean imputation) were used; Y/PY if multiple imputation included all predictors of missingness and all variables in the main analysis model.
+
+**4.10** — Was an appropriate alternative method used to correct for bias due to missing data? (`NA / Y / PY / WN / SN / NI`)
+> Asked when the analysis was neither complete case nor imputation. Examples: IPW, FIML.
+
+**4.11** — Is there evidence that the result was not biased by missing data? (`NA / Y / PY / PN / N`)
+> Evidence from (1) analysis methods that would not be biased under plausible missingness assumptions, or (2) sensitivity analyses showing results change little.
+
+**Decision tree (cribsheet p38):**
 
 ```python
-def robins_i_domain5_judge(signals: dict[str, str]) -> str:
-    """Domain 5 (missing data) — ROBINS-I guidance §4.6.
+def domain4_judge(signals: dict[str, str]) -> str:
+    """D4 Bias due to missing data. Cribsheet p38."""
+    q1, q2, q3 = (signals.get(k, "NI") for k in ("4.1","4.2","4.3"))
+    q4, q5, q6 = (signals.get(k, "NI") for k in ("4.4","4.5","4.6"))
+    q7, q8, q9, q10, q11 = (signals.get(k, "NI") for k in ("4.7","4.8","4.9","4.10","4.11"))
 
-    5.1 outcome data available for all/nearly all participants?
-    5.2 participants excluded due to missing intervention status?
-    5.3 participants excluded due to missing data on other variables?
-    """
-    q51 = signals.get("5.1", "NI")
-    q52 = signals.get("5.2", "NI")
-    q53 = signals.get("5.3", "NI")
-
-    if _yes(q51) and _no(q52) and _no(q53):
+    # Best case: complete data on all three variables → Low
+    if _strict_yes(q1) and _strict_yes(q2) and _strict_yes(q3):
         return "Low"
-    if _no(q51) and (_yes(q52) or _yes(q53)):
-        return "Serious"
-    if _no(q51):
-        return "Moderate"
-    if q51 == "NI":
-        return "No information"
-    return "Moderate"
+
+    # Complete case analysis path
+    if _strict_yes(q4) or _no_info(q4):
+        if _strict_no(q5):
+            return "Low"
+        if _strict_yes(q6):
+            return "Moderate" if _strict_yes(q11) else "Serious"
+        if _weak_no(q6) or _no_info(q6):
+            return "Moderate" if _strict_yes(q11) else "Serious"
+        return "Critical" if _strict_no(q11) else "Serious"  # SN on 4.6
+
+    # Imputation path
+    if _strict_yes(q7):
+        if _strict_yes(q8):
+            if _strict_yes(q9):
+                return "Low"
+            if _weak_no(q9) or _no_info(q9):
+                return "Moderate" if _strict_yes(q11) else "Serious"
+            return "Critical" if _strict_no(q11) else "Serious"  # SN on 4.9
+        return "Critical" if _strict_no(q11) else "Serious"  # 4.8 N/PN/NI
+
+    # Alternative method path
+    if _strict_yes(q10):
+        return "Low"
+    if _weak_no(q10) or _no_info(q10):
+        return "Moderate" if _strict_yes(q11) else "Serious"
+    return "Critical" if _strict_no(q11) else "Serious"  # SN on 4.10
 ```
 
 ---
 
-### Domain 6 — Bias in measurement of outcomes
+### Domain 5 — Bias arising from measurement of the outcome
 
 **Relevant extracted fields:** `outcome_ascertainment`, `outcome_definition`.
 
-**6.1** — Could the outcome measure have been influenced by knowledge of the intervention received?
-> Subjective outcomes (pain, quality of life, clinician judgement) can be influenced by intervention knowledge. Objective outcomes (all-cause mortality, linked-registry events) usually cannot.
+**5.1** — Could measurement or ascertainment of the outcome have differed between intervention groups? (`Y / PY / PN / N / NI`)
+> Y/PY → Serious directly. Differences arise through "diagnostic detection bias" or extra visits for intervention participants.
 
-**6.2** — Were outcome assessors aware of the intervention received by study participants?
-> Blinded assessors eliminate knowledge-driven measurement bias. In observational studies blinding is rarely formal — assess whether assessors had effective access to intervention status when scoring the outcome.
+**5.2** — Were outcome assessors aware of the intervention received by study participants? (`Y / PY / PN / N / NI`)
+> N if blinded, or if participants self-report and were themselves blinded. In observational studies, usually Y when participants report outcomes themselves.
 
-**6.3** — Were the methods of outcome assessment comparable across intervention groups?
-> Differential follow-up frequency, different diagnostic workups, or different case-finding between groups create detection bias.
+**5.3** — Could assessment of the outcome have been influenced by knowledge of the intervention received? (`NA / SY / WY / PN / N / NI`)
+> Only asked if 5.2 was Y/PY/NI. SY = yes, to a large extent (e.g. patient-reported symptoms in homeopathy studies; recovery assessments by physiotherapists). WY = yes, to a small extent (knowledge could have influenced but no strong reason to believe it did).
 
-**6.4** — Were any systematic errors in measurement of the outcome related to the intervention received?
-> Yes if intervention modifies the measured quantity (e.g., treatment that changes a biomarker used to define the outcome) without truly changing the underlying clinical state.
-
-**6.5** — Is it likely that assessment of the outcome was influenced by knowledge of the intervention received?
-> Distinguishes 'could have been' (some concerns) from 'likely was' (serious). Knowledge influence is more likely with strong beliefs about intervention benefit/harm.
-
-**Decision tree (ROBINS-I §4.7):**
+**Decision tree (cribsheet p41):**
 
 ```python
-def robins_i_domain6_judge(signals: dict[str, str]) -> str:
-    """Domain 6 (measurement of outcomes) — ROBINS-I guidance §4.7.
+def domain5_judge(signals: dict[str, str]) -> str:
+    """D5 Bias arising from measurement of the outcome. Cribsheet p41."""
+    q1, q2, q3 = (signals.get(k, "NI") for k in ("5.1","5.2","5.3"))
 
-    6.1 could outcome measure be influenced by intervention knowledge?
-    6.2 were outcome assessors aware of intervention received?
-    6.3 were outcome methods comparable across groups?
-    6.4 were systematic measurement errors related to intervention?
-    6.5 likely that measurement was influenced by intervention knowledge?
-    """
-    q61 = signals.get("6.1", "NI")
-    q62 = signals.get("6.2", "NI")
-    q63 = signals.get("6.3", "NI")
-    q64 = signals.get("6.4", "NI")
-    q65 = signals.get("6.5", "NI")
+    if _yes(q1):
+        return "Serious"  # differential measurement
 
-    if _yes(q64) or _yes(q65):
-        return "Serious"
-    if _no(q63):
-        return "Serious"
-    # Objective measurement OR blinded assessors → Low
-    if _no(q61) and _no(q62):
+    if _strict_no(q1):
+        if _strict_no(q2):
+            return "Low"
+        if _strong_yes(q3):
+            return "Serious"
+        if _weak_yes(q3) or _no_info(q3):
+            return "Moderate"
         return "Low"
-    # Some NI — honest "no information"
-    if q61 == "NI" and q62 == "NI":
-        return "No information"
+
+    # 5.1 NI
+    if _strict_no(q2):
+        return "Moderate"
+    if _strong_yes(q3):
+        return "Serious"
     return "Moderate"
 ```
 
 ---
 
-### Domain 7 — Bias in selection of the reported result
+### Domain 6 — Bias in selection of the reported result
 
 **Relevant extracted fields:** `outcome_definition`, `statistical_analysis`.
 
-**7.1** — Is the reported effect estimate likely to be selected, on the basis of the results, from multiple outcome measurements within the outcome domain?
-> Outcome domain may be measured multiple ways (scales, time points, definitions). If only the most favorable measurement is reported without prespecification, answer 'Yes'.
+**6.1** — Was the result reported in accordance with an available, pre-determined analysis plan? (`Y / PY / PN / N / NI`)
+> Analysis plans are rarely publicly available for non-randomized studies, so most papers will not be assessed as Low on the basis of 6.1 alone.
 
-**7.2** — Is the reported effect estimate likely to be selected, on the basis of the results, from multiple analyses of the intervention-outcome relationship?
-> Multiple modeling choices (unadjusted vs adjusted, alternative covariate sets, different missing-data strategies) can produce different estimates. Selection on favorable results is concerning.
+**6.2** — Selected from multiple outcome **measurements** within the outcome domain? (`Y / PY / PN / N / NI`)
+**6.3** — Selected from multiple **analyses** of the data? (`Y / PY / PN / N / NI`)
+**6.4** — Selected from multiple **subgroups**? (`Y / PY / PN / N / NI`)
 
-**7.3** — Is the reported effect estimate likely to be selected, on the basis of the results, from different subgroups?
-> Post-hoc subgroup reporting driven by where effects look largest is a form of result-driven selection.
-
-**Decision tree (ROBINS-I §4.8):**
+**Decision tree (cribsheet p47):**
 
 ```python
-def robins_i_domain7_judge(signals: dict[str, str]) -> str:
-    """Domain 7 (selection of reported result) — ROBINS-I guidance §4.8.
+def domain6_judge(signals: dict[str, str]) -> str:
+    """D6 Bias in selection of the reported result. Cribsheet p47."""
+    q1, q2, q3, q4 = (signals.get(k, "NI") for k in ("6.1","6.2","6.3","6.4"))
 
-    7.1 selected from multiple eligible outcome measurements?
-    7.2 selected from multiple eligible analyses?
-    7.3 selected from different subgroups on basis of results?
-    """
-    q71 = signals.get("7.1", "NI")
-    q72 = signals.get("7.2", "NI")
-    q73 = signals.get("7.3", "NI")
+    if _strict_yes(q1):
+        return "Low"
 
-    if _yes(q71) or _yes(q72) or _yes(q73):
+    yes_count = sum(1 for q in (q2, q3, q4) if _yes(q))
+    ni_count = sum(1 for q in (q2, q3, q4) if _no_info(q))
+
+    if yes_count >= 2:
+        return "Critical"
+    if yes_count == 1:
         return "Serious"
-    if q71 == "NI" and q72 == "NI" and q73 == "NI":
-        return "No information"
+    if ni_count == 3:
+        return "Serious"
+    if ni_count >= 1:
+        return "Moderate"
     return "Low"
 ```
 
 ---
 
-## 2.7 Overall ROBINS-I algorithm
+## 2.8 Overall ROBINS-I V2 algorithm
 
-Worst-domain aggregation per ROBINS-I guidance p.10:
+Worst-domain aggregation per cribsheet p48. The user may override upward when multiple Serious domains compound, but the algorithm default is the worst single-domain judgement. Domain 1's special `"Low (except for concerns about uncontrolled confounding)"` label is normalized to `"Low"` for aggregation.
 
 ```python
 def robins_i_overall(domain_judgements: list[str]) -> str:
-    """Overall judgement — worst-domain aggregation per ROBINS-I guidance p.10.
+    """Overall judgement — worst-domain aggregation per cribsheet p48.
 
-    Order of severity (worst → best):
-      Critical > Serious > Moderate > No information > Low.
-
-    A single Critical domain makes the study Critical overall. A single Serious
-    domain makes it Serious. "No information" means at least one domain could
-    not be judged but no Moderate/Serious/Critical domains were found.
+    Severity (worst → best): Critical > Serious > Moderate > Low.
     """
-    if any(j == "Critical" for j in domain_judgements):
-        return "Critical"
-    if any(j == "Serious" for j in domain_judgements):
-        return "Serious"
-    if any(j == "Moderate" for j in domain_judgements):
-        return "Moderate"
-    if any(j == "No information" for j in domain_judgements):
-        return "No information"
-    return "Low"
+    rank = {LOW_D1: 0, "Low": 0, "Moderate": 1, "Serious": 2, "Critical": 3}
+    worst = max((rank.get(j, 1) for j in domain_judgements), default=0)
+    if worst == 0:
+        return "Low"
+    return JUDGEMENTS[worst]
 ```
 
-**Helpers used by every decision tree (same as RoB 2):**
+**Preflight short-circuit:** if B2=Y/PY or B3=Y/PY at the preflight stage, the result is **Critical** with no domain-level assessment performed — see §2.6.
+
+**Helpers used by the V2 decision trees (alongside RoB 2's `_yes` / `_no`):**
 
 ```python
 def _yes(ans: str) -> bool:
-    return ans in ("Y", "PY")
+    """Any 'yes-flavoured' answer including weak / strong yes."""
+    return ans in ("Y", "PY", "WY", "SY")
 
 def _no(ans: str) -> bool:
-    return ans in ("N", "PN")
+    """Any 'no-flavoured' answer including weak / strong no."""
+    return ans in ("N", "PN", "WN", "SN")
+
+def _strict_yes(ans: str) -> bool:  return ans in ("Y", "PY")
+def _strict_no(ans: str) -> bool:   return ans in ("N", "PN")
+def _weak_no(ans: str) -> bool:     return ans == "WN"
+def _strong_no(ans: str) -> bool:   return ans == "SN"
+def _weak_yes(ans: str) -> bool:    return ans == "WY"
+def _strong_yes(ans: str) -> bool:  return ans == "SY"
+def _no_info(ans: str) -> bool:     return ans == "NI"
 ```
+
 
 ---
 
 # Appendix — How the orchestrator wires these together
 
-For each paper, [backend/quality_appraisal.py](../backend/quality_appraisal.py) classifies the study type, picks the matching tool from `STUDY_TYPE_REGISTRY` (RCT → RoB 2 + CONSORT 2025; Cohort / Case-Control / Case-Crossover / Non-Randomized Trial / Cross-Sectional → ROBINS-I + STROBE 2007), and calls `tool.run(pdf_bytes, fields, classification, primary_outcome, progress)`. Inside `run()`:
+For each paper, [backend/quality_appraisal.py](../backend/quality_appraisal.py) classifies the study type, picks the matching tool from `STUDY_TYPE_REGISTRY` (RCT → RoB 2 + CONSORT 2025; Cohort / Case-Control / Case-Crossover / Non-Randomized Trial / Cross-Sectional → ROBINS-I V2 + STROBE 2007), and calls `tool.run(pdf_bytes, fields, classification, primary_outcome, progress)`. Inside ROBINS-I V2's `run()`:
 
-1. For each `domain` in `DOMAINS`, build a per-domain prompt via `build_domain_prompt(...)`.
-2. Send PDF + prompt to the LLM via `backend/annotator.py:_call_with_pdf` (3-stage oversize fallback: PDF-as-document → pypdf text → chunked map-reduce).
-3. Parse JSON; coerce each signal answer into `Y/PY/PN/N/NI` (default `NI`).
-4. Map signals → domain judgement via `DOMAIN_JUDGES[domain_id](signals)` (the pure-Python decision tree — never the LLM).
-5. After all domains: aggregate via `rob2_overall(...)` or `robins_i_overall(...)`.
-6. Return `(domain_results, overall_judgement, overall_direction)`.
+1. **Preflight** — one LLM call answers B1 / B2 / B3 + C4. If B2=Y/PY or B3=Y/PY → return `Critical` and skip the rest. Otherwise C4 dispatches Domain 1 to **Variant A** (ITT, baseline confounding only) or **Variant B** (per-protocol, baseline + time-varying).
+2. For each `domain` in `DOMAINS`, build a per-domain prompt via `build_domain_prompt(domain, variant, ...)` (variant is used to pick Variant A or B signaling questions for Domain 1).
+3. Send PDF + prompt to the LLM via `backend/annotator.py:_call_with_pdf` (3-stage oversize fallback: PDF-as-document → pypdf text → chunked map-reduce).
+4. Parse JSON; coerce each signal answer into the per-question allowed token set (`Y / PY / PN / N / NI / WN / SN / WY / SY`), defaulting to `NI`.
+5. Map signals → domain judgement via `DOMAIN_JUDGES_VARIANT_A[domain_id](signals)` or `DOMAIN_JUDGES_VARIANT_B[domain_id](signals)` (the pure-Python decision tree — never the LLM).
+6. After all domains: aggregate via `rob2_overall(...)` or `robins_i_overall(...)`. The latter normalizes Domain 1's `"Low (except for concerns about uncontrolled confounding)"` label to `Low` for aggregation.
+7. Return `(domain_results, overall_judgement, overall_direction)`. `domain_results["preflight"]` carries the B1/B2/B3/C4 answers + rationales + the variant decision; per-domain entries are keyed by string domain id (`"1"` … `"6"`).
 
-The orchestrator then computes initial GRADE (from the registry) and an updated GRADE downgraded for RoB. The full prompt catalog and decision-tree source are also exposed via `prompt_catalog()` for the developer-view UI — readers can verify the exact logic behind any judgement.
+The orchestrator then computes initial GRADE (from the registry) and an updated GRADE downgraded for RoB + indirectness + imprecision. The full prompt catalog and decision-tree source — including the preflight prompt + both Domain 1 variant trees — are exposed via `prompt_catalog()` for the developer-view UI (any signed-in user can inspect the prompts and decision trees behind a judgement).

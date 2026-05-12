@@ -742,23 +742,28 @@ const ROB2_DOMAIN_META = [
   { id: 4, short: 'D4: Outcome measurement', full: 'Bias in measurement of the outcome' },
   { id: 5, short: 'D5: Reported result',     full: 'Bias in selection of the reported result' },
 ];
+// ROBINS-I V2 (20 November 2025 cribsheet) — 6 domains.
+// V2 removed the V1 "Bias due to deviations from intended interventions"
+// domain; protocol-deviation issues are folded into Domain 1 Variant B.
 const ROBINS_I_DOMAIN_META = [
-  { id: 1, short: 'D1: Confounding',      full: 'Bias due to confounding' },
-  { id: 2, short: 'D2: Selection',        full: 'Bias in selection of participants into the study' },
-  { id: 3, short: 'D3: Classification',   full: 'Bias in classification of interventions' },
-  { id: 4, short: 'D4: Deviations',       full: 'Bias due to deviations from intended interventions' },
-  { id: 5, short: 'D5: Missing data',     full: 'Bias due to missing data' },
-  { id: 6, short: 'D6: Outcome measure',  full: 'Bias in measurement of outcomes' },
-  { id: 7, short: 'D7: Reported result',  full: 'Bias in selection of the reported result' },
+  { id: 1, short: 'D1: Confounding',     full: 'Bias due to confounding' },
+  { id: 2, short: 'D2: Classification',  full: 'Bias in classification of interventions' },
+  { id: 3, short: 'D3: Selection',       full: 'Bias in selection of participants into the study (or analysis)' },
+  { id: 4, short: 'D4: Missing data',    full: 'Bias due to missing data' },
+  { id: 5, short: 'D5: Outcome measure', full: 'Bias arising from measurement of the outcome' },
+  { id: 6, short: 'D6: Reported result', full: 'Bias in selection of the reported result' },
 ];
 function domainMetaFor(tool) {
   return tool === 'robins_i' ? ROBINS_I_DOMAIN_META : ROB2_DOMAIN_META;
 }
 const ROB_BADGE_CLS = {
   'Low': 'rob-low',
+  // ROBINS-I V2: Domain 1 substitutes this label for "Low" per the cribsheet
+  // footnote — uncontrolled confounding cannot be ruled out observationally.
+  'Low (except for concerns about uncontrolled confounding)': 'rob-low',
   'Some concerns': 'rob-some', 'High': 'rob-high',
   'Moderate': 'rob-moderate', 'Serious': 'rob-high', 'Critical': 'rob-critical',
-  'No information': 'rob-ni',
+  'No information': 'rob-ni',  // legacy V1 only
 };
 function robBadgeCls(j) { return ROB_BADGE_CLS[j] || ''; }
 let _detailResult = null;      // the result row currently open in the detail modal
@@ -1408,7 +1413,7 @@ function renderDetailPanel(r, anchor) {
 
   // ── RoB section ──────────────────────────
   const domainIds = Object.keys(robDomains).sort((a, b) => Number(a) - Number(b));
-  const robHeader = detailTool === 'robins_i' ? 'Risk of Bias (ROBINS-I)' : 'Risk of Bias (RoB 2)';
+  const robHeader = detailTool === 'robins_i' ? 'Risk of Bias (ROBINS-I V2)' : 'Risk of Bias (RoB 2)';
   const robHtml = `<section id="qa-sec-rob"><h3>${escHtml(robHeader)}</h3>
     ${domainIds.length === 0 ? '<div style="color:var(--muted);">No RoB data.</div>' : domainIds.map(did => {
       const d = robDomains[did] || {};
@@ -1642,7 +1647,7 @@ function renderDetailPanel(r, anchor) {
     if (j) judgeCounts[j] = (judgeCounts[j] || 0) + 1;
   });
   const countsLine = detailTool === 'robins_i'
-    ? `Critical: <strong>${judgeCounts['Critical'] || 0}</strong> &middot; Serious: <strong>${judgeCounts['Serious'] || 0}</strong> &middot; Moderate: <strong>${judgeCounts['Moderate'] || 0}</strong>. Per ROBINS-I/GRADE guidance, single-study GRADE downgrades 1 level for Moderate/Serious (2 levels for any Critical, or ≥2 Serious), plus indirectness and imprecision downgrades (above). Inconsistency and publication bias still require a body of evidence and are not applied here.`
+    ? `Critical: <strong>${judgeCounts['Critical'] || 0}</strong> &middot; Serious: <strong>${judgeCounts['Serious'] || 0}</strong> &middot; Moderate: <strong>${judgeCounts['Moderate'] || 0}</strong>. Per ROBINS-I V2 / GRADE guidance, single-study GRADE downgrades 1 level for Moderate/Serious (2 levels for any Critical, or ≥2 Serious domains), plus indirectness and imprecision downgrades (above). Inconsistency and publication bias still require a body of evidence and are not applied here. ROBINS-I V2 uses a 4-level scale (Low/Moderate/Serious/Critical) — V1's separate "No information" judgement was retired.`
     : `High-risk domains: <strong>${judgeCounts['High'] || 0}</strong> &middot; Some-concerns domains: <strong>${judgeCounts['Some concerns'] || 0}</strong>. Per GradePro guidance, single-study GRADE downgrades by 1 level for "Some concerns" or any High domain, and 2 levels when ≥2 domains are High, plus the indirectness and imprecision downgrades (above). Inconsistency and publication bias still require a body of evidence and are not applied here.`;
   const initialDescription = detailTool === 'robins_i' ? 'From study type (non-randomized)' : 'From study type (RCT)';
   const updatedDescriptionParts = ['After RoB'];

@@ -150,9 +150,10 @@ def dispatch(study_type: str) -> dict[str, str] | None:
 # ─────────────────────────────────────────────
 # Credit cost
 # ─────────────────────────────────────────────
-# Per paper: classify (~3) + prefill (~8) + 5 × RoB 2 domain (~3 each) +
-#            CONSORT (~4) + indirectness (~3) + imprecision (~3) ≈ 36.
-# Matches the estimate surfaced in the UI before a run.
+# Per paper: classify (~3) + prefill (~8) + RoB (~15: 5 × RoB 2 domains for
+# RCTs, or 1 preflight + 6 ROBINS-I V2 domains for non-randomized — same
+# total LLM call count) + reporting guideline (~4) + indirectness (~3) +
+# imprecision (~3) ≈ 36. Matches the estimate surfaced in the UI before a run.
 CREDIT_COST_QA_PER_PAPER = 36
 
 
@@ -213,6 +214,17 @@ def _rob_downgrade(rob_overall: str,
     Returns ``(levels, reason)``. ``levels`` is 0/1/2; ``reason`` is the noun
     phrase that follows "for ..." in the explanation (e.g. "Some concerns in
     risk of bias").
+
+    Vocabulary:
+      RoB 2          Low / Some concerns / High
+      ROBINS-I V2    Low / Moderate / Serious / Critical (4 levels — V2 dropped
+                     the V1 "No information" overall judgement, though stored
+                     V1 runs still resolve via the legacy branch below).
+
+    Domain 1's "Low (except for concerns about uncontrolled confounding)"
+    label is normalized to plain "Low" by the ROBINS-I V2 overall aggregator
+    before it reaches this function, so the count of Serious domains below
+    is unaffected.
     """
     judgements = rob_domain_judgements or []
     if rob_overall == "Low":
@@ -227,18 +239,20 @@ def _rob_downgrade(rob_overall: str,
             return 2, f"High risk of bias in {high_count} domains"
         return 1, "High risk of bias"
 
-    # ROBINS-I branches
+    # ROBINS-I V2 branches
     if rob_overall == "Moderate":
-        return 1, "Moderate risk of bias (ROBINS-I)"
+        return 1, "Moderate risk of bias (ROBINS-I V2)"
     if rob_overall == "Serious":
         serious_count = sum(1 for j in judgements if j == "Serious")
         if serious_count >= 2:
-            return 2, f"Serious risk of bias in {serious_count} ROBINS-I domains"
-        return 1, "Serious risk of bias (ROBINS-I)"
+            return 2, f"Serious risk of bias in {serious_count} ROBINS-I V2 domains"
+        return 1, "Serious risk of bias (ROBINS-I V2)"
     if rob_overall == "Critical":
-        return 2, "Critical risk of bias (ROBINS-I)"
+        return 2, "Critical risk of bias (ROBINS-I V2)"
+
+    # Legacy V1 stored results — V2 no longer produces "No information" overall
     if rob_overall == "No information":
-        return 1, "No information in one or more ROBINS-I domains (conservative)"
+        return 1, "No information in one or more ROBINS-I domains (conservative; legacy V1 result)"
 
     return 1, f"risk of bias ({rob_overall})"
 
@@ -575,8 +589,13 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
         imprecision = {"error": "Imprecision assessment failed."}
 
     # 7. GRADE — combines RoB + indirectness + imprecision downgrades
-    rob_domain_judgements = [d.get("judgement", "Low")
-                              for d in rob_domains.values()]
+    # ROBINS-I V2 stores preflight metadata under rob_domains["preflight"];
+    # filter to dicts that actually carry a domain judgement.
+    rob_domain_judgements = [
+        d.get("judgement", "Low")
+        for k, d in rob_domains.items()
+        if k != "preflight" and isinstance(d, dict) and "judgement" in d
+    ]
     initial_grade = cfg["initial_grade"]
     updated_grade, grade_expl = compute_grade(
         initial_grade, rob_overall, rob_domain_judgements,
@@ -939,9 +958,22 @@ def flatten_result_row(result_row: dict[str, Any],
         "grade_explanation": result_row.get("grade_explanation"),
     }
     # Per-domain judgements + all signaling-question answers. Dispatch the
-    # DOMAINS list by rob_tool so ROBINS-I rows get 7 domains (not 5).
+    # DOMAINS list by rob_tool so ROBINS-I rows get 6 domains (V2) not 5.
     tool = result_row.get("rob_tool")
     domains_for_tool = robins_i.DOMAINS if tool == "robins_i" else rob2.DOMAINS
+
+    # ROBINS-I V2 preflight columns (B1/B2/B3/C4 + variant + screening decision).
+    # Empty for RoB 2 rows.
+    if tool == "robins_i":
+        preflight = rob_domains.get("preflight") or {}
+        row["robins_b1"] = preflight.get("B1", "")
+        row["robins_b2"] = preflight.get("B2", "")
+        row["robins_b3"] = preflight.get("B3", "")
+        row["robins_c4"] = preflight.get("C4", "")
+        row["robins_variant"] = preflight.get("variant") or (rob_domains.get("1") or {}).get("variant", "")
+        row["robins_screening_decision"] = preflight.get("screening_decision", "")
+        row["robins_screening_reason"] = preflight.get("screening_reason", "")
+
     for dom in domains_for_tool:
         d = rob_domains.get(str(dom["id"])) or {}
         row[f"rob_d{dom['id']}_judgement"] = d.get("judgement", "")

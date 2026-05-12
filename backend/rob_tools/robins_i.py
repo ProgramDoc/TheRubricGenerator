@@ -1,32 +1,72 @@
-"""ROBINS-I — Risk Of Bias In Non-randomised Studies of Interventions.
+"""ROBINS-I V2 — Risk Of Bias In Non-randomised Studies of Interventions, Version 2.
 
-Source: Sterne JA, Hernán MA, Reeves BC, Savović J, Berkman ND, Viswanathan M,
-et al. "ROBINS-I: a tool for assessing risk of bias in non-randomised studies
-of interventions." BMJ 2016; 355:i4919. https://doi.org/10.1136/bmj.i4919
+Source: ROBINS-I V2 cribsheet (20 November 2025). ROBINS-I V2 development group:
+Sterne JA, Brandt Mathur M, Elbers R, Hróbjartsson A, McAleenan A, Reeves B,
+Shrier I, Tilling K, Armstrong R, Berkman N, Boutron I, Carpenter J, Chan AW,
+Deeks J, Golder S, Henry D, Jüni P, Kirkham J, Konstantinidis M, Lasserson T,
+Loke Y, McGuinness L, Page M, Savović J, Shea B, Mawdsley D, Shepperd S,
+Tugwell P, Valentine J, Viswanathan M, Waddington HS, Wells G, Hernán M, Higgins J.
 
-Applies to non-randomized studies of interventions: Cohort, Case-Control,
-Case-Crossover, Non-Randomized Trial, and analytical Cross-Sectional studies.
-Quasi-experimental designs (before-after, ITS, DiD, regression discontinuity)
-need their own confounding-prompt adaptations and are deferred.
+V2 is published explicitly for **follow-up (cohort) studies**. The 6-domain
+structure removes V1's "Bias due to deviations from intended intervention"
+domain; protocol-deviation issues are folded into Domain 1 Variant B (time-
+varying confounding). Other non-randomized designs (Case-Control, Case-
+Crossover, Cross-Sectional) still dispatch to this tool from the registry
+in :mod:`backend.quality_appraisal` — V2 is applied as the best-available
+approximation; a methodologically pure assessment for those designs would
+require a different tool (V1 ROBINS-I, or a design-specific tool).
 
-v1 scope: **effect-of-assignment** interpretation of D4 only (effect-of-adherence
-variant deferred). Uses the 7-domain structure from the tool:
+The 6 domains:
 
-  D1  Confounding
-  D2  Selection of participants into the study
-  D3  Classification of interventions
-  D4  Deviations from intended interventions (effect of assignment)
-  D5  Missing data
-  D6  Measurement of outcomes
-  D7  Selection of the reported result
+  D1  Risk of bias due to confounding (two variants — see below)
+  D2  Risk of bias in classification of interventions
+  D3  Risk of bias in selection of participants into the study (or analysis)
+  D4  Risk of bias due to missing data
+  D5  Risk of bias arising from measurement of the outcome
+  D6  Risk of bias in selection of the reported result
 
-Signaling-question answers are Y / PY / PN / N / NI (same vocabulary as RoB 2).
-Domain judgements are 5-level: **Low / Moderate / Serious / Critical / No information**.
-Overall judgement = worst single-domain judgement per the tool's aggregation rule.
+**Preflight** — one LLM call answers four preliminary considerations:
+  B1  Did the authors attempt to control for confounding?
+  B2  (If N/PN to B1) Is there sufficient potential for confounding that an
+      unadjusted result should not be considered further?
+  B3  Was the method of measuring the outcome inappropriate?
+  C4  Did the analysis account for switches / protocol deviations during
+      follow-up? (No → ITT effect → Variant A; Yes → per-protocol → Variant B)
+
+If B2=Y/PY or B3=Y/PY, the result is **Critical** with no further assessment
+(saves 6 domain LLM calls). Otherwise C4 dispatches Domain 1 to Variant A
+(4 signaling questions, baseline confounding only) or Variant B (5 signaling
+questions, baseline + time-varying confounding).
+
+**Signal vocabulary:**
+  Y / PY / PN / N / NI   — universal (yes / probably yes / probably no / no /
+                            no information)
+  WN / SN                 — weak no / strong no (some confounding + missing-
+                            data questions)
+  WY / SY                 — weak yes / strong yes (some misclassification +
+                            measurement questions)
+
+Different questions accept different response-option subsets — declared per
+signal entry. Y/PY answers for low-RoB-marker questions point toward Low risk
+of bias; the algorithms map signal answers (including the weak/strong tokens)
+to a 4-level domain judgement.
+
+**Domain judgement scale (4-level):**
+  Low / Moderate / Serious / Critical
+
+V1's separate "No information" judgement is gone in V2 — NI is still a valid
+signal answer, but the algorithms route NI through the decision trees rather
+than producing a distinct "No information" judgement. For Domain 1, "Low" is
+labelled "Low (except for concerns about uncontrolled confounding)" per the
+cribsheet footnote on page 4 — confounding cannot be eliminated in an
+observational study, so the best achievable confidence is "Low except…".
+
+**Overall:** worst-domain aggregation. Critical > Serious > Moderate > Low.
 """
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 from typing import Any, Callable
@@ -36,462 +76,1155 @@ from ..annotator import _call_with_pdf
 logger = logging.getLogger("rubricgen")
 
 
-SIGNAL_OPTIONS = ("Y", "PY", "PN", "N", "NI")
-JUDGEMENTS = ("Low", "Moderate", "Serious", "Critical", "No information")
-
-
 # ─────────────────────────────────────────────
-# Decision trees (pure Python — no LLM)
+# Signal vocabulary + judgement scale
 # ─────────────────────────────────────────────
-# Each domain's algorithm is a direct translation of the ROBINS-I guidance
-# document. The LLM answers signaling questions; code maps those answers to a
-# judgement. Keeping the trees in code (not prompts) makes the developer view
-# honest: reviewers can see the exact logic via inspect.getsource.
+SIGNAL_OPTIONS_ALL = ("Y", "PY", "PN", "N", "NI", "WN", "SN", "WY", "SY")
+"""All legal signal tokens across V2. Per-question subsets are declared on
+each signal entry."""
+
+JUDGEMENTS = ("Low", "Moderate", "Serious", "Critical")
+"""Domain-level judgements. Note Domain 1 substitutes
+'Low (except for concerns about uncontrolled confounding)' for plain Low —
+that substitution happens after the tree returns."""
+
+LOW_D1 = "Low (except for concerns about uncontrolled confounding)"
 
 
 def _yes(ans: str) -> bool:
-    return ans in ("Y", "PY")
+    """Truthy: any 'yes-flavoured' answer including weak / strong yes."""
+    return ans in ("Y", "PY", "WY", "SY")
 
 
 def _no(ans: str) -> bool:
+    """Truthy: any 'no-flavoured' answer including weak / strong no."""
+    return ans in ("N", "PN", "WN", "SN")
+
+
+def _strict_yes(ans: str) -> bool:
+    return ans in ("Y", "PY")
+
+
+def _strict_no(ans: str) -> bool:
     return ans in ("N", "PN")
 
 
-def robins_i_domain1_judge(signals: dict[str, str]) -> str:
-    """Domain 1 (confounding) — ROBINS-I guidance §4.2.
+def _weak_no(ans: str) -> bool:
+    return ans == "WN"
 
-    1.1 potential for confounding    → if N/PN, result = Low (no confounding expected).
-    1.4 appropriate analysis         → if N/PN, result = Serious/Critical.
-    1.5 confounders measured validly → downgrades 1.4-Y to Serious if poor.
-    1.6 adjustment for post-intervention variables → if Y/PY, result = Serious
-                                                     (adjustment on causal pathway biases the estimate).
-    1.8 time-varying confounding     → if Y/PY unaddressed, worst-case Serious.
+
+def _strong_no(ans: str) -> bool:
+    return ans == "SN"
+
+
+def _weak_yes(ans: str) -> bool:
+    return ans == "WY"
+
+
+def _strong_yes(ans: str) -> bool:
+    return ans == "SY"
+
+
+def _no_info(ans: str) -> bool:
+    return ans == "NI"
+
+
+# ─────────────────────────────────────────────
+# Decision trees — pure Python (no LLM)
+# ─────────────────────────────────────────────
+# Each tree is a direct translation of the algorithm diagrams in the ROBINS-I
+# V2 cribsheet (20 November 2025). Page references point to the source PDF.
+# Keeping the trees in code (not prompts) lets reviewers see the exact
+# scoring logic via inspect.getsource — surfaced in the developer view.
+
+
+def domain1_variant_a_judge(signals: dict[str, str]) -> str:
+    """D1 Variant A (ITT effect, baseline confounding only). Cribsheet p20.
+
+    Signaling questions:
+      1A.1  Controlled for all important confounding factors?
+      1A.2  Confounding factors measured validly and reliably?
+      1A.3  Controlled for any post-intervention variables?
+      1A.4  Negative controls suggest serious uncontrolled confounding?
     """
-    q11 = signals.get("1.1", "NI")
-    q14 = signals.get("1.4", "NI")
-    q15 = signals.get("1.5", "NI")
-    q16 = signals.get("1.6", "NI")
-    q18 = signals.get("1.8", "NI")
+    q1 = signals.get("1A.1", "NI")
+    q2 = signals.get("1A.2", "NI")
+    q3 = signals.get("1A.3", "NI")
+    q4 = signals.get("1A.4", "NI")
 
-    # No potential for confounding → Low (rare for observational data)
-    if _no(q11):
-        return "Low"
-    # Adjusted for a post-intervention variable → causal-pathway bias → Serious
-    if _yes(q16):
+    # 1.1 SN or NI: nothing further to redeem the result
+    if _strong_no(q1) or _no_info(q1):
+        return "Critical" if _yes(q4) else "Serious"
+
+    # 1.1 Y/PY: well-controlled
+    if _strict_yes(q1):
+        if _yes(q3):  # over-adjusted for post-intervention vars → causal-pathway bias
+            if _yes(q4):
+                return "Critical"
+            # 1.4 No: severity depends on 1.2 validity
+            if _strict_yes(q2):
+                return "Serious"
+            return "Critical"
+        # 1.3 N/PN/NI: no over-adjustment
+        if _strict_yes(q2) or _weak_no(q2):
+            return "Serious" if _yes(q4) else LOW_D1
+        # 1.2 SN/NI: validity concerns plus possibly uncontrolled confounding
         return "Serious"
-    # No adjustment attempted at all → Critical
-    if _no(q14):
+
+    # 1.1 WN: most-but-not-all controlled (floor is Moderate, not Low)
+    if _weak_no(q1):
+        if _yes(q3):
+            if _yes(q4):
+                return "Critical"
+            if _strict_yes(q2):
+                return "Serious"
+            return "Critical"
+        # 1.3 N/PN/NI
+        if _strict_yes(q2) or _weak_no(q2):
+            return "Serious" if _yes(q4) else "Moderate"
+        return "Serious"
+
+    # Fallthrough — shouldn't be reachable with a valid signal token
+    return "Serious"
+
+
+def domain1_variant_b_judge(signals: dict[str, str]) -> str:
+    """D1 Variant B (per-protocol effect, baseline + time-varying). Cribsheet p24.
+
+    Signaling questions:
+      1B.1  Appropriate analysis method for time-varying confounding?
+      1B.2  Controlled for all important baseline + time-varying factors?
+      1B.3  Confounding factors measured validly and reliably?
+      1B.4  Controlled for variables measured after intervention start?
+      1B.5  Negative controls suggest serious uncontrolled confounding?
+    """
+    q1 = signals.get("1B.1", "NI")
+    q2 = signals.get("1B.2", "NI")
+    q3 = signals.get("1B.3", "NI")
+    q4 = signals.get("1B.4", "NI")
+    q5 = signals.get("1B.5", "NI")
+
+    # 1.1 N/PN/NI: wrong analysis method (e.g. plain regression with time-varying
+    #               confounders) — bias risk dominated by 1.4 and 1.5
+    if _strict_no(q1) or _no_info(q1):
+        if _yes(q4):
+            return "Critical"
+        return "Critical" if _yes(q5) else "Serious"
+
+    # 1.1 Y/PY: appropriate g-methods etc. used
+    if _strict_yes(q1):
+        # 1.2: all important factors controlled?
+        if _strict_yes(q2):
+            # 1.3: validity of measurement
+            if _strict_yes(q3) or _weak_no(q3):
+                return "Serious" if _yes(q5) else LOW_D1
+            return "Serious"  # SN / NI on 1.3
+        if _weak_no(q2):
+            if _strict_yes(q3) or _weak_no(q3):
+                return "Serious" if _yes(q5) else "Moderate"
+            return "Serious"
+        # 1.2 SN/NI: not all important factors controlled
+        return "Critical" if _yes(q5) else "Serious"
+
+    return "Serious"
+
+
+def domain2_judge(signals: dict[str, str]) -> str:
+    """D2 Bias in classification of interventions. Cribsheet p28.
+
+    Signaling questions:
+      2.1  Intervention strategies distinguishable at start of follow-up?
+      2.2  Did almost all outcome events occur after strategies became
+           distinguishable?
+      2.3  Did the analysis avoid problems from non-distinguishable strategies?
+      2.4  Classification of intervention status influenced by knowledge of
+           outcome / risk of outcome? (differential misclassification)
+      2.5  Further classification errors (non-differential) likely?
+    """
+    q1 = signals.get("2.1", "NI")
+    q2 = signals.get("2.2", "NI")
+    q3 = signals.get("2.3", "NI")
+    q4 = signals.get("2.4", "NI")
+    q5 = signals.get("2.5", "NI")
+
+    # Upstream tier: 2.1 → 2.2 → 2.3 cascade decides which matrix row to use
+    if _yes(q1) or _yes(q2):
+        tier = 0  # best — top matrix
+    elif _strong_yes(q3):
+        tier = 1  # middle matrix (per cribsheet: SY routes to middle 2.4)
+    elif _weak_yes(q3) or _no_info(q3):
+        tier = 1
+    else:
+        tier = 2  # worst — 2.3 N/PN: analysis did not address non-distinguishable strategies
+
+    # 2.4 differential misclassification bump
+    if _strict_no(q4):
+        bump4 = 0
+    elif _weak_yes(q4) or _no_info(q4):
+        bump4 = 1
+    elif _strong_yes(q4):
+        bump4 = 2
+    else:
+        bump4 = 1  # defensive fallback
+
+    # 2.5 non-differential misclassification bump
+    if _strict_no(q5):
+        bump5 = 0
+    else:  # Y / PY / NI all bump
+        bump5 = 1
+
+    # Tier 2 has a direct CRITICAL for 2.4 SY/WY/NI per the diagram
+    if tier == 2 and (_yes(q4) or _no_info(q4)):
         return "Critical"
-    if q14 == "NI":
-        return "No information"
-    # 1.4 Y/PY: analysis attempted. Quality of measurement matters.
-    if _no(q15):
-        return "Serious"
-    if q15 == "NI":
-        return "Moderate"
-    # Time-varying confounding unaddressed → bump to Serious
-    if _yes(q18):
-        return "Serious"
-    # Best case for a well-adjusted observational study
-    return "Moderate"
+
+    idx = min(tier + bump4 + bump5, 3)
+    return JUDGEMENTS[idx]
 
 
-def robins_i_domain2_judge(signals: dict[str, str]) -> str:
-    """Domain 2 (selection of participants) — ROBINS-I guidance §4.3.
+def domain3_judge(signals: dict[str, str]) -> str:
+    """D3 Bias in selection of participants. Cribsheet p32.
 
-    2.1 selection based on post-intervention characteristics?
-    2.2 post-intervention selection associated with intervention?
-    2.3 post-intervention selection influenced by outcome?
-    2.4 follow-up start coincides with intervention start?
-    2.5 adjustment methods used that correct selection bias?
+    Signaling questions:
+      A. Prevalent-user bias and immortal time
+        3.1  Follow-up began at start of intervention strategies?
+        3.2  (If Y/PY to 3.1) Were outcome events after intervention start
+             excluded from the analysis?
+      B. Other selection bias
+        3.3  Selection based on participant characteristics observed AFTER
+             intervention start?
+        3.4  (If Y/PY to 3.3) Were post-intervention variables that influenced
+             selection associated with intervention?
+        3.5  (If Y/PY to 3.4) Were those variables influenced by outcome
+             (or cause of outcome)?
+      C. Analysis / sensitivity / severity (if A or B raises concerns)
+        3.6  Did the analysis correct for selection biases identified above?
+        3.7  Did sensitivity analyses demonstrate minimal impact?
+        3.8  Were selection biases severe enough to exclude from synthesis?
     """
-    q21 = signals.get("2.1", "NI")
-    q22 = signals.get("2.2", "NI")
-    q23 = signals.get("2.3", "NI")
-    q24 = signals.get("2.4", "NI")
-    q25 = signals.get("2.5", "NI")
+    q1 = signals.get("3.1", "NI")
+    q2 = signals.get("3.2", "NI")
+    q3 = signals.get("3.3", "NI")
+    q4 = signals.get("3.4", "NI")
+    q5 = signals.get("3.5", "NI")
+    q6 = signals.get("3.6", "NI")
+    q7 = signals.get("3.7", "NI")
+    q8 = signals.get("3.8", "NI")
 
-    # Clean case: no post-intervention selection AND follow-up aligns
-    if _no(q21) and _yes(q24):
+    # Subsection A: prevalent-user bias and immortal time
+    if _strict_yes(q1):
+        a_judgement = "Low" if _strict_no(q2) or _no_info(q2) else "Moderate"
+    elif _weak_no(q1) or _no_info(q1):
+        a_judgement = "Moderate"
+    elif _strong_no(q1):
+        a_judgement = "Serious"
+    else:
+        a_judgement = "Moderate"
+
+    # Subsection B: other selection bias
+    if _strict_no(q3):
+        b_judgement = "Low"
+    elif _yes(q3):
+        if _strict_no(q4) or _no_info(q4):
+            b_judgement = "Low"
+        elif _yes(q4):
+            if _yes(q5):
+                b_judgement = "Serious"
+            else:  # N/PN/NI to 3.5
+                b_judgement = "Moderate"
+        else:
+            b_judgement = "Moderate"
+    else:  # NI to 3.3
+        b_judgement = "Moderate"
+
+    # Combine A and B per the across-tier matrix (cribsheet p32)
+    rank = {"Low": 0, "Moderate": 1, "Serious": 2, "Critical": 3}
+    worst = max(rank[a_judgement], rank[b_judgement])
+
+    if worst == 0:
         return "Low"
-    # Post-intervention selection linked to both intervention and outcome
-    if _yes(q21) and _yes(q22) and _yes(q23):
-        return "Moderate" if _yes(q25) else "Serious"
-    # Post-intervention selection linked to intervention only
-    if _yes(q21) and _yes(q22):
-        return "Moderate" if _yes(q25) else "Serious"
-    # Immortal-time-bias risk (follow-up doesn't coincide)
-    if _no(q24):
-        return "Moderate" if _yes(q25) else "Serious"
-    return "Moderate"
-
-
-def robins_i_domain3_judge(signals: dict[str, str]) -> str:
-    """Domain 3 (classification of interventions) — ROBINS-I guidance §4.4.
-
-    3.1 intervention groups clearly defined?
-    3.2 information recorded at the start of the intervention?
-    3.3 classification affected by knowledge of the outcome?
-    """
-    q31 = signals.get("3.1", "NI")
-    q32 = signals.get("3.2", "NI")
-    q33 = signals.get("3.3", "NI")
-
-    if _yes(q33):
-        return "Serious"
-    if _no(q31) or _no(q32):
+    if worst == 1:
         return "Moderate"
-    if q31 == "NI" or q32 == "NI":
-        return "No information"
-    return "Low"
 
-
-def robins_i_domain4_judge(signals: dict[str, str]) -> str:
-    """Domain 4 (deviations from intended interventions, effect-of-assignment
-    variant) — ROBINS-I guidance §4.5.
-
-    4.1 deviations beyond usual care?
-    4.2 unbalanced deviations likely to have affected outcome?
-    4.3 important co-interventions balanced between groups?
-    4.4 intervention implemented correctly?
-    4.5 appropriate analysis for effect of assignment?
-    """
-    q41 = signals.get("4.1", "NI")
-    q42 = signals.get("4.2", "NI")
-    q43 = signals.get("4.3", "NI")
-    q44 = signals.get("4.4", "NI")
-    q45 = signals.get("4.5", "NI")
-
-    # Best case: no unusual deviations, correct implementation, balanced co-interventions
-    if _no(q41) and _yes(q44) and _yes(q43):
-        return "Low"
-    # Unbalanced deviations likely to affect outcome
-    if _yes(q41) and _yes(q42):
-        return "Moderate" if _yes(q45) else "Serious"
-    # Intervention not correctly implemented → Serious
-    if _no(q44):
-        return "Serious"
-    # Co-interventions unbalanced → Moderate at least
-    if _no(q43):
+    # Subsection C only applies when A or B is Serious
+    # 3.6: analysis corrected for biases?
+    if _yes(q6):
         return "Moderate"
-    return "Moderate"
-
-
-def robins_i_domain5_judge(signals: dict[str, str]) -> str:
-    """Domain 5 (missing data) — ROBINS-I guidance §4.6.
-
-    5.1 outcome data available for all/nearly all participants?
-    5.2 participants excluded due to missing intervention status?
-    5.3 participants excluded due to missing data on other variables?
-    """
-    q51 = signals.get("5.1", "NI")
-    q52 = signals.get("5.2", "NI")
-    q53 = signals.get("5.3", "NI")
-
-    if _yes(q51) and _no(q52) and _no(q53):
-        return "Low"
-    if _no(q51) and (_yes(q52) or _yes(q53)):
-        return "Serious"
-    if _no(q51):
+    # 3.7: sensitivity analyses minimal impact?
+    if _yes(q7):
         return "Moderate"
-    if q51 == "NI":
-        return "No information"
-    return "Moderate"
-
-
-def robins_i_domain6_judge(signals: dict[str, str]) -> str:
-    """Domain 6 (measurement of outcomes) — ROBINS-I guidance §4.7.
-
-    6.1 could outcome measure be influenced by intervention knowledge?
-    6.2 were outcome assessors aware of intervention received?
-    6.3 were outcome methods comparable across groups?
-    6.4 were systematic measurement errors related to intervention?
-    6.5 likely that measurement was influenced by intervention knowledge?
-    """
-    q61 = signals.get("6.1", "NI")
-    q62 = signals.get("6.2", "NI")
-    q63 = signals.get("6.3", "NI")
-    q64 = signals.get("6.4", "NI")
-    q65 = signals.get("6.5", "NI")
-
-    if _yes(q64) or _yes(q65):
-        return "Serious"
-    if _no(q63):
-        return "Serious"
-    # Objective measurement OR blinded assessors → Low
-    if _no(q61) and _no(q62):
-        return "Low"
-    # Some NI — honest "no information"
-    if q61 == "NI" and q62 == "NI":
-        return "No information"
-    return "Moderate"
-
-
-def robins_i_domain7_judge(signals: dict[str, str]) -> str:
-    """Domain 7 (selection of reported result) — ROBINS-I guidance §4.8.
-
-    7.1 selected from multiple eligible outcome measurements?
-    7.2 selected from multiple eligible analyses?
-    7.3 selected from different subgroups on basis of results?
-    """
-    q71 = signals.get("7.1", "NI")
-    q72 = signals.get("7.2", "NI")
-    q73 = signals.get("7.3", "NI")
-
-    if _yes(q71) or _yes(q72) or _yes(q73):
-        return "Serious"
-    if q71 == "NI" and q72 == "NI" and q73 == "NI":
-        return "No information"
-    return "Low"
-
-
-def robins_i_overall(domain_judgements: list[str]) -> str:
-    """Overall judgement — worst-domain aggregation per ROBINS-I guidance p.10.
-
-    Order of severity (worst → best):
-      Critical > Serious > Moderate > No information > Low.
-
-    A single Critical domain makes the study Critical overall. A single Serious
-    domain makes it Serious. "No information" means at least one domain could
-    not be judged but no Moderate/Serious/Critical domains were found.
-    """
-    if any(j == "Critical" for j in domain_judgements):
+    # 3.8: biases severe enough to exclude from synthesis?
+    if _yes(q8):
         return "Critical"
-    if any(j == "Serious" for j in domain_judgements):
+    return "Serious"
+
+
+def domain4_judge(signals: dict[str, str]) -> str:
+    """D4 Bias due to missing data. Cribsheet p38.
+
+    Signaling questions:
+      4.1  Complete data on intervention status for all/nearly all?
+      4.2  Complete data on outcome for all/nearly all?
+      4.3  Complete data on confounders for all/nearly all?
+      4.4  Is the result based on a complete case analysis?
+      4.5  (If complete case) Was exclusion related to true outcome value?
+      4.6  (If yes to 4.5) Is outcome-missingness relationship explained by
+           variables in the analysis model?
+      4.7  Was the analysis based on imputing missing values?
+      4.8  (If imputed) Is MAR/MCAR reasonable?
+      4.9  (If 4.8 reasonable) Was imputation performed appropriately?
+      4.10 (If neither complete case nor imputed) Was an alternative
+           appropriate method used?
+      4.11 (If 4.5 raises concerns, or 4.9/4.10 weak) Is there evidence the
+           result was not biased?
+    """
+    q1 = signals.get("4.1", "NI")
+    q2 = signals.get("4.2", "NI")
+    q3 = signals.get("4.3", "NI")
+    q4 = signals.get("4.4", "NI")
+    q5 = signals.get("4.5", "NI")
+    q6 = signals.get("4.6", "NI")
+    q7 = signals.get("4.7", "NI")
+    q8 = signals.get("4.8", "NI")
+    q9 = signals.get("4.9", "NI")
+    q10 = signals.get("4.10", "NI")
+    q11 = signals.get("4.11", "NI")
+
+    # Best case: complete data on all three variables → Low directly
+    if _strict_yes(q1) and _strict_yes(q2) and _strict_yes(q3):
+        return "Low"
+
+    # Complete case analysis path
+    if _strict_yes(q4) or _no_info(q4):
+        # 4.5: was exclusion related to outcome?
+        if _strict_no(q5):  # N / PN: exclusion not related → Low
+            return "Low"
+        # Y / PY / NI to 4.5: concerning exclusion
+        # 4.6: outcome-missingness explained by analysis model?
+        if _strict_yes(q6):
+            # Bias is plausibly addressed in the model; check 4.11
+            if _strict_yes(q11):
+                return "Moderate"
+            return "Serious"
+        if _weak_no(q6) or _no_info(q6):
+            # Some concerns about whether the model captures the relationship
+            if _strict_yes(q11):
+                return "Moderate"
+            return "Serious"
+        # SN: bias likely substantial
+        return "Critical" if _strict_no(q11) else "Serious"
+
+    # Imputation path
+    if _strict_yes(q7):
+        if _strict_yes(q8):
+            # 4.9: imputation appropriate?
+            if _strict_yes(q9):
+                return "Low"
+            if _weak_no(q9) or _no_info(q9):
+                return "Moderate" if _strict_yes(q11) else "Serious"
+            # SN
+            return "Critical" if _strict_no(q11) else "Serious"
+        # 4.8 N/PN/NI: MAR/MCAR not reasonable → bias likely
+        return "Critical" if _strict_no(q11) else "Serious"
+
+    # Alternative method path (neither complete case nor imputation)
+    if _strict_yes(q10):
+        return "Low"
+    if _weak_no(q10) or _no_info(q10):
+        return "Moderate" if _strict_yes(q11) else "Serious"
+    # SN to 4.10
+    return "Critical" if _strict_no(q11) else "Serious"
+
+
+def domain5_judge(signals: dict[str, str]) -> str:
+    """D5 Bias arising from measurement of the outcome. Cribsheet p41.
+
+    Signaling questions:
+      5.1  Could measurement/ascertainment of outcome have differed between
+           intervention groups?
+      5.2  Were outcome assessors aware of intervention received?
+      5.3  (If yes to 5.2) Could assessment have been influenced by knowledge
+           of intervention?
+    """
+    q1 = signals.get("5.1", "NI")
+    q2 = signals.get("5.2", "NI")
+    q3 = signals.get("5.3", "NI")
+
+    # 5.1 Y/PY: differential measurement → Serious directly
+    if _yes(q1):
         return "Serious"
-    if any(j == "Moderate" for j in domain_judgements):
+
+    # 5.1 N/PN: comparable measurement methods
+    if _strict_no(q1):
+        if _strict_no(q2):
+            return "Low"
+        # 5.2 Y/PY/NI: assessors knew → 5.3 (impact of knowledge)
+        if _strong_yes(q3):
+            return "Serious"
+        if _weak_yes(q3) or _no_info(q3):
+            return "Moderate"
+        # PN / N on 5.3: knowledge unlikely to influence assessment
+        return "Low"
+
+    # 5.1 NI: unclear whether measurement differed
+    if _strict_no(q2):
         return "Moderate"
-    if any(j == "No information" for j in domain_judgements):
-        return "No information"
+    if _strong_yes(q3):
+        return "Serious"
+    return "Moderate"
+
+
+def domain6_judge(signals: dict[str, str]) -> str:
+    """D6 Bias in selection of the reported result. Cribsheet p47.
+
+    Signaling questions:
+      6.1  Result reported in accordance with pre-determined analysis plan?
+      6.2  Result selected from multiple outcome measurements?
+      6.3  Result selected from multiple analyses?
+      6.4  Result selected from multiple subgroups?
+    """
+    q1 = signals.get("6.1", "NI")
+    q2 = signals.get("6.2", "NI")
+    q3 = signals.get("6.3", "NI")
+    q4 = signals.get("6.4", "NI")
+
+    if _strict_yes(q1):
+        return "Low"
+
+    yes_count = sum(1 for q in (q2, q3, q4) if _yes(q))
+    ni_count = sum(1 for q in (q2, q3, q4) if _no_info(q))
+
+    if yes_count >= 2:
+        return "Critical"
+    if yes_count == 1:
+        return "Serious"
+    # No Y/PY among 6.2-6.4
+    if ni_count == 3:
+        return "Serious"
+    if ni_count >= 1:
+        return "Moderate"
     return "Low"
 
 
-DOMAIN_JUDGES: dict[int, Callable[[dict[str, str]], str]] = {
-    1: robins_i_domain1_judge,
-    2: robins_i_domain2_judge,
-    3: robins_i_domain3_judge,
-    4: robins_i_domain4_judge,
-    5: robins_i_domain5_judge,
-    6: robins_i_domain6_judge,
-    7: robins_i_domain7_judge,
+DOMAIN_JUDGES_VARIANT_A: dict[int, Callable[[dict[str, str]], str]] = {
+    1: domain1_variant_a_judge,
+    2: domain2_judge,
+    3: domain3_judge,
+    4: domain4_judge,
+    5: domain5_judge,
+    6: domain6_judge,
+}
+
+DOMAIN_JUDGES_VARIANT_B: dict[int, Callable[[dict[str, str]], str]] = {
+    1: domain1_variant_b_judge,
+    2: domain2_judge,
+    3: domain3_judge,
+    4: domain4_judge,
+    5: domain5_judge,
+    6: domain6_judge,
 }
 
 
+def robins_i_overall(domain_judgements: list[str]) -> str:
+    """Overall judgement — worst-domain aggregation per cribsheet p48.
+
+    The user may override upward when multiple Serious domains compound, but
+    this code returns the algorithm default. Domain 1's special
+    "Low (except for concerns about uncontrolled confounding)" is treated as
+    Low for aggregation purposes.
+    """
+    rank = {LOW_D1: 0, "Low": 0, "Moderate": 1, "Serious": 2, "Critical": 3}
+    worst = max((rank.get(j, 1) for j in domain_judgements), default=0)
+    if worst == 0:
+        return "Low"
+    return JUDGEMENTS[worst]
+
+
 # ─────────────────────────────────────────────
-# Domain definitions — signaling questions + verbatim elaborations
+# Per-question response option subsets
 # ─────────────────────────────────────────────
-DOMAINS: list[dict[str, Any]] = [
+# Each signaling question declares the legal answer tokens for that question.
+# Tokens are: Y / PY / PN / N / NI / WN / SN / WY / SY (subsets vary).
+_BASIC = ("Y", "PY", "PN", "N", "NI")
+_BASIC_NA = ("NA", "Y", "PY", "PN", "N", "NI")
+_WITH_WN_SN = ("Y", "PY", "WN", "SN", "NI")
+_NA_WITH_WN_SN = ("NA", "Y", "PY", "WN", "SN", "NI")
+_WITH_WY_SY = ("Y", "PY", "WY", "SY", "PN", "N", "NI")
+_DIFFERENTIAL = ("SY", "WY", "PN", "N", "NI")
+_NA_DIFFERENTIAL = ("NA", "SY", "WY", "PN", "N", "NI")
+
+
+# ─────────────────────────────────────────────
+# Signal definitions — verbatim text from the cribsheet
+# ─────────────────────────────────────────────
+DOMAIN1_VARIANT_A_SIGNALS: list[dict[str, Any]] = [
     {
-        "id": 1,
-        "name": "Bias due to confounding",
-        "relevant_fields": ["confounders_measured", "adjustment_method",
-                             "exposure_definition", "comparator_group",
-                             "immortal_time_bias", "confounding_control"],
-        "signals": [
-            {"id": "1.1",
-             "text": "Is there potential for confounding of the effect of intervention in this study?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Confounding is expected in almost all non-randomized studies. Answer 'No' or 'Probably no' only when randomization or strong quasi-experimental design rules it out (e.g., if the intervention is truly unrelated to participant characteristics)."},
-            {"id": "1.2",
-             "text": "Was the analysis based on splitting participants' follow up time according to intervention received?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Time-split analyses compare time on vs off treatment within participants. They avoid some selection issues but require handling of time-varying confounding."},
-            {"id": "1.3",
-             "text": "If Y/PY to 1.2: Were intervention discontinuations or switches likely to be related to factors that are prognostic for the outcome?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "If people stopped/switched intervention for reasons related to outcome prognosis (e.g., side effects, worsening disease), the time-split comparison is confounded."},
-            {"id": "1.4",
-             "text": "Did the authors use an appropriate analysis method that controlled for all the important confounding domains?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "The paper should identify important confounding domains (baseline characteristics associated with both intervention and outcome) and use multivariable adjustment, stratification, matching, propensity scores, or similar. 'No' if no adjustment is attempted or key domains are omitted."},
-            {"id": "1.5",
-             "text": "If Y/PY to 1.4: Were confounding domains that were controlled for measured validly and reliably by the variables available in this study?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Adjustment only helps if the confounders were measured well. Self-report of important variables, missing data on confounders, or measurement at the wrong time point weakens adjustment."},
-            {"id": "1.6",
-             "text": "Did the authors control for any post-intervention variables that could have been affected by the intervention?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Adjusting for variables on the causal pathway between intervention and outcome biases the effect estimate. Classic example: adjusting for a biomarker that the intervention changes."},
-            {"id": "1.7",
-             "text": "Did the authors use an appropriate analysis method that controlled for time-varying confounding?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Applies when confounders change over time and intervention decisions depend on those time-varying values (e.g., clinicians adjusting dose based on disease progression). Methods like marginal structural models or g-estimation are appropriate; standard regression is not."},
-            {"id": "1.8",
-             "text": "Were there important time-varying confounding effects that the analysis did not account for?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Answer 'Yes' only if you have clear evidence of unaddressed time-varying confounding; 'No' when not relevant or appropriately handled."},
-        ],
+        "id": "1A.1",
+        "text": "Did the authors control for all the important confounding factors for which this was necessary?",
+        "options": list(_WITH_WN_SN),
+        "elaboration": (
+            "Answer Y/PY if all important confounding factors identified in the "
+            "preliminary consideration were appropriately controlled for "
+            "(stratification, regression, matching, standardization, propensity "
+            "scores, IPTW). Answer WN if most were controlled and uncontrolled "
+            "confounding was probably not substantial. Answer SN if at least one "
+            "important confounder should have been controlled but was not, and "
+            "the failure is likely to have a material impact."
+        ),
     },
     {
-        "id": 2,
-        "name": "Bias in selection of participants into the study",
-        "relevant_fields": ["case_source", "control_selection", "matching",
-                             "sampling_method", "loss_to_follow_up",
-                             "immortal_time_bias"],
-        "signals": [
-            {"id": "2.1",
-             "text": "Was selection of participants into the study (or analysis) based on participant characteristics observed after the start of intervention?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Examples: restricting the analytic sample to people who completed treatment; selecting cases based on events observed during follow-up; excluding early deaths."},
-            {"id": "2.2",
-             "text": "If Y/PY to 2.1: Were the post-intervention variables that influenced selection likely to be associated with intervention?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "If selection variables are associated with intervention (e.g., completers differ between arms), selection can bias the effect estimate."},
-            {"id": "2.3",
-             "text": "If Y/PY to 2.1 and 2.2: Were the post-intervention variables that influenced selection likely to be influenced by the outcome or a cause of the outcome?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Selection linked to intervention AND to outcome (or its causes) produces collider/selection bias."},
-            {"id": "2.4",
-             "text": "Do start of follow-up and start of intervention coincide for most participants?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Answer 'No' if participants accrue person-time before intervention start (immortal time) or after (lag). Mis-timed follow-up usually inflates apparent protective effects of treatment."},
-            {"id": "2.5",
-             "text": "Were adjustment techniques used that are likely to correct for the presence of selection biases?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Inverse-probability-of-selection weighting, exclusion of the immortal period, or landmark analysis can correct selection bias. Simple multivariable adjustment typically does not."},
-        ],
+        "id": "1A.2",
+        "text": "Were confounding factors that were controlled for (and for which control was necessary) measured validly and reliably by the variables available in this study?",
+        "options": list(_NA_WITH_WN_SN),
+        "elaboration": (
+            "Adjustment helps only if confounders were measured well. Answer "
+            "WN if measurement error was probably not substantial; SN if there "
+            "was at least one important confounder measured poorly enough that "
+            "the extent of measurement error in confounders was probably "
+            "substantial."
+        ),
     },
     {
-        "id": 3,
-        "name": "Bias in classification of interventions",
-        "relevant_fields": ["exposure_definition", "exposure_measurement",
-                             "exposure_ascertainment"],
-        "signals": [
-            {"id": "3.1",
-             "text": "Were intervention groups clearly defined?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Clear definitions specify the intervention(s) under study, its dose/duration/route, and an explicit comparator."},
-            {"id": "3.2",
-             "text": "Was the information used to define intervention groups recorded at the start of the intervention?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Prospective recording of intervention status prevents recall/memory-based misclassification. Retrospective ascertainment from medical records at a later time is weaker."},
-            {"id": "3.3",
-             "text": "Could classification of intervention status have been affected by knowledge of the outcome or risk of the outcome?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Differential misclassification — e.g., exposure recorded after the event occurred, case-control studies reconstructing exposure history — inflates or distorts effect estimates."},
-        ],
+        "id": "1A.3",
+        "text": "Did the authors control for any post-intervention variables that could have been affected by the intervention?",
+        "options": list(_BASIC_NA),
+        "elaboration": (
+            "Controlling for variables on the causal pathway between intervention "
+            "and outcome (over-adjustment) biases the effect estimate. Classic "
+            "example: adjusting for a biomarker that the intervention changes."
+        ),
     },
     {
-        "id": 4,
-        "name": "Bias due to deviations from intended interventions (effect of assignment)",
-        "relevant_fields": ["blinding", "allocation_mechanism",
-                             "baseline_comparability", "analysis_framework"],
-        "signals": [
-            {"id": "4.1",
-             "text": "Were there deviations from the intended intervention beyond what would be expected in usual practice?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Usual-practice deviations (treatment stopped for side effects, patient preference changes) are acceptable. Trial-context deviations (unblinded providers altering care, protocol-mandated changes not planned for routine use) are concerning."},
-            {"id": "4.2",
-             "text": "If Y/PY to 4.1: Were these deviations from intended intervention unbalanced between groups and likely to have affected the outcome?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Balanced deviations bias less than unbalanced. Judge substantial effect on the outcome of interest."},
-            {"id": "4.3",
-             "text": "Were important co-interventions balanced between intervention groups?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Co-interventions (other treatments received alongside the intervention) that differ between groups can confound the effect estimate."},
-            {"id": "4.4",
-             "text": "Was the intervention implemented as intended, with fidelity?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Was each participant in the intervention group actually exposed to (a dose of) the intended intervention? Poor fidelity (low adherence, wrong dose) attenuates observed effects."},
-            {"id": "4.5",
-             "text": "Was an appropriate analysis used to estimate the effect of assignment to intervention?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "ITT or intention-equivalent analyses (using the intervention as assigned rather than as received) estimate the effect of assignment. Per-protocol or as-treated analyses estimate something different and can be biased."},
-        ],
+        "id": "1A.4",
+        "text": "Did the use of negative controls, quantitative bias analysis, or other considerations suggest serious uncontrolled confounding?",
+        "options": list(_BASIC[:4]),  # Y / PY / PN / N
+        "elaboration": (
+            "If the study did not use negative controls and no other considerations "
+            "suggest uncontrolled confounding, answer N. Answer Y/PY if negative "
+            "controls indicate the result being assessed suffers from material "
+            "bias due to confounding."
+        ),
+    },
+]
+
+DOMAIN1_VARIANT_B_SIGNALS: list[dict[str, Any]] = [
+    {
+        "id": "1B.1",
+        "text": "Did the authors use an analysis method that was appropriate to control for time-varying as well as baseline confounding?",
+        "options": list(_BASIC),
+        "elaboration": (
+            "Appropriate methods to control for time-varying confounding "
+            "('g-methods') include inverse probability weighting based on "
+            "baseline- and time-varying confounding factors, with adjustment "
+            "for the censoring weights. Standard regression models including "
+            "time-varying confounders may be problematic when those "
+            "confounders are affected by prior intervention (treatment-"
+            "confounder feedback)."
+        ),
     },
     {
-        "id": 5,
-        "name": "Bias due to missing data",
-        "relevant_fields": ["loss_to_follow_up", "missing_data_handling",
-                             "attrition_rate"],
-        "signals": [
-            {"id": "5.1",
-             "text": "Were outcome data available for all, or nearly all, participants?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "'Nearly all' means missingness is small enough that it could not meaningfully change the effect estimate. Judge by proportion AND by whether missing participants differ from available ones."},
-            {"id": "5.2",
-             "text": "Were participants excluded from the analysis due to missing data on the intervention status?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Excluding people with unknown intervention status can introduce bias if their outcomes differ systematically."},
-            {"id": "5.3",
-             "text": "Were participants excluded from the analysis due to missing data on other variables needed for the analysis?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Complete-case analysis on confounders/effect modifiers may bias the estimate when missingness is not completely at random."},
-        ],
+        "id": "1B.2",
+        "text": "Did the authors control for all the important baseline and time-varying confounding factors for which this was necessary?",
+        "options": list(_NA_WITH_WN_SN),
+        "elaboration": (
+            "Per-protocol analyses must control for both baseline and time-"
+            "varying confounding factors that predict changes to intervention "
+            "received. Same WN / SN semantics as Variant A 1.1."
+        ),
     },
     {
-        "id": 6,
-        "name": "Bias in measurement of outcomes",
-        "relevant_fields": ["outcome_ascertainment", "outcome_definition"],
-        "signals": [
-            {"id": "6.1",
-             "text": "Could the outcome measure have been influenced by knowledge of the intervention received?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Subjective outcomes (pain, quality of life, clinician judgement) can be influenced by intervention knowledge. Objective outcomes (all-cause mortality, linked-registry events) usually cannot."},
-            {"id": "6.2",
-             "text": "Were outcome assessors aware of the intervention received by study participants?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Blinded assessors eliminate knowledge-driven measurement bias. In observational studies blinding is rarely formal — assess whether assessors had effective access to intervention status when scoring the outcome."},
-            {"id": "6.3",
-             "text": "Were the methods of outcome assessment comparable across intervention groups?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Differential follow-up frequency, different diagnostic workups, or different case-finding between groups create detection bias."},
-            {"id": "6.4",
-             "text": "Were any systematic errors in measurement of the outcome related to the intervention received?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Yes if intervention modifies the measured quantity (e.g., treatment that changes a biomarker used to define the outcome) without truly changing the underlying clinical state."},
-            {"id": "6.5",
-             "text": "Is it likely that assessment of the outcome was influenced by knowledge of the intervention received?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Distinguishes 'could have been' (some concerns) from 'likely was' (serious). Knowledge influence is more likely with strong beliefs about intervention benefit/harm."},
-        ],
+        "id": "1B.3",
+        "text": "Were confounding factors that were controlled for measured validly and reliably by the variables available in this study?",
+        "options": list(_NA_WITH_WN_SN),
+        "elaboration": (
+            "Same measurement-validity question as Variant A 1.2 but applied "
+            "to baseline + time-varying confounders."
+        ),
     },
     {
-        "id": 7,
-        "name": "Bias in selection of the reported result",
-        "relevant_fields": ["outcome_definition", "statistical_analysis"],
-        "signals": [
-            {"id": "7.1",
-             "text": "Is the reported effect estimate likely to be selected, on the basis of the results, from multiple outcome measurements within the outcome domain?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Outcome domain may be measured multiple ways (scales, time points, definitions). If only the most favorable measurement is reported without prespecification, answer 'Yes'."},
-            {"id": "7.2",
-             "text": "Is the reported effect estimate likely to be selected, on the basis of the results, from multiple analyses of the intervention-outcome relationship?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Multiple modeling choices (unadjusted vs adjusted, alternative covariate sets, different missing-data strategies) can produce different estimates. Selection on favorable results is concerning."},
-            {"id": "7.3",
-             "text": "Is the reported effect estimate likely to be selected, on the basis of the results, from different subgroups?",
-             "options": list(SIGNAL_OPTIONS),
-             "elaboration": "Post-hoc subgroup reporting driven by where effects look largest is a form of result-driven selection."},
-        ],
+        "id": "1B.4",
+        "text": "Did the authors control for time-varying factors or other variables measured after the start of intervention?",
+        "options": list(_BASIC_NA),
+        "elaboration": (
+            "Asked when an inappropriate analysis method (1B.1 N/PN/NI) has "
+            "been used. Conditioning on time-varying factors measured after "
+            "the start of intervention is likely to lead to bias when those "
+            "factors are also on the causal pathway from intervention to "
+            "outcome."
+        ),
+    },
+    {
+        "id": "1B.5",
+        "text": "Did the use of negative controls, or other considerations, suggest serious uncontrolled confounding?",
+        "options": list(_BASIC[:4]),
+        "elaboration": "Same as Variant A 1.4.",
+    },
+]
+
+DOMAIN2_SIGNALS: list[dict[str, Any]] = [
+    {
+        "id": "2.1",
+        "text": "Were the intervention strategies distinguishable at the time when follow-up would have started in the target trial?",
+        "options": list(_BASIC),
+        "elaboration": (
+            "In most non-randomized studies, participants are classified to "
+            "intervention strategies based on information about interventions "
+            "prescribed or received. Some strategies (e.g. 'surgery within 6 "
+            "months of diagnosis' vs 'delay surgery until clinical progression') "
+            "cannot be distinguished at follow-up start, creating a period of "
+            "'immortal time' during which the outcome cannot occur for some "
+            "groups."
+        ),
+    },
+    {
+        "id": "2.2",
+        "text": "Did all or nearly all outcome events occur after the intervention and comparator strategies could be distinguished?",
+        "options": list(_BASIC_NA),
+        "elaboration": (
+            "Asked only if 2.1 was N/PN/NI. If the indistinguishable period is "
+            "short relative to total follow-up, the proportion of outcome "
+            "events during that period may be low and the misclassification "
+            "bias correspondingly small."
+        ),
+    },
+    {
+        "id": "2.3",
+        "text": "Did the analysis avoid problems arising from intervention strategies that are not distinguishable at the start of follow-up?",
+        "options": list(_NA_DIFFERENTIAL),
+        "elaboration": (
+            "Answer SY (strong yes, fully) if predictors of treatment during "
+            "follow-up were measured and used appropriately to derive inverse-"
+            "probability weights (e.g. clone-censor-weighting, g-formula), or "
+            "if the study used a 'landmark' analysis. WY (partially) if "
+            "appropriate but unlikely to have fully adjusted for prognostic "
+            "factors predicting treatment after start of follow-up."
+        ),
+    },
+    {
+        "id": "2.4",
+        "text": "Was classification of intervention status influenced by knowledge of the outcome or risk of the outcome?",
+        "options": list(_DIFFERENTIAL),
+        "elaboration": (
+            "Differential misclassification arises when the outcome (or its "
+            "causes, other than the intervention) influences how interventions "
+            "are classified. SY = yes, and the impact was substantial; WY = "
+            "yes, but the impact was not substantial."
+        ),
+    },
+    {
+        "id": "2.5",
+        "text": "Were further classification errors (not influenced by knowledge of the outcome or risk of the outcome) likely?",
+        "options": list(_BASIC),
+        "elaboration": (
+            "Non-differential misclassification — receipt of intervention not "
+            "recorded for some participants. Usually biases towards the null. "
+            "'Nearly all' should be interpreted as 'enough to be confident of "
+            "the findings'."
+        ),
+    },
+]
+
+DOMAIN3_SIGNALS: list[dict[str, Any]] = [
+    {
+        "id": "3.1",
+        "text": "Did follow-up in the analysis begin at the start of the intervention strategies being compared?",
+        "options": list(_WITH_WN_SN),
+        "elaboration": (
+            "A. Prevalent-user bias and immortal time. Answer Y/PY if all "
+            "outcome events and follow-up time after the start of the "
+            "interventions were included in the analysis. WN if not "
+            "substantial; SN if leading to a substantial risk of bias."
+        ),
+    },
+    {
+        "id": "3.2",
+        "text": "Were outcome events during a period of follow-up after the start of the interventions excluded from the analysis?",
+        "options": list(_BASIC),
+        "elaboration": (
+            "Only asked if 3.1 was Y/PY. Such exclusion creates 'immortal time' "
+            "during which events cannot occur and biases the effect estimate."
+        ),
+    },
+    {
+        "id": "3.3",
+        "text": "Was selection of participants into the study (or into the analysis) based on participant characteristics observed after the start of intervention, additional to the situations addressed in 3.1 and 3.2?",
+        "options": list(_BASIC),
+        "elaboration": (
+            "B. Other selection bias. Answer Y/PY if selection into the study "
+            "was based on post-intervention characteristics. N/PN if selection "
+            "was based only on pre-intervention characteristics — baseline "
+            "confounding is addressed in Domain 1, not here."
+        ),
+    },
+    {
+        "id": "3.4",
+        "text": "Were the post-intervention variables that influenced selection likely to be associated with intervention?",
+        "options": list(_BASIC_NA),
+        "elaboration": (
+            "Only asked if 3.3 was Y/PY. Selection bias occurs when selection "
+            "is related to an effect of either intervention or a cause of "
+            "intervention AND an effect of either the outcome or a cause of "
+            "the outcome."
+        ),
+    },
+    {
+        "id": "3.5",
+        "text": "Were the post-intervention variables that influenced selection likely to be influenced by the outcome or a cause of the outcome?",
+        "options": list(_BASIC_NA),
+        "elaboration": "Only asked if 3.4 was Y/PY. Collider-style selection bias.",
+    },
+    {
+        "id": "3.6",
+        "text": "Is it likely that the analysis corrected for all of the potential selection biases identified above?",
+        "options": list(_BASIC_NA),
+        "elaboration": (
+            "C. Analysis / sensitivity / severity. Only asked if A or B raised "
+            "concerns. Inverse probability weights can create a pseudo-"
+            "population without the selection bias if assumptions are justified."
+        ),
+    },
+    {
+        "id": "3.7",
+        "text": "Did sensitivity analyses demonstrate that the likely impact of the potential selection biases identified above was minimal?",
+        "options": list(_BASIC_NA),
+        "elaboration": "Only asked if 3.6 was N/PN/NI.",
+    },
+    {
+        "id": "3.8",
+        "text": "Were potential selection biases identified above sufficiently severe that the result should not be included in a quantitative synthesis?",
+        "options": list(_BASIC_NA),
+        "elaboration": (
+            "Distinguishes 'Serious' from 'Critical' risk of selection bias. "
+            "Answer N/PN/NI unless there is clear evidence that the selection "
+            "biases identified were severe."
+        ),
+    },
+]
+
+DOMAIN4_SIGNALS: list[dict[str, Any]] = [
+    {
+        "id": "4.1",
+        "text": "Were complete data on intervention status available for all, or nearly all, participants?",
+        "options": list(_BASIC),
+        "elaboration": (
+            "'Nearly all' should be interpreted as the number excluded due to "
+            "missing intervention data is so small it could not have made an "
+            "important difference to the estimated effect. NI usually leads "
+            "to a high risk-of-bias judgement."
+        ),
+    },
+    {
+        "id": "4.2",
+        "text": "Were complete data on the outcome available for all, or nearly all, participants?",
+        "options": list(_BASIC),
+        "elaboration": (
+            "For continuous outcomes, complete data for 95% (or 90%) is often "
+            "sufficient. For dichotomous outcomes, the proportion required is "
+            "directly linked to the risk of the outcome event."
+        ),
+    },
+    {
+        "id": "4.3",
+        "text": "Were complete data on important confounding variables available for all, or nearly all, participants?",
+        "options": list(_BASIC),
+        "elaboration": "Same 'nearly all' interpretation as 4.1 and 4.2.",
+    },
+    {
+        "id": "4.4",
+        "text": "Is the result based on a complete case analysis?",
+        "options": list(_BASIC_NA),
+        "elaboration": (
+            "A complete case analysis is restricted to participants with "
+            "complete data on all of the intervention, outcome and confounding "
+            "variables."
+        ),
+    },
+    {
+        "id": "4.5",
+        "text": "Was exclusion from the analysis because of missing data (in intervention, confounders or the outcome) likely to be related to the true value of the outcome?",
+        "options": list(_BASIC_NA),
+        "elaboration": (
+            "Y/PY if e.g. (1) differences between intervention groups in "
+            "proportions excluded; (2) reported reasons indicate missingness "
+            "depends on the true outcome; (3) the outcome's nature makes "
+            "missingness likely (severe depression participants missing "
+            "appointments)."
+        ),
+    },
+    {
+        "id": "4.6",
+        "text": "Is the relationship between the outcome and missingness likely to be explained by the variables in the analysis model?",
+        "options": list(_NA_WITH_WN_SN),
+        "elaboration": (
+            "If all variables that plausibly explain the outcome-missingness "
+            "relationship are included in the complete-case analysis, bias "
+            "due to missing data will be low. WN if not substantial; SN if "
+            "bias is likely substantial."
+        ),
+    },
+    {
+        "id": "4.7",
+        "text": "Was the analysis based on imputing missing values?",
+        "options": list(_BASIC_NA),
+        "elaboration": "Y/PY if the analysis used either single or multiple imputation.",
+    },
+    {
+        "id": "4.8",
+        "text": "Is it reasonable to assume data were 'missing at random' (MAR) or 'missing completely at random' (MCAR)?",
+        "options": list(_BASIC_NA),
+        "elaboration": (
+            "Multiple imputation avoids bias provided incomplete variables "
+            "are MAR or MCAR but not if MNAR (missing not at random). N/PN "
+            "if there is reason to believe data are MNAR."
+        ),
+    },
+    {
+        "id": "4.9",
+        "text": "Was imputation performed appropriately?",
+        "options": list(_NA_WITH_WN_SN),
+        "elaboration": (
+            "WN / SN if simple methods (LOCF, mean imputation) were used; "
+            "Y/PY if multiple imputation included all predictors of "
+            "missingness and all variables in the main analysis model."
+        ),
+    },
+    {
+        "id": "4.10",
+        "text": "Was an appropriate alternative method used to correct for bias due to missing data?",
+        "options": list(_NA_WITH_WN_SN),
+        "elaboration": (
+            "Asked when the analysis was neither a complete case analysis "
+            "nor based on imputation. Examples include inverse probability "
+            "weighting and full information maximum likelihood."
+        ),
+    },
+    {
+        "id": "4.11",
+        "text": "Is there evidence that the result was not biased by missing data?",
+        "options": list(_BASIC_NA),
+        "elaboration": (
+            "Evidence may come from (1) analysis methods that would not be "
+            "biased under plausible assumptions about missingness, or "
+            "(2) sensitivity analyses showing results change little under "
+            "plausible assumptions."
+        ),
+    },
+]
+
+DOMAIN5_SIGNALS: list[dict[str, Any]] = [
+    {
+        "id": "5.1",
+        "text": "Could measurement or ascertainment of the outcome have differed between intervention groups?",
+        "options": list(_BASIC),
+        "elaboration": (
+            "Comparable methods involve the same measurement methods and "
+            "thresholds, used at comparable time points. Differences can arise "
+            "through 'diagnostic detection bias' or extra visits for "
+            "intervention participants."
+        ),
+    },
+    {
+        "id": "5.2",
+        "text": "Were outcome assessors aware of the intervention received by study participants?",
+        "options": list(_BASIC),
+        "elaboration": (
+            "N if outcome assessors were blinded, or if participants self-"
+            "report and were themselves blinded. In observational studies, the "
+            "answer will usually be Y when participants report their outcomes "
+            "themselves."
+        ),
+    },
+    {
+        "id": "5.3",
+        "text": "Could assessment of the outcome have been influenced by knowledge of the intervention received?",
+        "options": list(_NA_DIFFERENTIAL),
+        "elaboration": (
+            "Only asked if 5.2 was Y/PY/NI. SY (yes, to a large extent) for "
+            "patient-reported symptoms in homeopathy studies, or assessments "
+            "of recovery by physiotherapists. WY (yes, to a small extent) when "
+            "knowledge could have influenced assessment but no strong reason "
+            "to believe it did."
+        ),
+    },
+]
+
+DOMAIN6_SIGNALS: list[dict[str, Any]] = [
+    {
+        "id": "6.1",
+        "text": "Was the result reported in accordance with an available, pre-determined analysis plan?",
+        "options": list(_BASIC),
+        "elaboration": (
+            "Analysis plans are rarely publicly available for non-randomized "
+            "studies, so most papers will not be assessed as Low risk of bias "
+            "for this domain on the basis of 6.1 alone."
+        ),
+    },
+    {
+        "id": "6.2",
+        "text": "Is the numerical result being assessed likely to have been selected, on the basis of the results, from multiple outcome measurements within the outcome domain?",
+        "options": list(_BASIC),
+        "elaboration": (
+            "Pain may be measured via VAS, McGill Pain Questionnaire, etc, at "
+            "multiple time points. If only the most favourable is reported "
+            "without justification, answer Y/PY."
+        ),
+    },
+    {
+        "id": "6.3",
+        "text": "Is the numerical result being assessed likely to have been selected, on the basis of the results, from multiple analyses of the data?",
+        "options": list(_BASIC),
+        "elaboration": (
+            "Multiple analytic choices (unadjusted vs adjusted, alternative "
+            "covariate sets, missing-data strategies) generate multiple "
+            "estimates. Selection on favourable results is concerning."
+        ),
+    },
+    {
+        "id": "6.4",
+        "text": "Is the numerical result being assessed likely to have been selected, on the basis of the results, from multiple subgroups?",
+        "options": list(_BASIC),
+        "elaboration": (
+            "Particularly with large cohorts from routine data, multiple "
+            "subgroup estimates can be generated. Selection of the most "
+            "interesting subgroup result is selective reporting."
+        ),
     },
 ]
 
 
 # ─────────────────────────────────────────────
-# Prompt building + LLM orchestration
+# Canonical DOMAINS list for the orchestrator + flattener
+# ─────────────────────────────────────────────
+# Domain 1 carries the union of Variant A + Variant B signals so CSV/XLSX
+# exports get columns for every possible question. Per-paper, only the chosen
+# variant's signals are populated.
+DOMAINS: list[dict[str, Any]] = [
+    {
+        "id": 1,
+        "name": "Bias due to confounding",
+        "variants": ["A", "B"],
+        "variant_signals": {
+            "A": DOMAIN1_VARIANT_A_SIGNALS,
+            "B": DOMAIN1_VARIANT_B_SIGNALS,
+        },
+        "signals": DOMAIN1_VARIANT_A_SIGNALS + DOMAIN1_VARIANT_B_SIGNALS,
+        "relevant_fields": [
+            "confounders_measured", "adjustment_method", "exposure_definition",
+            "comparator_group", "immortal_time_bias", "confounding_control",
+        ],
+    },
+    {
+        "id": 2,
+        "name": "Bias in classification of interventions",
+        "signals": DOMAIN2_SIGNALS,
+        "relevant_fields": [
+            "exposure_definition", "exposure_measurement",
+            "exposure_ascertainment", "intervention_classification",
+        ],
+    },
+    {
+        "id": 3,
+        "name": "Bias in selection of participants into the study (or analysis)",
+        "signals": DOMAIN3_SIGNALS,
+        "relevant_fields": [
+            "case_source", "control_selection", "sampling_method",
+            "loss_to_follow_up", "immortal_time_bias",
+        ],
+    },
+    {
+        "id": 4,
+        "name": "Bias due to missing data",
+        "signals": DOMAIN4_SIGNALS,
+        "relevant_fields": [
+            "loss_to_follow_up", "missing_data_handling", "attrition_rate",
+        ],
+    },
+    {
+        "id": 5,
+        "name": "Bias arising from measurement of the outcome",
+        "signals": DOMAIN5_SIGNALS,
+        "relevant_fields": ["outcome_ascertainment", "outcome_definition"],
+    },
+    {
+        "id": 6,
+        "name": "Bias in selection of the reported result",
+        "signals": DOMAIN6_SIGNALS,
+        "relevant_fields": ["outcome_definition", "statistical_analysis"],
+    },
+]
+
+
+# ─────────────────────────────────────────────
+# Preflight (B1 / B2 / B3 screening + C4 variant)
 # ─────────────────────────────────────────────
 _SYSTEM_PROMPT = (
     "You are an evidence-synthesis methodologist assessing risk of bias in a "
-    "non-randomized study of an intervention using the Cochrane ROBINS-I tool. "
-    "Read the PDF carefully. Answer each signaling question with one of: "
-    "Y (yes), PY (probably yes), PN (probably no), N (no), NI (no information). "
-    "Provide a 1-2 sentence rationale for each answer, quoting the paper where "
-    "possible. Return ONLY a valid JSON object — no preamble, no markdown fences."
+    "non-randomized study of an intervention using the Cochrane ROBINS-I V2 "
+    "tool (20 November 2025 cribsheet). Read the PDF carefully. Answer each "
+    "signaling question with one of the allowed tokens for that question — "
+    "Y (yes), PY (probably yes), PN (probably no), N (no), NI (no information), "
+    "and where indicated WN (weak no), SN (strong no), WY (weak yes), "
+    "SY (strong yes). Provide a 1-2 sentence rationale for each answer, "
+    "quoting the paper where possible. Return ONLY a valid JSON object — no "
+    "preamble, no markdown fences."
 )
 
 
-def build_domain_prompt(domain: dict[str, Any],
-                        study_type: str,
-                        primary_outcome: str,
-                        extracted_fields: dict[str, str]) -> str:
-    """Per-domain prompt for ROBINS-I signaling-question assessment."""
-    relevant = {k: extracted_fields[k]
-                for k in domain["relevant_fields"] if extracted_fields.get(k)}
+def _build_preflight_prompt(study_type: str,
+                            primary_outcome: str,
+                            extracted_fields: dict[str, str]) -> str:
+    """Prompt for the combined B1/B2/B3 + C4 preflight pass."""
+    relevant_keys = [
+        "confounders_measured", "adjustment_method", "outcome_definition",
+        "outcome_ascertainment", "analysis_framework", "primary_outcome_measurement",
+    ]
+    relevant = {k: extracted_fields[k] for k in relevant_keys
+                if extracted_fields.get(k)}
     ctx_json = json.dumps(relevant, indent=2) if relevant else "(no pre-extracted fields)"
 
+    return f"""You are performing the **Preliminary Considerations** screen of ROBINS-I V2 on a non-randomized study.
+
+Study type: {study_type}
+Outcome being assessed: {primary_outcome}
+
+Context (fields already extracted from the paper):
+{ctx_json}
+
+Answer four preliminary-consideration questions:
+
+**B1. Did the authors make any attempt to control for confounding in the result being assessed?**
+Options: Y / PY / PN / N
+Elaboration: Confounding is a substantial problem in most non-randomized studies. Answer Y/PY if the analysis includes multivariable adjustment, matching, stratification, propensity-score methods, or inverse probability weighting.
+
+**B2. (Only if N/PN to B1) Is there sufficient potential for confounding that an unadjusted result should not be considered further?**
+Options: Y / PY / PN / N
+Elaboration: If there is sufficient potential for confounding that an unadjusted result should not be considered, the result is at Critical risk of bias.
+
+**B3. Was the method of measuring the outcome inappropriate?**
+Options: Y / PY / PN / N
+Elaboration: Identify methods of outcome measurement unsuitable for the outcome they evaluate. Answer Y/PY if (1) important outcome values fall outside levels detectable by the method; (2) the instrument has demonstrated poor reliability/validity; or (3) measurement differed substantially between intervention and comparator groups so that group differences are not interpretable. In most circumstances answer N/PN.
+
+**C4. Did the analysis account for switches during follow-up between the intervention strategies being compared, or for other protocol deviations during follow-up?**
+Options: No (the analysis is estimating the intention-to-treat effect — Variant A) / Yes (the analysis is estimating the per-protocol effect — Variant B)
+
+Return JSON with exactly this shape:
+{{
+  "B1": "Y|PY|PN|N",
+  "B1_rationale": "1-2 sentences quoting the paper",
+  "B2": "Y|PY|PN|N|NA",
+  "B2_rationale": "1-2 sentences (or 'NA' if B1 was Y/PY)",
+  "B3": "Y|PY|PN|N",
+  "B3_rationale": "1-2 sentences quoting the paper",
+  "C4": "No|Yes",
+  "C4_rationale": "1-2 sentences explaining whether the analysis estimates ITT or per-protocol"
+}}"""
+
+
+def run_preflight(pdf_bytes: bytes,
+                  study_type: str,
+                  primary_outcome: str,
+                  extracted_fields: dict[str, str]) -> dict[str, Any]:
+    """Run the preflight LLM call. Returns the parsed answers + a decision.
+
+    Returns a dict with::
+
+        {
+          "B1": "Y|PY|PN|N",
+          "B2": "Y|PY|PN|N|NA",
+          "B3": "Y|PY|PN|N",
+          "C4": "No|Yes",
+          "rationales": {"B1": ..., "B2": ..., "B3": ..., "C4": ...},
+          "screening_decision": "proceed" | "critical",
+          "screening_reason": str,
+          "variant": "A" | "B",
+        }
+    """
+    prompt = _build_preflight_prompt(study_type, primary_outcome, extracted_fields)
+    raw = _call_with_pdf(pdf_bytes, prompt, max_tokens=2048)
+
+    def _opt(key: str, default: str = "NI", allowed: tuple = ("Y", "PY", "PN", "N")) -> str:
+        v = str(raw.get(key, default)).strip().upper()
+        if v not in allowed:
+            return default
+        return v
+
+    b1 = _opt("B1")
+    b2 = _opt("B2", default="NA", allowed=("Y", "PY", "PN", "N", "NA"))
+    b3 = _opt("B3")
+    c4_raw = str(raw.get("C4", "No")).strip().lower()
+    c4 = "Yes" if c4_raw.startswith("y") else "No"
+
+    rationales = {
+        "B1": str(raw.get("B1_rationale", "")).strip(),
+        "B2": str(raw.get("B2_rationale", "")).strip(),
+        "B3": str(raw.get("B3_rationale", "")).strip(),
+        "C4": str(raw.get("C4_rationale", "")).strip(),
+    }
+
+    # Screening decision per cribsheet p9: B2 Y/PY or B3 Y/PY → Critical
+    if b2 in ("Y", "PY"):
+        return {
+            "B1": b1, "B2": b2, "B3": b3, "C4": c4,
+            "rationales": rationales,
+            "screening_decision": "critical",
+            "screening_reason": (
+                "B2: Sufficient potential for confounding that the unadjusted "
+                "result should not be considered further."
+            ),
+            "variant": "A" if c4 == "No" else "B",
+        }
+    if b3 in ("Y", "PY"):
+        return {
+            "B1": b1, "B2": b2, "B3": b3, "C4": c4,
+            "rationales": rationales,
+            "screening_decision": "critical",
+            "screening_reason": (
+                "B3: The method of measuring the outcome is inappropriate."
+            ),
+            "variant": "A" if c4 == "No" else "B",
+        }
+
+    return {
+        "B1": b1, "B2": b2, "B3": b3, "C4": c4,
+        "rationales": rationales,
+        "screening_decision": "proceed",
+        "screening_reason": "",
+        "variant": "A" if c4 == "No" else "B",
+    }
+
+
+# ─────────────────────────────────────────────
+# Per-domain prompt building + LLM orchestration
+# ─────────────────────────────────────────────
+def _signals_for_domain(domain: dict[str, Any], variant: str) -> list[dict[str, Any]]:
+    """Return the active signal list — variant-specific for Domain 1."""
+    if domain.get("variant_signals"):
+        return domain["variant_signals"][variant]
+    return domain["signals"]
+
+
+def build_domain_prompt(domain: dict[str, Any],
+                        variant: str,
+                        study_type: str,
+                        primary_outcome: str,
+                        extracted_fields: dict[str, str],
+                        target_pico: dict[str, str] | None = None) -> str:
+    """Per-domain prompt builder. For D1, the signal list is variant-specific."""
+    signals = _signals_for_domain(domain, variant)
+
+    relevant = {k: extracted_fields[k]
+                for k in domain.get("relevant_fields", []) if extracted_fields.get(k)}
+    ctx_json = json.dumps(relevant, indent=2) if relevant else "(no pre-extracted fields)"
+
+    pico_block = ""
+    if target_pico:
+        pico_block = "\nTarget PICO (user-supplied):\n" + json.dumps(target_pico, indent=2) + "\n"
+
+    domain_header = f"Domain {domain['id']} — {domain['name']}"
+    if domain["id"] == 1:
+        domain_header += f" (Variant {variant})"
+
     q_lines = []
-    for sig in domain["signals"]:
+    for sig in signals:
         q_lines.append(
             f"\n**{sig['id']}. {sig['text']}**\n"
             f"Elaboration: {sig['elaboration']}\n"
@@ -500,17 +1233,18 @@ def build_domain_prompt(domain: dict[str, Any],
     questions_block = "\n".join(q_lines)
 
     shape = "{\n"
-    for sig in domain["signals"]:
-        shape += f'  "{sig["id"]}": "Y|PY|PN|N|NI",\n'
+    for sig in signals:
+        opt_string = "|".join(sig["options"])
+        shape += f'  "{sig["id"]}": "{opt_string}",\n'
         shape += f'  "{sig["id"]}_rationale": "1-2 sentences quoting the paper",\n'
-    shape += '  "direction_of_bias": "NA|Favours experimental|Favours comparator|Towards null|Away from null|Unpredictable"\n'
+    shape += '  "direction_of_bias": "NA|Favours intervention|Favours comparator|Towards null|Away from null|Unpredictable"\n'
     shape += "}"
 
-    return f"""Assess **Domain {domain['id']} — {domain['name']}** for the study described in the attached PDF.
+    return f"""Assess **{domain_header}** for the study described in the attached PDF using the ROBINS-I V2 tool.
 
 Study type: {study_type}
 Outcome being assessed: {primary_outcome}
-
+{pico_block}
 Context (fields already extracted from the paper):
 {ctx_json}
 
@@ -520,66 +1254,119 @@ Signaling questions:
 Return a JSON object with exactly this shape:
 {shape}
 
-ROBINS-I answers carry different meaning than RoB 2: the judgement scale is Low / Moderate / Serious / Critical / No information (code maps your signal answers to this judgement). Answer N (or PN) when the paper gives enough information to rule out the problem, and NI only when the paper is silent. Rationales must be short (1-2 sentences) and quote the paper verbatim where possible."""
+Notes on ROBINS-I V2:
+- The judgement scale is **Low / Moderate / Serious / Critical** (4 levels). Code maps your signal answers to the judgement — answer the signaling questions only.
+- Some questions allow **WN / SN** (weak / strong no) or **WY / SY** (weak / strong yes). Use the strong version only when the magnitude is clearly substantial; use the weak version when the direction is right but the magnitude is uncertain.
+- Answer N (or PN) when the paper gives enough information to rule out the problem; NI only when the paper is silent.
+- Rationales must be short (1-2 sentences) and quote the paper verbatim where possible."""
 
 
-def _assess_domain(pdf_bytes: bytes, domain: dict[str, Any],
-                   study_type: str, primary_outcome: str,
-                   extracted_fields: dict[str, str]) -> dict[str, Any]:
-    """LLM-assess one domain and return {signals, rationales, judgement, direction}."""
-    prompt = build_domain_prompt(domain, study_type, primary_outcome, extracted_fields)
+def _assess_domain(pdf_bytes: bytes,
+                   domain: dict[str, Any],
+                   variant: str,
+                   study_type: str,
+                   primary_outcome: str,
+                   extracted_fields: dict[str, str],
+                   target_pico: dict[str, str] | None = None,
+                   ) -> dict[str, Any]:
+    """LLM-assess one domain. Returns {signals, rationales, judgement, direction, variant?}."""
+    prompt = build_domain_prompt(
+        domain, variant, study_type, primary_outcome, extracted_fields, target_pico,
+    )
     raw = _call_with_pdf(pdf_bytes, prompt, max_tokens=8192)
 
+    signals_for_this = _signals_for_domain(domain, variant)
     signals: dict[str, str] = {}
     rationales: dict[str, str] = {}
-    for sig in domain["signals"]:
+    for sig in signals_for_this:
         sid = sig["id"]
         ans = str(raw.get(sid, "NI")).strip().upper()
-        if ans not in SIGNAL_OPTIONS:
-            logger.warning("ROBINS-I domain %s question %s: invalid answer %r — defaulting to NI",
-                            domain["id"], sid, ans)
-            ans = "NI"
+        # Normalize "NA" tokens not in this question's allowed set → NI
+        allowed = set(sig["options"])
+        if ans not in allowed:
+            logger.warning(
+                "ROBINS-I V2 domain %s question %s: invalid answer %r (allowed %s) — defaulting to NI",
+                domain["id"], sid, ans, sorted(allowed),
+            )
+            ans = "NI" if "NI" in allowed else next(iter(allowed))
         signals[sid] = ans
         rationales[sid] = str(raw.get(f"{sid}_rationale", "")).strip()
 
-    judgement = DOMAIN_JUDGES[domain["id"]](signals)
+    judges = DOMAIN_JUDGES_VARIANT_A if variant == "A" else DOMAIN_JUDGES_VARIANT_B
+    judgement = judges[domain["id"]](signals)
     direction = str(raw.get("direction_of_bias", "NA")).strip() or "NA"
-    return {
+
+    result: dict[str, Any] = {
         "signals": signals,
         "rationales": rationales,
         "judgement": judgement,
         "direction": direction,
     }
+    if domain["id"] == 1:
+        result["variant"] = variant
+    return result
 
 
 def run(pdf_bytes: bytes,
         extracted_fields: dict[str, str],
         classification: dict[str, str],
         primary_outcome: str,
-        progress: Callable[[int], None] | None = None) -> tuple[dict[str, Any], str, str]:
-    """Run ROBINS-I against a non-randomized study of an intervention.
+        progress: Callable[[int], None] | None = None,
+        target_pico: dict[str, str] | None = None,
+        ) -> tuple[dict[str, Any], str, str]:
+    """Run ROBINS-I V2 against a non-randomized study.
+
+    Pipeline:
+      1. Preflight (B1/B2/B3 + C4) — single LLM call.
+      2. If B2=Y/PY or B3=Y/PY → return Critical immediately (skip domains).
+      3. Otherwise per-domain assessments (Domain 1 dispatched by Variant).
 
     Returns ``(domain_results, overall_judgement, overall_direction)``.
+
+    ``domain_results["preflight"]`` carries the B1/B2/B3/C4 answers +
+    rationales + variant + screening decision. When a screening short-circuit
+    fires, the per-domain entries are absent except for the Critical-routing
+    metadata.
     """
     study_type = classification.get("study_type", "Cohort Study")
 
-    domain_results: dict[str, Any] = {}
+    # Stage 1 — preflight
+    if progress:
+        try:
+            progress(0)
+        except Exception:
+            pass
+
+    preflight = run_preflight(pdf_bytes, study_type, primary_outcome, extracted_fields)
+    domain_results: dict[str, Any] = {"preflight": preflight}
+
+    # Stage 2 — screening short-circuit
+    if preflight["screening_decision"] == "critical":
+        return domain_results, "Critical", "Unpredictable"
+
+    # Stage 3 — six domains
+    variant = preflight["variant"]
     for domain in DOMAINS:
         if progress:
             try:
                 progress(domain["id"])
             except Exception:
                 pass
-        result = _assess_domain(pdf_bytes, domain, study_type,
-                                 primary_outcome, extracted_fields)
+        result = _assess_domain(
+            pdf_bytes, domain, variant, study_type, primary_outcome,
+            extracted_fields, target_pico,
+        )
         result["id"] = domain["id"]
         result["name"] = domain["name"]
         domain_results[str(domain["id"])] = result
 
-    overall = robins_i_overall(
-        [domain_results[str(d["id"])]["judgement"] for d in DOMAINS])
+    # Aggregate overall judgement
+    domain_judgements = [domain_results[str(d["id"])]["judgement"] for d in DOMAINS]
+    overall = robins_i_overall(domain_judgements)
 
-    dirs = [domain_results[str(d["id"])]["direction"] for d in DOMAINS
+    # Direction of bias — modal across domains; ties → Unpredictable
+    dirs = [domain_results[str(d["id"])]["direction"]
+            for d in DOMAINS
             if domain_results[str(d["id"])]["direction"] not in ("", "NA")]
     if not dirs:
         overall_direction = "NA"
@@ -598,28 +1385,71 @@ def run(pdf_bytes: bytes,
 # Developer-view exposure
 # ─────────────────────────────────────────────
 def prompt_catalog() -> dict[str, Any]:
-    """Return the prompts + decision-tree source for the developer icon."""
-    import inspect
+    """Return prompts + decision-tree source for the developer icon.
+
+    The returned structure surfaces:
+      - The system prompt + preflight prompt template
+      - Each domain's signal definitions (verbatim from the cribsheet)
+      - Each domain's pure-Python decision tree via inspect.getsource
+      - The overall-aggregation algorithm
+    """
     domain_entries = []
     for domain in DOMAINS:
-        judge_fn = DOMAIN_JUDGES[domain["id"]]
-        sample_fields = {k: "<extracted value>" for k in domain["relevant_fields"]}
+        sample_fields = {k: "<extracted value>"
+                         for k in domain.get("relevant_fields", [])}
+        if domain.get("variant_signals"):
+            # Domain 1 — emit prompts for both variants
+            prompts = {
+                "A": build_domain_prompt(
+                    domain, "A", "Cohort Study",
+                    "<primary outcome here>", sample_fields,
+                ),
+                "B": build_domain_prompt(
+                    domain, "B", "Cohort Study",
+                    "<primary outcome here>", sample_fields,
+                ),
+            }
+            judge_code = {
+                "A": inspect.getsource(domain1_variant_a_judge),
+                "B": inspect.getsource(domain1_variant_b_judge),
+            }
+            signals_payload = {
+                "A": DOMAIN1_VARIANT_A_SIGNALS,
+                "B": DOMAIN1_VARIANT_B_SIGNALS,
+            }
+        else:
+            prompts = build_domain_prompt(
+                domain, "A", "Cohort Study",
+                "<primary outcome here>", sample_fields,
+            )
+            judge_fn = DOMAIN_JUDGES_VARIANT_A[domain["id"]]
+            judge_code = inspect.getsource(judge_fn)
+            signals_payload = domain["signals"]
+
         domain_entries.append({
             "id": domain["id"],
             "name": domain["name"],
-            "signals": domain["signals"],
-            "relevant_fields": domain["relevant_fields"],
-            "prompt_template": build_domain_prompt(
-                domain, "Cohort Study",
-                "<primary outcome here>", sample_fields,
-            ),
-            "decision_tree_code": inspect.getsource(judge_fn),
+            "signals": signals_payload,
+            "relevant_fields": domain.get("relevant_fields", []),
+            "prompt_template": prompts,
+            "decision_tree_code": judge_code,
         })
+
     return {
-        "tool": "ROBINS-I (Sterne et al. 2016) — non-randomized studies of interventions",
+        "tool": (
+            "ROBINS-I V2 (20 November 2025 cribsheet) — non-randomized "
+            "studies of interventions, published scope: follow-up (cohort) "
+            "studies. The tool is also applied to other non-randomized "
+            "designs by the quality-appraisal dispatcher as the "
+            "best-available approximation."
+        ),
         "system_prompt": _SYSTEM_PROMPT,
-        "signal_options": list(SIGNAL_OPTIONS),
+        "signal_options_all": list(SIGNAL_OPTIONS_ALL),
         "judgements": list(JUDGEMENTS),
+        "domain_1_low_label": LOW_D1,
+        "preflight_prompt_template": _build_preflight_prompt(
+            "Cohort Study", "<primary outcome here>", {},
+        ),
         "domains": domain_entries,
         "overall_algorithm_code": inspect.getsource(robins_i_overall),
     }
