@@ -2063,9 +2063,15 @@ async function _loadSignalTextCache() {
     if (r.ok) {
       const cat = await r.json();
       const map = {};
+      const flattenSignals = (sigs) => {
+        if (!sigs) return [];
+        if (Array.isArray(sigs)) return sigs;
+        if (typeof sigs === 'object') return Object.values(sigs).flat();
+        return [];
+      };
       Object.entries(cat.rob_tools || {}).forEach(([toolKey, tool]) => {
         (tool.domains || []).forEach(d => {
-          (d.signals || []).forEach(s => {
+          flattenSignals(d.signals).forEach(s => {
             map[toolKey + ':' + d.id + ':' + s.id] = s.text;
           });
         });
