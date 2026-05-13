@@ -2281,21 +2281,74 @@ async function openDevModal() {
 }
 function closeDevModal() { document.getElementById('dev-modal').classList.remove('open'); }
 
+const VARIANT_LABELS = {
+  A: 'Variant A — intention-to-treat / as-randomised effect',
+  B: 'Variant B — per-protocol / starting-and-adhering effect',
+  single_arm: 'Single-arm adaptation (no comparator)',
+};
+function _splitByVariant(field) {
+  if (field && typeof field === 'object' && !Array.isArray(field)) {
+    return Object.entries(field).map(([k, v]) => ({
+      label: VARIANT_LABELS[k] || k, value: v,
+    }));
+  }
+  return [{ label: null, value: field }];
+}
+function _renderSignalsList(signals) {
+  return (signals || []).map(s => `<div class="item-row"><span class="id">${escHtml(s.id)}</span>
+    <div><div style="font-weight:600;">${escHtml(s.text)}</div>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:2px;">${escHtml(s.elaboration)}</div></div></div>`).join('');
+}
 function _renderDevRobTool(tool, sectionNum) {
   if (!tool) return '';
   let html = `<div class="dev-section"><h3>${escHtml(sectionNum)}. Risk-of-bias tool — ${escHtml(tool.tool)}</h3>
     <details><summary>System prompt</summary><pre>${escHtml(tool.system_prompt)}</pre></details>
     <details><summary>Judgements</summary><div style="font-size:11.5px;">${(tool.judgements || []).map(j => '<span class="chip">' + escHtml(j) + '</span>').join(' ')}</div></details>
     <details><summary>Overall aggregation algorithm (code)</summary><pre>${escHtml(tool.overall_algorithm_code)}</pre></details>`;
+
+  if (tool.domain_1_low_label) {
+    html += `<details><summary>Domain 1 "Low" label (cohort variants)</summary><div style="font-size:11.5px;padding:6px 0;">${escHtml(tool.domain_1_low_label)}</div></details>`;
+  }
+  if (tool.domain_1_low_label_single_arm) {
+    html += `<details><summary>Domain 1 "Low" label (single-arm)</summary><div style="font-size:11.5px;padding:6px 0;">${escHtml(tool.domain_1_low_label_single_arm)}</div></details>`;
+  }
+  if (Array.isArray(tool.single_arm_study_types) && tool.single_arm_study_types.length) {
+    html += `<details><summary>Study types dispatched to single-arm variant</summary><div style="font-size:11.5px;">${tool.single_arm_study_types.map(t => '<span class="chip">' + escHtml(t) + '</span>').join(' ')}</div></details>`;
+  }
+  if (tool.preflight_prompt_template) {
+    html += `<details><summary>Preflight prompt (selects variant A / B / single-arm)</summary><pre>${escHtml(tool.preflight_prompt_template)}</pre></details>`;
+  }
+
+  const renderCodeVariants = (variants, summaryLabel) => {
+    if (variants.length === 1 && variants[0].label === null) {
+      return `<details><summary>${summaryLabel}</summary><pre>${escHtml(variants[0].value || '')}</pre></details>`;
+    }
+    const inner = variants.map(v =>
+      `<details><summary>${escHtml(v.label)}</summary><pre>${escHtml(v.value || '')}</pre></details>`
+    ).join('');
+    return `<details><summary>${summaryLabel} (${variants.length} variants)</summary>${inner}</details>`;
+  };
+
   (tool.domains || []).forEach(d => {
+    const signalsVariants = _splitByVariant(d.signals);
+    const promptVariants = _splitByVariant(d.prompt_template);
+    const treeVariants = _splitByVariant(d.decision_tree_code);
+
+    let signalsHtml;
+    if (signalsVariants.length === 1 && signalsVariants[0].label === null) {
+      signalsHtml = _renderSignalsList(signalsVariants[0].value);
+    } else {
+      signalsHtml = signalsVariants.map(v =>
+        `<details open><summary>${escHtml(v.label)}</summary>${_renderSignalsList(v.value)}</details>`
+      ).join('');
+    }
+
     html += `<details><summary>Domain ${escHtml(d.id)} — ${escHtml(d.name)}</summary>
       <div style="font-size:11.5px;color:var(--muted);margin:6px 0;">Relevant fields: ${(d.relevant_fields || []).map(f => '<span class="chip">' + escHtml(f) + '</span>').join(' ')}</div>
       <strong>Signaling questions:</strong>
-      ${(d.signals || []).map(s => `<div class="item-row"><span class="id">${escHtml(s.id)}</span>
-        <div><div style="font-weight:600;">${escHtml(s.text)}</div>
-        <div style="font-size:10.5px;color:var(--muted);margin-top:2px;">${escHtml(s.elaboration)}</div></div></div>`).join('')}
-      <details><summary>Prompt template</summary><pre>${escHtml(d.prompt_template)}</pre></details>
-      <details><summary>Decision-tree code</summary><pre>${escHtml(d.decision_tree_code)}</pre></details>
+      ${signalsHtml}
+      ${renderCodeVariants(promptVariants, 'Prompt template')}
+      ${renderCodeVariants(treeVariants, 'Decision-tree code')}
     </details>`;
   });
   html += `</div>`;
