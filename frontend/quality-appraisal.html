@@ -1326,7 +1326,7 @@ function renderResults() {
   const runVariant = variantOf(firstOk);
   const runDomainMeta = domainMetaFor(runTool, runVariant);
   const robDomainIds = firstOk && firstOk.rob_domains
-    ? Object.keys(firstOk.rob_domains).sort((a, b) => Number(a) - Number(b))
+    ? Object.keys(firstOk.rob_domains).filter(k => /^\d+$/.test(k)).sort((a, b) => Number(a) - Number(b))
     : runDomainMeta.map(m => String(m.id));
   const guidelineHeader =
     runTool === 'robins_i' ? 'STROBE adherence' :
@@ -1630,7 +1630,7 @@ function renderDetailPanel(r, anchor) {
   </section>`;
 
   // ── RoB section ──────────────────────────
-  const domainIds = Object.keys(robDomains).sort((a, b) => Number(a) - Number(b));
+  const domainIds = Object.keys(robDomains).filter(k => /^\d+$/.test(k)).sort((a, b) => Number(a) - Number(b));
   const robHeader =
     detailTool === 'robins_i' ? 'Risk of Bias (ROBINS-I V2)' :
     detailTool === 'quadas3'  ? 'Risk of Bias (QUADAS-3 v1.2)' :
