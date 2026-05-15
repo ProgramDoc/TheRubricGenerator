@@ -31,7 +31,7 @@ Both modules also expose `prompt_catalog()` for the developer-view UI (transpare
 
 ## 1.1 Overview
 
-- **Scope (v1):** individually-randomized parallel-group trials assessing the effect of **assignment** to intervention (intention-to-treat). Cluster-randomized and cross-over trials use different Domain 1/2 signaling questions and are deferred to future modules (`rob2_cluster`, `rob2_crossover`).
+- **Scope (v1):** individually-randomized parallel-group trials assessing the effect of **assignment** to intervention (intention-to-treat). Cluster-randomized trials use different Domain 1/2 signaling questions and are deferred to a future module (`rob2_cluster`). **Cross-over trials are now supported via the [RoB 2 cross-over extension](#section-1b--cochrane-rob-2-cross-over-trials-extension) module (`rob2_crossover`) — Section 1B below.**
 - **Domains:** 5
   1. Bias arising from the randomization process
   2. Bias due to deviations from intended interventions (effect of assignment)
@@ -391,6 +391,116 @@ def _yes(ans: str) -> bool:
 def _no(ans: str) -> bool:
     return ans in ("N", "PN")
 ```
+
+---
+
+# Section 1B — Cochrane RoB 2 cross-over trials extension
+
+## 1B.1 Overview
+
+- **Scope:** randomized **cross-over** trials. Source: the Cochrane RoB 2 cross-over extension (Higgins, Eldridge, Li, Sterne — `RoB2_crossover_trial_assessment_tool`).
+- **Domains:** 6 (parallel-group has 5; the extension inserts Domain S after D2)
+  1. Bias arising from the randomization process
+  2. Bias due to deviations from intended interventions (effect of assignment)
+  - **S.** Bias arising from period and carryover effects ← NEW (cross-over only)
+  3. Bias due to missing outcome data
+  4. Bias in measurement of the outcome
+  5. Bias in selection of the reported result — **4 signaling questions** (5.4 added)
+- **Judgement scale:** 3-level — `Low` / `Some concerns` / `High`, same as parallel-group.
+- **Module:** [`backend/rob_tools/rob2_crossover.py`](../backend/rob_tools/rob2_crossover.py). Registered in `STUDY_TYPE_REGISTRY["Crossover Trial"]`.
+
+## 1B.2 Domain S — Bias arising from period and carryover effects
+
+Carryover is the persistence of a treatment effect from one period into the next. The extension domain checks both whether carryover can be ruled out (study design + biology) and whether the analysis handled it appropriately.
+
+### Signaling questions (verbatim from the cross-over cribsheet)
+
+```text
+S.1  Were carryover effects unlikely to occur in this trial, given the nature
+     of the interventions and the outcome?
+S.2  If carryover effects could occur, was there a suitable washout period
+     between treatment periods?
+S.3  For trials with potential for carryover effects, were unbiased data
+     available for the analysis (e.g., from periods unaffected by carryover,
+     or via methods that adjust for carryover)?
+S.4  Were the data analysed using an appropriate paired analysis that takes
+     the cross-over design into account?
+```
+
+### Decision tree
+
+```python
+def rob2_crossover_domainS_judge(signals: dict[str, str]) -> str:
+    s1 = signals.get("S.1", "NI")
+    s2 = signals.get("S.2", "NI")
+    s3 = signals.get("S.3", "NI")
+    s4 = signals.get("S.4", "NI")
+
+    # Carryover ruled out + paired/appropriate analysis → Low
+    if _yes(s1) and _yes(s4):
+        return "Low"
+
+    # Carryover plausible + no washout + no unbiased data → High
+    if _no(s1) and _no(s2) and _no(s3):
+        return "High"
+
+    # Carryover plausible + analysis didn't take design into account → High
+    if _no(s1) and _no(s4):
+        return "High"
+
+    # Inappropriate analysis on its own (regardless of carryover ruled-out
+    # status) → High, because results aren't usable
+    if _no(s4) and not _yes(s1):
+        return "High"
+
+    return "Some concerns"
+```
+
+## 1B.3 Domain 5 — extends parallel-group with 5.4
+
+Domain 5 in the cross-over cribsheet has **four** signaling questions. 5.1–5.3 are reused verbatim from the parallel-group cribsheet (elaborations note "as for parallel group trials"); 5.4 is cross-over-specific.
+
+### 5.4 — verbatim from the cross-over cribsheet
+
+```text
+5.4  Is a result based on data from both periods sought, but unavailable on
+     the basis of carryover having been identified?
+
+Elaboration: This question addresses the situation in which only results from
+the first period are reported on the basis of a test for carryover. Answer 'N'
+if data from both periods contribute to the result being assessed for risk of
+bias.
+```
+
+A "Y/PY" answer on 5.4 escalates Domain 5 to High because it represents selective reporting (first-period-only data chosen post-hoc based on a carryover test result).
+
+### Decision tree
+
+```python
+def rob2_crossover_domain5_judge(signals: dict[str, str]) -> str:
+    q51 = signals.get("5.1", "NI")
+    q52 = signals.get("5.2", "NI")
+    q53 = signals.get("5.3", "NI")
+    q54 = signals.get("5.4", "NI")
+
+    if _yes(q52) or _yes(q53) or _yes(q54):
+        return "High"
+    if _no(q52) and _no(q53) and _no(q54):
+        return "Low" if _yes(q51) else "Some concerns"
+    return "Some concerns"
+```
+
+## 1B.4 Other domains
+
+Domains 1, 2, 3, and 4 reuse the parallel-group signaling questions verbatim — the elaborations note "as for parallel group trials" with cross-over-specific framing (e.g., D1.3 refers to baseline differences between **sequence** groups at study entry; D2.5 refers to "balanced between sequence groups across periods"; D2.6 expects a **paired** analysis that accounts for period and/or carryover effects). The full module source is the canonical reference: [`backend/rob_tools/rob2_crossover.py`](../backend/rob_tools/rob2_crossover.py).
+
+## 1B.5 Overall algorithm
+
+Same as parallel-group RoB 2 (cribsheet p.24): Low iff all 6 domains Low; High iff any domain High OR ≥2 domains Some concerns; Some concerns otherwise. The `rob2_crossover_overall()` function delegates to `rob2.rob2_overall()` for this aggregation.
+
+## 1B.6 Reporting guideline — CONSORT cross-over extension
+
+Cross-over trials use the combined **CONSORT 2025 + cross-over extension** reporting checklist, implemented in [`backend/reporting_guidelines/consort_crossover.py`](../backend/reporting_guidelines/consort_crossover.py). The cross-over extension (Dwan, Li, Altman, Elbourne 2019, BMJ 366: l4378) adds 16 items prefixed `X-` covering: identification as a cross-over trial; description of periods and sequences; washout duration and rationale; carryover considerations; period effects; per-period outcomes; paired sample-size calculation; sequence randomization; paired statistical methods; pre-specified first-period contingency; flow diagram by period and sequence; period-specific losses; baseline data by sequence; period-specific outcome data; paired effect estimates with 95% CI; carryover test results. One LLM call per paper assesses adherence to all 30 + 16 = 46 items; proportion is `adhered / applicable` (null items excluded).
 
 ---
 

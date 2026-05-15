@@ -30,6 +30,9 @@
 | Modify the annotator | `backend/annotator.py` (tables, field catalog, prompts, analytics) + `frontend/annotator.html` (3-pane UI + tabbed right pane) |
 | Add an annotator field group / type-specific / modifier constant | `backend/annotator.py` — `FIELD_GROUPS`, `TYPE_FIELD_IDS`, `DESIGN_MODIFIER_COLS`, `NUMERIC_FIELDS`, `CATEGORICAL_FIELDS` |
 | Modify Quality Appraisal AI | `backend/quality_appraisal.py` (registry, orchestrator, GRADE combine, DDL) + `backend/rob_tools/*.py` (RoB tools) + `backend/reporting_guidelines/*.py` (checklists) + `backend/indirectness.py` (GRADE indirectness PICO assessment) + `backend/imprecision.py` (GRADE imprecision single-trial assessment) + `frontend/quality-appraisal.html` |
+| Modify RoB 2 cross-over extension | `backend/rob_tools/rob2_crossover.py` (6 domains incl. Domain S period/carryover + 5.4 selective first-period reporting). Registered in `STUDY_TYPE_REGISTRY["Crossover Trial"]` with `reporting_guideline="consort_crossover"`. Reuses parallel-group D1/D2/D3/D4 signal trees from `rob2.py` and adds a fourth Domain 5 question. Frontend: `ROB2_CROSSOVER_DOMAIN_META` + dispatch in `domainMetaFor('rob2_crossover')`. Reference: [docs/quality_appraisal_rob_reference.md](docs/quality_appraisal_rob_reference.md) Section 1B. **Sharable cross-platform methodology**: [docs/rob2_crossover_shareable.md](docs/rob2_crossover_shareable.md) (self-contained — signaling questions + decision trees + prompt templates, no framework dependencies). |
+| Modify CONSORT cross-over extension | `backend/reporting_guidelines/consort_crossover.py` (base CONSORT 2025 items reused via import + 16 cross-over extension items prefixed `X-` from Dwan et al. 2019). One LLM call per paper; same `adhered/applicable/proportion` shape as `consort2025.py`. Registered in `_GUIDELINE_RUNNERS["consort_crossover"]`. |
+| Reviewer override the assessed outcome | Run-create modal exposes a per-paper "Override outcome" text input. Backend stores it in `quality_appraisal_runs.outcome_overrides_json` and the chosen outcome on `quality_appraisal_results.assessed_outcome` (separate from the auto-pick which stays in `primary_outcome`). When override is in effect, `rob2.run` and `rob2_crossover.run` add a Domain 1 prompt reminder that randomization is per-trial, not per-outcome. Detail modal renders a "Reviewer override" chip in the Summary section. |
 | Add a new risk-of-bias tool (AMSTAR-2, …) | New `backend/rob_tools/<tool>.py` exposing `run(pdf_bytes, fields, classification, primary_outcome, progress)` and `prompt_catalog()`, then register in `backend/quality_appraisal.py:STUDY_TYPE_REGISTRY` + `_TOOL_RUNNERS`. Tools that need per-estimate iteration (like QUADAS-3) also expose `extract_estimates(pdf_bytes, fields)` and register in `_ESTIMATE_EXTRACTORS`; the registry entry sets `supports_estimates=True` so `appraise_paper` routes through `_appraise_paper_with_estimates` |
 | Add a new reporting guideline (PRISMA, …) | New `backend/reporting_guidelines/<guide>.py` exposing `run(pdf_bytes, fields, classification)` and `prompt_catalog()`, then register in `backend/quality_appraisal.py:_GUIDELINE_RUNNERS` |
 | Modify QUADAS-3 (diagnostic accuracy) | `backend/rob_tools/quadas3.py` (4 domains × 20 signals + applicability + decision tree + estimate extractor) + `backend/reporting_guidelines/stard.py` (STARD 2015 — 34 items including a/b sub-items) + registry entry in `backend/quality_appraisal.py:STUDY_TYPE_REGISTRY["Diagnostic Accuracy"]` (skip_grade_extras=True, supports_estimates=True) + frontend wiring in `frontend/quality-appraisal.html` (`QUADAS3_DOMAIN_META`, applicability column + detail section, Phase-4 estimate selector). Endpoint: `POST /api/quality-appraisal/extract-estimates` |
@@ -102,11 +105,14 @@ backend/
   ├── indirectness.py   — GRADE indirectness — single-trial PICO assessment (4 subdomains, severity decision tree)
   ├── imprecision.py    — GRADE imprecision — single-trial CI / N / events / fragility (4 subdomains, severity decision tree)
   ├── rob_tools/
-  │   ├── rob2.py       — RoB 2 (RCTs)
-  │   └── robins_i.py   — ROBINS-I V2 (20 Nov 2025 cribsheet, follow-up cohort studies; also dispatched for case-control / cross-sectional as approximation, and for Single-Arm Trial / Dose-Escalation Study via the adapted single_arm variant of D1 + D2)
+  │   ├── rob2.py            — RoB 2 (parallel-group RCTs, 5 domains, 2019 cribsheet)
+  │   ├── rob2_crossover.py  — RoB 2 cross-over extension (6 domains incl. Domain S period/carryover + Domain 5 question 5.4)
+  │   └── robins_i.py        — ROBINS-I V2 (20 Nov 2025 cribsheet, follow-up cohort studies; also dispatched for case-control / cross-sectional as approximation, and for Single-Arm Trial / Dose-Escalation Study via the adapted single_arm variant of D1 + D2)
   ├── reporting_guidelines/
-  │   ├── consort.py    — CONSORT 2025 (RCTs)
-  │   └── strobe.py     — STROBE 2007 (observational designs)
+  │   ├── consort2025.py       — CONSORT 2025 (parallel-group RCTs, 30 items)
+  │   ├── consort_crossover.py — CONSORT 2025 base + Dwan et al. 2019 cross-over extension (30 + 16 items)
+  │   ├── stard.py             — STARD 2015 (diagnostic accuracy, 34 items)
+  │   └── strobe.py            — STROBE 2007 (observational designs)
   ├── agreements.py     — Legal text
   └── promo.py          — Promo codes
 

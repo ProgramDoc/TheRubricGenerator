@@ -18,8 +18,8 @@ import json
 import pytest
 
 from backend import quality_appraisal as qa
-from backend.rob_tools import rob2, robins_i
-from backend.reporting_guidelines import consort2025, strobe
+from backend.rob_tools import rob2, rob2_crossover, robins_i
+from backend.reporting_guidelines import consort2025, consort_crossover, strobe
 
 
 # ─────────────────────────────────────────────
@@ -1291,3 +1291,238 @@ class TestApiAuth:
         r = client.get("/api/quality-appraisal/runs/99999",
                        cookies={"rubricgen_session": test_user["cookie"]})
         assert r.status_code == 404
+
+
+# ─────────────────────────────────────────────
+# RoB 2 cross-over extension — Domain S (period/carryover)
+# ─────────────────────────────────────────────
+class TestCrossoverDomainS:
+    """Period/carryover decision tree for cross-over trials.
+
+    S.1 — carryover ruled out?
+    S.2 — suitable washout (only relevant if S.1=N/PN)
+    S.3 — unbiased data available (only relevant if S.1=N/PN)
+    S.4 — paired/appropriate analysis used?
+    """
+
+    def test_no_carryover_and_paired_analysis_is_low(self):
+        # S.1 Y (no carryover) + S.4 Y (paired) → Low regardless of S.2/S.3
+        for s2 in rob2_crossover.SIGNAL_OPTIONS:
+            for s3 in rob2_crossover.SIGNAL_OPTIONS:
+                assert rob2_crossover.rob2_crossover_domainS_judge({
+                    "S.1": "Y", "S.2": s2, "S.3": s3, "S.4": "Y",
+                }) == "Low"
+
+    def test_carryover_plausible_no_washout_no_unbiased_is_high(self):
+        # S.1 N + S.2 N + S.3 N → High (carryover + no mitigation)
+        assert rob2_crossover.rob2_crossover_domainS_judge({
+            "S.1": "N", "S.2": "N", "S.3": "N", "S.4": "Y",
+        }) == "High"
+
+    def test_carryover_plausible_no_paired_analysis_is_high(self):
+        # S.1 N + S.4 N → High (carryover present, analysis didn't account for it)
+        assert rob2_crossover.rob2_crossover_domainS_judge({
+            "S.1": "N", "S.2": "Y", "S.3": "Y", "S.4": "N",
+        }) == "High"
+
+    def test_no_paired_analysis_alone_is_high(self):
+        # S.4 N (inappropriate analysis) with no carryover ruled-out → High
+        assert rob2_crossover.rob2_crossover_domainS_judge({
+            "S.1": "NI", "S.2": "NI", "S.3": "NI", "S.4": "N",
+        }) == "High"
+
+    def test_ni_throughout_is_some_concerns(self):
+        # All NI → Some concerns (not enough info to be confident)
+        assert rob2_crossover.rob2_crossover_domainS_judge({
+            "S.1": "NI", "S.2": "NI", "S.3": "NI", "S.4": "NI",
+        }) == "Some concerns"
+
+    def test_carryover_plausible_with_washout_and_paired_is_some_concerns(self):
+        # S.1 N + S.2 Y + S.3 NI + S.4 Y → some uncertainty remains
+        assert rob2_crossover.rob2_crossover_domainS_judge({
+            "S.1": "N", "S.2": "Y", "S.3": "NI", "S.4": "Y",
+        }) == "Some concerns"
+
+
+# ─────────────────────────────────────────────
+# RoB 2 cross-over extension — Domain 5 (4 questions incl. 5.4)
+# ─────────────────────────────────────────────
+class TestCrossoverDomain5:
+    """Cross-over Domain 5 has 5.1, 5.2, 5.3, and 5.4 (first-period-only
+    reporting based on a carryover test)."""
+
+    def test_5_4_yes_alone_is_high(self):
+        # 5.4 Y/PY (first-period-only on carryover test) → High
+        assert rob2_crossover.rob2_crossover_domain5_judge({
+            "5.1": "Y", "5.2": "N", "5.3": "N", "5.4": "Y",
+        }) == "High"
+        assert rob2_crossover.rob2_crossover_domain5_judge({
+            "5.1": "Y", "5.2": "N", "5.3": "N", "5.4": "PY",
+        }) == "High"
+
+    def test_5_4_no_doesnt_change_parallel_outcome(self):
+        # When 5.4 N/PN, decision matches parallel-group logic
+        assert rob2_crossover.rob2_crossover_domain5_judge({
+            "5.1": "Y", "5.2": "N", "5.3": "N", "5.4": "N",
+        }) == "Low"
+        assert rob2_crossover.rob2_crossover_domain5_judge({
+            "5.1": "N", "5.2": "N", "5.3": "N", "5.4": "N",
+        }) == "Some concerns"
+
+    def test_5_2_or_5_3_yes_still_high(self):
+        assert rob2_crossover.rob2_crossover_domain5_judge({
+            "5.1": "Y", "5.2": "Y", "5.3": "N", "5.4": "N",
+        }) == "High"
+        assert rob2_crossover.rob2_crossover_domain5_judge({
+            "5.1": "Y", "5.2": "N", "5.3": "Y", "5.4": "N",
+        }) == "High"
+
+    def test_ni_mixed_is_some_concerns(self):
+        assert rob2_crossover.rob2_crossover_domain5_judge({
+            "5.1": "NI", "5.2": "NI", "5.3": "NI", "5.4": "NI",
+        }) == "Some concerns"
+
+
+# ─────────────────────────────────────────────
+# Cross-over module — six-domain run() shape + registry
+# ─────────────────────────────────────────────
+class TestCrossoverRunShape:
+    """Verify the cross-over module exposes 6 domains in cribsheet order
+    (1 → 2 → S → 3 → 4 → 5) and the catalog surfaces 5.4."""
+
+    def test_six_domains_in_cribsheet_order(self):
+        domain_ids = [d["id"] for d in rob2_crossover.DOMAINS]
+        assert domain_ids == [1, 2, "S", 3, 4, 5]
+
+    def test_domain_5_has_four_signaling_questions(self):
+        d5 = next(d for d in rob2_crossover.DOMAINS if d["id"] == 5)
+        signal_ids = [s["id"] for s in d5["signals"]]
+        assert signal_ids == ["5.1", "5.2", "5.3", "5.4"]
+
+    def test_domain_s_has_four_signaling_questions(self):
+        dS = next(d for d in rob2_crossover.DOMAINS if d["id"] == "S")
+        signal_ids = [s["id"] for s in dS["signals"]]
+        assert signal_ids == ["S.1", "S.2", "S.3", "S.4"]
+
+    def test_prompt_catalog_surfaces_all_six_domains(self):
+        cat = rob2_crossover.prompt_catalog()
+        assert len(cat["domains"]) == 6
+        catalog_ids = [d["id"] for d in cat["domains"]]
+        assert "S" in catalog_ids
+        # 5.4 must appear in Domain 5's signal list within the catalog
+        d5 = next(d for d in cat["domains"] if d["id"] == 5)
+        assert any(s["id"] == "5.4" for s in d5["signals"])
+
+    def test_qa_prompt_catalog_includes_crossover(self):
+        cat = qa.prompt_catalog()
+        assert "rob2_crossover" in cat["rob_tools"]
+        cross_cat = cat["rob_tools"]["rob2_crossover"]
+        assert len(cross_cat["domains"]) == 6
+
+
+# ─────────────────────────────────────────────
+# Crossover registry dispatch
+# ─────────────────────────────────────────────
+class TestCrossoverDispatch:
+    def test_crossover_trial_is_registered(self):
+        cfg = qa.dispatch("Crossover Trial")
+        assert cfg is not None
+        assert cfg["rob_tool"] == "rob2_crossover"
+        assert cfg["initial_grade"] == "High"
+
+    def test_tool_runner_resolves(self):
+        assert qa._TOOL_RUNNERS["rob2_crossover"] is rob2_crossover.run
+
+
+# ─────────────────────────────────────────────
+# Domain 1 prompt — reviewer-override note
+# ─────────────────────────────────────────────
+class TestDomain1OutcomeOverridePrompt:
+    """When ``outcome_is_override`` is True, Domain 1's prompt should remind
+    the LLM that randomization is per-trial (not per-outcome) so it doesn't
+    conflate outcome ambiguity with randomization-process concerns."""
+
+    def test_override_note_in_rob2_domain1_only(self):
+        d1 = next(d for d in rob2.DOMAINS if d["id"] == 1)
+        d3 = next(d for d in rob2.DOMAINS if d["id"] == 3)
+        prompt_d1 = rob2.build_domain_prompt(
+            d1, "Randomized Controlled Trial",
+            "Secondary outcome X", {}, outcome_is_override=True,
+        )
+        prompt_d3 = rob2.build_domain_prompt(
+            d3, "Randomized Controlled Trial",
+            "Secondary outcome X", {}, outcome_is_override=True,
+        )
+        # Domain 1 picks up the override note
+        assert "non-primary outcome chosen by the reviewer" in prompt_d1
+        assert "per-trial" not in prompt_d3.lower() or \
+                "randomization process for the trial as a whole" not in prompt_d3
+        # Domain 3 does not get the override note (it's outcome-specific)
+        assert "non-primary outcome chosen by the reviewer" not in prompt_d3
+
+    def test_no_override_note_when_not_overridden(self):
+        d1 = next(d for d in rob2.DOMAINS if d["id"] == 1)
+        prompt = rob2.build_domain_prompt(
+            d1, "Randomized Controlled Trial",
+            "Overall survival", {}, outcome_is_override=False,
+        )
+        assert "non-primary outcome chosen" not in prompt
+
+    def test_crossover_domain1_also_gets_override_note(self):
+        d1 = next(d for d in rob2_crossover.DOMAINS if d["id"] == 1)
+        prompt = rob2_crossover.build_domain_prompt(
+            d1, "Crossover Trial", "Secondary outcome",
+            {}, outcome_is_override=True,
+        )
+        assert "non-primary outcome chosen by the reviewer" in prompt
+
+
+# ─────────────────────────────────────────────
+# CONSORT cross-over extension (Dwan et al. 2019)
+# ─────────────────────────────────────────────
+class TestConsortCrossover:
+    def test_items_include_base_and_extension(self):
+        # Base CONSORT 2025 items present
+        base_ids = {it["id"] for it in consort2025.ITEMS}
+        cross_ids = {it["id"] for it in consort_crossover.ITEMS}
+        assert base_ids.issubset(cross_ids)
+        # Extension items prefixed X-
+        ext_ids = {it["id"] for it in consort_crossover.CROSSOVER_EXTENSION_ITEMS}
+        assert all(eid.startswith("X-") for eid in ext_ids)
+        # All extension items appear in the combined list
+        assert ext_ids.issubset(cross_ids)
+
+    def test_extension_covers_carryover_washout_paired(self):
+        descriptions = " ".join(
+            it["description"].lower() for it in consort_crossover.CROSSOVER_EXTENSION_ITEMS
+        )
+        # The extension must mention the cross-over-specific concepts
+        assert "washout" in descriptions
+        assert "carryover" in descriptions
+        assert "paired" in descriptions
+        assert "period" in descriptions
+        assert "sequence" in descriptions
+
+    def test_prompt_lists_both_base_and_extension(self):
+        prompt = consort_crossover.build_prompt({"study_type": "Crossover Trial"})
+        # Some base item ids must appear
+        assert "**1a**" in prompt
+        assert "**26**" in prompt
+        # All extension items must appear
+        for it in consort_crossover.CROSSOVER_EXTENSION_ITEMS:
+            assert f"**{it['id']}**" in prompt, f"Extension item {it['id']} missing from prompt"
+
+    def test_crossover_registry_uses_consort_crossover(self):
+        cfg = qa.dispatch("Crossover Trial")
+        assert cfg["reporting_guideline"] == "consort_crossover"
+
+    def test_guideline_runner_resolves(self):
+        assert qa._GUIDELINE_RUNNERS["consort_crossover"] is consort_crossover.run
+
+    def test_qa_prompt_catalog_includes_crossover_guideline(self):
+        cat = qa.prompt_catalog()
+        assert "consort_crossover" in cat["reporting_guidelines"]
+        ccat = cat["reporting_guidelines"]["consort_crossover"]
+        assert "crossover_extension_items" in ccat
+        assert len(ccat["crossover_extension_items"]) == len(
+            consort_crossover.CROSSOVER_EXTENSION_ITEMS)

@@ -661,6 +661,15 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
         </div>
       </details>
       <details style="margin:8px 0 4px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;background:var(--paper-2);">
+        <summary style="cursor:pointer;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);">Per-paper outcome overrides (optional)</summary>
+        <div style="margin-top:8px;font-size:11px;color:var(--muted);line-height:1.45;">
+          By default the assessor auto-picks the paper's primary outcome from its extracted fields. If a paper's primary outcome is ambiguous or unclear, you can specify an alternative outcome to assess here (e.g., a clearer secondary outcome). Leave blank to use the auto-pick. Domain 1 prompts are updated to remind the assessor that randomization is per-trial when an override is supplied.
+        </div>
+        <div id="run-outcome-overrides-list" style="margin-top:8px;font-size:12px;">
+          <div style="color:var(--muted);font-size:11px;">Select papers above to add an override for each.</div>
+        </div>
+      </details>
+      <details style="margin:8px 0 4px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;background:var(--paper-2);">
         <summary style="cursor:pointer;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);">QUADAS-3 / diagnostic accuracy (optional)</summary>
         <div style="margin-top:8px;font-size:11px;color:var(--muted);line-height:1.45;">
           For diagnostic test accuracy papers (QUADAS-3 v1.2): supply a free-text description of your review's synthesis question + ideal test accuracy trial (Phases 1+2 of QUADAS-3). Applicability concerns are then judged against this context. You can also pre-extract numerical accuracy estimates from each paper (Phase 4) and pick which ones to appraise — each estimate produces its own RoB + applicability + GRADE row.
@@ -787,12 +796,24 @@ const QUADAS3_DOMAIN_META = [
   { id: 3, short: 'D3: Target Condition', full: 'Target Condition', hasApplicability: true  },
   { id: 4, short: 'D4: Analysis',         full: 'Analysis',         hasApplicability: false },
 ];
+// RoB 2 cross-over extension — 6 domains (adds Domain S for period/carryover
+// effects between D2 and D3). Domain 5 has a fourth signaling question (5.4)
+// for selective reporting of first-period-only data based on a carryover test.
+const ROB2_CROSSOVER_DOMAIN_META = [
+  { id: 1,   short: 'D1: Randomization',       full: 'Bias arising from the randomization process' },
+  { id: 2,   short: 'D2: Deviations',          full: 'Bias due to deviations from intended interventions (effect of assignment)' },
+  { id: 'S', short: 'DS: Period/carryover',    full: 'Bias arising from period and carryover effects' },
+  { id: 3,   short: 'D3: Missing data',        full: 'Bias due to missing outcome data' },
+  { id: 4,   short: 'D4: Outcome measurement', full: 'Bias in measurement of the outcome' },
+  { id: 5,   short: 'D5: Reported result',     full: 'Bias in selection of the reported result' },
+];
 // domainMetaFor returns the appropriate domain-meta table. For ROBINS-I, the
 // optional second argument is the variant ('A' | 'B' | 'single_arm') read
 // from result.rob_domains.preflight.variant; only 'single_arm' swaps the meta.
 function domainMetaFor(tool, variant) {
-  if (tool === 'quadas3')  return QUADAS3_DOMAIN_META;
-  if (tool === 'robins_i') return variant === 'single_arm' ? ROBINS_I_SA_DOMAIN_META : ROBINS_I_DOMAIN_META;
+  if (tool === 'quadas3')        return QUADAS3_DOMAIN_META;
+  if (tool === 'rob2_crossover') return ROB2_CROSSOVER_DOMAIN_META;
+  if (tool === 'robins_i')       return variant === 'single_arm' ? ROBINS_I_SA_DOMAIN_META : ROBINS_I_DOMAIN_META;
   return ROB2_DOMAIN_META;
 }
 // Extract the variant string from a result row's rob_domains. Returns
@@ -815,6 +836,21 @@ const ROB_BADGE_CLS = {
   'Insufficient information': 'rob-ni',  // QUADAS-3
 };
 function robBadgeCls(j) { return ROB_BADGE_CLS[j] || ''; }
+// Sort domain ids (mix of numeric and string e.g. 'S') in cribsheet order
+// according to the supplied domain-meta table. IDs not present in the meta
+// table fall to the end in lexicographic order.
+function sortDomainIdsByMeta(ids, meta) {
+  const order = new Map();
+  (meta || []).forEach((m, i) => order.set(String(m.id), i));
+  return ids.slice().sort((a, b) => {
+    const aHas = order.has(String(a));
+    const bHas = order.has(String(b));
+    if (aHas && bHas) return order.get(String(a)) - order.get(String(b));
+    if (aHas) return -1;
+    if (bHas) return 1;
+    return String(a).localeCompare(String(b));
+  });
+}
 let _detailResult = null;      // the result row currently open in the detail modal
 let _detailPdfDoc = null;      // PDF.js document for the currently-open paper
 let _detailPdfPaperId = null;  // paper id whose PDF is currently rendered
@@ -1099,7 +1135,26 @@ function openRunModal() {
   _quadas3Estimates = {};
   const list = document.getElementById('run-estimates-list');
   if (list) { list.innerHTML = ''; list.style.display = 'none'; }
+  renderOutcomeOverrideList();
   document.getElementById('run-modal').classList.add('open');
+}
+
+function renderOutcomeOverrideList() {
+  const list = document.getElementById('run-outcome-overrides-list');
+  if (!list) return;
+  const ids = Array.from(selectedPaperIds);
+  if (!ids.length) {
+    list.innerHTML = '<div style="color:var(--muted);font-size:11px;">Select papers above to add an override for each.</div>';
+    return;
+  }
+  list.innerHTML = ids.map(id => {
+    const p = papers.find(pp => pp.id === id);
+    const name = p ? (p.filename || ('paper ' + id)) : ('paper ' + id);
+    return `<div style="margin-bottom:8px;display:grid;grid-template-columns:1fr 2fr;gap:6px 10px;align-items:center;">
+      <label for="run-outcome-override-${id}" style="font-size:11px;color:var(--muted);font-weight:600;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;" title="${escHtml(name)}">${escHtml(name)}</label>
+      <input id="run-outcome-override-${id}" type="text" placeholder="Leave blank to use auto-pick" style="padding:5px 7px;border-radius:5px;border:1px solid var(--rule-2);background:var(--paper);color:var(--text);font-family:inherit;font-size:12px;" />
+    </div>`;
+  }).join('');
 }
 function closeRunModal() { document.getElementById('run-modal').classList.remove('open'); }
 
@@ -1226,6 +1281,17 @@ async function submitRun() {
   if (Object.keys(paperEstimates).length > 0) {
     payload.paper_estimates = paperEstimates;
   }
+  // Per-paper outcome overrides — reviewer can specify an alternative
+  // outcome when the auto-picked primary is unclear/ambiguous.
+  const outcomeOverrides = {};
+  for (const id of paper_ids) {
+    const el = document.getElementById('run-outcome-override-' + id);
+    const v = (el && el.value || '').trim();
+    if (v) outcomeOverrides[String(id)] = v;
+  }
+  if (Object.keys(outcomeOverrides).length > 0) {
+    payload.paper_outcome_overrides = outcomeOverrides;
+  }
   try {
     const r = await fetch('/api/quality-appraisal/runs', {
       method: 'POST',
@@ -1325,8 +1391,14 @@ function renderResults() {
   const runTool = (firstOk && firstOk.rob_tool) || 'rob2';
   const runVariant = variantOf(firstOk);
   const runDomainMeta = domainMetaFor(runTool, runVariant);
+  // Domain IDs are numeric for parallel-group RoB 2 (1..5), ROBINS-I (1..6),
+  // and QUADAS-3 (1..4) — but the cross-over extension adds Domain S (string id).
+  // Filter out the V2 'preflight' metadata key and sort numeric ids first, then
+  // string ids in cribsheet order using the runDomainMeta ordering.
   const robDomainIds = firstOk && firstOk.rob_domains
-    ? Object.keys(firstOk.rob_domains).filter(k => /^\d+$/.test(k)).sort((a, b) => Number(a) - Number(b))
+    ? sortDomainIdsByMeta(
+        Object.keys(firstOk.rob_domains).filter(k => k !== 'preflight'),
+        runDomainMeta)
     : runDomainMeta.map(m => String(m.id));
   const guidelineHeader =
     runTool === 'robins_i' ? 'STROBE adherence' :
@@ -1609,14 +1681,22 @@ function renderDetailPanel(r, anchor) {
   const detailVariant = variantOf(r);
   const detailMeta = domainMetaFor(detailTool, detailVariant);
 
+  const assessedOutcome = r.assessed_outcome || r.primary_outcome || '';
+  const primaryOutcome = r.primary_outcome || '';
+  const overrideActive = !!r.assessed_outcome && r.assessed_outcome !== r.primary_outcome;
+  const outcomeBlock = overrideActive
+    ? `<div>${escHtml(assessedOutcome)} <span class="chip" style="background:var(--accent-2,#fff3cd);color:#7a5b00;border:1px solid #e0c46c;font-size:10px;margin-left:6px;" title="Reviewer override — the paper's auto-picked primary outcome was: ${escHtml(primaryOutcome)}">Reviewer override</span>
+        <div style="margin-top:4px;color:var(--muted);font-size:11px;">Auto-picked primary: ${escHtml(primaryOutcome || '—')}</div></div>`
+    : `<div>${escHtml(assessedOutcome || '—')}</div>`;
+
   let summaryHtml = `<section id="qa-sec-summary"><h3>Summary</h3>
     <div style="display:grid;grid-template-columns:140px 1fr;gap:6px 12px;font-size:12px;">
       <div style="color:var(--muted);font-weight:600;">Classification</div>
       <div><strong>${escHtml(r.study_type || '—')}</strong>
         ${classification.subcategory ? ' &middot; <span style="color:var(--muted);">' + escHtml(classification.subcategory) + '</span>' : ''}
         ${modChips ? '<div style="margin-top:4px;">' + modChips + '</div>' : ''}</div>
-      <div style="color:var(--muted);font-weight:600;">Primary outcome</div>
-      <div>${escHtml(r.primary_outcome || '—')}</div>
+      <div style="color:var(--muted);font-weight:600;">${overrideActive ? 'Assessed outcome' : 'Primary outcome'}</div>
+      ${outcomeBlock}
       <div style="color:var(--muted);font-weight:600;">Overall RoB</div>
       <div><span class="rob-badge ${robCls}">${escHtml(r.rob_overall || '—')}</span>${r.rob_direction && r.rob_direction !== 'NA' ? ' <span style="color:var(--muted);font-size:11px;">(direction: ' + escHtml(r.rob_direction) + ')</span>' : ''}</div>
       <div style="color:var(--muted);font-weight:600;">${escHtml(
@@ -1630,7 +1710,11 @@ function renderDetailPanel(r, anchor) {
   </section>`;
 
   // ── RoB section ──────────────────────────
-  const domainIds = Object.keys(robDomains).filter(k => /^\d+$/.test(k)).sort((a, b) => Number(a) - Number(b));
+  // Include numeric domain ids (1..N) plus the cross-over extension's Domain S.
+  // The 'preflight' key is V2 ROBINS-I metadata, not a domain — filter it out.
+  const domainIds = sortDomainIdsByMeta(
+    Object.keys(robDomains).filter(k => k !== 'preflight'),
+    detailMeta);
   const robHeader =
     detailTool === 'robins_i' ? 'Risk of Bias (ROBINS-I V2)' :
     detailTool === 'quadas3'  ? 'Risk of Bias (QUADAS-3 v1.2)' :
