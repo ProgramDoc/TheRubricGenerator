@@ -36,8 +36,8 @@ from . import paper_files
 from . import indirectness as indir_mod
 from . import imprecision as imprec_mod
 from .helpers import call_anthropic, parse_json_response
-from .rob_tools import rob2, robins_i, quadas3
-from .reporting_guidelines import consort2025, strobe, stard
+from .rob_tools import rob2, rob2_crossover, robins_i, quadas3
+from .reporting_guidelines import consort2025, consort_crossover, strobe, stard
 
 logger = logging.getLogger("rubricgen")
 
@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS quality_appraisal_runs (
     imprecision_thresholds_json TEXT,
     quadas3_review_context      TEXT,
     paper_estimates_json        TEXT NOT NULL DEFAULT '{}',
+    outcome_overrides_json      TEXT NOT NULL DEFAULT '{}',
     created_at                  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     completed_at                TIMESTAMP,
     deleted_at                  TIMESTAMP
@@ -76,6 +77,7 @@ CREATE TABLE IF NOT EXISTS quality_appraisal_results (
     rob_tool                 TEXT,
     reporting_guideline      TEXT,
     primary_outcome          TEXT,
+    assessed_outcome         TEXT,
     classification_json      TEXT    NOT NULL DEFAULT '{}',
     extracted_fields_json    TEXT    NOT NULL DEFAULT '{}',
     rob_domains_json         TEXT    NOT NULL DEFAULT '{}',
@@ -156,21 +158,29 @@ STUDY_TYPE_REGISTRY: dict[str, dict[str, Any]] = {
                                           # row (same paper_id, distinct
                                           # estimate_id).
     },
+    # Cross-over RCT — RoB 2 cross-over extension (6 domains incl. Domain S
+    # for period/carryover effects; Domain 5 has 4 signaling questions
+    # including 5.4 for first-period-only reporting on the basis of a
+    # carryover test). Reporting guideline is the combined CONSORT 2025 base
+    # checklist plus the Dwan et al. 2019 cross-over extension items
+    # (washout, period effects, sequence randomization, paired analysis, etc.).
+    "Crossover Trial":              {"rob_tool": "rob2_crossover", "reporting_guideline": "consort_crossover", "initial_grade": "High"},
     # Future (not wired yet — classification skips + refunds):
     # "Cluster Randomized Trial":    {"rob_tool": "rob2_cluster",    "reporting_guideline": "consort_cluster",    "initial_grade": "High"},
-    # "Crossover Trial":             {"rob_tool": "rob2_crossover",  "reporting_guideline": "consort_crossover",  "initial_grade": "High"},
     # "SR with Meta-Analysis":       {"rob_tool": "amstar2",         "reporting_guideline": "prisma2020",         "initial_grade": "High"},
 }
 
 _TOOL_RUNNERS: dict[str, Callable] = {
-    "rob2":     rob2.run,
-    "robins_i": robins_i.run,
-    "quadas3":  quadas3.run,
+    "rob2":           rob2.run,
+    "rob2_crossover": rob2_crossover.run,
+    "robins_i":       robins_i.run,
+    "quadas3":        quadas3.run,
 }
 _GUIDELINE_RUNNERS: dict[str, Callable] = {
-    "consort2025": consort2025.run,
-    "strobe":      strobe.run,
-    "stard":       stard.run,
+    "consort2025":       consort2025.run,
+    "consort_crossover": consort_crossover.run,
+    "strobe":            strobe.run,
+    "stard":             stard.run,
 }
 # Tools that support Phase-4 estimate extraction. Used by the run-create modal
 # to pre-populate per-paper estimate selectors. Each value MUST be a callable
@@ -242,6 +252,12 @@ def migrate_qa_columns(conn) -> None:
             conn.execute("ALTER TABLE quality_appraisal_results ADD COLUMN estimate_id INTEGER")
         if not column_exists(conn, "quality_appraisal_results", "estimate_json"):
             conn.execute("ALTER TABLE quality_appraisal_results ADD COLUMN estimate_json TEXT NOT NULL DEFAULT '{}'")
+        # Outcome override (reviewer can override the auto-picked primary outcome
+        # — e.g., when the paper's stated primary is ambiguous).
+        if not column_exists(conn, "quality_appraisal_runs", "outcome_overrides_json"):
+            conn.execute("ALTER TABLE quality_appraisal_runs ADD COLUMN outcome_overrides_json TEXT NOT NULL DEFAULT '{}'")
+        if not column_exists(conn, "quality_appraisal_results", "assessed_outcome"):
+            conn.execute("ALTER TABLE quality_appraisal_results ADD COLUMN assessed_outcome TEXT")
         conn.commit()
 
 
@@ -557,6 +573,7 @@ def _appraise_paper_with_estimates(conn, run_id: int, paper_id: int,
                        rob_tool=cfg["rob_tool"],
                        reporting_guideline=cfg["reporting_guideline"],
                        primary_outcome=primary_outcome,
+                       assessed_outcome=primary_outcome,
                        classification=classification,
                        extracted_fields=fields,
                        rob_domains=rob_domains,
@@ -599,6 +616,7 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
                    imprecision_thresholds: dict[str, str] | None = None,
                    paper_estimates: list[dict[str, Any]] | None = None,
                    quadas3_review_context: str | None = None,
+                   outcome_override: str | None = None,
                    ) -> dict[str, Any]:
     """Appraise a single paper end-to-end. Writes one row to
     ``quality_appraisal_results`` per estimate (QUADAS-3 supports multiple
@@ -624,6 +642,12 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
     ``quadas3_review_context`` is the user-supplied review-level context
     (Phases 1+2 — synthesis question + ideal test accuracy trial) for
     diagnostic-accuracy applicability assessment. Threaded into prompts.
+
+    ``outcome_override`` lets the reviewer specify the outcome to assess when
+    the paper's auto-picked primary outcome is unclear or ambiguous. When
+    supplied, it replaces the auto-pick as the ``assessed_outcome`` passed to
+    the RoB tool's prompts. The auto-pick is still recorded as
+    ``primary_outcome`` for audit.
     """
     def _notify(level: str, msg: str) -> None:
         if on_progress:
@@ -706,7 +730,14 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
         return {"status": "error", "error": msg}
 
     primary_outcome = pick_primary_outcome(fields)
-    _notify("info", f"Primary outcome: {primary_outcome[:80]}")
+    override_str = (outcome_override or "").strip()
+    assessed_outcome = override_str or primary_outcome
+    outcome_is_override = bool(override_str) and override_str != primary_outcome
+    if outcome_is_override:
+        _notify("info",
+                 f"Assessed outcome (reviewer override): {assessed_outcome[:80]}")
+    else:
+        _notify("info", f"Primary outcome: {primary_outcome[:80]}")
 
     # 3.5 QUADAS-3 / per-estimate path. Diagnostic-accuracy papers can have
     # multiple Phase-4 estimates and produce one result row per estimate.
@@ -733,11 +764,20 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
         return {"status": "skipped", "error": msg}
 
     _notify("info", f"Running risk-of-bias assessment ({cfg['rob_tool']})")
+    # rob2 and rob2_crossover accept outcome_is_override so Domain 1 can be
+    # framed around per-trial randomization when the assessed outcome is a
+    # reviewer pick rather than the paper's primary. Other tools (ROBINS-I,
+    # QUADAS-3) don't accept that kwarg yet — gate it.
+    rob_kwargs: dict[str, Any] = {
+        "progress": lambda domain_id: _notify(
+            "progress", f"RoB {cfg['rob_tool']} domain {domain_id}"),
+    }
+    if cfg["rob_tool"] in ("rob2", "rob2_crossover"):
+        rob_kwargs["outcome_is_override"] = outcome_is_override
     try:
         rob_domains, rob_overall, rob_direction = rob_runner(
-            pdf_bytes, fields, classification, primary_outcome,
-            progress=lambda domain_id: _notify(
-                "progress", f"RoB {cfg['rob_tool']} domain {domain_id}"),
+            pdf_bytes, fields, classification, assessed_outcome,
+            **rob_kwargs,
         )
     except HTTPException as he:
         msg = f"Risk-of-bias assessment failed: {he.detail}"
@@ -789,7 +829,7 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
     indirectness_expl = ""
     try:
         indirectness, indirectness_overall, indirectness_levels, indirectness_expl = (
-            indir_mod.run(pdf_bytes, fields, classification, primary_outcome,
+            indir_mod.run(pdf_bytes, fields, classification, assessed_outcome,
                           target_pico=target_pico)
         )
     except HTTPException as he:
@@ -811,7 +851,7 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
     imprecision_expl = ""
     try:
         imprecision, imprecision_overall, imprecision_levels, imprecision_expl = (
-            imprec_mod.run(pdf_bytes, fields, classification, primary_outcome,
+            imprec_mod.run(pdf_bytes, fields, classification, assessed_outcome,
                             thresholds=imprecision_thresholds)
         )
     except HTTPException as he:
@@ -847,6 +887,7 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
                    rob_tool=cfg["rob_tool"],
                    reporting_guideline=cfg["reporting_guideline"],
                    primary_outcome=primary_outcome,
+                   assessed_outcome=assessed_outcome,
                    classification=classification,
                    extracted_fields=fields,
                    rob_domains=rob_domains,
@@ -887,6 +928,7 @@ def _write_result(conn, run_id: int, paper_id: int, *,
                   rob_tool: str | None = None,
                   reporting_guideline: str | None = None,
                   primary_outcome: str | None = None,
+                  assessed_outcome: str | None = None,
                   classification: dict | None = None,
                   extracted_fields: dict | None = None,
                   rob_domains: dict | None = None,
@@ -921,6 +963,7 @@ def _write_result(conn, run_id: int, paper_id: int, *,
             """INSERT INTO quality_appraisal_results
                     (run_id, paper_id, status, error_message, filename,
                      study_type, rob_tool, reporting_guideline, primary_outcome,
+                     assessed_outcome,
                      classification_json, extracted_fields_json,
                      rob_domains_json, rob_overall, rob_direction,
                      applicability_overall, estimate_id, estimate_json,
@@ -931,9 +974,10 @@ def _write_result(conn, run_id: int, paper_id: int, *,
                      imprecision_json, imprecision_overall,
                      imprecision_levels, imprecision_explanation,
                      initial_grade, updated_grade, grade_explanation)
-               VALUES (?, ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?,  ?, ?, ?,  ?, ?, ?,  ?, ?,  ?, ?,  ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?,  ?, ?, ?, ?, ?,  ?, ?,  ?, ?, ?,  ?, ?, ?,  ?, ?,  ?, ?,  ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?)""",
             (run_id, paper_id, status, error, filename,
              study_type, rob_tool, reporting_guideline, primary_outcome,
+             assessed_outcome,
              json.dumps(classification or {}),
              json.dumps(extracted_fields or {}),
              json.dumps(rob_domains or {}),
@@ -975,6 +1019,7 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
     imprecision_thresholds: dict[str, str] | None = None
     quadas3_review_context: str | None = None
     paper_estimates_map: dict[str, list[dict[str, Any]]] = {}
+    outcome_overrides_map: dict[str, str] = {}
     setup_conn = get_db_fn()
     try:
         with setup_conn:
@@ -986,7 +1031,8 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
         try:
             row = setup_conn.execute(
                 "SELECT target_pico_json, imprecision_thresholds_json, "
-                "       quadas3_review_context, paper_estimates_json "
+                "       quadas3_review_context, paper_estimates_json, "
+                "       outcome_overrides_json "
                 "FROM quality_appraisal_runs WHERE id=?",
                 (run_id,),
             ).fetchone()
@@ -1013,6 +1059,15 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
                                     e for e in est_list if isinstance(e, dict)]
                 except Exception as e:
                     logger.warning("Failed to parse paper_estimates_json for run %s: %s", run_id, e)
+            if row and row["outcome_overrides_json"]:
+                try:
+                    oo = json.loads(row["outcome_overrides_json"])
+                    if isinstance(oo, dict):
+                        for pid_key, val in oo.items():
+                            if isinstance(val, str) and val.strip():
+                                outcome_overrides_map[str(pid_key)] = val.strip()
+                except Exception as e:
+                    logger.warning("Failed to parse outcome_overrides_json for run %s: %s", run_id, e)
         except Exception as e:
             logger.warning("Failed to load run params for run %s: %s", run_id, e)
         log_event(setup_conn, run_id, "info",
@@ -1030,6 +1085,9 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
             total_estimates = sum(len(v) for v in paper_estimates_map.values())
             log_event(setup_conn, run_id, "info",
                        f"QUADAS-3 will run against {total_estimates} estimate(s) across {len(paper_estimates_map)} paper(s).")
+        if outcome_overrides_map:
+            log_event(setup_conn, run_id, "info",
+                       f"Outcome overrides supplied for {len(outcome_overrides_map)} paper(s).")
     finally:
         setup_conn.close()
 
@@ -1037,6 +1095,7 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
         pconn = get_db_fn()
         try:
             paper_estimates = paper_estimates_map.get(str(pid)) or []
+            outcome_override = outcome_overrides_map.get(str(pid))
             try:
                 summary = appraise_paper(
                     pconn, papers_dir, user_id, is_admin, run_id, pid,
@@ -1046,6 +1105,7 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
                     imprecision_thresholds=imprecision_thresholds,
                     paper_estimates=paper_estimates,
                     quadas3_review_context=quadas3_review_context,
+                    outcome_override=outcome_override,
                 )
             except Exception as e:
                 logger.exception("Unhandled error in appraise_paper (run=%s paper=%s)",
@@ -1153,14 +1213,16 @@ def prompt_catalog() -> dict[str, Any]:
         "registry": STUDY_TYPE_REGISTRY,
         "credit_cost_per_paper": CREDIT_COST_QA_PER_PAPER,
         "rob_tools": {
-            "rob2":     rob2.prompt_catalog(),
-            "robins_i": robins_i.prompt_catalog(),
-            "quadas3":  quadas3.prompt_catalog(),
+            "rob2":           rob2.prompt_catalog(),
+            "rob2_crossover": rob2_crossover.prompt_catalog(),
+            "robins_i":       robins_i.prompt_catalog(),
+            "quadas3":        quadas3.prompt_catalog(),
         },
         "reporting_guidelines": {
-            "consort2025": consort2025.prompt_catalog(),
-            "strobe":      strobe.prompt_catalog(),
-            "stard":       stard.prompt_catalog(),
+            "consort2025":       consort2025.prompt_catalog(),
+            "consort_crossover": consort_crossover.prompt_catalog(),
+            "strobe":            strobe.prompt_catalog(),
+            "stard":             stard.prompt_catalog(),
         },
         "indirectness": indir_mod.prompt_catalog(),
         "imprecision": imprec_mod.prompt_catalog(),
@@ -1224,6 +1286,7 @@ def flatten_result_row(result_row: dict[str, Any],
         "adaptive_design": fields.get("adaptive_design", ""),
         "pragmatic_vs_explanatory": fields.get("pragmatic_vs_explanatory", ""),
         "primary_outcome": result_row.get("primary_outcome"),
+        "assessed_outcome": result_row.get("assessed_outcome"),
         "rob_overall": result_row.get("rob_overall"),
         "rob_direction": result_row.get("rob_direction"),
         "consort_proportion": result_row.get("guideline_proportion"),
@@ -1271,6 +1334,8 @@ def flatten_result_row(result_row: dict[str, Any],
         domains_for_tool = robins_i.DOMAINS
     elif tool == "quadas3":
         domains_for_tool = quadas3.DOMAINS
+    elif tool == "rob2_crossover":
+        domains_for_tool = rob2_crossover.DOMAINS
     else:
         domains_for_tool = rob2.DOMAINS
 

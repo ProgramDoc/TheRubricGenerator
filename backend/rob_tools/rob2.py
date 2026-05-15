@@ -402,8 +402,9 @@ _SYSTEM_PROMPT = (
 
 def build_domain_prompt(domain: dict[str, Any],
                         study_type: str,
-                        primary_outcome: str,
-                        extracted_fields: dict[str, str]) -> str:
+                        assessed_outcome: str,
+                        extracted_fields: dict[str, str],
+                        outcome_is_override: bool = False) -> str:
     """Per-domain prompt for RoB 2 signaling-question assessment.
 
     Sends:
@@ -411,6 +412,12 @@ def build_domain_prompt(domain: dict[str, Any],
       - verbatim signaling questions + elaborations from the cribsheet
       - relevant extracted fields from the annotator (so the LLM sees structured data)
       - expected JSON shape
+
+    When ``outcome_is_override`` is True (the reviewer chose a non-primary
+    outcome because the paper's primary was unclear), Domain 1 gets an extra
+    note reminding the LLM that randomization is a per-trial property — the
+    signaling-question answers shouldn't depend on which outcome the reviewer
+    picked.
     """
     # Only surface fields that exist + have a non-empty value
     relevant = {k: extracted_fields[k]
@@ -433,10 +440,19 @@ def build_domain_prompt(domain: dict[str, Any],
     shape += '  "direction_of_bias": "NA|Favours experimental|Favours comparator|Towards null|Away from null|Unpredictable"\n'
     shape += "}"
 
+    override_note = ""
+    if outcome_is_override and domain["id"] == 1:
+        override_note = (
+            "\n\nNote: this assessment is for a non-primary outcome chosen by the "
+            "reviewer because the paper's primary outcome was unclear. Domain 1 "
+            "signaling questions concern the randomization process for the trial "
+            "as a whole, not the specific outcome — answer accordingly."
+        )
+
     return f"""Assess **Domain {domain['id']} — {domain['name']}** for the study described in the attached PDF.
 
 Study type: {study_type}
-Outcome being assessed: {primary_outcome}
+Outcome being assessed: {assessed_outcome}{override_note}
 
 Context (fields already extracted from the paper):
 {ctx_json}
@@ -451,10 +467,12 @@ Answer N (or PN) when the paper gives enough information to rule out the problem
 
 
 def _assess_domain(pdf_bytes: bytes, domain: dict[str, Any],
-                   study_type: str, primary_outcome: str,
-                   extracted_fields: dict[str, str]) -> dict[str, Any]:
+                   study_type: str, assessed_outcome: str,
+                   extracted_fields: dict[str, str],
+                   outcome_is_override: bool = False) -> dict[str, Any]:
     """LLM-assess one domain and return {signals, rationales, judgement, direction}."""
-    prompt = build_domain_prompt(domain, study_type, primary_outcome, extracted_fields)
+    prompt = build_domain_prompt(domain, study_type, assessed_outcome,
+                                  extracted_fields, outcome_is_override)
     # 8k tokens is generous for 3-7 signal answers + rationales
     raw = _call_with_pdf(pdf_bytes, prompt, max_tokens=8192)
 
@@ -483,8 +501,9 @@ def _assess_domain(pdf_bytes: bytes, domain: dict[str, Any],
 def run(pdf_bytes: bytes,
         extracted_fields: dict[str, str],
         classification: dict[str, str],
-        primary_outcome: str,
-        progress: Callable[[int], None] | None = None) -> tuple[dict[str, Any], str, str]:
+        assessed_outcome: str,
+        progress: Callable[[int], None] | None = None,
+        outcome_is_override: bool = False) -> tuple[dict[str, Any], str, str]:
     """Run RoB 2 against a parallel-group RCT.
 
     Returns ``(domain_results, overall_judgement, overall_direction)``.
@@ -493,6 +512,12 @@ def run(pdf_bytes: bytes,
       ``{name, signals, rationales, judgement, direction}``.
     - ``overall_direction`` uses the most-common non-NA direction across domains
       (or "NA" if all domains report NA).
+
+    ``assessed_outcome`` is the outcome being assessed (auto-picked primary
+    by default; the reviewer can override it for ambiguous-primary cases).
+    ``outcome_is_override=True`` adds a per-trial randomization reminder to
+    the Domain 1 prompt so the LLM doesn't conflate outcome ambiguity with
+    randomization-process concerns.
     """
     study_type = classification.get("study_type", "Randomized Controlled Trial")
 
@@ -504,7 +529,8 @@ def run(pdf_bytes: bytes,
             except Exception:
                 pass
         result = _assess_domain(pdf_bytes, domain, study_type,
-                                 primary_outcome, extracted_fields)
+                                 assessed_outcome, extracted_fields,
+                                 outcome_is_override=outcome_is_override)
         result["id"] = domain["id"]
         result["name"] = domain["name"]
         domain_results[str(domain["id"])] = result
@@ -545,7 +571,7 @@ def prompt_catalog() -> dict[str, Any]:
             "relevant_fields": domain["relevant_fields"],
             "prompt_template": build_domain_prompt(
                 domain, "Randomized Controlled Trial",
-                "<primary outcome here>", sample_fields,
+                "<assessed outcome here>", sample_fields,
             ),
             "decision_tree_code": inspect.getsource(judge_fn),
         })

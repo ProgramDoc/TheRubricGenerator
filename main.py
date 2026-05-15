@@ -8149,6 +8149,11 @@ class QualityAppraisalRunPayload(BaseModel):
     project_id: int | None = None
     target_pico: QualityAppraisalTargetPico | None = None
     imprecision_thresholds: QualityAppraisalImprecisionThresholds | None = None
+    # Per-paper reviewer override: when the auto-picked primary outcome is
+    # ambiguous, the reviewer can specify the outcome to assess. Keys are
+    # paper-id strings (JSON object keys must be strings) and values are the
+    # outcome description. Empty strings / unspecified keys → no override.
+    paper_outcome_overrides: dict[str, str] | None = None
 
 
 @app.get("/api/quality-appraisal/supported-types")
@@ -8231,16 +8236,30 @@ def api_qa_run_create(body: QualityAppraisalRunPayload,
             if any(it.values()):
                 imprecision_thresholds_json = json.dumps(it)
 
+        outcome_overrides_json = "{}"
+        if body.paper_outcome_overrides:
+            cleaned = {
+                str(k): v.strip()
+                for k, v in body.paper_outcome_overrides.items()
+                if isinstance(v, str) and v.strip()
+            }
+            # Only keep overrides for papers in this run
+            allowed_ids = {str(p) for p in paper_ids}
+            cleaned = {k: v for k, v in cleaned.items() if k in allowed_ids}
+            if cleaned:
+                outcome_overrides_json = json.dumps(cleaned)
+
         with conn:
             cur = conn.execute(
                 """INSERT INTO quality_appraisal_runs
                         (user_id, project_id, paper_ids_json, paper_count,
                          credit_cost, status, target_pico_json,
-                         imprecision_thresholds_json)
-                   VALUES (?, ?, ?, ?, ?, 'pending', ?, ?) RETURNING id""",
+                         imprecision_thresholds_json, outcome_overrides_json)
+                   VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?) RETURNING id""",
                 (user["id"], body.project_id,
                  json.dumps(paper_ids), len(paper_ids), total_cost,
-                 target_pico_json, imprecision_thresholds_json),
+                 target_pico_json, imprecision_thresholds_json,
+                 outcome_overrides_json),
             )
             run_id = cur.lastrowid
             conn.commit()
@@ -8285,6 +8304,7 @@ def _load_qa_run(conn, run_id: int, user_id: int, is_admin: bool) -> dict:
         """SELECT r.id, r.user_id, r.project_id, r.paper_ids_json, r.paper_count,
                   r.status, r.credit_cost, r.credits_refunded, r.error_message,
                   r.target_pico_json, r.imprecision_thresholds_json,
+                  r.outcome_overrides_json,
                   r.created_at, r.completed_at, r.deleted_at,
                   p.name AS project_name
              FROM quality_appraisal_runs r
@@ -8308,6 +8328,11 @@ def _load_qa_run(conn, run_id: int, user_id: int, is_admin: bool) -> dict:
             d.pop("imprecision_thresholds_json") or "null") or None
     except Exception:
         d["imprecision_thresholds"] = None
+    try:
+        d["paper_outcome_overrides"] = json.loads(
+            d.pop("outcome_overrides_json") or "{}") or {}
+    except Exception:
+        d["paper_outcome_overrides"] = {}
     return d
 
 
@@ -8325,6 +8350,7 @@ def api_qa_run_get(run_id: int,
         rows = conn.execute(
             """SELECT id, paper_id, status, error_message, filename,
                       study_type, rob_tool, reporting_guideline, primary_outcome,
+                      assessed_outcome,
                       classification_json, extracted_fields_json,
                       rob_domains_json, rob_overall, rob_direction,
                       guideline_json, guideline_proportion,
@@ -8430,6 +8456,7 @@ def _qa_flatten_for_export(run_detail: dict) -> list[dict]:
             "rob_tool": r.get("rob_tool"),
             "reporting_guideline": r.get("reporting_guideline"),
             "primary_outcome": r.get("primary_outcome"),
+            "assessed_outcome": r.get("assessed_outcome"),
             "classification": r.get("classification") or {},
             "extracted_fields": r.get("extracted_fields") or {},
             "rob_domains": r.get("rob_domains") or {},
