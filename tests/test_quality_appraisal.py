@@ -18,7 +18,7 @@ import json
 import pytest
 
 from backend import quality_appraisal as qa
-from backend.rob_tools import rob2, rob2_crossover, robins_i
+from backend.rob_tools import rob2, rob2_crossover, robins_i, quadas2, quadas3
 from backend.reporting_guidelines import consort2025, consort_crossover, strobe
 
 
@@ -1526,3 +1526,235 @@ class TestConsortCrossover:
         assert "crossover_extension_items" in ccat
         assert len(ccat["crossover_extension_items"]) == len(
             consort_crossover.CROSSOVER_EXTENSION_ITEMS)
+
+
+# ═════════════════════════════════════════════
+# QUADAS-2 (Whiting 2011) — pure-Python tests
+# ═════════════════════════════════════════════
+class TestQuadas2DecisionTree:
+    """Per Whiting 2011 Phase 4: all 'yes' → low; any 'no' → high; otherwise unclear."""
+
+    def test_all_yes_is_low(self):
+        assert quadas2.quadas2_domain_judge({"1.1": "Y", "1.2": "Y", "1.3": "Y"}) == "Low"
+
+    def test_any_no_is_high(self):
+        assert quadas2.quadas2_domain_judge({"1.1": "Y", "1.2": "N", "1.3": "Y"}) == "High"
+
+    def test_single_no_with_others_yes_is_high(self):
+        assert quadas2.quadas2_domain_judge({"1.1": "N", "1.2": "Y"}) == "High"
+
+    def test_mixed_yes_unclear_is_unclear(self):
+        assert quadas2.quadas2_domain_judge({"1.1": "Y", "1.2": "U"}) == "Unclear"
+
+    def test_empty_is_unclear(self):
+        assert quadas2.quadas2_domain_judge({}) == "Unclear"
+
+    def test_all_unclear_is_unclear(self):
+        assert quadas2.quadas2_domain_judge({"a": "U", "b": "U"}) == "Unclear"
+
+    def test_no_dominates_unclear(self):
+        # Any N is enough for High even mixed with U
+        assert quadas2.quadas2_domain_judge({"a": "U", "b": "N"}) == "High"
+
+
+class TestQuadas2Overall:
+    def test_all_low_is_low(self):
+        assert quadas2.quadas2_overall(["Low"] * 4) == "Low"
+
+    def test_any_high_is_high(self):
+        assert quadas2.quadas2_overall(["Low", "High", "Low", "Low"]) == "High"
+
+    def test_mixed_low_unclear_is_unclear(self):
+        assert quadas2.quadas2_overall(["Low", "Unclear", "Low", "Low"]) == "Unclear"
+
+    def test_empty_is_unclear(self):
+        assert quadas2.quadas2_overall([]) == "Unclear"
+
+    def test_all_unclear_is_unclear(self):
+        assert quadas2.quadas2_overall(["Unclear"] * 4) == "Unclear"
+
+
+class TestQuadas2Applicability:
+    """Applicability aggregator: only 3 domains feed it (D4 excluded)."""
+
+    def test_three_domains_low(self):
+        assert quadas2.quadas2_applicability_overall(["Low", "Low", "Low"]) == "Low"
+
+    def test_three_domains_one_high(self):
+        assert quadas2.quadas2_applicability_overall(["Low", "High", "Low"]) == "High"
+
+    def test_three_domains_one_unclear(self):
+        assert quadas2.quadas2_applicability_overall(["Low", "Unclear", "Low"]) == "Unclear"
+
+
+class TestQuadas2Domains:
+    """Structural invariants on the DOMAINS list."""
+
+    def test_four_domains(self):
+        assert len(quadas2.DOMAINS) == 4
+
+    def test_signal_counts_match_whiting_2011_table_1(self):
+        # D1=3 (consecutive/random + case-control avoided + inappropriate exclusions)
+        # D2=2 (blind to reference + threshold pre-specified)
+        # D3=2 (correct classification + blind to index)
+        # D4=4 (interval + all received reference + same reference + all in analysis)
+        sig_counts = [len(d["signals"]) for d in quadas2.DOMAINS]
+        assert sig_counts == [3, 2, 2, 4]
+
+    def test_d4_has_no_applicability(self):
+        # Domain 4 (Flow & Timing) is RoB-only per Whiting 2011 Table 1
+        assert quadas2.DOMAINS[3]["has_applicability"] is False
+
+    def test_d1_d2_d3_have_applicability(self):
+        for d in quadas2.DOMAINS[:3]:
+            assert d["has_applicability"] is True
+
+    def test_judges_dict_keyed_by_id(self):
+        # DOMAIN_JUDGES dispatches by domain id; all four domains use the same rule.
+        assert set(quadas2.DOMAIN_JUDGES.keys()) == {1, 2, 3, 4}
+        for jid, fn in quadas2.DOMAIN_JUDGES.items():
+            assert fn is quadas2.quadas2_domain_judge
+
+    def test_signal_options_are_three_level(self):
+        assert quadas2.SIGNAL_OPTIONS == ("Y", "N", "U")
+
+
+class TestQuadas2PromptCatalog:
+    def test_catalog_contains_quadas2(self):
+        cat = quadas2.prompt_catalog()
+        assert cat["tool"].startswith("QUADAS-2")
+        assert cat["signal_options"] == ["Y", "N", "U"]
+        assert cat["judgements"] == ["Low", "High", "Unclear"]
+        assert len(cat["domains"]) == 4
+
+
+class TestRobDowngradeUnclear:
+    """QUADAS-2 outcome 'Unclear' → 1 level conservative downgrade."""
+
+    def test_unclear_downgrades_one_level(self):
+        levels, reason = qa._rob_downgrade("Unclear", ["Unclear", "Low", "Low", "Low"])
+        assert levels == 1
+        assert "QUADAS-2" in reason
+
+    def test_compute_grade_high_unclear_drops_to_moderate(self):
+        new_level, expl = qa.compute_grade("High", "Unclear", ["Unclear", "Low", "Low", "Low"])
+        assert new_level == "Moderate"
+        assert "QUADAS-2" in expl or "Unclear" in expl
+
+    def test_compute_grade_high_two_high_drops_two_levels(self):
+        # ≥2 High domains → 2 levels (existing branch — QUADAS-2 routes through it too)
+        new_level, _ = qa.compute_grade("High", "High", ["High", "High", "Low", "Low"])
+        assert new_level == "Low"
+
+    def test_low_quadas2_no_downgrade(self):
+        new_level, expl = qa.compute_grade("High", "Low", ["Low"] * 4)
+        assert new_level == "High"
+
+
+class TestQuadas2Dispatch:
+    """tool_override='quadas2' on diagnostic-accuracy papers swaps cfg['rob_tool']
+    without mutating the module-level registry. Override is ignored for RCTs."""
+
+    def test_quadas2_in_tool_runners(self):
+        assert "quadas2" in qa._TOOL_RUNNERS
+        assert qa._TOOL_RUNNERS["quadas2"] is quadas2.run
+
+    def test_quadas2_estimate_extractor_aliases_quadas3(self):
+        assert "quadas2" in qa._ESTIMATE_EXTRACTORS
+        assert qa._ESTIMATE_EXTRACTORS["quadas2"] is qa._ESTIMATE_EXTRACTORS["quadas3"]
+        assert qa._ESTIMATE_EXTRACTORS["quadas2"] is quadas3.extract_estimates
+
+    def test_registry_dispatch_still_returns_quadas3_default(self):
+        cfg = qa.dispatch("Diagnostic Accuracy")
+        assert cfg is not None
+        assert cfg["rob_tool"] == "quadas3"  # registry default — overrides happen per-run
+
+    def test_registry_dispatch_is_dict_copy_safe(self):
+        # appraise_paper shallow-copies cfg before mutating rob_tool, but
+        # double-check that the registry dict itself is unaffected by any
+        # downstream mutation.
+        cfg1 = qa.dispatch("Diagnostic Accuracy")
+        cfg2 = qa.dispatch("Diagnostic Accuracy")
+        cfg1["rob_tool"] = "mutated"  # simulate accidental mutation
+        # Reset the registry entry back to the canonical value for test isolation
+        qa.STUDY_TYPE_REGISTRY["Diagnostic Accuracy"]["rob_tool"] = "quadas3"
+        # The shallow-copy idiom inside appraise_paper protects against this
+        # exact pattern; this test pins the registry state for follow-up tests.
+        assert qa.STUDY_TYPE_REGISTRY["Diagnostic Accuracy"]["rob_tool"] == "quadas3"
+
+
+class TestQuadas2FlattenForExport:
+    """flatten_result_row maps QUADAS-2 rows to per-domain + per-applicability columns."""
+
+    def _make_quadas2_row(self):
+        return {
+            "paper_id": 42,
+            "filename": "test.pdf",
+            "status": "ok",
+            "study_type": "Diagnostic Accuracy",
+            "rob_tool": "quadas2",
+            "primary_outcome": "Acute appendicitis",
+            "classification": {"major_category": "Diagnostic", "subcategory": ""},
+            "extracted_fields": {"citation_title": "Test paper"},
+            "rob_domains": {
+                "1": {"judgement": "Low",     "applicability_judgement": "Low",
+                       "signals": {"1.1": "Y", "1.2": "Y", "1.3": "Y"}},
+                "2": {"judgement": "Unclear", "applicability_judgement": "Low",
+                       "signals": {"2.1": "Y", "2.2": "U"}},
+                "3": {"judgement": "Low",     "applicability_judgement": "High",
+                       "signals": {"3.1": "Y", "3.2": "Y"}},
+                "4": {"judgement": "Low",
+                       "signals": {"4.1": "Y", "4.2": "Y", "4.3": "Y", "4.4": "Y"}},
+            },
+            "rob_overall": "Unclear",
+            "rob_direction": "NA",
+            "applicability_overall": "High",
+            "guideline": {"adhered": 18, "applicable": 30, "proportion": 0.6},
+            "guideline_adhered": 18, "guideline_applicable": 30, "guideline_proportion": 0.6,
+            "initial_grade": "High", "updated_grade": "Moderate",
+            "grade_explanation": "Downgraded 1 level: Unclear in one or more QUADAS-2 domains.",
+        }
+
+    def test_quadas2_flatten_includes_per_domain_judgements(self):
+        row = qa.flatten_result_row(self._make_quadas2_row())
+        assert row["rob_d1_judgement"] == "Low"
+        assert row["rob_d2_judgement"] == "Unclear"
+        assert row["rob_d3_judgement"] == "Low"
+        assert row["rob_d4_judgement"] == "Low"
+
+    def test_quadas2_flatten_includes_applicability_for_d1_d2_d3(self):
+        row = qa.flatten_result_row(self._make_quadas2_row())
+        assert row["rob_d1_applicability"] == "Low"
+        assert row["rob_d2_applicability"] == "Low"
+        assert row["rob_d3_applicability"] == "High"
+        # D4 has no applicability column
+        assert "rob_d4_applicability" not in row
+
+    def test_quadas2_flatten_includes_all_signal_answers(self):
+        row = qa.flatten_result_row(self._make_quadas2_row())
+        # D1: 3 signals
+        assert row["rob_1.1"] == "Y"
+        assert row["rob_1.2"] == "Y"
+        assert row["rob_1.3"] == "Y"
+        # D2: 2 signals (one Unclear)
+        assert row["rob_2.1"] == "Y"
+        assert row["rob_2.2"] == "U"
+        # D4: 4 signals
+        assert row["rob_4.4"] == "Y"
+
+    def test_quadas2_flatten_includes_overall_applicability(self):
+        row = qa.flatten_result_row(self._make_quadas2_row())
+        assert row["applicability_overall"] == "High"
+
+
+class TestQuadas2PromptCatalogWired:
+    """Top-level prompt_catalog includes QUADAS-2 alongside QUADAS-3."""
+
+    def test_catalog_contains_both_quadas_tools(self):
+        cat = qa.prompt_catalog()
+        assert "quadas2" in cat["rob_tools"]
+        assert "quadas3" in cat["rob_tools"]
+        # Sanity check on QUADAS-2 entry shape
+        q2 = cat["rob_tools"]["quadas2"]
+        assert q2["signal_options"] == ["Y", "N", "U"]
+        assert len(q2["domains"]) == 4

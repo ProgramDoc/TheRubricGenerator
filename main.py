@@ -65,6 +65,8 @@ from backend.quality_appraisal import QUALITY_APPRAISAL_TABLES_SQL
 from backend import quality_appraisal as qa_mod
 from backend.review import GRADE_REVIEWS_TABLES_SQL
 from backend import review as review_mod
+from backend.extension import EXTENSION_TABLES_SQL
+from backend import extension as extension_mod
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rubricgen")
@@ -406,6 +408,8 @@ def init_db() -> None:
         qa_mod.migrate_qa_columns(conn)
         # 3-judge adjudication: human-review queue for grade disagreements
         conn.executescript(GRADE_REVIEWS_TABLES_SQL)
+        conn.executescript(EXTENSION_TABLES_SQL)
+        extension_mod.migrate_user_columns(conn)
         # Project invitations (for unregistered users)
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS project_invitations (
@@ -874,8 +878,24 @@ def _get_user_from_token(token: str | None) -> dict | None:
 
 
 def _get_user_by_api_key(api_key: str) -> dict | None:
-    """Look up a user by their personal API key."""
-    if not api_key or not api_key.startswith("rg_user_"):
+    """Look up a user by their personal API key OR Chrome-extension token.
+
+    Accepts either:
+    - ``rg_user_*`` — full developer API key (users.api_key)
+    - ``rg_ext_*``  — Chrome-extension token (users.extension_token)
+
+    Both grant the same user identity. The extension token is a separate
+    column so revoking the extension doesn't break the developer key.
+    """
+    if not api_key:
+        return None
+    if api_key.startswith("rg_ext_"):
+        conn = get_db()
+        try:
+            return extension_mod.get_user_by_extension_token(conn, api_key)
+        finally:
+            conn.close()
+    if not api_key.startswith("rg_user_"):
         return None
     conn = get_db()
     row = conn.execute(
@@ -5257,6 +5277,7 @@ class SearchImportPayload(BaseModel):
     project_id: int | None = None
     # 'metadata' (instant, free) | 'fetch' (2 cr) | 'firecrawl' (5 cr)
     # | 'browser' (15 cr) | 'auto' (2-15 cr, tier-priced — recommended default)
+    # | 'extension' (free, queues for the user's Chrome extension)
     mode: str = "metadata"
 
 class SearchExportPayload(BaseModel):
@@ -5413,9 +5434,10 @@ def api_search_import(body: SearchImportPayload, rubricgen_session: str | None =
     """
     user = require_user(rubricgen_session)
     require_active_seat(user, "engineer")
-    if body.mode not in ("metadata", "auto", "fetch", "firecrawl", "browser"):
+    if body.mode not in ("metadata", "auto", "fetch", "firecrawl", "browser", "extension"):
         raise HTTPException(
-            400, "mode must be 'metadata', 'auto', 'fetch', 'firecrawl', or 'browser'"
+            400,
+            "mode must be 'metadata', 'auto', 'fetch', 'firecrawl', 'browser', or 'extension'",
         )
     if not body.result_ids:
         raise HTTPException(400, "result_ids cannot be empty")
@@ -5446,6 +5468,19 @@ def api_search_import(body: SearchImportPayload, rubricgen_session: str | None =
             return search_mod.import_results(
                 conn, body.session_id, body.result_ids, user["id"], PAPERS_DIR,
                 project_id=body.project_id, mode="metadata",
+            )
+
+        if body.mode == "extension":
+            # No daemon, no credit charge — the user's browser does the work.
+            ext_status = extension_mod.get_extension_status(conn, user["id"])
+            if not ext_status["paired"]:
+                raise HTTPException(
+                    412,
+                    "Pair the Chrome extension first at /developers, then retry.",
+                )
+            return search_mod.import_results_extension(
+                conn, body.session_id, body.result_ids, user["id"],
+                project_id=body.project_id,
             )
 
         # async modes — credit-gate, enqueue, spawn worker. 'auto' pre-charges
@@ -5513,6 +5548,219 @@ def api_search_pdf_fetch_events(run_id: int, after: int = 0,
         return {"events": events}
     finally:
         conn.close()
+
+
+# ─────────────────────────────────────────────
+# Chrome extension: pairing + queue + upload
+# See backend/extension.py for the logic; routes here are thin pass-throughs.
+# ─────────────────────────────────────────────
+
+class ExtensionPairPayload(BaseModel):
+    code: str
+
+
+class ExtensionResolvePayload(BaseModel):
+    landing_url: str
+    anchors: list[dict]
+
+
+@app.post("/api/extension/pair-code")
+def api_extension_mint_pairing_code(rubricgen_session: str | None = Cookie(default=None)):
+    """Generate a one-time pairing code for the calling user.
+
+    The code is short (``EX-XXXX-YYYY``) and TTL'd for 10 min. Any prior
+    unconsumed code for this user is invalidated. The caller must be a real
+    logged-in user (cookie session) — this endpoint is *not* available via
+    API key, since you'd already have an API key if you had one.
+    """
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        return extension_mod.mint_pairing_code(conn, user["id"])
+    finally:
+        conn.close()
+
+
+@app.post("/api/extension/pair")
+def api_extension_pair(body: ExtensionPairPayload):
+    """Exchange a pairing code for a permanent ``rg_ext_*`` token.
+
+    No auth required — the code itself is the auth. This is the one endpoint
+    the Chrome extension hits before it has a token.
+    """
+    conn = get_db()
+    try:
+        try:
+            return extension_mod.consume_pairing_code(conn, body.code)
+        except ValueError as e:
+            reason = str(e)
+            status = {
+                "not_found": 404,
+                "expired": 410,
+                "already_consumed": 409,
+            }.get(reason, 400)
+            raise HTTPException(status, f"Pairing code {reason}")
+    finally:
+        conn.close()
+
+
+@app.delete("/api/extension/token")
+def api_extension_revoke(rubricgen_session: str | None = Cookie(default=None)):
+    """Revoke the calling user's extension token. Idempotent."""
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        extension_mod.revoke_extension_token(conn, user["id"])
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.get("/api/extension/status")
+def api_extension_status(rubricgen_session: str | None = Cookie(default=None),
+                         x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Return ``{paired, paired_at, queue_count}`` for the developers page +
+    the extension popup's connection check."""
+    user = require_user(rubricgen_session, x_api_key)
+    conn = get_db()
+    try:
+        return extension_mod.get_extension_status(conn, user["id"])
+    finally:
+        conn.close()
+
+
+@app.get("/api/extension/queue")
+def api_extension_queue(limit: int = 50,
+                        rubricgen_session: str | None = Cookie(default=None),
+                        x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Return papers waiting for extension fetch (``pdf_status='extension_pending'``).
+
+    Auth: cookie session OR ``rg_ext_*`` token (the extension itself uses the
+    token; the developers page uses the cookie)."""
+    user = require_user(rubricgen_session, x_api_key)
+    conn = get_db()
+    try:
+        return {"papers": extension_mod.get_queue(conn, user["id"], limit)}
+    finally:
+        conn.close()
+
+
+@app.post("/api/extension/papers/{paper_id}/pdf")
+async def api_extension_upload_pdf(paper_id: int, request: Request,
+                                    rubricgen_session: str | None = Cookie(default=None),
+                                    x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Receive PDF bytes for a queued paper.
+
+    Body: JSON ``{pdf_b64: "<base64>"}``. We accept base64 in JSON to avoid
+    multipart parsing in the extension and to keep the request shape boring.
+    """
+    user = require_user(rubricgen_session, x_api_key)
+    payload = await request.json()
+    pdf_b64 = payload.get("pdf_b64") or ""
+    if not isinstance(pdf_b64, str) or not pdf_b64:
+        raise HTTPException(400, "pdf_b64 is required")
+    try:
+        import base64
+        pdf_bytes = base64.b64decode(pdf_b64, validate=True)
+    except Exception:
+        raise HTTPException(400, "pdf_b64 is not valid base64")
+
+    conn = get_db()
+    try:
+        try:
+            return extension_mod.upload_pdf_for_paper(
+                conn, user["id"], paper_id, pdf_bytes,
+            )
+        except ValueError as e:
+            reason = str(e)
+            status = {
+                "too_large": 413,
+                "not_pdf": 415,
+                "not_found": 404,
+                "already_present": 409,
+                "upgrade_failed": 500,
+            }.get(reason, 400)
+            raise HTTPException(status, reason)
+    finally:
+        conn.close()
+
+
+@app.post("/api/extension/papers/{paper_id}/skip")
+def api_extension_skip(paper_id: int,
+                       rubricgen_session: str | None = Cookie(default=None),
+                       x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Mark a queued paper as ``fetch_failed`` so the queue clears. Idempotent."""
+    user = require_user(rubricgen_session, x_api_key)
+    conn = get_db()
+    try:
+        try:
+            return extension_mod.skip_paper(conn, user["id"], paper_id)
+        except ValueError as e:
+            if str(e) == "not_found":
+                raise HTTPException(404, "Paper not found")
+            raise HTTPException(400, str(e))
+    finally:
+        conn.close()
+
+
+@app.post("/api/papers/{paper_id}/queue-for-extension")
+def api_paper_queue_for_extension(paper_id: int,
+                                   rubricgen_session: str | None = Cookie(default=None)):
+    """Queue an existing paper for Chrome-extension PDF fetch.
+
+    Used by the Library page's bulk "Send to extension" action — re-queues a
+    metadata-only / fetch_failed paper that the user already has, without
+    going through the search-import path.
+    """
+    user = require_user(rubricgen_session)
+    conn = get_db()
+    try:
+        ext_status = extension_mod.get_extension_status(conn, user["id"])
+        if not ext_status["paired"]:
+            raise HTTPException(
+                412, "Pair the Chrome extension first at /developers, then retry."
+            )
+        paper = conn.execute(
+            "SELECT id, user_id, pdf_status FROM papers WHERE id = ?",
+            (paper_id,),
+        ).fetchone()
+        if not paper or paper["user_id"] != user["id"]:
+            raise HTTPException(404, "Paper not found")
+        if paper["pdf_status"] == "present":
+            raise HTTPException(409, "Paper already has a PDF")
+        with conn:
+            conn.execute(
+                "UPDATE papers SET pdf_status = 'extension_pending' WHERE id = ?",
+                (paper_id,),
+            )
+            conn.commit()
+        return {"ok": True, "paper_id": paper_id, "pdf_status": "extension_pending"}
+    finally:
+        conn.close()
+
+
+@app.post("/api/extension/resolve-pdf-url")
+def api_extension_resolve_pdf_url(body: ExtensionResolvePayload,
+                                   rubricgen_session: str | None = Cookie(default=None),
+                                   x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """LLM-driven fallback for the extension's content script: when its DOM
+    heuristics miss, send the rendered page's anchors here and Claude Haiku
+    picks the most likely PDF download link.
+
+    Same prompt + JSON contract as ``backend/browser_agent.py`` (both reuse
+    ``backend/pdf_link_picker.py``).
+    """
+    require_user(rubricgen_session, x_api_key)
+    if not body.landing_url:
+        raise HTTPException(400, "landing_url is required")
+    anchors = body.anchors or []
+    if not anchors:
+        return {"pdf_url": None, "reason": "no_anchors"}
+    # Cap to 200 anchors regardless of what the extension sent
+    anchors = anchors[:200]
+    from backend import pdf_link_picker
+    picked = pdf_link_picker.pick_pdf_url_from_anchors(body.landing_url, anchors)
+    return {"pdf_url": picked}
 
 
 @app.post("/api/search/export/ris")
@@ -8149,11 +8397,23 @@ class QualityAppraisalRunPayload(BaseModel):
     project_id: int | None = None
     target_pico: QualityAppraisalTargetPico | None = None
     imprecision_thresholds: QualityAppraisalImprecisionThresholds | None = None
+    quadas3_review_context: str | None = None
+    # Map of {paper_id: [estimate_dict, ...]} for QUADAS-2/3 per-estimate runs.
+    # Keys may arrive as ints or strings (frontend uses strings); we normalise
+    # both into the run row.
+    paper_estimates: dict[str, list[dict]] | None = None
     # Per-paper reviewer override: when the auto-picked primary outcome is
     # ambiguous, the reviewer can specify the outcome to assess. Keys are
     # paper-id strings (JSON object keys must be strings) and values are the
     # outcome description. Empty strings / unspecified keys → no override.
     paper_outcome_overrides: dict[str, str] | None = None
+    # Per-run RoB tool selection for diagnostic-accuracy papers
+    # ('quadas2' | 'quadas3' | None). None → registry default (QUADAS-3).
+    diagnostic_tool_choice: str | None = None
+
+
+class QualityAppraisalExtractEstimatesPayload(BaseModel):
+    paper_id: int
 
 
 @app.get("/api/quality-appraisal/supported-types")
@@ -8212,9 +8472,41 @@ def api_qa_run_create(body: QualityAppraisalRunPayload,
         if missing:
             raise HTTPException(400, f"unknown or unowned paper ids: {missing}")
 
-        total_cost = len(paper_ids) * qa_mod.CREDIT_COST_QA_PER_PAPER
-        _annotator_ai_gate(conn, user, total_cost,
-                           f"Quality Appraisal run ({len(paper_ids)} papers)")
+        # Cost model: each "unit of work" is 36 cr. For non-QUADAS papers
+        # there is exactly 1 unit per paper. For QUADAS-3 (per-estimate)
+        # there is 1 unit per estimate; if no estimates were supplied for a
+        # diagnostic-accuracy paper, the appraiser falls back to a single
+        # primary-estimate iteration → 1 unit. We don't know the per-paper
+        # study type at run-create time, so we treat any paper with
+        # paper_estimates as QUADAS-3 (the modal only collects estimates
+        # for diagnostic-accuracy papers).
+        paper_estimates_clean: dict[str, list[dict]] = {}
+        if body.paper_estimates:
+            for k, v in body.paper_estimates.items():
+                try:
+                    pid_int = int(k)
+                except Exception:
+                    continue
+                if pid_int not in paper_ids:
+                    continue
+                if not isinstance(v, list):
+                    continue
+                clean_list = [e for e in v if isinstance(e, dict)]
+                if clean_list:
+                    paper_estimates_clean[str(pid_int)] = clean_list
+
+        unit_count = 0
+        for pid in paper_ids:
+            ests = paper_estimates_clean.get(str(pid)) or []
+            unit_count += max(1, len(ests))
+        total_cost = unit_count * qa_mod.CREDIT_COST_QA_PER_PAPER
+
+        cost_label = (
+            f"Quality Appraisal run ({len(paper_ids)} papers, {unit_count} units)"
+            if unit_count != len(paper_ids)
+            else f"Quality Appraisal run ({len(paper_ids)} papers)"
+        )
+        _annotator_ai_gate(conn, user, total_cost, cost_label)
 
         target_pico_json = None
         if body.target_pico is not None:
@@ -8236,6 +8528,13 @@ def api_qa_run_create(body: QualityAppraisalRunPayload,
             if any(it.values()):
                 imprecision_thresholds_json = json.dumps(it)
 
+        review_ctx = (body.quadas3_review_context or "").strip() or None
+        paper_estimates_json = json.dumps(paper_estimates_clean) if paper_estimates_clean else "{}"
+
+        dtc = (body.diagnostic_tool_choice or "").strip().lower() or None
+        if dtc is not None and dtc not in ("quadas2", "quadas3"):
+            raise HTTPException(400, "diagnostic_tool_choice must be 'quadas2' or 'quadas3'")
+
         outcome_overrides_json = "{}"
         if body.paper_outcome_overrides:
             cleaned = {
@@ -8254,12 +8553,15 @@ def api_qa_run_create(body: QualityAppraisalRunPayload,
                 """INSERT INTO quality_appraisal_runs
                         (user_id, project_id, paper_ids_json, paper_count,
                          credit_cost, status, target_pico_json,
-                         imprecision_thresholds_json, outcome_overrides_json)
-                   VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?) RETURNING id""",
+                         imprecision_thresholds_json,
+                         quadas3_review_context, paper_estimates_json,
+                         outcome_overrides_json, diagnostic_tool_choice)
+                   VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?) RETURNING id""",
                 (user["id"], body.project_id,
                  json.dumps(paper_ids), len(paper_ids), total_cost,
                  target_pico_json, imprecision_thresholds_json,
-                 outcome_overrides_json),
+                 review_ctx, paper_estimates_json,
+                 outcome_overrides_json, dtc),
             )
             run_id = cur.lastrowid
             conn.commit()
@@ -8275,6 +8577,76 @@ def api_qa_run_create(body: QualityAppraisalRunPayload,
     return {"run_id": run_id, "status": "running"}
 
 
+@app.post("/api/quality-appraisal/extract-estimates")
+def api_qa_extract_estimates(body: QualityAppraisalExtractEstimatesPayload,
+                             rubricgen_session: str | None = Cookie(default=None),
+                             x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Extract candidate Phase-4 accuracy estimates from a diagnostic-accuracy
+    paper. Used by the run-create modal step 2 to populate per-paper estimate
+    selectors.
+
+    Charges 3 credits (matching annotator's classify cost). Auto-refunds on
+    error.
+    """
+    from backend import annotator as annotator_mod
+    from backend import billing as bill_mod
+    from backend.rob_tools import quadas3 as quadas3_mod
+
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    is_admin = user.get("role") == "admin"
+    paper_id = int(body.paper_id)
+
+    conn = get_db()
+    try:
+        owned = conn.execute(
+            "SELECT id FROM papers WHERE id=? AND user_id=?",
+            (paper_id, user["id"]),
+        ).fetchone()
+        if not owned and not is_admin:
+            raise HTTPException(404, "paper not found or access denied")
+
+        cost = 3
+        _annotator_ai_gate(conn, user, cost,
+                           f"Extract diagnostic-accuracy estimates (paper {paper_id})")
+
+        try:
+            pdf_bytes, _filename = annotator_mod.load_paper_pdf(
+                conn, PAPERS_DIR, paper_id, user["id"], is_admin=is_admin)
+        except HTTPException:
+            if not is_admin:
+                try:
+                    bill_mod.refund_credits(conn, user["id"], cost,
+                                            "Refund: extract-estimates load failed")
+                except Exception:
+                    pass
+            raise
+
+        try:
+            estimates = quadas3_mod.extract_estimates(pdf_bytes, {})
+        except HTTPException:
+            if not is_admin:
+                try:
+                    bill_mod.refund_credits(conn, user["id"], cost,
+                                            "Refund: extract-estimates extraction failed")
+                except Exception:
+                    pass
+            raise
+        except Exception:
+            logger.exception("extract_estimates failed for paper %s", paper_id)
+            if not is_admin:
+                try:
+                    bill_mod.refund_credits(conn, user["id"], cost,
+                                            "Refund: extract-estimates extraction failed")
+                except Exception:
+                    pass
+            raise HTTPException(502, "Estimate extraction failed — see server logs.")
+    finally:
+        conn.close()
+
+    return {"paper_id": paper_id, "estimates": estimates}
+
+
 @app.get("/api/quality-appraisal/runs")
 def api_qa_runs_list(rubricgen_session: str | None = Cookie(default=None),
                      x_api_key: str | None = Header(default=None, alias="X-API-Key")):
@@ -8286,6 +8658,7 @@ def api_qa_runs_list(rubricgen_session: str | None = Cookie(default=None),
         rows = conn.execute(
             """SELECT r.id, r.project_id, r.paper_count, r.status,
                       r.credit_cost, r.credits_refunded, r.error_message,
+                      r.diagnostic_tool_choice,
                       r.created_at, r.completed_at,
                       p.name AS project_name
                  FROM quality_appraisal_runs r
@@ -8304,7 +8677,9 @@ def _load_qa_run(conn, run_id: int, user_id: int, is_admin: bool) -> dict:
         """SELECT r.id, r.user_id, r.project_id, r.paper_ids_json, r.paper_count,
                   r.status, r.credit_cost, r.credits_refunded, r.error_message,
                   r.target_pico_json, r.imprecision_thresholds_json,
+                  r.quadas3_review_context, r.paper_estimates_json,
                   r.outcome_overrides_json,
+                  r.diagnostic_tool_choice,
                   r.created_at, r.completed_at, r.deleted_at,
                   p.name AS project_name
              FROM quality_appraisal_runs r
@@ -8328,6 +8703,10 @@ def _load_qa_run(conn, run_id: int, user_id: int, is_admin: bool) -> dict:
             d.pop("imprecision_thresholds_json") or "null") or None
     except Exception:
         d["imprecision_thresholds"] = None
+    try:
+        d["paper_estimates"] = json.loads(d.pop("paper_estimates_json") or "{}") or {}
+    except Exception:
+        d["paper_estimates"] = {}
     try:
         d["paper_outcome_overrides"] = json.loads(
             d.pop("outcome_overrides_json") or "{}") or {}
@@ -8353,6 +8732,7 @@ def api_qa_run_get(run_id: int,
                       assessed_outcome,
                       classification_json, extracted_fields_json,
                       rob_domains_json, rob_overall, rob_direction,
+                      applicability_overall, estimate_id, estimate_json,
                       guideline_json, guideline_proportion,
                       guideline_adhered, guideline_applicable,
                       indirectness_json, indirectness_overall,
@@ -8374,7 +8754,7 @@ def api_qa_run_get(run_id: int,
         d = dict(r)
         for jkey in ("classification_json", "extracted_fields_json",
                      "rob_domains_json", "guideline_json", "indirectness_json",
-                     "imprecision_json"):
+                     "imprecision_json", "estimate_json"):
             try:
                 d[jkey.replace("_json", "")] = json.loads(d.pop(jkey) or "{}")
             except Exception:
@@ -8462,6 +8842,9 @@ def _qa_flatten_for_export(run_detail: dict) -> list[dict]:
             "rob_domains": r.get("rob_domains") or {},
             "rob_overall": r.get("rob_overall"),
             "rob_direction": r.get("rob_direction"),
+            "applicability_overall": r.get("applicability_overall"),
+            "estimate_id": r.get("estimate_id"),
+            "estimate": r.get("estimate") or {},
             "guideline": r.get("guideline") or {},
             "guideline_proportion": r.get("guideline_proportion"),
             "guideline_adhered": r.get("guideline_adhered"),

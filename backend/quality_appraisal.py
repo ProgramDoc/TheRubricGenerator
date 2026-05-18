@@ -36,7 +36,7 @@ from . import paper_files
 from . import indirectness as indir_mod
 from . import imprecision as imprec_mod
 from .helpers import call_anthropic, parse_json_response
-from .rob_tools import rob2, rob2_crossover, robins_i, quadas3
+from .rob_tools import rob2, rob2_crossover, robins_i, quadas3, quadas2
 from .reporting_guidelines import consort2025, consort_crossover, strobe, stard
 
 logger = logging.getLogger("rubricgen")
@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS quality_appraisal_runs (
     quadas3_review_context      TEXT,
     paper_estimates_json        TEXT NOT NULL DEFAULT '{}',
     outcome_overrides_json      TEXT NOT NULL DEFAULT '{}',
+    diagnostic_tool_choice      TEXT,
     created_at                  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     completed_at                TIMESTAMP,
     deleted_at                  TIMESTAMP
@@ -175,6 +176,7 @@ _TOOL_RUNNERS: dict[str, Callable] = {
     "rob2_crossover": rob2_crossover.run,
     "robins_i":       robins_i.run,
     "quadas3":        quadas3.run,
+    "quadas2":        quadas2.run,
 }
 _GUIDELINE_RUNNERS: dict[str, Callable] = {
     "consort2025":       consort2025.run,
@@ -185,8 +187,11 @@ _GUIDELINE_RUNNERS: dict[str, Callable] = {
 # Tools that support Phase-4 estimate extraction. Used by the run-create modal
 # to pre-populate per-paper estimate selectors. Each value MUST be a callable
 # of signature ``(pdf_bytes, extracted_fields) -> list[dict]``.
+# QUADAS-2 aliases QUADAS-3's extractor — numerical sens/spec extraction is
+# RoB-tool-agnostic, so a single shared prompt covers both.
 _ESTIMATE_EXTRACTORS: dict[str, Callable] = {
     "quadas3": quadas3.extract_estimates,
+    "quadas2": quadas3.extract_estimates,
 }
 
 
@@ -258,6 +263,10 @@ def migrate_qa_columns(conn) -> None:
             conn.execute("ALTER TABLE quality_appraisal_runs ADD COLUMN outcome_overrides_json TEXT NOT NULL DEFAULT '{}'")
         if not column_exists(conn, "quality_appraisal_results", "assessed_outcome"):
             conn.execute("ALTER TABLE quality_appraisal_results ADD COLUMN assessed_outcome TEXT")
+        # QUADAS-2 alongside QUADAS-3 — per-run tool selection
+        # (NULL = QUADAS-3 default for back-compat with existing rows)
+        if not column_exists(conn, "quality_appraisal_runs", "diagnostic_tool_choice"):
+            conn.execute("ALTER TABLE quality_appraisal_runs ADD COLUMN diagnostic_tool_choice TEXT")
         conn.commit()
 
 
@@ -327,6 +336,11 @@ def _rob_downgrade(rob_overall: str,
     # already handled at the top; "High" matches the RoB 2 branch above.
     if rob_overall == "Insufficient information":
         return 1, "Insufficient information in one or more QUADAS-3 domains (conservative)"
+
+    # QUADAS-2 branches (Low / High / Unclear). "Low" and "High" share the
+    # branches above; "Unclear" is QUADAS-2-specific.
+    if rob_overall == "Unclear":
+        return 1, "Unclear risk of bias in one or more QUADAS-2 domains (conservative)"
 
     return 1, f"risk of bias ({rob_overall})"
 
@@ -617,6 +631,7 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
                    paper_estimates: list[dict[str, Any]] | None = None,
                    quadas3_review_context: str | None = None,
                    outcome_override: str | None = None,
+                   tool_override: str | None = None,
                    ) -> dict[str, Any]:
     """Appraise a single paper end-to-end. Writes one row to
     ``quality_appraisal_results`` per estimate (QUADAS-3 supports multiple
@@ -640,14 +655,21 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
     assessment against the paper's primary / headline accuracy estimate.
 
     ``quadas3_review_context`` is the user-supplied review-level context
-    (Phases 1+2 — synthesis question + ideal test accuracy trial) for
-    diagnostic-accuracy applicability assessment. Threaded into prompts.
+    for diagnostic-accuracy applicability assessment (Phases 1+2 — synthesis
+    question + ideal test accuracy trial when using QUADAS-3; PIRT review
+    question when using QUADAS-2). Threaded into prompts.
 
     ``outcome_override`` lets the reviewer specify the outcome to assess when
     the paper's auto-picked primary outcome is unclear or ambiguous. When
     supplied, it replaces the auto-pick as the ``assessed_outcome`` passed to
     the RoB tool's prompts. The auto-pick is still recorded as
     ``primary_outcome`` for audit.
+
+    ``tool_override`` selects between QUADAS-2 and QUADAS-3 for
+    diagnostic-accuracy papers (``'quadas2'`` or ``'quadas3'``). When unset
+    or set to anything other than a registered tool, the registry default
+    (currently QUADAS-3) is used. Override is ignored for non-diagnostic
+    study types so a stray param can't reroute an RCT to a QUADAS tool.
     """
     def _notify(level: str, msg: str) -> None:
         if on_progress:
@@ -690,6 +712,15 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
 
     study_type = classification.get("study_type", "")
     cfg = dispatch(study_type)
+    # Per-run tool override for diagnostic-accuracy papers (QUADAS-2 vs
+    # QUADAS-3). Shallow-copy the cfg so we never mutate the module-level
+    # registry — critical because run_batch_async is multi-threaded.
+    if cfg is not None and tool_override and study_type == "Diagnostic Accuracy":
+        if tool_override in _TOOL_RUNNERS:
+            cfg = {**cfg, "rob_tool": tool_override}
+        else:
+            logger.warning("Unknown tool_override %r for paper %s — falling back to %s",
+                            tool_override, paper_id, cfg["rob_tool"])
     if cfg is None:
         msg = (
             f"Study type '{study_type}' is not yet supported by Quality Appraisal. "
@@ -1018,6 +1049,7 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
     target_pico: dict[str, str] | None = None
     imprecision_thresholds: dict[str, str] | None = None
     quadas3_review_context: str | None = None
+    diagnostic_tool_choice: str | None = None
     paper_estimates_map: dict[str, list[dict[str, Any]]] = {}
     outcome_overrides_map: dict[str, str] = {}
     setup_conn = get_db_fn()
@@ -1032,7 +1064,7 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
             row = setup_conn.execute(
                 "SELECT target_pico_json, imprecision_thresholds_json, "
                 "       quadas3_review_context, paper_estimates_json, "
-                "       outcome_overrides_json "
+                "       outcome_overrides_json, diagnostic_tool_choice "
                 "FROM quality_appraisal_runs WHERE id=?",
                 (run_id,),
             ).fetchone()
@@ -1048,6 +1080,10 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
                 rc = (row["quadas3_review_context"] or "").strip()
                 if rc:
                     quadas3_review_context = rc
+            if row and row["diagnostic_tool_choice"]:
+                dtc = (row["diagnostic_tool_choice"] or "").strip().lower()
+                if dtc in ("quadas2", "quadas3"):
+                    diagnostic_tool_choice = dtc
             if row and row["paper_estimates_json"]:
                 try:
                     pe = json.loads(row["paper_estimates_json"])
@@ -1080,7 +1116,10 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
                        "Imprecision will be assessed against the supplied MID thresholds.")
         if quadas3_review_context:
             log_event(setup_conn, run_id, "info",
-                       "QUADAS-3 applicability will be judged against the supplied review context.")
+                       "Diagnostic-accuracy applicability will be judged against the supplied review context.")
+        if diagnostic_tool_choice:
+            log_event(setup_conn, run_id, "info",
+                       f"Diagnostic-accuracy papers will use {diagnostic_tool_choice.upper()}.")
         if paper_estimates_map:
             total_estimates = sum(len(v) for v in paper_estimates_map.values())
             log_event(setup_conn, run_id, "info",
@@ -1106,6 +1145,7 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
                     paper_estimates=paper_estimates,
                     quadas3_review_context=quadas3_review_context,
                     outcome_override=outcome_override,
+                    tool_override=diagnostic_tool_choice,
                 )
             except Exception as e:
                 logger.exception("Unhandled error in appraise_paper (run=%s paper=%s)",
@@ -1217,6 +1257,7 @@ def prompt_catalog() -> dict[str, Any]:
             "rob2_crossover": rob2_crossover.prompt_catalog(),
             "robins_i":       robins_i.prompt_catalog(),
             "quadas3":        quadas3.prompt_catalog(),
+            "quadas2":        quadas2.prompt_catalog(),
         },
         "reporting_guidelines": {
             "consort2025":       consort2025.prompt_catalog(),
@@ -1327,20 +1368,23 @@ def flatten_result_row(result_row: dict[str, Any],
     row["applicability_overall"] = result_row.get("applicability_overall") or ""
 
     # Per-domain judgements + all signaling-question answers. Dispatch the
-    # DOMAINS list by rob_tool so ROBINS-I V2 rows get 6 domains, QUADAS-3
-    # rows get 4, and the rest fall back to RoB 2's 5.
+    # DOMAINS list by rob_tool so ROBINS-I V2 rows get 6 domains, QUADAS-2
+    # rows get 4 (different signal IDs from QUADAS-3), QUADAS-3 rows get 4,
+    # and the rest fall back to RoB 2's 5.
     tool = result_row.get("rob_tool")
     if tool == "robins_i":
         domains_for_tool = robins_i.DOMAINS
     elif tool == "quadas3":
         domains_for_tool = quadas3.DOMAINS
+    elif tool == "quadas2":
+        domains_for_tool = quadas2.DOMAINS
     elif tool == "rob2_crossover":
         domains_for_tool = rob2_crossover.DOMAINS
     else:
         domains_for_tool = rob2.DOMAINS
 
     # ROBINS-I V2 preflight columns (B1/B2/B3/C4 + variant + screening
-    # decision). Empty for RoB 2 / QUADAS-3 rows.
+    # decision). Empty for RoB 2 / QUADAS rows.
     if tool == "robins_i":
         preflight = rob_domains.get("preflight") or {}
         row["robins_b1"] = preflight.get("B1", "")
@@ -1354,8 +1398,9 @@ def flatten_result_row(result_row: dict[str, Any],
     for dom in domains_for_tool:
         d = rob_domains.get(str(dom["id"])) or {}
         row[f"rob_d{dom['id']}_judgement"] = d.get("judgement", "")
-        # QUADAS-3 — also dump per-domain applicability (3 of 4 domains have it)
-        if tool == "quadas3" and dom.get("has_applicability"):
+        # QUADAS-2 / QUADAS-3 — also dump per-domain applicability (3 of 4
+        # domains have it; Flow & Timing / Analysis are RoB-only).
+        if tool in ("quadas2", "quadas3") and dom.get("has_applicability"):
             row[f"rob_d{dom['id']}_applicability"] = d.get("applicability_judgement", "")
         for sig in dom["signals"]:
             row[f"rob_{sig['id']}"] = (d.get("signals") or {}).get(sig["id"], "")
