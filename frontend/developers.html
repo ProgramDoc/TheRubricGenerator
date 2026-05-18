@@ -190,6 +190,32 @@ pre.code { background: var(--navy); color: #e2e8f0; padding: 12px 14px; border-r
     </div>
   </div>
 
+  <!-- Chrome Extension Pairing -->
+  <div class="card">
+    <div class="card-header"><h2>🧩 Chrome Extension</h2></div>
+    <div class="card-body">
+      <p style="font-size:12px;color:var(--muted);margin-bottom:10px">
+        Pair the Chrome extension to fetch <strong>paywalled PDFs through your authenticated browser</strong>
+        (institutional VPN, SSO, library proxy). The extension processes a queue of papers from your imports —
+        no credentials ever touch our server.
+      </p>
+      <div id="ext-status" style="font-size:12px;margin-bottom:10px;color:var(--muted)">Loading…</div>
+      <div id="ext-actions" class="btn-group"></div>
+      <div id="ext-pairing-display" style="margin-top:12px"></div>
+      <details style="margin-top:14px;font-size:12px">
+        <summary style="cursor:pointer;color:var(--muted)">How to install</summary>
+        <ol style="padding-left:20px;line-height:1.8;color:var(--muted);margin-top:8px">
+          <li>Clone this repo (or download the <code>extension/</code> folder)</li>
+          <li>Open <code>chrome://extensions</code> → toggle <strong>Developer mode</strong> on</li>
+          <li>Click <strong>Load unpacked</strong> → select the <code>extension/</code> folder</li>
+          <li>Click "Generate pairing code" above, paste it into the extension popup</li>
+          <li>From the search-import modal, pick "🧩 Via my browser extension" and click Import</li>
+          <li>Open the extension popup, click "Process queue"</li>
+        </ol>
+      </details>
+    </div>
+  </div>
+
   <!-- Quick Start -->
   <div class="card">
     <div class="card-header"><h2>🚀 Quick Start</h2></div>
@@ -451,8 +477,81 @@ async function revokeKey() {
   loadKeyStatus();
 }
 
+/* ─── Chrome extension pairing ─── */
+async function loadExtensionStatus() {
+  try {
+    const r = await fetch('/api/extension/status');
+    if (!r.ok) return;
+    const s = await r.json();
+    const status = document.getElementById('ext-status');
+    const actions = document.getElementById('ext-actions');
+    if (s.paired) {
+      const paired = s.paired_at ? new Date(s.paired_at).toLocaleString() : '—';
+      status.innerHTML = `<span style="color:var(--green);font-weight:700">✓ Connected</span> · paired ${paired}` +
+        (s.queue_count > 0 ? ` · <strong>${s.queue_count} paper(s) in queue</strong>` : ' · queue empty');
+      actions.innerHTML = `
+        <button class="btn btn-primary" onclick="mintPairingCode()">New pairing code</button>
+        <button class="btn btn-red" onclick="revokeExtension()">Revoke</button>
+      `;
+    } else {
+      status.innerHTML = '<span style="color:var(--muted)">Not connected — pair the extension to enable PDF fetch via your browser.</span>';
+      actions.innerHTML = '<button class="btn btn-primary" onclick="mintPairingCode()">Generate pairing code</button>';
+      document.getElementById('ext-pairing-display').innerHTML = '';
+    }
+  } catch (e) {
+    console.error('loadExtensionStatus failed:', e);
+  }
+}
+
+let pairingCountdownTimer = null;
+
+async function mintPairingCode() {
+  if (pairingCountdownTimer) { clearInterval(pairingCountdownTimer); pairingCountdownTimer = null; }
+  const r = await fetch('/api/extension/pair-code', { method: 'POST' });
+  if (!r.ok) { alert('Failed to mint pairing code'); return; }
+  const data = await r.json();
+  const target = document.getElementById('ext-pairing-display');
+  const expiresAt = new Date(data.expires_at).getTime();
+
+  function render() {
+    const remaining = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
+    if (remaining <= 0) {
+      target.innerHTML = '<div style="color:var(--red);font-size:12px">Code expired. Generate a new one.</div>';
+      if (pairingCountdownTimer) { clearInterval(pairingCountdownTimer); pairingCountdownTimer = null; }
+      return;
+    }
+    const min = Math.floor(remaining / 60);
+    const sec = (remaining % 60).toString().padStart(2, '0');
+    target.innerHTML = `
+      <div style="background:var(--paper-2);border:1px solid var(--border);border-radius:6px;padding:14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Pairing code</div>
+          <div style="font-family:var(--mono,monospace);font-size:22px;font-weight:700;color:var(--text);letter-spacing:.05em">${data.code}</div>
+        </div>
+        <div style="font-size:11px;color:var(--muted)">
+          Expires in <strong>${min}:${sec}</strong>
+        </div>
+        <button class="btn btn-copy" onclick="navigator.clipboard.writeText('${data.code}').then(() => this.textContent = '✓ Copied')">Copy</button>
+        <div style="font-size:11px;color:var(--muted);flex-basis:100%">
+          Paste this into the Chrome extension popup → "Pair" field. The code is single-use.
+        </div>
+      </div>
+    `;
+  }
+  render();
+  pairingCountdownTimer = setInterval(render, 1000);
+}
+
+async function revokeExtension() {
+  if (!confirm('Revoke the Chrome extension? It will stop working immediately and you\'ll need a new pairing code to reconnect.')) return;
+  await fetch('/api/extension/token', { method: 'DELETE' });
+  if (pairingCountdownTimer) { clearInterval(pairingCountdownTimer); pairingCountdownTimer = null; }
+  loadExtensionStatus();
+}
+
 checkAuth();
 loadKeyStatus();
+loadExtensionStatus();
 </script>
 </body>
 </html>

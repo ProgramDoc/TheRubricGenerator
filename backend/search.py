@@ -898,6 +898,85 @@ def import_results(conn: sqlite3.Connection, session_id: int,
     return {"imported": imported, "skipped": skipped, "failed": failed, "paper_ids": paper_ids}
 
 
+def import_results_extension(conn: sqlite3.Connection, session_id: int,
+                              result_ids: list[int], user_id: int,
+                              project_id: int | None = None) -> dict:
+    """Import selected search results as papers awaiting Chrome-extension fetch.
+
+    Same shape as :func:`import_results` (mode='metadata') but stamps
+    ``pdf_status='extension_pending'`` instead of ``'metadata_only'``. The
+    Chrome extension polls ``GET /api/extension/queue`` for these rows and
+    POSTs the PDF bytes back to ``/api/extension/papers/{id}/pdf``.
+
+    Synchronous: no daemon thread. The user's browser owns the next step.
+    """
+    imported = 0
+    skipped = 0
+    failed = 0
+    paper_ids: list[int] = []
+
+    for rid in result_ids:
+        r = conn.execute(
+            "SELECT * FROM search_results WHERE id = ? AND session_id = ?",
+            (rid, session_id),
+        ).fetchone()
+        if not r:
+            continue
+        # If a paper row already exists with a real PDF, leave it alone — but
+        # if it's metadata-only / fetch_failed, requeue it for the extension.
+        existing_paper = None
+        if r["imported"] and r["paper_id"]:
+            existing_paper = conn.execute(
+                "SELECT id, pdf_status FROM papers WHERE id = ?",
+                (r["paper_id"],),
+            ).fetchone()
+            if existing_paper and existing_paper["pdf_status"] == "present":
+                skipped += 1
+                continue
+
+        if existing_paper:
+            # Re-queue an existing metadata-only / fetch_failed row.
+            try:
+                with conn:
+                    conn.execute(
+                        "UPDATE papers SET pdf_status = 'extension_pending' WHERE id = ?",
+                        (existing_paper["id"],),
+                    )
+                    conn.commit()
+                paper_id = existing_paper["id"]
+            except Exception as e:
+                logger.error("Failed to requeue paper %s for extension: %s",
+                             existing_paper["id"], e)
+                failed += 1
+                continue
+        else:
+            paper_id = _insert_metadata_paper(conn, r, user_id, project_id)
+            if paper_id is None:
+                failed += 1
+                continue
+            try:
+                with conn:
+                    conn.execute(
+                        "UPDATE papers SET pdf_status = 'extension_pending' WHERE id = ?",
+                        (paper_id,),
+                    )
+                    conn.execute(
+                        "UPDATE search_results SET imported = 1, paper_id = ? WHERE id = ?",
+                        (paper_id, rid),
+                    )
+                    conn.commit()
+            except Exception as e:
+                logger.error("Failed to mark paper %s extension_pending: %s",
+                             paper_id, e)
+                failed += 1
+                continue
+
+        paper_ids.append(paper_id)
+        imported += 1
+
+    return {"imported": imported, "skipped": skipped, "failed": failed, "paper_ids": paper_ids}
+
+
 # ─────────────────────────────────────────────
 # Background PDF-fetch worker
 # ─────────────────────────────────────────────

@@ -1027,12 +1027,21 @@ table.res-table tbody tr:hover { background: #f8fafc; }
         </div>
       </div>
       <div class="import-mode-card" data-mode="browser" onclick="setImportMode('browser')"
-           style="border:2px solid var(--rule, #e2e8f0);border-radius:6px;padding:12px;margin-bottom:14px;cursor:pointer">
+           style="border:2px solid var(--rule, #e2e8f0);border-radius:6px;padding:12px;margin-bottom:10px;cursor:pointer">
         <div style="font-weight:700;font-size:12px;color:var(--ink-1, #0f172a)">🤖 Fetch PDF (browser agent) <span style="color:var(--ink-4, #64748b);font-weight:500" id="import-browser-cost">— 0 credits</span></div>
         <div style="font-size:11px;color:var(--ink-3, #475569);margin-top:4px;line-height:1.4">
           Final tier. Fires up a real Chromium browser session, navigates the publisher landing page,
           and clicks through to download the PDF — picks up cookies + Referer headers that Firecrawl can't.
           Slow (5–30s per paper) and most expensive. Use when Firecrawl still misses.
+        </div>
+      </div>
+      <div class="import-mode-card" data-mode="extension" onclick="setImportMode('extension')" id="import-mode-extension"
+           style="display:none;border:2px solid var(--rule, #e2e8f0);border-radius:6px;padding:12px;margin-bottom:14px;cursor:pointer">
+        <div style="font-weight:700;font-size:12px;color:var(--ink-1, #0f172a)">🧩 Via my Chrome extension <span style="color:var(--ink-4, #64748b);font-weight:500">— free</span></div>
+        <div style="font-size:11px;color:var(--ink-3, #475569);margin-top:4px;line-height:1.4">
+          Queues these papers for your paired Chrome extension. The extension fetches each PDF inside
+          <em>your</em> browser session — perfect for paywalled journals you have institutional access to.
+          Open the extension popup and click "Process queue" to run.
         </div>
       </div>
     </div>
@@ -3544,6 +3553,7 @@ function importSelected() {
     document.getElementById('import-firecrawl-cost').textContent = '— ' + (ids.length * PDF_FIRECRAWL_CREDIT_COST) + ' credits';
     document.getElementById('import-browser-cost').textContent = '— ' + (ids.length * PDF_BROWSER_CREDIT_COST) + ' credits';
     setImportMode('auto');
+    refreshExtensionImportCard();
     document.getElementById('import-modal').classList.add('open');
   } catch (err) {
     console.error('importSelected failed:', err);
@@ -3562,6 +3572,20 @@ function setImportMode(mode) {
     card.style.borderColor = active ? 'var(--blue, #3b82f6)' : 'var(--rule, #e2e8f0)';
     card.style.background = active ? '#f1f5ff' : '#fff';
   });
+}
+
+async function refreshExtensionImportCard() {
+  var card = document.getElementById('import-mode-extension');
+  if (!card) return;
+  try {
+    var r = await fetch('/api/extension/status');
+    if (!r.ok) { card.style.display = 'none'; return; }
+    var s = await r.json();
+    card.style.display = s.paired ? 'block' : 'none';
+    if (!s.paired && importMode === 'extension') setImportMode('auto');
+  } catch (e) {
+    card.style.display = 'none';
+  }
 }
 
 async function submitImport() {
@@ -3590,6 +3614,9 @@ async function submitImport() {
     closeImportModal();
     if (importMode === 'metadata') {
       showToast('Imported: ' + data.imported + ', Skipped: ' + data.skipped + ', Failed: ' + data.failed,
+                data.imported > 0 ? 'success' : 'info');
+    } else if (importMode === 'extension') {
+      showToast('Queued ' + data.imported + ' paper(s) for your Chrome extension. Open the extension popup → Process queue.',
                 data.imported > 0 ? 'success' : 'info');
     } else {
       showToast('Fetching ' + data.total + ' PDFs in the background…', 'info');

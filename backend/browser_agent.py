@@ -140,79 +140,21 @@ async def _gather_anchors(page) -> list[dict]:
         return []
 
 
-def _llm_pick_pdf_url(landing_url: str, anchors: list[dict]) -> str | None:
-    """Sync Claude call. Returns a chosen URL or None on decline/error.
-
-    Runs in a worker thread (called via ``asyncio.to_thread``) so the
-    Playwright event loop isn't blocked by a synchronous httpx request.
-    """
-    if not anchors:
-        return None
-    import json
-    try:
-        from . import helpers
-    except Exception as e:
-        logger.info("Browser agent: helpers import failed: %s", e)
-        return None
-    payload = json.dumps(anchors, separators=(",", ":"))[:8000]
-    system = (
-        "You help a librarian download academic PDFs. Given the visible links on "
-        "a publisher's article landing page, identify the URL that downloads the "
-        "full-text PDF. Common patterns: href contains '/pdf/' or ends '.pdf'; "
-        "text or aria-label contains 'Download PDF', 'Full text PDF', 'View PDF'; "
-        "type='application/pdf'. If the page is paywalled, login-walled, or the "
-        "PDF link is genuinely missing, return null and decline. Return ONLY a "
-        "single JSON object with shape "
-        "{\"pdf_url\": <absolute URL string or null>, \"confidence\": <0.0-1.0>, "
-        "\"reason\": <one short sentence>}."
-    )
-    user = (
-        f"Landing URL: {landing_url}\n\n"
-        f"Visible anchors (first 200, JSON):\n{payload}\n\n"
-        "Respond with the JSON object only."
-    )
-    try:
-        raw = helpers.call_anthropic(
-            [{"role": "user", "content": user}],
-            system,
-            max_tokens=256,
-            model="claude-haiku-4-5-20251001",
-        )
-    except Exception as e:
-        logger.info("Browser agent: LLM call failed: %s", e)
-        return None
-    try:
-        parsed = helpers.parse_json_response(raw)
-    except Exception as e:
-        logger.info("Browser agent: LLM JSON parse failed: %s | raw=%s", e, str(raw)[:200])
-        return None
-    pdf_url = parsed.get("pdf_url")
-    confidence = parsed.get("confidence") or 0
-    reason = (parsed.get("reason") or "")[:200]
-    if not pdf_url or pdf_url == "null":
-        logger.info("Browser agent: LLM declined PDF URL for %s — %s",
-                    landing_url[:80], reason)
-        return None
-    if not isinstance(pdf_url, str) or not pdf_url.startswith("http"):
-        logger.info("Browser agent: LLM returned invalid URL '%s'", str(pdf_url)[:120])
-        return None
-    if confidence < 0.5:
-        logger.info("Browser agent: LLM low confidence (%s) — %s",
-                    confidence, reason)
-        return None
-    logger.info("Browser agent: LLM picked %s (conf=%s) — %s",
-                pdf_url[:120], confidence, reason)
-    return pdf_url
-
-
 async def _llm_resolve_pdf_url(page, landing_url: str) -> str | None:
-    """Async wrapper: harvest anchors, run the (sync) LLM call in a worker
-    thread, return the picked URL or None."""
+    """Async wrapper: harvest anchors, run the (sync) shared LLM picker in a
+    worker thread, return the picked URL or None.
+
+    The picker prompt + JSON contract live in ``backend/pdf_link_picker.py``
+    so the Chrome extension's `/api/extension/resolve-pdf-url` endpoint gets
+    identical behavior."""
     anchors = await _gather_anchors(page)
     if not anchors:
         return None
     try:
-        return await asyncio.to_thread(_llm_pick_pdf_url, landing_url, anchors)
+        from . import pdf_link_picker
+        return await asyncio.to_thread(
+            pdf_link_picker.pick_pdf_url_from_anchors, landing_url, anchors
+        )
     except Exception as e:
         logger.info("Browser agent: LLM thread failed: %s", e)
         return None

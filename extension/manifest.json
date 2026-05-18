@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "The AI Researcher — PDF Fetcher",
+  "version": "0.1.0",
+  "description": "Fetch paywalled PDFs through your authenticated browser session and upload them to The AI Researcher.",
+  "permissions": ["storage", "tabs", "scripting", "activeTab"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "The AI Researcher — PDF Fetcher"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

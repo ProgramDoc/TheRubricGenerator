@@ -248,6 +248,7 @@
     <div class="toolbar">
       <span class="count" id="result-count">0 papers</span>
       <button class="btn" id="bulk-assign-btn" onclick="showBulkAssignPop(event)" disabled>Add selected to project…</button>
+      <button class="btn" id="bulk-extension-btn" onclick="bulkSendToExtension()" disabled style="display:none">↪ Send to extension</button>
       <button class="btn danger" id="bulk-delete-btn" onclick="bulkDelete()" disabled>Delete selected</button>
       <button class="btn" onclick="loadLibrary()">↻ Refresh</button>
     </div>
@@ -302,6 +303,7 @@ function escHtml(s) {
   });
 
   await loadLibrary();
+  refreshExtensionBulkButton();
 })();
 
 // ─── Data loading ─────────────────────────────────────────────────────
@@ -458,12 +460,60 @@ function refreshBulkButtons() {
   const n = _selected.size;
   document.getElementById('bulk-assign-btn').disabled = n === 0;
   document.getElementById('bulk-delete-btn').disabled = n === 0;
+  // The "Send to extension" button is only useful for selected papers that
+  // are NOT already PDF-present.
+  const extBtn = document.getElementById('bulk-extension-btn');
+  if (extBtn) {
+    const sendable = [..._selected].filter(pid => {
+      const p = _papers.find(x => x.id === pid);
+      return p && p.pdf_status && p.pdf_status !== 'present';
+    });
+    extBtn.disabled = sendable.length === 0;
+    extBtn.textContent = sendable.length > 0
+      ? `↪ Send ${sendable.length} to extension`
+      : '↪ Send to extension';
+  }
   if (n > 0) {
     document.getElementById('result-count').textContent = `${n} selected of ${_papers.length} papers`;
   } else {
     document.getElementById('result-count').textContent =
       _papers.length === 1 ? '1 paper' : `${_papers.length} papers`;
   }
+}
+
+async function refreshExtensionBulkButton() {
+  // Show the bulk button only if the user has paired the extension.
+  const btn = document.getElementById('bulk-extension-btn');
+  if (!btn) return;
+  try {
+    const r = await fetch('/api/extension/status');
+    if (!r.ok) { btn.style.display = 'none'; return; }
+    const s = await r.json();
+    btn.style.display = s.paired ? '' : 'none';
+  } catch {
+    btn.style.display = 'none';
+  }
+}
+
+async function bulkSendToExtension() {
+  const sendable = [..._selected].filter(pid => {
+    const p = _papers.find(x => x.id === pid);
+    return p && p.pdf_status && p.pdf_status !== 'present';
+  });
+  if (!sendable.length) return;
+  let ok = 0, failed = 0;
+  for (const pid of sendable) {
+    try {
+      // Mark the paper as extension_pending. Reuse the search-import flow
+      // would require an associated search_result row; instead, we ask the
+      // backend to re-queue an existing paper directly.
+      const r = await fetch(`/api/papers/${pid}/queue-for-extension`, { method: 'POST' });
+      if (r.ok) ok++; else failed++;
+    } catch (e) { failed++; }
+  }
+  alert(`Queued ${ok} paper(s) for the Chrome extension. Open the extension popup → Process queue.${failed ? ' ' + failed + ' failed.' : ''}`);
+  _selected.clear();
+  await loadLibrary();
 }
 
 // ─── Bulk actions ─────────────────────────────────────────────────────

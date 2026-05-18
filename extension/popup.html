@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>The AI Researcher — PDF Fetcher</title>
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <div class="logo">📄 The AI Researcher</div>
+    <div class="subtitle">PDF Fetcher</div>
+  </header>
+
+  <section id="pair-section" class="hidden">
+    <div class="status muted">Not paired yet.</div>
+    <p class="help">
+      Generate a pairing code on the
+      <a href="#" id="open-developers">Developers page</a>
+      and paste it below.
+    </p>
+    <div class="pair-row">
+      <input type="text" id="pair-input" placeholder="EX-XXXX-XXXX" autocomplete="off" maxlength="20">
+      <button id="pair-btn">Pair</button>
+    </div>
+    <div class="server-row">
+      <label for="server-url">Server</label>
+      <input type="url" id="server-url" placeholder="https://therubricgenerator.onrender.com">
+    </div>
+    <div id="pair-error" class="err hidden"></div>
+  </section>
+
+  <section id="connected-section" class="hidden">
+    <div class="status ok">
+      <span id="connected-dot">●</span>
+      Connected
+    </div>
+    <div class="queue-summary">
+      <span id="queue-count">0</span> paper<span id="queue-plural">s</span> in queue
+    </div>
+    <div class="actions">
+      <button id="process-btn" class="primary">Process queue</button>
+      <button id="refresh-btn" title="Refresh queue count">↻</button>
+    </div>
+    <div id="progress" class="hidden">
+      <div class="progress-line"><span id="progress-now">—</span></div>
+      <div class="progress-bar"><div id="progress-fill" style="width:0%"></div></div>
+      <div class="progress-meta"><span id="progress-done">0</span> done · <span id="progress-skipped">0</span> skipped · <span id="progress-total">0</span> total</div>
+    </div>
+    <ul id="event-log"></ul>
+    <div class="actions actions-secondary">
+      <button id="unpair-btn" class="danger-link">Unpair extension</button>
+    </div>
+  </section>
+
+  <footer>
+    <a href="https://github.com/ProgramDoc/TheRubricGenerator" target="_blank">v0.1.0 — source</a>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>
