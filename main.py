@@ -8410,6 +8410,14 @@ class QualityAppraisalRunPayload(BaseModel):
     # Per-run RoB tool selection for diagnostic-accuracy papers
     # ('quadas2' | 'quadas3' | None). None → registry default (QUADAS-3).
     diagnostic_tool_choice: str | None = None
+    # Per-run RoB tool selection for non-randomized cohort-type papers
+    # ('robins_i' | 'robins_i_v1' | None). None → registry default (V2).
+    # Ignored for randomized / diagnostic / single-arm study types.
+    robins_i_tool_choice: str | None = None
+    # Per-run analysis aim for cluster-randomized trials
+    # ('assignment' | 'adhering' | None). None → 'assignment' (ITT) default.
+    # Selects the RoB 2 CRT Domain 2 variant; ignored for other study types.
+    rob2_cluster_aim: str | None = None
 
 
 class QualityAppraisalExtractEstimatesPayload(BaseModel):
@@ -8535,6 +8543,14 @@ def api_qa_run_create(body: QualityAppraisalRunPayload,
         if dtc is not None and dtc not in ("quadas2", "quadas3"):
             raise HTTPException(400, "diagnostic_tool_choice must be 'quadas2' or 'quadas3'")
 
+        rtc = (body.robins_i_tool_choice or "").strip().lower() or None
+        if rtc is not None and rtc not in ("robins_i", "robins_i_v1"):
+            raise HTTPException(400, "robins_i_tool_choice must be 'robins_i' or 'robins_i_v1'")
+
+        rca = (body.rob2_cluster_aim or "").strip().lower() or None
+        if rca is not None and rca not in ("assignment", "adhering"):
+            raise HTTPException(400, "rob2_cluster_aim must be 'assignment' or 'adhering'")
+
         outcome_overrides_json = "{}"
         if body.paper_outcome_overrides:
             cleaned = {
@@ -8555,13 +8571,14 @@ def api_qa_run_create(body: QualityAppraisalRunPayload,
                          credit_cost, status, target_pico_json,
                          imprecision_thresholds_json,
                          quadas3_review_context, paper_estimates_json,
-                         outcome_overrides_json, diagnostic_tool_choice)
-                   VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?) RETURNING id""",
+                         outcome_overrides_json, diagnostic_tool_choice,
+                         robins_i_tool_choice, rob2_cluster_aim)
+                   VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
                 (user["id"], body.project_id,
                  json.dumps(paper_ids), len(paper_ids), total_cost,
                  target_pico_json, imprecision_thresholds_json,
                  review_ctx, paper_estimates_json,
-                 outcome_overrides_json, dtc),
+                 outcome_overrides_json, dtc, rtc, rca),
             )
             run_id = cur.lastrowid
             conn.commit()
@@ -8658,7 +8675,7 @@ def api_qa_runs_list(rubricgen_session: str | None = Cookie(default=None),
         rows = conn.execute(
             """SELECT r.id, r.project_id, r.paper_count, r.status,
                       r.credit_cost, r.credits_refunded, r.error_message,
-                      r.diagnostic_tool_choice,
+                      r.diagnostic_tool_choice, r.robins_i_tool_choice,
                       r.created_at, r.completed_at,
                       p.name AS project_name
                  FROM quality_appraisal_runs r
@@ -8679,7 +8696,7 @@ def _load_qa_run(conn, run_id: int, user_id: int, is_admin: bool) -> dict:
                   r.target_pico_json, r.imprecision_thresholds_json,
                   r.quadas3_review_context, r.paper_estimates_json,
                   r.outcome_overrides_json,
-                  r.diagnostic_tool_choice,
+                  r.diagnostic_tool_choice, r.robins_i_tool_choice,
                   r.created_at, r.completed_at, r.deleted_at,
                   p.name AS project_name
              FROM quality_appraisal_runs r

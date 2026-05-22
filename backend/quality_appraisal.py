@@ -36,8 +36,8 @@ from . import paper_files
 from . import indirectness as indir_mod
 from . import imprecision as imprec_mod
 from .helpers import call_anthropic, parse_json_response
-from .rob_tools import rob2, rob2_crossover, robins_i, quadas3, quadas2
-from .reporting_guidelines import consort2025, consort_crossover, strobe, stard
+from .rob_tools import rob2, rob2_crossover, rob2_cluster, robins_i, robins_i_v1, quadas3, quadas2
+from .reporting_guidelines import consort2025, consort_crossover, consort_cluster, strobe, stard
 
 logger = logging.getLogger("rubricgen")
 
@@ -62,6 +62,8 @@ CREATE TABLE IF NOT EXISTS quality_appraisal_runs (
     paper_estimates_json        TEXT NOT NULL DEFAULT '{}',
     outcome_overrides_json      TEXT NOT NULL DEFAULT '{}',
     diagnostic_tool_choice      TEXT,
+    robins_i_tool_choice        TEXT,
+    rob2_cluster_aim            TEXT,
     created_at                  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     completed_at                TIMESTAMP,
     deleted_at                  TIMESTAMP
@@ -166,21 +168,29 @@ STUDY_TYPE_REGISTRY: dict[str, dict[str, Any]] = {
     # checklist plus the Dwan et al. 2019 cross-over extension items
     # (washout, period effects, sequence randomization, paired analysis, etc.).
     "Crossover Trial":              {"rob_tool": "rob2_crossover", "reporting_guideline": "consort_crossover", "initial_grade": "High"},
+    # Cluster-randomized RCT — RoB 2 CRT extension (6 domains: 1a randomization
+    # + 1b identification/recruitment-timing + 2-5; Domain 2 has an ITT and a
+    # per-protocol variant selected per run via quality_appraisal_runs.rob2_cluster_aim).
+    # Reporting guideline is CONSORT 2025 base plus the Campbell et al. 2012
+    # cluster-randomised-trial extension items.
+    "Cluster Randomized Trial":     {"rob_tool": "rob2_cluster",   "reporting_guideline": "consort_cluster",   "initial_grade": "High"},
     # Future (not wired yet — classification skips + refunds):
-    # "Cluster Randomized Trial":    {"rob_tool": "rob2_cluster",    "reporting_guideline": "consort_cluster",    "initial_grade": "High"},
     # "SR with Meta-Analysis":       {"rob_tool": "amstar2",         "reporting_guideline": "prisma2020",         "initial_grade": "High"},
 }
 
 _TOOL_RUNNERS: dict[str, Callable] = {
     "rob2":           rob2.run,
     "rob2_crossover": rob2_crossover.run,
-    "robins_i":       robins_i.run,
+    "rob2_cluster":   rob2_cluster.run,
+    "robins_i":       robins_i.run,       # V2 (20 Nov 2025 cribsheet) — default
+    "robins_i_v1":    robins_i_v1.run,    # V1 (1 Aug 2016 cribsheet) — opt-in per run
     "quadas3":        quadas3.run,
     "quadas2":        quadas2.run,
 }
 _GUIDELINE_RUNNERS: dict[str, Callable] = {
     "consort2025":       consort2025.run,
     "consort_crossover": consort_crossover.run,
+    "consort_cluster":   consort_cluster.run,
     "strobe":            strobe.run,
     "stard":             stard.run,
 }
@@ -267,6 +277,18 @@ def migrate_qa_columns(conn) -> None:
         # (NULL = QUADAS-3 default for back-compat with existing rows)
         if not column_exists(conn, "quality_appraisal_runs", "diagnostic_tool_choice"):
             conn.execute("ALTER TABLE quality_appraisal_runs ADD COLUMN diagnostic_tool_choice TEXT")
+        # ROBINS-I V1 alongside V2 — per-run tool selection
+        # (NULL = V2 default for back-compat; "robins_i_v1" opts into V1 cribsheet
+        #  for cohort/case-control/NRSI/cross-sectional/case-crossover papers.
+        #  Single-arm study types ignore this — V1's cribsheet is cohort-only,
+        #  so they stay on V2's single_arm variant regardless.)
+        if not column_exists(conn, "quality_appraisal_runs", "robins_i_tool_choice"):
+            conn.execute("ALTER TABLE quality_appraisal_runs ADD COLUMN robins_i_tool_choice TEXT")
+        # RoB 2 Cluster per-run analysis aim — 'assignment' (intention-to-treat,
+        # default) or 'adhering' (per-protocol). Selects the Domain 2 variant.
+        # NULL = 'assignment' for back-compat with existing rows.
+        if not column_exists(conn, "quality_appraisal_runs", "rob2_cluster_aim"):
+            conn.execute("ALTER TABLE quality_appraisal_runs ADD COLUMN rob2_cluster_aim TEXT")
         conn.commit()
 
 
@@ -632,6 +654,8 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
                    quadas3_review_context: str | None = None,
                    outcome_override: str | None = None,
                    tool_override: str | None = None,
+                   robins_i_tool_override: str | None = None,
+                   rob2_cluster_aim: str | None = None,
                    ) -> dict[str, Any]:
     """Appraise a single paper end-to-end. Writes one row to
     ``quality_appraisal_results`` per estimate (QUADAS-3 supports multiple
@@ -670,6 +694,17 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
     or set to anything other than a registered tool, the registry default
     (currently QUADAS-3) is used. Override is ignored for non-diagnostic
     study types so a stray param can't reroute an RCT to a QUADAS tool.
+
+    ``robins_i_tool_override`` selects between ROBINS-I V2 and V1 for
+    non-randomized cohort-type papers (``'robins_i'`` for V2 (default) or
+    ``'robins_i_v1'`` for V1). Ignored for randomized / diagnostic /
+    single-arm study types (V1's cribsheet is cohort-only; single-arm uses
+    V2's single_arm variant).
+
+    ``rob2_cluster_aim`` selects the RoB 2 CRT Domain 2 variant for
+    cluster-randomized trials (``'assignment'`` for the intention-to-treat
+    effect (default) or ``'adhering'`` for the per-protocol effect). Only
+    consulted when the dispatched RoB tool is ``rob2_cluster``.
     """
     def _notify(level: str, msg: str) -> None:
         if on_progress:
@@ -721,6 +756,17 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
         else:
             logger.warning("Unknown tool_override %r for paper %s — falling back to %s",
                             tool_override, paper_id, cfg["rob_tool"])
+    # Per-run tool override for ROBINS-I cohort-type papers (V2 vs V1).
+    # Only applies when (a) the registry default is robins_i, AND
+    # (b) the study type is NOT single-arm (V1's cribsheet is cohort-only).
+    if (cfg is not None and robins_i_tool_override
+            and cfg.get("rob_tool") == "robins_i"
+            and study_type not in robins_i.SINGLE_ARM_STUDY_TYPES):
+        if robins_i_tool_override in ("robins_i", "robins_i_v1"):
+            cfg = {**cfg, "rob_tool": robins_i_tool_override}
+        else:
+            logger.warning("Unknown robins_i_tool_override %r for paper %s — keeping %s",
+                            robins_i_tool_override, paper_id, cfg["rob_tool"])
     if cfg is None:
         msg = (
             f"Study type '{study_type}' is not yet supported by Quality Appraisal. "
@@ -803,8 +849,14 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
         "progress": lambda domain_id: _notify(
             "progress", f"RoB {cfg['rob_tool']} domain {domain_id}"),
     }
-    if cfg["rob_tool"] in ("rob2", "rob2_crossover"):
+    if cfg["rob_tool"] in ("rob2", "rob2_crossover", "rob2_cluster"):
         rob_kwargs["outcome_is_override"] = outcome_is_override
+    # RoB 2 Cluster also takes the per-run analysis aim (ITT vs per-protocol),
+    # which picks the Domain 2 variant.
+    if cfg["rob_tool"] == "rob2_cluster":
+        rob_kwargs["aim"] = (
+            "adhering" if str(rob2_cluster_aim or "").strip().lower() == "adhering"
+            else "assignment")
     try:
         rob_domains, rob_overall, rob_direction = rob_runner(
             pdf_bytes, fields, classification, assessed_outcome,
@@ -1050,6 +1102,8 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
     imprecision_thresholds: dict[str, str] | None = None
     quadas3_review_context: str | None = None
     diagnostic_tool_choice: str | None = None
+    robins_i_tool_choice: str | None = None
+    rob2_cluster_aim: str | None = None
     paper_estimates_map: dict[str, list[dict[str, Any]]] = {}
     outcome_overrides_map: dict[str, str] = {}
     setup_conn = get_db_fn()
@@ -1064,7 +1118,8 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
             row = setup_conn.execute(
                 "SELECT target_pico_json, imprecision_thresholds_json, "
                 "       quadas3_review_context, paper_estimates_json, "
-                "       outcome_overrides_json, diagnostic_tool_choice "
+                "       outcome_overrides_json, diagnostic_tool_choice, "
+                "       robins_i_tool_choice, rob2_cluster_aim "
                 "FROM quality_appraisal_runs WHERE id=?",
                 (run_id,),
             ).fetchone()
@@ -1084,6 +1139,14 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
                 dtc = (row["diagnostic_tool_choice"] or "").strip().lower()
                 if dtc in ("quadas2", "quadas3"):
                     diagnostic_tool_choice = dtc
+            if row and row["robins_i_tool_choice"]:
+                rtc = (row["robins_i_tool_choice"] or "").strip().lower()
+                if rtc in ("robins_i", "robins_i_v1"):
+                    robins_i_tool_choice = rtc
+            if row and row["rob2_cluster_aim"]:
+                rca = (row["rob2_cluster_aim"] or "").strip().lower()
+                if rca in ("assignment", "adhering"):
+                    rob2_cluster_aim = rca
             if row and row["paper_estimates_json"]:
                 try:
                     pe = json.loads(row["paper_estimates_json"])
@@ -1120,6 +1183,16 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
         if diagnostic_tool_choice:
             log_event(setup_conn, run_id, "info",
                        f"Diagnostic-accuracy papers will use {diagnostic_tool_choice.upper()}.")
+        if robins_i_tool_choice:
+            label = "ROBINS-I V1 (1 Aug 2016 cribsheet)" if robins_i_tool_choice == "robins_i_v1" else "ROBINS-I V2 (20 Nov 2025 cribsheet)"
+            log_event(setup_conn, run_id, "info",
+                       f"Non-randomized cohort-type papers will use {label}.")
+        if rob2_cluster_aim:
+            aim_label = ("the per-protocol effect (effect of adhering to intervention)"
+                         if rob2_cluster_aim == "adhering"
+                         else "the intention-to-treat effect (effect of assignment to intervention)")
+            log_event(setup_conn, run_id, "info",
+                       f"Cluster-randomized trials will assess {aim_label}.")
         if paper_estimates_map:
             total_estimates = sum(len(v) for v in paper_estimates_map.values())
             log_event(setup_conn, run_id, "info",
@@ -1146,6 +1219,8 @@ def run_batch(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
                     quadas3_review_context=quadas3_review_context,
                     outcome_override=outcome_override,
                     tool_override=diagnostic_tool_choice,
+                    robins_i_tool_override=robins_i_tool_choice,
+                    rob2_cluster_aim=rob2_cluster_aim,
                 )
             except Exception as e:
                 logger.exception("Unhandled error in appraise_paper (run=%s paper=%s)",
@@ -1255,13 +1330,16 @@ def prompt_catalog() -> dict[str, Any]:
         "rob_tools": {
             "rob2":           rob2.prompt_catalog(),
             "rob2_crossover": rob2_crossover.prompt_catalog(),
+            "rob2_cluster":   rob2_cluster.prompt_catalog(),
             "robins_i":       robins_i.prompt_catalog(),
+            "robins_i_v1":    robins_i_v1.prompt_catalog(),
             "quadas3":        quadas3.prompt_catalog(),
             "quadas2":        quadas2.prompt_catalog(),
         },
         "reporting_guidelines": {
             "consort2025":       consort2025.prompt_catalog(),
             "consort_crossover": consort_crossover.prompt_catalog(),
+            "consort_cluster":   consort_cluster.prompt_catalog(),
             "strobe":            strobe.prompt_catalog(),
             "stard":             stard.prompt_catalog(),
         },
@@ -1374,12 +1452,19 @@ def flatten_result_row(result_row: dict[str, Any],
     tool = result_row.get("rob_tool")
     if tool == "robins_i":
         domains_for_tool = robins_i.DOMAINS
+    elif tool == "robins_i_v1":
+        domains_for_tool = robins_i_v1.DOMAINS
     elif tool == "quadas3":
         domains_for_tool = quadas3.DOMAINS
     elif tool == "quadas2":
         domains_for_tool = quadas2.DOMAINS
     elif tool == "rob2_crossover":
         domains_for_tool = rob2_crossover.DOMAINS
+    elif tool == "rob2_cluster":
+        # Domain 2 signal IDs differ by analysis aim — pick the variant the
+        # row actually used (run() records it under rob_domains["aim"]).
+        domains_for_tool = rob2_cluster.domains_for_aim(
+            rob_domains.get("aim") or "assignment")
     else:
         domains_for_tool = rob2.DOMAINS
 
@@ -1394,6 +1479,12 @@ def flatten_result_row(result_row: dict[str, Any],
         row["robins_variant"] = preflight.get("variant") or (rob_domains.get("1") or {}).get("variant", "")
         row["robins_screening_decision"] = preflight.get("screening_decision", "")
         row["robins_screening_reason"] = preflight.get("screening_reason", "")
+    # ROBINS-I V1 aim-preflight columns (§1.1 — auto-determined Stage-II aim
+    # of study + rationale). Empty for V2 / RoB 2 / QUADAS rows.
+    if tool == "robins_i_v1":
+        aim_pf = rob_domains.get("aim_preflight") or {}
+        row["robins_v1_aim"] = aim_pf.get("aim", "")
+        row["robins_v1_aim_rationale"] = aim_pf.get("rationale", "")
 
     for dom in domains_for_tool:
         d = rob_domains.get(str(dom["id"])) or {}

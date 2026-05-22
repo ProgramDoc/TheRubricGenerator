@@ -698,6 +698,46 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
         </div>
         <div id="run-estimates-list" style="margin-top:10px;display:none;"></div>
       </details>
+      <details style="margin:8px 0 4px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;background:var(--paper-2);">
+        <summary style="cursor:pointer;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);">Non-randomized cohort-type (ROBINS-I V1 / V2) (optional)</summary>
+        <div style="margin-top:8px;font-size:11px;color:var(--muted);line-height:1.45;">
+          For non-randomized cohort, case-control, NRSI, cross-sectional, and case-crossover papers, pick which ROBINS-I version to run. Single-arm / dose-escalation papers always use ROBINS-I V2's single_arm variant (V1's cribsheet is cohort-only).
+        </div>
+        <div style="margin-top:8px;">
+          <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px;">ROBINS-I version</label>
+          <div style="display:flex;gap:14px;font-size:12px;flex-wrap:wrap;">
+            <label style="display:flex;gap:6px;align-items:center;cursor:pointer;">
+              <input type="radio" name="ri-rob-tool" value="robins_i" checked> ROBINS-I V2 (20 Nov 2025 cribsheet, default)
+            </label>
+            <label style="display:flex;gap:6px;align-items:center;cursor:pointer;">
+              <input type="radio" name="ri-rob-tool" value="robins_i_v1"> ROBINS-I V1 (1 Aug 2016 cribsheet)
+            </label>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.45;">
+            V2 (default) has 6 domains with a B1/B2/B3 + C4 preflight that routes Domain 1 to Variant A (ITT) or B (per-protocol). V1 has 7 domains and an aim-gated Domain 4; this implementation adds an LLM-driven aim preflight (§1.1 of the V1 cribsheet) that auto-determines the Stage-II aim from the paper — mechanically equivalent to V2's C4 question.
+          </div>
+        </div>
+      </details>
+      <details style="margin:8px 0 4px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;background:var(--paper-2);">
+        <summary style="cursor:pointer;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);">Cluster-randomized trial (RoB 2 CRT) (optional)</summary>
+        <div style="margin-top:8px;font-size:11px;color:var(--muted);line-height:1.45;">
+          For cluster-randomized trials, pick which effect the review team aims to estimate. This selects the RoB 2 CRT Domain 2 variant; it has no effect on other study types.
+        </div>
+        <div style="margin-top:8px;">
+          <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px;">Analysis aim (Domain 2)</label>
+          <div style="display:flex;gap:14px;font-size:12px;flex-wrap:wrap;">
+            <label style="display:flex;gap:6px;align-items:center;cursor:pointer;">
+              <input type="radio" name="rob2-cluster-aim" value="assignment" checked> Effect of assignment — intention-to-treat (default)
+            </label>
+            <label style="display:flex;gap:6px;align-items:center;cursor:pointer;">
+              <input type="radio" name="rob2-cluster-aim" value="adhering"> Effect of adhering — per-protocol
+            </label>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.45;">
+            RoB 2 CRT has 6 domains (1a randomization, 1b identification/recruitment timing, 2-5). Domain 2 differs by aim: the assignment variant asks 8 signalling questions (2.1a, 2.1b, 2.2-2.7); the adhering variant asks 6 (2.1, 2.2-2.6).
+          </div>
+        </div>
+      </details>
       <div style="margin-top:12px;font-size:12px;color:var(--muted);"><span id="run-count">0</span> paper(s) selected.</div>
     </div>
     <div class="modal-foot">
@@ -821,6 +861,33 @@ const ROB2_CROSSOVER_DOMAIN_META = [
   { id: 4,   short: 'D4: Outcome measurement', full: 'Bias in measurement of the outcome' },
   { id: 5,   short: 'D5: Reported result',     full: 'Bias in selection of the reported result' },
 ];
+// RoB 2 cluster-randomized extension (RoB 2 CRT, 2021) — 6 domains. Adds
+// Domain 1b (timing of identification/recruitment of participants) after the
+// D1a randomization domain. Domain 2 has an ITT and a per-protocol variant
+// selected per run; the meta label is variant-agnostic (the detail modal
+// shows the variant's actual signalling questions).
+const ROB2_CLUSTER_DOMAIN_META = [
+  { id: '1a', short: 'D1a: Randomization',     full: 'Bias arising from the randomization process' },
+  { id: '1b', short: 'D1b: Identification',    full: 'Bias arising from the timing of identification or recruitment of participants' },
+  { id: 2,    short: 'D2: Deviations',         full: 'Bias due to deviations from the intended interventions' },
+  { id: 3,    short: 'D3: Missing data',       full: 'Bias due to missing outcome data' },
+  { id: 4,    short: 'D4: Outcome measurement', full: 'Bias in measurement of the outcome' },
+  { id: 5,    short: 'D5: Reported result',    full: 'Bias in selection of the reported result' },
+];
+// ROBINS-I V1 (1 August 2016 cribsheet) — 7 domains. Same intent as V2 but the
+// historical layout: separate "Bias due to deviations from intended
+// interventions" domain (D4, aim-gated) that V2 folded into Variant B.
+// V1's judgement scale has 5 levels (Low / Moderate / Serious / Critical /
+// No information) — V2 retired the "No information" judgement, V1 keeps it.
+const ROBINS_I_V1_DOMAIN_META = [
+  { id: 1, short: 'D1: Confounding',        full: 'Bias due to confounding' },
+  { id: 2, short: 'D2: Selection',          full: 'Bias in selection of participants into the study' },
+  { id: 3, short: 'D3: Classification',     full: 'Bias in classification of interventions' },
+  { id: 4, short: 'D4: Deviations',         full: 'Bias due to deviations from intended interventions (aim-gated)' },
+  { id: 5, short: 'D5: Missing data',       full: 'Bias due to missing data' },
+  { id: 6, short: 'D6: Outcome measure',    full: 'Bias in measurement of outcomes' },
+  { id: 7, short: 'D7: Reported result',    full: 'Bias in selection of the reported result' },
+];
 // QUADAS-2 (Whiting 2011) — 4 domains. D1-D3 carry RoB + applicability;
 // D4 (Flow and Timing) is RoB-only. Same hasApplicability shape as QUADAS-3
 // so the detail-modal applicability section reuses the same render path.
@@ -837,6 +904,8 @@ function domainMetaFor(tool, variant) {
   if (tool === 'quadas2')        return QUADAS2_DOMAIN_META;
   if (tool === 'quadas3')        return QUADAS3_DOMAIN_META;
   if (tool === 'rob2_crossover') return ROB2_CROSSOVER_DOMAIN_META;
+  if (tool === 'rob2_cluster')   return ROB2_CLUSTER_DOMAIN_META;
+  if (tool === 'robins_i_v1')    return ROBINS_I_V1_DOMAIN_META;
   if (tool === 'robins_i')       return variant === 'single_arm' ? ROBINS_I_SA_DOMAIN_META : ROBINS_I_DOMAIN_META;
   return ROB2_DOMAIN_META;
 }
@@ -845,6 +914,12 @@ function domainMetaFor(tool, variant) {
 // guideline header at the half-dozen sites that previously hardcoded 'quadas3'.
 function isDxToolRow(r) {
   return r && (r.rob_tool === 'quadas2' || r.rob_tool === 'quadas3');
+}
+// True for any ROBINS-I tool (V1 or V2). Used at sites that previously
+// hardcoded 'robins_i' — STROBE label, GRADE explanation, dev-view chip,
+// non-randomized study-type framing.
+function isRobinsITool(t) {
+  return t === 'robins_i' || t === 'robins_i_v1';
 }
 // Extract the variant string from a result row's rob_domains. Returns
 // undefined when missing (e.g. RoB 2 rows, legacy V1 ROBINS-I rows, QUADAS-3 rows).
@@ -862,7 +937,7 @@ const ROB_BADGE_CLS = {
   'Low (except for concerns about uncontrolled benchmarking)': 'rob-low',
   'Some concerns': 'rob-some', 'High': 'rob-high',
   'Moderate': 'rob-moderate', 'Serious': 'rob-high', 'Critical': 'rob-critical',
-  'No information': 'rob-ni',  // legacy V1 only
+  'No information': 'rob-ni',  // ROBINS-I V1 (5-level scale: Low/Moderate/Serious/Critical/No information)
   'Insufficient information': 'rob-ni',  // QUADAS-3
   'Unclear': 'rob-ni',  // QUADAS-2 (reuses the yellow rob-ni style)
 };
@@ -1171,6 +1246,12 @@ function openRunModal() {
   const q3radio = document.querySelector('input[name="dx-rob-tool"][value="quadas3"]');
   if (q3radio) q3radio.checked = true;
   onDxToolChange();
+  // Reset to default ROBINS-I V2 selection on each open
+  const riV2radio = document.querySelector('input[name="ri-rob-tool"][value="robins_i"]');
+  if (riV2radio) riV2radio.checked = true;
+  // Reset to default RoB 2 CRT aim (effect of assignment / ITT) on each open
+  const clAimRadio = document.querySelector('input[name="rob2-cluster-aim"][value="assignment"]');
+  if (clAimRadio) clAimRadio.checked = true;
   document.getElementById('run-modal').classList.add('open');
 }
 
@@ -1347,6 +1428,14 @@ async function submitRun() {
   if (dxTool && dxTool !== 'quadas3') {
     payload.diagnostic_tool_choice = dxTool;
   }
+  const riTool = (document.querySelector('input[name="ri-rob-tool"]:checked') || {}).value || 'robins_i';
+  if (riTool && riTool !== 'robins_i') {
+    payload.robins_i_tool_choice = riTool;
+  }
+  const clAim = (document.querySelector('input[name="rob2-cluster-aim"]:checked') || {}).value || 'assignment';
+  if (clAim && clAim !== 'assignment') {
+    payload.rob2_cluster_aim = clAim;
+  }
   try {
     const r = await fetch('/api/quality-appraisal/runs', {
       method: 'POST',
@@ -1452,11 +1541,11 @@ function renderResults() {
   // string ids in cribsheet order using the runDomainMeta ordering.
   const robDomainIds = firstOk && firstOk.rob_domains
     ? sortDomainIdsByMeta(
-        Object.keys(firstOk.rob_domains).filter(k => k !== 'preflight'),
+        Object.keys(firstOk.rob_domains).filter(k => k !== 'preflight' && k !== 'aim_preflight' && k !== 'aim'),
         runDomainMeta)
     : runDomainMeta.map(m => String(m.id));
   const guidelineHeader =
-    runTool === 'robins_i' ? 'STROBE adherence' :
+    isRobinsITool(runTool) ? 'STROBE adherence' :
     (runTool === 'quadas2' || runTool === 'quadas3') ? 'STARD adherence' :
     'CONSORT adherence';
   // Show Applicability column only when at least one row uses a QUADAS variant.
@@ -1514,13 +1603,20 @@ function renderResults() {
           (estimate.specificity ? ' · spec ' + estimate.specificity : '')
         ).slice(0, 120)}</div>`
       : '';
-    // Tool chip — visible at-a-glance audit that this row was scored with
-    // QUADAS-2 vs QUADAS-3 (amber vs blue). Empty for non-diagnostic rows.
+    // Tool chip — visible at-a-glance audit of which RoB variant scored this
+    // row. QUADAS-2 amber / QUADAS-3 blue / ROBINS-I V1 amber / ROBINS-I V2 blue.
+    // Empty for the registry defaults (RoB 2 / ROBINS-I V2 when V2 is the
+    // implicit choice) so the chip only fires when the row used a non-default
+    // tool selection that's worth surfacing.
     const toolChip = (r.rob_tool === 'quadas2')
       ? `<span class="chip" style="margin-left:6px;background:#fef3c7;border-color:#fde68a;color:#92400e;">QUADAS-2</span>`
       : (r.rob_tool === 'quadas3')
         ? `<span class="chip" style="margin-left:6px;background:#dbeafe;border-color:#bfdbfe;color:#1e40af;">QUADAS-3 v1.2</span>`
-        : '';
+        : (r.rob_tool === 'robins_i_v1')
+          ? `<span class="chip" style="margin-left:6px;background:#fef3c7;border-color:#fde68a;color:#92400e;" title="ROBINS-I V1, 1 Aug 2016 cribsheet">ROBINS-I V1</span>`
+          : (r.rob_tool === 'rob2_cluster')
+            ? `<span class="chip" style="margin-left:6px;background:#f3e8ff;border-color:#e9d5ff;color:#6b21a8;" title="RoB 2 cluster-randomized extension (RoB 2 CRT, 2021)">RoB 2 Cluster</span>`
+            : '';
 
     const robCls = robBadgeCls(r.rob_overall);
 
@@ -1762,25 +1858,41 @@ function renderDetailPanel(r, anchor) {
       <div style="color:var(--muted);font-weight:600;">Overall RoB</div>
       <div><span class="rob-badge ${robCls}">${escHtml(r.rob_overall || '—')}</span>${r.rob_direction && r.rob_direction !== 'NA' ? ' <span style="color:var(--muted);font-size:11px;">(direction: ' + escHtml(r.rob_direction) + ')</span>' : ''}</div>
       <div style="color:var(--muted);font-weight:600;">${escHtml(
-        detailTool === 'robins_i' ? 'STROBE adherence' :
+        isRobinsITool(detailTool) ? 'STROBE adherence' :
         (detailTool === 'quadas2' || detailTool === 'quadas3') ? 'STARD adherence' :
         'CONSORT adherence')}</div>
       <div>${(guideline.adhered != null && guideline.applicable != null) ? escHtml(guideline.adhered) + ' / ' + escHtml(guideline.applicable) + (guideline.proportion != null ? ' <span style="color:var(--muted);">(' + (guideline.proportion * 100).toFixed(0) + '%)</span>' : '') : '—'}</div>
       <div style="color:var(--muted);font-weight:600;">GRADE</div>
       <div><span class="${gradeClsOf(r.initial_grade)}">${escHtml(r.initial_grade || '—')}</span> → <span class="${gradeClsOf(r.updated_grade)}">${escHtml(r.updated_grade || '—')}</span></div>
+      ${(detailTool === 'robins_i_v1' && robDomains.aim_preflight) ? `
+      <div style="color:var(--muted);font-weight:600;">Aim of study</div>
+      <div>
+        <span class="chip" style="background:var(--paper-2);border:1px solid var(--rule-2);font-size:11px;">${escHtml(robDomains.aim_preflight.aim || '—')}</span>
+        <span style="color:var(--muted);font-size:11px;margin-left:6px;">(§1.1 aim preflight — auto-determined)</span>
+        ${robDomains.aim_preflight.rationale ? `<div style="margin-top:4px;color:var(--muted);font-size:11px;line-height:1.45;">${escHtml(robDomains.aim_preflight.rationale)}</div>` : ''}
+      </div>` : ''}
+      ${(detailTool === 'rob2_cluster' && robDomains.aim) ? `
+      <div style="color:var(--muted);font-weight:600;">Analysis aim</div>
+      <div>
+        <span class="chip" style="background:var(--paper-2);border:1px solid var(--rule-2);font-size:11px;">${robDomains.aim === 'adhering' ? 'Effect of adhering (per-protocol)' : 'Effect of assignment (intention-to-treat)'}</span>
+        <span style="color:var(--muted);font-size:11px;margin-left:6px;">(RoB 2 CRT Domain 2 variant — reviewer-selected)</span>
+      </div>` : ''}
     </div>
   </section>`;
 
   // ── RoB section ──────────────────────────
   // Include numeric domain ids (1..N) plus the cross-over extension's Domain S.
-  // The 'preflight' key is V2 ROBINS-I metadata, not a domain — filter it out.
+  // 'preflight' is V2 ROBINS-I metadata, 'aim_preflight' is V1 metadata — both
+  // are not domains, filter them out.
   const domainIds = sortDomainIdsByMeta(
-    Object.keys(robDomains).filter(k => k !== 'preflight'),
+    Object.keys(robDomains).filter(k => k !== 'preflight' && k !== 'aim_preflight' && k !== 'aim'),
     detailMeta);
   const robHeader =
-    detailTool === 'robins_i' ? 'Risk of Bias (ROBINS-I V2)' :
-    detailTool === 'quadas3'  ? 'Risk of Bias (QUADAS-3 v1.2)' :
-    detailTool === 'quadas2'  ? 'Risk of Bias (QUADAS-2, 2011)' :
+    detailTool === 'robins_i_v1' ? 'Risk of Bias (ROBINS-I V1, 1 Aug 2016)' :
+    detailTool === 'robins_i'    ? 'Risk of Bias (ROBINS-I V2, 20 Nov 2025)' :
+    detailTool === 'quadas3'     ? 'Risk of Bias (QUADAS-3 v1.2)' :
+    detailTool === 'quadas2'     ? 'Risk of Bias (QUADAS-2, 2011)' :
+    detailTool === 'rob2_cluster' ? 'Risk of Bias (RoB 2 Cluster, 2021)' :
     'Risk of Bias (RoB 2)';
   const robHtml = `<section id="qa-sec-rob"><h3>${escHtml(robHeader)}</h3>
     ${domainIds.length === 0 ? '<div style="color:var(--muted);">No RoB data.</div>' : domainIds.map(did => {
@@ -2049,7 +2161,7 @@ function renderDetailPanel(r, anchor) {
     return a.id.localeCompare(b.id);
   };
   const guidelineHeading =
-    detailTool === 'robins_i' ? 'STROBE 2007 checklist' :
+    isRobinsITool(detailTool) ? 'STROBE 2007 checklist' :
     (detailTool === 'quadas2' || detailTool === 'quadas3') ? 'STARD 2015 checklist' :
     'CONSORT 2025 checklist';
   const consortHtml = `<section id="qa-sec-consort"><h3>${escHtml(guidelineHeading)}
@@ -2057,7 +2169,7 @@ function renderDetailPanel(r, anchor) {
       ${(guideline.adhered != null) ? escHtml(guideline.adhered) + ' / ' + escHtml(guideline.applicable) + ' applicable' : ''}
     </span></h3>
     ${consortIds.length === 0 ? `<div style="color:var(--muted);">No ${
-        detailTool === 'robins_i' ? 'STROBE' :
+        isRobinsITool(detailTool) ? 'STROBE' :
         (detailTool === 'quadas2' || detailTool === 'quadas3') ? 'STARD' :
         'CONSORT'} data.</div>` :
       Object.keys(groups).map(sec => `<div class="qa-consort-group">
@@ -2090,7 +2202,9 @@ function renderDetailPanel(r, anchor) {
     if (j) judgeCounts[j] = (judgeCounts[j] || 0) + 1;
   });
   let countsLine;
-  if (detailTool === 'robins_i') {
+  if (detailTool === 'robins_i_v1') {
+    countsLine = `Critical: <strong>${judgeCounts['Critical'] || 0}</strong> &middot; Serious: <strong>${judgeCounts['Serious'] || 0}</strong> &middot; Moderate: <strong>${judgeCounts['Moderate'] || 0}</strong> &middot; No information: <strong>${judgeCounts['No information'] || 0}</strong>. Per ROBINS-I V1 / GRADE guidance, single-study GRADE downgrades 1 level for Moderate/Serious (2 levels for any Critical, or ≥2 Serious domains), plus indirectness and imprecision downgrades (above). Inconsistency and publication bias still require a body of evidence and are not applied here. ROBINS-I V1 uses a 5-level scale (Low / Moderate / Serious / Critical / No information) — the "No information" judgement was retired in V2.`;
+  } else if (detailTool === 'robins_i') {
     countsLine = `Critical: <strong>${judgeCounts['Critical'] || 0}</strong> &middot; Serious: <strong>${judgeCounts['Serious'] || 0}</strong> &middot; Moderate: <strong>${judgeCounts['Moderate'] || 0}</strong>. Per ROBINS-I V2 / GRADE guidance, single-study GRADE downgrades 1 level for Moderate/Serious (2 levels for any Critical, or ≥2 Serious domains), plus indirectness and imprecision downgrades (above). Inconsistency and publication bias still require a body of evidence and are not applied here. ROBINS-I V2 uses a 4-level scale (Low/Moderate/Serious/Critical) — V1's separate "No information" judgement was retired.`;
   } else if (detailTool === 'quadas3') {
     countsLine = `High-risk domains: <strong>${judgeCounts['High'] || 0}</strong> &middot; Insufficient-information domains: <strong>${judgeCounts['Insufficient information'] || 0}</strong>. Per QUADAS-3 / GRADE guidance for single-study diagnostic accuracy, GRADE downgrades 1 level for any High domain (2 levels when ≥2 domains are High) or any Insufficient-information domain (conservative). Indirectness and imprecision are skipped for diagnostic-accuracy assessments because the existing GRADE-extra modules assume PICO/treatment trials, not PIRT — see CLAUDE.md.`;
@@ -2100,7 +2214,7 @@ function renderDetailPanel(r, anchor) {
     countsLine = `High-risk domains: <strong>${judgeCounts['High'] || 0}</strong> &middot; Some-concerns domains: <strong>${judgeCounts['Some concerns'] || 0}</strong>. Per GradePro guidance, single-study GRADE downgrades by 1 level for "Some concerns" or any High domain, and 2 levels when ≥2 domains are High, plus the indirectness and imprecision downgrades (above). Inconsistency and publication bias still require a body of evidence and are not applied here.`;
   }
   const initialDescription =
-    detailTool === 'robins_i' ? 'From study type (non-randomized)' :
+    isRobinsITool(detailTool) ? 'From study type (non-randomized)' :
     (detailTool === 'quadas2' || detailTool === 'quadas3') ? 'From study type (diagnostic accuracy, cross-sectional default)' :
     'From study type (RCT)';
   const isDxDetail = (detailTool === 'quadas2' || detailTool === 'quadas3');
@@ -2189,9 +2303,11 @@ function renderDetailPanel(r, anchor) {
     const robBtn = navRoot.querySelector('button[data-section="rob"]');
     if (robBtn) {
       robBtn.textContent =
-        detailTool === 'robins_i' ? 'ROBINS-I' :
-        detailTool === 'quadas3'  ? 'QUADAS-3' :
-        detailTool === 'quadas2'  ? 'QUADAS-2' :
+        detailTool === 'robins_i_v1' ? 'ROBINS-I V1' :
+        detailTool === 'robins_i'    ? 'ROBINS-I V2' :
+        detailTool === 'quadas3'     ? 'QUADAS-3' :
+        detailTool === 'quadas2'     ? 'QUADAS-2' :
+        detailTool === 'rob2_cluster' ? 'RoB 2 Cluster' :
         'RoB 2';
     }
   }

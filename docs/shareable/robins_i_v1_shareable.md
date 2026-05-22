@@ -1,4 +1,4 @@
-# ROBINS-I V1 — Sharable Methodology Reference
+# ROBINS-I V1 — Sharable Methodology Reference for OVID_
 
 A self-contained reference for implementing an automated ROBINS-I V1 (1 August 2016) risk-of-bias assessment of non-randomized studies of interventions. Contains:
 
@@ -7,17 +7,17 @@ A self-contained reference for implementing an automated ROBINS-I V1 (1 August 2
 - LLM prompt templates (the exact strings sent to the model)
 - Expected JSON output shapes
 - V1 judgement tables (Tables 1, 2, 3) verbatim from the cribsheet
-- Overall worst-domain aggregation algorithm
+
 
 **Source:** Sterne JAC, Hernán MA, Reeves BC, Savović J, Berkman ND, Viswanathan M, Henry D, Altman DG, Ansari MT, Boutron I, Carpenter JR, Chan A-W, Churchill R, Hróbjartsson A, Kirkham J, Jüni P, Loke YK, Pigott TD, Ramsay CR, Regidor D, Rothstein HR, Sandhu L, Santaguida PL, Schünemann HJ, Shea B, Shrier I, Tugwell P, Turner L, Valentine JC, Waddington H, Waters E, Whiting P, Higgins JPT. *The Risk Of Bias In Non-randomized Studies — of Interventions (ROBINS-I) assessment tool (version for cohort-type studies).* Version 1 August 2016. Underlying paper: Sterne JAC et al., BMJ 2016;355:i4919.
 
 **Scope:** ROBINS-I V1 (1 August 2016 cohort-type studies template). Out of scope: ROBINS-I V2 (20 November 2025 — superseded V1; covered in a separate shareable at `docs/shareable/robins_i_v2_shareable.md`); ROB 2 (which is for RCTs, separate tool); systematic-review assessment (AMSTAR-2, separate tool); QUADAS-2 / QUADAS-3 (for diagnostic test accuracy, separate tools).
 
-**License:** The V1 cribsheet is released under CC BY-NC-ND 4.0 — Attribution-NonCommercial-NoDerivatives. The signaling-question text and judgement tables transcribed here remain under that license; the Python decision-tree code in §15 is the author's interpretation of the prose tables and is freely usable.
-
 **Conservative-tree note.** V1 expresses its domain judgements as **narrative tables** (Tables 1 + 2 in §11), not as deterministic decision trees. The Python trees in §15 are conservative interpretations of those tables; reviewers will sometimes legitimately override the algorithmic mapping based on materiality, "very strongly related" judgements, and other prose-table judgement calls. §17.5 details every place the trees are charitable or conservative interpretations of the cribsheet narrative.
 
-**V1 has no preflight stage.** Unlike V2 (which runs a B1/B2/B3 + C4 preflight before any domain assessment), V1 unconditionally assesses all 7 domains. The aim of study (assessing effect of *assignment to* intervention vs effect of *starting and adhering to* intervention) is set once at the Stage-II study-spec stage and gates Domain 4 question selection.
+**V1 has no preflight stage in the original cribsheet.** Unlike V2 (which runs a B1/B2/B3 + C4 preflight before any domain assessment), V1 unconditionally assesses all 7 domains. The aim of study (assessing effect of *assignment to* intervention vs effect of *starting and adhering to* intervention) is set once at the Stage-II study-spec stage and gates Domain 4 question selection. **This implementation adds one optional preflight LLM call — the aim preflight (§1.1) — that auto-determines the Stage-II aim from the paper, mechanically equivalent to V2's C4 question.** Reviewers may still set the aim manually; auto-determination only runs when no manual value is supplied.
+
+**Production integration in The AI Researcher.** This shareable doc is now mirrored by [backend/rob_tools/robins_i_v1.py](../../backend/rob_tools/robins_i_v1.py), the production module that runs inside the Quality Appraisal pipeline. V1 is selectable per-run alongside V2 (V2 is the default) via the ROBINS-I version radio in the run-create modal. The choice persists on `quality_appraisal_runs.robins_i_tool_choice` (`NULL` = V2 default for back-compat). Single-arm / Dose-Escalation papers ignore the toggle and continue to use V2's single_arm variant — V1's cribsheet is cohort-only. The production module returns the 3-tuple `(domain_results, overall, direction)` expected by the existing tool-runner contract; the aim-preflight payload (`{aim, rationale}`) is stashed in `domain_results["aim_preflight"]` so the per-paper detail view can surface how the aim was chosen (mirrors V2's `domain_results["preflight"]` convention). The reference implementation in §15 below returns a 4-tuple with `aim_rationale` as a top-level element instead — both forms are equivalent; the production wrapper just moves the rationale inside the dict to satisfy the existing call site.
 
 **Cascade enforcement is in Python, not the LLM.** V1 has cascading signaling questions in Domains 1, 2, 4, and 5 — where one question's answer determines whether a downstream question is asked (NA). These cascade rules are deterministic from the cribsheet, so this implementation enforces them in pure Python (`enforce_cascade_dN_v1` functions in §15) AFTER the LLM has answered. The LLM is asked to answer every question based on its reading of the paper; Python then overrides any LLM answer to `NA` when the cribsheet's cascade rules indicate the question is gated out. This (1) prevents the LLM from incorrectly answering a substantive question when the cascade says NA, (2) catches LLM inconsistency between gating-question and downstream-question answers, and (3) ensures the same paper always produces the same cascade structure regardless of LLM stochasticity. See §18 for the design rationale and the per-domain cascade rules.
 
@@ -76,6 +76,50 @@ The aim gates Domain 4 (Bias due to deviations from intended interventions):
 - `starting_and_adhering` → answer 4.3, 4.4, 4.5, 4.6 (4 questions)
 
 The aim does NOT gate Domain 1 in V1 (V2's variant routing replaces this).
+
+### 1.1 Aim preflight (LLM-determined)
+
+The cribsheet expects the aim to be committed at Stage II — historically a reviewer-supplied checkbox set before any domain assessment. This implementation adds one **optional** LLM call that auto-determines the aim from the paper, so V1 can be run end-to-end without a manual study-spec step. The auto-determination is **mechanically equivalent** to V2's C4 preflight question (does the analysis account for protocol deviations during follow-up?) — only the output mapping differs (V2 routes to Variant A vs B; V1 sets `assignment_to` vs `starting_and_adhering`).
+
+**Manual override remains supported.** Reviewers who want to commit the aim before the run (e.g. because they're appraising a specific pre-registered analysis) pass `aim="assignment_to"` or `aim="starting_and_adhering"` directly to `run_v1` and the preflight is skipped. Auto-determination only runs when `aim=None`.
+
+**Decision logic** (deterministic Python wrapper around the LLM answer):
+- Paper's analysis is ITT-like (analyses everyone as-randomized / as-assigned, ignores switches and crossovers) → `assignment_to`
+- Paper's analysis is per-protocol-like (censors at discontinuation / switch, restricts to adherers, applies IPCW / g-methods / marginal structural models / instrumental-variable analysis for adherence) → `starting_and_adhering`
+- Paper reports both (ITT primary + per-protocol sensitivity, or vice versa) → pick the headline / primary estimate the appraisal is targeting
+- Observational cohort defaulting (exposed = self-selected starter) → typically `starting_and_adhering` unless the analysis defines exposure on first-prescription-style ITT-like grounds
+- Genuinely ambiguous (analysis section is silent on protocol-deviation handling) → default `assignment_to` and surface the ambiguity in the rationale
+
+**Prompt** — one call, JSON output, modeled on V2's `_build_preflight_prompt_cohort`:
+
+```text
+You are determining the **aim of study** for a ROBINS-I V1 risk-of-bias assessment of a non-randomized study.
+
+Outcome being assessed: {primary_outcome}
+
+Context (fields already extracted from the paper):
+{ctx_json}
+
+ROBINS-I V1 assesses risk of bias against a target estimand. The Stage-II aim of study commits to which estimand the appraisal targets:
+
+- **"assignment_to"** — the analysis estimates the effect of *assignment to* intervention (intention-to-treat). Participants are analysed in the group they were originally assigned to; switches, crossovers, and non-adherence are ignored. This aim is set when the paper reports an as-randomized / as-assigned / mITT analysis as its primary estimate.
+- **"starting_and_adhering"** — the analysis estimates the effect of *starting and adhering to* intervention (per-protocol). The analysis is restricted to (or weights toward) participants who actually started and adhered to the assigned intervention, and protocol deviations are accounted for via censoring, IPCW, g-methods, marginal structural models, or instrumental-variable estimation. This aim is set when the paper reports a per-protocol / as-treated / completer analysis as its primary estimate.
+
+**Question.** Which aim does the primary analysis of the paper target for the outcome being assessed?
+
+Elaboration:
+- If the paper reports both an ITT and a per-protocol analysis, pick the aim that matches the **headline / primary estimate** for this outcome, not the sensitivity analysis.
+- Observational cohort studies typically map to **"starting_and_adhering"** because exposure is defined by who actually started the treatment — unless the analysis explicitly uses an ITT-like exposure definition (e.g. first prescription regardless of refill).
+- If the analysis section is genuinely silent on whether protocol deviations are accounted for, default to **"assignment_to"** and note the ambiguity in the rationale.
+
+Return JSON with exactly this shape:
+{{
+  "aim": "assignment_to|starting_and_adhering",
+  "rationale": "1-2 sentences quoting or paraphrasing the analysis-section text that supports the choice"
+}}
+```
+
+**Python reference function** — see §15 (`determine_aim_v1`, `_build_aim_preflight_prompt_v1`).
 
 ---
 
@@ -354,7 +398,7 @@ def domain3_judge_v1(signals: dict[str, str]) -> str:
 
 ## 6. Domain 4 — Bias due to deviations from intended interventions
 
-6 signaling questions, **aim-gated**. The aim of the study (set at Stage II) determines which subset is asked:
+6 signaling questions, **aim-gated**. The aim of the study (set at Stage II, or auto-determined by the §1.1 aim preflight) determines which subset is asked:
 
 - **Aim = `assignment_to`** (assessing effect of assignment to intervention): answer 4.1 and 4.2.
 - **Aim = `starting_and_adhering`** (assessing effect of starting and adhering to intervention): answer 4.3, 4.4, 4.5, 4.6.
@@ -815,10 +859,12 @@ Notes on ROBINS-I V1:
 
 ```text
 
-Aim of study (set at Stage II): {aim}
+Aim of study: {aim}
 - "assignment_to" → answer signaling questions 4.1 and 4.2 only.
 - "starting_and_adhering" → answer signaling questions 4.3 through 4.6 only.
 ```
+
+The `aim` value may have been set manually at Stage II or auto-determined by the §1.1 aim preflight — the per-domain prompt doesn't need to distinguish the source.
 
 `{pico_block}` is empty when no `target_pico` is supplied; otherwise:
 
@@ -903,6 +949,8 @@ When `aim = "assignment_to"`, only 4.1 and 4.2 are required; 4.3–4.6 should be
 
 ### 13.4 Final per-paper result returned by `run_v1()`
 
+`run_v1()` returns the 4-tuple `(domain_results, overall_judgement, overall_direction, aim_rationale)`. Conceptual JSON shape of the assembled result:
+
 ```json
 {
   "domain_results": {
@@ -915,11 +963,12 @@ When `aim = "assignment_to"`, only 4.1 and 4.2 are required; 4.3–4.6 should be
     "7": {"id": 7, "name": "Bias in selection of the reported result", "signals": {...}, "rationales": {...}, "judgement": "Low", "direction": "NA"}
   },
   "overall_judgement": "Moderate",
-  "overall_direction": "Favours experimental"
+  "overall_direction": "Favours experimental",
+  "aim_rationale": "Methods section reports an intention-to-treat analysis where all randomized participants were analysed in their assigned group regardless of crossovers."
 }
 ```
 
-V1 has no preflight key in the result (unlike V2).
+`aim_rationale` is `null` when the aim was manually supplied by the caller (preflight skipped); a string when the §1.1 aim preflight ran. V1 still has no domain-level preflight key (B1/B2/B3/C4 are V2-only) — the aim preflight is V1-specific and returns only the chosen aim plus rationale.
 
 ---
 
@@ -1458,6 +1507,77 @@ def _signals_for_domain_v1(domain: dict[str, Any], aim: str) -> list[dict[str, A
     return domain["signals"]
 
 
+# ─────────────────────────────────────────────
+# Aim preflight (§1.1) — one LLM call, auto-determines the Stage-II aim
+# ─────────────────────────────────────────────
+_AIM_PREFLIGHT_RELEVANT_KEYS = (
+    "analysis_framework",
+    "primary_outcome_measurement",
+    "outcome_definition",
+    "outcome_ascertainment",
+)
+
+
+def _build_aim_preflight_prompt_v1(primary_outcome: str,
+                                   extracted_fields: dict[str, str]) -> str:
+    """Build the §1.1 aim-preflight prompt.
+
+    Mirrors V2's `_build_preflight_prompt_cohort` structure (context block
+    derived from prefilled methods/analysis fields + a single question);
+    the question is V2's C4 reworded to map onto V1's AIMS output values.
+    """
+    relevant = {k: extracted_fields[k] for k in _AIM_PREFLIGHT_RELEVANT_KEYS
+                if extracted_fields.get(k)}
+    ctx_json = json.dumps(relevant, indent=2) if relevant else "(no pre-extracted fields)"
+
+    return f"""You are determining the **aim of study** for a ROBINS-I V1 risk-of-bias assessment of a non-randomized study.
+
+Outcome being assessed: {primary_outcome}
+
+Context (fields already extracted from the paper):
+{ctx_json}
+
+ROBINS-I V1 assesses risk of bias against a target estimand. The Stage-II aim of study commits to which estimand the appraisal targets:
+
+- **"assignment_to"** — the analysis estimates the effect of *assignment to* intervention (intention-to-treat). Participants are analysed in the group they were originally assigned to; switches, crossovers, and non-adherence are ignored. This aim is set when the paper reports an as-randomized / as-assigned / mITT analysis as its primary estimate.
+- **"starting_and_adhering"** — the analysis estimates the effect of *starting and adhering to* intervention (per-protocol). The analysis is restricted to (or weights toward) participants who actually started and adhered to the assigned intervention, and protocol deviations are accounted for via censoring, IPCW, g-methods, marginal structural models, or instrumental-variable estimation. This aim is set when the paper reports a per-protocol / as-treated / completer analysis as its primary estimate.
+
+**Question.** Which aim does the primary analysis of the paper target for the outcome being assessed?
+
+Elaboration:
+- If the paper reports both an ITT and a per-protocol analysis, pick the aim that matches the **headline / primary estimate** for this outcome, not the sensitivity analysis.
+- Observational cohort studies typically map to **"starting_and_adhering"** because exposure is defined by who actually started the treatment — unless the analysis explicitly uses an ITT-like exposure definition (e.g. first prescription regardless of refill).
+- If the analysis section is genuinely silent on whether protocol deviations are accounted for, default to **"assignment_to"** and note the ambiguity in the rationale.
+
+Return JSON with exactly this shape:
+{{
+  "aim": "assignment_to|starting_and_adhering",
+  "rationale": "1-2 sentences quoting or paraphrasing the analysis-section text that supports the choice"
+}}"""
+
+
+def determine_aim_v1(pdf_bytes: bytes,
+                     primary_outcome: str,
+                     extracted_fields: dict[str, str],
+                     llm_call: Callable[[bytes, str, int], dict[str, Any]],
+                     ) -> tuple[str, str]:
+    """V1 aim preflight — single LLM call returns (aim, rationale).
+
+    aim ∈ AIMS = ("assignment_to", "starting_and_adhering").
+    Mechanically equivalent to V2's C4 question; only the output mapping differs.
+    Falls back to "assignment_to" when the LLM returns an unrecognized value
+    (matches the cribsheet's ambiguous-methods guidance).
+    """
+    prompt = _build_aim_preflight_prompt_v1(primary_outcome, extracted_fields)
+    raw = llm_call(pdf_bytes, prompt, 512)
+    aim_raw = str(raw.get("aim", "")).strip().lower()
+    if aim_raw not in AIMS:
+        logger.warning("ROBINS-I V1 aim preflight: invalid LLM answer %r — defaulting to 'assignment_to'", aim_raw)
+        aim_raw = "assignment_to"
+    rationale = str(raw.get("rationale", "")).strip()
+    return aim_raw, rationale
+
+
 def build_domain_prompt_v1(domain: dict[str, Any],
                            study_type: str,
                            primary_outcome: str,
@@ -1474,7 +1594,7 @@ def build_domain_prompt_v1(domain: dict[str, Any],
     aim_block = ""
     if domain.get("aim_gated"):
         aim_block = (
-            f"\nAim of study (set at Stage II): {aim}\n"
+            f"\nAim of study: {aim}\n"
             '- "assignment_to" → answer signaling questions 4.1 and 4.2 only.\n'
             '- "starting_and_adhering" → answer signaling questions 4.3 through 4.6 only.\n'
         )
@@ -1582,21 +1702,37 @@ def run_v1(pdf_bytes: bytes,
            primary_outcome: str,
            *,
            llm_call: Callable[[bytes, str, int], dict[str, Any]],
-           aim: str = "assignment_to",
+           aim: str | None = None,
            target_pico: dict[str, str] | None = None,
            progress: Callable[[int], None] | None = None,
-           ) -> tuple[dict[str, Any], str, str]:
+           ) -> tuple[dict[str, Any], str, str, str | None]:
     """Run ROBINS-I V1 against a non-randomized study.
 
-    Returns (domain_results, overall_judgement, overall_direction).
+    Returns (domain_results, overall_judgement, overall_direction, aim_rationale).
 
-    `aim` must be 'assignment_to' (uses D4 questions 4.1+4.2) or
-    'starting_and_adhering' (uses D4 questions 4.3-4.6). Set at Stage II.
+    `aim`:
+        - `None` (default) → auto-determine via the §1.1 aim preflight (one
+          LLM call). The chosen aim is recorded on the D4 result; the
+          rationale is returned as the 4th tuple element.
+        - `"assignment_to"` → uses D4 questions 4.1+4.2 (ITT estimand).
+          Manual Stage-II value; preflight is skipped; aim_rationale is None.
+        - `"starting_and_adhering"` → uses D4 questions 4.3-4.6 (per-protocol
+          estimand). Manual Stage-II value; preflight is skipped;
+          aim_rationale is None.
 
-    V1 has no preflight stage — all 7 domains are assessed unconditionally.
+    V1's original cribsheet has no preflight stage; this implementation adds
+    the optional aim-preflight LLM call (§1.1) so the Stage-II aim can be
+    auto-determined from the paper. All 7 domains are still assessed
+    unconditionally — the preflight only chooses which D4 question subset
+    to ask.
     """
-    if aim not in AIMS:
-        raise ValueError(f"aim must be one of {AIMS}; got {aim!r}")
+    if aim is None:
+        aim, aim_rationale = determine_aim_v1(
+            pdf_bytes, primary_outcome, extracted_fields, llm_call)
+    else:
+        if aim not in AIMS:
+            raise ValueError(f"aim must be None or one of {AIMS}; got {aim!r}")
+        aim_rationale = None
     study_type = classification.get("study_type", "Cohort Study")
 
     domain_results: dict[str, Any] = {}
@@ -1629,7 +1765,7 @@ def run_v1(pdf_bytes: bytes,
         else:
             overall_direction = counts[0][0]
 
-    return domain_results, overall, overall_direction
+    return domain_results, overall, overall_direction, aim_rationale
 ```
 
 ---
@@ -1697,6 +1833,44 @@ try:
     assert False, "should have raised"
 except ValueError:
     pass
+
+# ─────────────────────────────────────────────
+# §1.1 Aim preflight — auto-determination of the Stage-II aim
+# ─────────────────────────────────────────────
+def _mock_llm_itt(pdf_bytes, prompt, max_tokens):
+    return {"aim": "assignment_to",
+            "rationale": "Methods: intention-to-treat analysis; all participants analysed in originally assigned group."}
+
+def _mock_llm_pp(pdf_bytes, prompt, max_tokens):
+    return {"aim": "starting_and_adhering",
+            "rationale": "Methods: per-protocol with inverse probability of censoring weights for treatment discontinuation."}
+
+def _mock_llm_garbage(pdf_bytes, prompt, max_tokens):
+    return {"aim": "Maybe?", "rationale": ""}
+
+# ITT-like analysis → assignment_to
+aim, rat = determine_aim_v1(b"", "all-cause mortality at 12 months",
+                            {"analysis_framework": "ITT; participants analysed as originally assigned"},
+                            llm_call=_mock_llm_itt)
+assert aim == "assignment_to"
+assert "intention-to-treat" in rat.lower()
+
+# Per-protocol-like analysis (with IPCW) → starting_and_adhering
+aim, rat = determine_aim_v1(b"", "all-cause mortality at 12 months",
+                            {"analysis_framework": "Per-protocol with IPCW for treatment discontinuation"},
+                            llm_call=_mock_llm_pp)
+assert aim == "starting_and_adhering"
+assert "ipcw" in rat.lower() or "per-protocol" in rat.lower()
+
+# Garbage LLM answer → safe default per cribsheet ambiguity guidance
+aim, rat = determine_aim_v1(b"", "any outcome", {}, llm_call=_mock_llm_garbage)
+assert aim == "assignment_to"
+
+# Empty extracted_fields → prompt builder still produces a valid prompt
+prompt = _build_aim_preflight_prompt_v1("all-cause mortality at 12 months", {})
+assert "Outcome being assessed: all-cause mortality at 12 months" in prompt
+assert "(no pre-extracted fields)" in prompt
+assert '"aim": "assignment_to|starting_and_adhering"' in prompt
 
 # ─────────────────────────────────────────────
 # Domain 5 — missing data
@@ -1880,9 +2054,9 @@ print("All ROBINS-I V1 sanity checks passed.")
 | Per-domain judgement scale | **5-level** Low / Moderate / Serious / Critical / **No information** | **4-level** Low / Moderate / Serious / Critical (NI retired as a judgement) |
 | Overall judgement scale | 5-level (NI possible) | 4-level worst-domain |
 | Variant support for D1 | Single tree, two paths chosen by 1.2/1.3 cascade | Three explicit variants: **A** (ITT/baseline only), **B** (per-protocol/baseline + time-varying), **single_arm** (uncontrolled designs) |
-| Preflight | None — every domain assessed | **Mandatory preflight** with B1/B2/B3 + C4 short-circuits + variant routing |
+| Preflight | None in original cribsheet; this impl adds an **optional aim preflight** (§1.1) that auto-determines the Stage-II aim of study; all 7 domains still assessed | **Mandatory preflight** with B1/B2/B3 + C4 short-circuits + variant routing |
 | D1 "Low" label | Plain "Low" | **"Low (except for concerns about uncontrolled confounding)"** for cohort; "Low (except for concerns about uncontrolled benchmarking)" for single-arm |
-| Aim-of-study handling | Stage-II checkbox gates D4 question subset | Preflight C4 selects D1 variant A vs B; D4 no longer exists |
+| Aim-of-study handling | Stage-II checkbox OR §1.1 aim-preflight LLM call (single question, same protocol-deviation-accounting decision as V2's C4); gates D4 question subset | Preflight C4 selects D1 variant A vs B; D4 no longer exists |
 | Direction-of-bias options | 3 (D1) or 5 (D2+); per-domain | 6 per-domain + 1 overall (modal across domains, ties → "Unpredictable") |
 | Single-arm support | Not addressed | Project-specific `single_arm` variant of D1 + D2 |
 
@@ -1941,15 +2115,7 @@ The exact rules each `enforce_cascade_*_v1` function applies (cribsheet page ref
 
 - **D3, D6, D7**: no cascading. `enforce_cascade_v1()` returns the signals unchanged for these domains.
 
-### 18.3 Operational notes for deployment
 
-- **Override logging.** The orchestrator builds an `overrides` dict comparing pre-cascade and post-cascade signals, and logs it at `logger.debug`. If you want to monitor LLM-cascade inconsistency in production, raise the log level to `INFO`/`WARNING` or hook the override dict into your telemetry pipeline. High override rates on a specific question may indicate a prompt issue worth investigating.
-
-- **Decision tree compatibility.** The decision trees in §3–§9 already handle `NA` correctly — they use `signals.get(sid, "NI")` lookups and check `in ("Y", "PY")` / `in ("N", "PN")` membership, so `NA` falls through to the same path as unknown tokens. No tree changes are needed when wiring in cascade enforcement.
-
-- **Streaming / multi-call alternative.** If your downstream workflow requires conditional question-asking (e.g. for cost optimization on very long papers where unnecessary signals matter), you can split each cascading domain into two LLM calls: one for the gating questions only, then one for the active downstream subset. This implementation deliberately chooses single-call-per-domain because the token savings of conditional asking are minor and the simpler control flow is easier to maintain.
-
-- **JSON shape unchanged.** The expected JSON output shape (§13) still includes `NA` as a valid token for gated questions — the LLM is allowed to answer NA if it correctly identifies a gated question, but Python doesn't require it to. The shape is the same either way.
 
 
 
