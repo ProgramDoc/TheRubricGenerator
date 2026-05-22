@@ -2035,16 +2035,17 @@ class TestClusterDomain2Assignment:
 
 class TestClusterDomain2Adhering:
     """Domain 2 — effect of adhering (per-protocol) — cribsheet p.14.
-    'NA' is a meaningful routing token in this flowchart."""
+    The LLM answers Y/PY/PN/N/NI; the cascade derives NA for gated-out
+    questions. The judge runs on the post-cascade signals."""
 
     def test_not_aware_no_failures_is_low(self):
         assert rob2_cluster.rob2_cluster_domain2_adhering_judge(
             {"2.1": "N", "2.2": "N", "2.4": "N", "2.5": "N"}) == "Low"
 
-    def test_not_aware_na_failures_is_low(self):
-        # NA on the implementation/adherence questions routes like N/PN
+    def test_ni_failures_route_to_analysis_check(self):
+        # NI on 2.4/2.5 is not "no concern" — routes to the 2.6 analysis check
         assert rob2_cluster.rob2_cluster_domain2_adhering_judge(
-            {"2.1": "N", "2.2": "N", "2.4": "NA", "2.5": "NA"}) == "Low"
+            {"2.1": "N", "2.2": "N", "2.4": "NI", "2.5": "N", "2.6": "Y"}) == "Some concerns"
 
     def test_unbalanced_nonprotocol_inappropriate_analysis_is_high(self):
         assert rob2_cluster.rob2_cluster_domain2_adhering_judge(
@@ -2056,7 +2057,7 @@ class TestClusterDomain2Adhering:
 
     def test_implementation_failure_appropriate_analysis_is_some_concerns(self):
         assert rob2_cluster.rob2_cluster_domain2_adhering_judge(
-            {"2.1": "Y", "2.3": "NA", "2.4": "Y", "2.5": "N", "2.6": "Y"}) == "Some concerns"
+            {"2.1": "Y", "2.3": "Y", "2.4": "Y", "2.5": "N", "2.6": "Y"}) == "Some concerns"
 
     def test_implementation_failure_inappropriate_analysis_is_high(self):
         assert rob2_cluster.rob2_cluster_domain2_adhering_judge(
@@ -2136,6 +2137,71 @@ class TestClusterDomain5AndOverall:
 
 
 # ─────────────────────────────────────────────
+# RoB 2 Cluster — cascade enforcement (Python-derived NA)
+# ─────────────────────────────────────────────
+class TestClusterCascade:
+    """The LLM answers every question on the 5-token scale; enforce_cascade_*
+    derives NA for any conditional question whose precondition is not met."""
+
+    def test_1b_gates_1b2_when_1b1_yes(self):
+        # 1b.2 is asked only if 1b.1 is N/PN/NI
+        out = rob2_cluster.enforce_cascade_1b({"1b.1": "Y", "1b.2": "Y", "1b.3": "N"})
+        assert out["1b.2"] == "NA"
+        assert out["1b.3"] == "N"  # 1b.3 is unconditional — never gated
+
+    def test_1b_keeps_1b2_when_1b1_no(self):
+        out = rob2_cluster.enforce_cascade_1b({"1b.1": "N", "1b.2": "Y", "1b.3": "N"})
+        assert out["1b.2"] == "Y"
+
+    def test_assignment_cascade_gates_full_chain(self):
+        # 2.1a=N gates 2.1b; not-aware gates 2.3; which cascades to 2.4/2.5;
+        # 2.6=Y gates 2.7.
+        out = rob2_cluster.enforce_cascade_2_assignment(
+            {"2.1a": "N", "2.1b": "Y", "2.2": "N", "2.3": "Y",
+             "2.4": "Y", "2.5": "Y", "2.6": "Y", "2.7": "Y"})
+        for sid in ("2.1b", "2.3", "2.4", "2.5", "2.7"):
+            assert out[sid] == "NA", f"{sid} should be gated NA: {out}"
+        assert out["2.1a"] == "N" and out["2.2"] == "N" and out["2.6"] == "Y"
+
+    def test_assignment_cascade_keeps_on_path_questions(self):
+        out = rob2_cluster.enforce_cascade_2_assignment(
+            {"2.1a": "Y", "2.1b": "Y", "2.2": "N", "2.3": "Y",
+             "2.4": "Y", "2.5": "N", "2.6": "N", "2.7": "N"})
+        assert all(v != "NA" for v in out.values()), out
+
+    def test_adhering_cascade_gates_2_3_and_2_6(self):
+        out = rob2_cluster.enforce_cascade_2_adhering(
+            {"2.1": "N", "2.2": "N", "2.3": "Y", "2.4": "N", "2.5": "N", "2.6": "Y"})
+        assert out["2.3"] == "NA"   # not aware → 2.3 gated
+        assert out["2.6"] == "NA"   # 2.3 NA + 2.4/2.5 N → 2.6 gated
+        # 2.4 / 2.5 are always asked — never gated
+        assert out["2.4"] == "N" and out["2.5"] == "N"
+
+    def test_domain3_cascade_gates_when_data_complete(self):
+        out = rob2_cluster.enforce_cascade_3(
+            {"3.1a": "Y", "3.1b": "Y", "3.2": "N", "3.3": "N", "3.4": "N"})
+        for sid in ("3.2", "3.3", "3.4"):
+            assert out[sid] == "NA", f"{sid} should be gated NA: {out}"
+
+    def test_domain4_cascade_gates_assessor_chain_when_method_bad(self):
+        # 4.1=Y short-circuits to High → 4.3a-4.5 all gated
+        out = rob2_cluster.enforce_cascade_4(
+            {"4.1": "Y", "4.2": "N", "4.3a": "N", "4.3b": "N", "4.4": "N", "4.5": "N"})
+        for sid in ("4.3a", "4.3b", "4.4", "4.5"):
+            assert out[sid] == "NA", f"{sid} should be gated NA: {out}"
+
+    def test_enforce_cascade_dispatch(self):
+        # Domains 1a and 5 have no conditional questions — passthrough
+        assert rob2_cluster.enforce_cascade("1a", {"1a.1": "Y"}) == {"1a.1": "Y"}
+        assert rob2_cluster.enforce_cascade(5, {"5.1": "Y"}) == {"5.1": "Y"}
+        # Domain 2 dispatches by aim
+        adher = rob2_cluster.enforce_cascade(
+            2, {"2.1": "N", "2.2": "N", "2.3": "Y", "2.4": "N", "2.5": "N", "2.6": "Y"},
+            aim="adhering")
+        assert adher["2.3"] == "NA"
+
+
+# ─────────────────────────────────────────────
 # RoB 2 Cluster — six-domain run() shape + both Domain 2 variants
 # ─────────────────────────────────────────────
 class TestClusterRunShape:
@@ -2170,8 +2236,11 @@ class TestClusterRunShape:
         assert (rob2_cluster.judges_for("adhering")[2]
                 is rob2_cluster.rob2_cluster_domain2_adhering_judge)
 
-    def test_signal_options_include_na(self):
-        assert "NA" in rob2_cluster.SIGNAL_OPTIONS
+    def test_signal_options_exclude_na(self):
+        # NA is not a signal answer the LLM produces — it is derived in code
+        # by the cascade enforcers.
+        assert rob2_cluster.SIGNAL_OPTIONS == ("Y", "PY", "PN", "N", "NI")
+        assert "NA" not in rob2_cluster.SIGNAL_OPTIONS
 
     def test_domain1a_gets_outcome_override_note(self):
         d1a = rob2_cluster.domains_for_aim("assignment")[0]

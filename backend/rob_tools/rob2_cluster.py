@@ -7,10 +7,15 @@ Encodes the official Cochrane RoB 2 cluster-randomized-trial extension cribsheet
   questions + elaborations, differing only in Domain 2.
 - ``rob2_cluster_domain*_judge(signals)`` — pure-Python decision trees
   transcribed verbatim from the cribsheet flowcharts.
+- ``enforce_cascade_*(signals)`` — pure-Python cascade enforcers: they derive
+  ``NA`` for any conditional question whose precondition is not met, AFTER the
+  LLM answers. The LLM never decides applicability — it answers every question
+  on the Y/PY/PN/N/NI scale and the conditional ("If X to Y") structure is
+  resolved entirely in code (the ROBINS-I V1 pattern).
 - ``rob2_cluster_overall(domain_judgements)`` — aggregate per p.22.
 - ``run(pdf_bytes, fields, classification, assessed_outcome, progress, ...)`` —
   per-domain LLM calls via the annotator's ``_call_with_pdf`` pipeline, then
-  local decision-tree evaluation.
+  local cascade enforcement + decision-tree evaluation.
 
 Six domains (vs. five for parallel-group RoB 2):
 
@@ -27,13 +32,14 @@ Six domains (vs. five for parallel-group RoB 2):
 and ``adhering`` (the per-protocol effect — 6 signals: 2.1, 2.2-2.6). The
 cribsheet flowcharts for the two variants are distinct (pp. 12 and 14).
 
-Signaling-question answers are Y / PY / PN / N / NI, plus **NA** for conditional
-questions (the CRT cribsheet lists NA as a response option). Domain judgements
-are "Low" / "Some concerns" / "High".
+Signaling-question answers are Y / PY / PN / N / NI (signaling question 3.2 is
+the cribsheet exception — it offers no NI). ``NA`` is **not** a signal answer:
+it is a derived value the cascade enforcers assign to gated-out questions.
+Domain judgements are "Low" / "Some concerns" / "High".
 
 The 2021 CRT flowcharts route several paths differently from the 2019
 parallel-group cribsheet in :mod:`backend.rob_tools.rob2` (e.g. p.6 — a
-concealed-but-not-random sequence is *Some concerns* here, and D3/D4 split 3.1
+concealed-but-non-random sequence is *Some concerns* here, and D3/D4 split 3.1
 and 4.3 into 3.1a/3.1b and 4.3a/4.3b). The decision trees are therefore
 transcribed independently. Only Domain 5 and the overall aggregation are
 genuinely identical to standard RoB 2 and delegate to that module.
@@ -51,12 +57,15 @@ from . import rob2
 logger = logging.getLogger("rubricgen")
 
 
-# Y / PY / PN / N / NI plus NA — NA is offered for conditional questions and is
-# a meaningful routing token in the Domain 2 adhering flowchart.
-SIGNAL_OPTIONS = ("Y", "PY", "PN", "N", "NI", "NA")
+# The signal-answer scale the LLM uses. ``NA`` is intentionally absent — the
+# LLM never decides applicability; the cascade enforcers derive ``NA`` in code.
+SIGNAL_OPTIONS = ("Y", "PY", "PN", "N", "NI")
 
 _BASE_OPTS = ["Y", "PY", "PN", "N", "NI"]
-_NA_OPTS = ["NA", "Y", "PY", "PN", "N", "NI"]
+# Signaling question 3.2 is the cribsheet's one exception — it offers no
+# "No information" option (you either have evidence the result is unbiased,
+# or you do not).
+_NO_NI_OPTS = ["Y", "PY", "PN", "N"]
 
 
 # ─────────────────────────────────────────────
@@ -66,6 +75,11 @@ _NA_OPTS = ["NA", "Y", "PY", "PN", "N", "NI"]
 # answers signaling questions; code maps those answers to a judgement. Keeping
 # the trees in code (not prompts) makes the developer view honest: we can show
 # the exact logic via ``inspect.getsource``.
+#
+# The judges run on post-cascade signals: questions gated out by the cascade
+# enforcers carry "NA". The trees short-circuit before reaching any gated-out
+# question, so "NA" never reaches a judgement-relevant comparison; _yes()/_no()
+# treat it as neither yes nor no regardless.
 
 
 def _yes(ans: str) -> bool:
@@ -76,29 +90,15 @@ def _no(ans: str) -> bool:
     return ans in ("N", "PN")
 
 
-def _g(signals: dict[str, str], sid: str) -> str:
-    """Read a signal answer, mapping a stray 'NA' to 'NI'.
-
-    Used by every tree EXCEPT the Domain 2 adhering tree. In the assignment,
-    1a, 1b, 3 and 4 flowcharts a question is consulted only on the branch
-    where it is applicable, so a well-formed assessment never sends 'NA' to
-    those reads — 'NA' there is an LLM slip, and 'NI' is the safe equivalent.
-    The adhering tree reads raw because its flowchart (p.14) groups 'NA' with
-    the no-concern branches on purpose.
-    """
-    a = str(signals.get(sid, "NI")).strip().upper()
-    return "NI" if a == "NA" else a
-
-
 def rob2_cluster_domain1a_judge(signals: dict[str, str]) -> str:
     """Domain 1a (randomization process) — RoB 2 CRT cribsheet p.6.
 
     Inputs: ``{"1a.1": ..., "1a.2": ..., "1a.3": ...}``.
     Output: "Low" / "Some concerns" / "High".
     """
-    q1 = _g(signals, "1a.1")
-    q2 = _g(signals, "1a.2")
-    q3 = _g(signals, "1a.3")
+    q1 = signals.get("1a.1", "NI")
+    q2 = signals.get("1a.2", "NI")
+    q3 = signals.get("1a.3", "NI")
 
     if _no(q2):
         return "High"
@@ -116,9 +116,9 @@ def rob2_cluster_domain1b_judge(signals: dict[str, str]) -> str:
 
     The cluster-specific domain. Inputs: ``{"1b.1", "1b.2", "1b.3"}``.
     """
-    q1 = _g(signals, "1b.1")
-    q2 = _g(signals, "1b.2")
-    q3 = _g(signals, "1b.3")
+    q1 = signals.get("1b.1", "NI")
+    q2 = signals.get("1b.2", "NI")
+    q3 = signals.get("1b.3", "NI")
 
     if _yes(q1):
         # All participants identified/recruited before randomization →
@@ -142,14 +142,14 @@ def rob2_cluster_domain2_assignment_judge(signals: dict[str, str]) -> str:
       Some   otherwise
     Part 1 uses 2.1a/2.1b/2.2 then the 2.3 → 2.4 → 2.5 chain; Part 2 uses 2.6-2.7.
     """
-    q21a = _g(signals, "2.1a")
-    q21b = _g(signals, "2.1b")
-    q22 = _g(signals, "2.2")
-    q23 = _g(signals, "2.3")
-    q24 = _g(signals, "2.4")
-    q25 = _g(signals, "2.5")
-    q26 = _g(signals, "2.6")
-    q27 = _g(signals, "2.7")
+    q21a = signals.get("2.1a", "NI")
+    q21b = signals.get("2.1b", "NI")
+    q22 = signals.get("2.2", "NI")
+    q23 = signals.get("2.3", "NI")
+    q24 = signals.get("2.4", "NI")
+    q25 = signals.get("2.5", "NI")
+    q26 = signals.get("2.6", "NI")
+    q27 = signals.get("2.7", "NI")
 
     # ── Part 1 — awareness gate, then 2.3 → 2.4 → 2.5 ──
     if _no(q21a):
@@ -194,20 +194,22 @@ def rob2_cluster_domain2_adhering_judge(signals: dict[str, str]) -> str:
 
     Inputs: ``{"2.1", "2.2", "2.3", "2.4", "2.5", "2.6"}``.
 
-    'NA' is a meaningful routing token here — the p.14 flowchart groups it with
-    the no-concern branches ("NA/Y/PY" out of 2.3; "NA/N/PN" out of 2.4/2.5).
-    This tree therefore reads raw, unlike the other cluster trees.
+    The p.14 flowchart groups the cribsheet's NA answers with the no-concern
+    branches ("NA/Y/PY" out of 2.3; "NA/N/PN" out of 2.4/2.5). Because the LLM
+    answers on the Y/PY/PN/N/NI scale only — answering Y for 2.3 / N for 2.4-2.5
+    when a failure mode is not a relevant concern — those NA branches fold into
+    Y and N here.
     """
-    q21 = str(signals.get("2.1", "NI")).strip().upper()
-    q22 = str(signals.get("2.2", "NI")).strip().upper()
-    q23 = str(signals.get("2.3", "NI")).strip().upper()
-    q24 = str(signals.get("2.4", "NI")).strip().upper()
-    q25 = str(signals.get("2.5", "NI")).strip().upper()
-    q26 = str(signals.get("2.6", "NI")).strip().upper()
+    q21 = signals.get("2.1", "NI")
+    q22 = signals.get("2.2", "NI")
+    q23 = signals.get("2.3", "NI")
+    q24 = signals.get("2.4", "NI")
+    q25 = signals.get("2.5", "NI")
+    q26 = signals.get("2.6", "NI")
 
     def _node_2425() -> str:
-        # Both 2.4 and 2.5 NA/N/PN → Low; otherwise consult 2.6.
-        if q24 in ("NA", "N", "PN") and q25 in ("NA", "N", "PN"):
+        # Both 2.4 and 2.5 N/PN → Low; otherwise consult 2.6.
+        if _no(q24) and _no(q25):
             return "Low"
         return "Some concerns" if _yes(q26) else "High"
 
@@ -215,7 +217,7 @@ def rob2_cluster_domain2_adhering_judge(signals: dict[str, str]) -> str:
         # Neither participants nor carers/deliverers aware → straight to 2.4/2.5.
         return _node_2425()
     # Either 2.1 or 2.2 Y/PY/NI → consult 2.3.
-    if q23 in ("NA", "Y", "PY"):
+    if _yes(q23):
         return _node_2425()
     # 2.3 N/PN/NI → consult 2.6 directly.
     return "Some concerns" if _yes(q26) else "High"
@@ -227,11 +229,11 @@ def rob2_cluster_domain3_judge(signals: dict[str, str]) -> str:
     3.1 is split into 3.1a (data available for all recruiting clusters) and
     3.1b (data available for all/nearly all participants within clusters).
     """
-    q31a = _g(signals, "3.1a")
-    q31b = _g(signals, "3.1b")
-    q32 = _g(signals, "3.2")
-    q33 = _g(signals, "3.3")
-    q34 = _g(signals, "3.4")
+    q31a = signals.get("3.1a", "NI")
+    q31b = signals.get("3.1b", "NI")
+    q32 = signals.get("3.2", "N")
+    q33 = signals.get("3.3", "NI")
+    q34 = signals.get("3.4", "NI")
 
     if _yes(q31a) and _yes(q31b):
         return "Low"
@@ -254,12 +256,12 @@ def rob2_cluster_domain4_judge(signals: dict[str, str]) -> str:
     for participant-reported outcomes) and 4.3b (assessors aware of the
     intervention received).
     """
-    q41 = _g(signals, "4.1")
-    q42 = _g(signals, "4.2")
-    q43a = _g(signals, "4.3a")
-    q43b = _g(signals, "4.3b")
-    q44 = _g(signals, "4.4")
-    q45 = _g(signals, "4.5")
+    q41 = signals.get("4.1", "NI")
+    q42 = signals.get("4.2", "NI")
+    q43a = signals.get("4.3a", "NI")
+    q43b = signals.get("4.3b", "NI")
+    q44 = signals.get("4.4", "NI")
+    q45 = signals.get("4.5", "NI")
 
     if _yes(q41):
         return "High"
@@ -313,6 +315,129 @@ def judges_for(aim: str) -> dict[Any, Callable[[dict[str, str]], str]]:
 
 
 # ─────────────────────────────────────────────
+# Cascade enforcement — pure-Python NA derivation
+# ─────────────────────────────────────────────
+# The cribsheet gates several signaling questions on prior answers ("If X to
+# Y…"). Rather than ask the LLM to decide whether a question is applicable,
+# the LLM answers every question on its merits and these functions then mark
+# the gated-out questions "NA" in code. Run AFTER the LLM responds, BEFORE the
+# decision tree. Domains 1a and 5 have no conditional questions → no cascade.
+
+
+def enforce_cascade_1b(signals: dict[str, str]) -> dict[str, str]:
+    """D1b — 1b.2 is asked only if 1b.1 is N/PN/NI (cribsheet p.7)."""
+    out = dict(signals)
+    if out.get("1b.1", "NI") in ("Y", "PY"):
+        out["1b.2"] = "NA"
+    return out
+
+
+def enforce_cascade_2_assignment(signals: dict[str, str]) -> dict[str, str]:
+    """D2 (effect of assignment) — conditional chain (cribsheet pp.9-11).
+
+      2.1b  asked iff 2.1a is Y/PY/NI
+      2.3   asked iff 2.1b or 2.2 is Y/PY/NI
+      2.4   asked iff 2.3 is Y/PY
+      2.5   asked iff 2.4 is Y/PY/NI
+      2.7   asked iff 2.6 is N/PN/NI
+    """
+    out = dict(signals)
+    if out.get("2.1a", "NI") in ("N", "PN"):
+        out["2.1b"] = "NA"
+    aware = (out.get("2.1b", "NA") in ("Y", "PY", "NI")
+             or out.get("2.2", "NI") in ("Y", "PY", "NI"))
+    if not aware:
+        out["2.3"] = "NA"
+    if out.get("2.3", "NA") not in ("Y", "PY"):
+        out["2.4"] = "NA"
+    if out.get("2.4", "NA") not in ("Y", "PY", "NI"):
+        out["2.5"] = "NA"
+    if out.get("2.6", "NI") in ("Y", "PY"):
+        out["2.7"] = "NA"
+    return out
+
+
+def enforce_cascade_2_adhering(signals: dict[str, str]) -> dict[str, str]:
+    """D2 (effect of adhering) — conditional chain (cribsheet pp.13-14).
+
+      2.3   asked iff 2.1 or 2.2 is Y/PY/NI
+      2.6   asked iff 2.3 is N/PN/NI, or 2.4 or 2.5 is Y/PY/NI
+
+    2.4 and 2.5 are always asked — their "[If applicable]" tag is a substantive
+    judgement (is the failure mode relevant?), not a prior-answer dependency,
+    and folds into a Y/PY/PN/N/NI answer.
+    """
+    out = dict(signals)
+    aware = (out.get("2.1", "NI") in ("Y", "PY", "NI")
+             or out.get("2.2", "NI") in ("Y", "PY", "NI"))
+    if not aware:
+        out["2.3"] = "NA"
+    need_26 = (out.get("2.3", "NA") in ("N", "PN", "NI")
+               or out.get("2.4", "NI") in ("Y", "PY", "NI")
+               or out.get("2.5", "NI") in ("Y", "PY", "NI"))
+    if not need_26:
+        out["2.6"] = "NA"
+    return out
+
+
+def enforce_cascade_3(signals: dict[str, str]) -> dict[str, str]:
+    """D3 — conditional chain (cribsheet p.15).
+
+      3.2  asked iff 3.1a or 3.1b is N/PN/NI
+      3.3  asked iff 3.2 is N/PN
+      3.4  asked iff 3.3 is Y/PY/NI
+    """
+    out = dict(signals)
+    missing = (out.get("3.1a", "NI") in ("N", "PN", "NI")
+               or out.get("3.1b", "NI") in ("N", "PN", "NI"))
+    if not missing:
+        out["3.2"] = "NA"
+    if out.get("3.2", "NA") not in ("N", "PN"):
+        out["3.3"] = "NA"
+    if out.get("3.3", "NA") not in ("Y", "PY", "NI"):
+        out["3.4"] = "NA"
+    return out
+
+
+def enforce_cascade_4(signals: dict[str, str]) -> dict[str, str]:
+    """D4 — conditional chain (cribsheet p.17).
+
+      4.3a  asked iff 4.1 and 4.2 are both N/PN/NI
+      4.3b  asked iff 4.3a is Y/PY/NI
+      4.4   asked iff 4.3b is Y/PY/NI
+      4.5   asked iff 4.4 is Y/PY/NI
+    """
+    out = dict(signals)
+    if out.get("4.1", "NI") in ("Y", "PY") or out.get("4.2", "NI") in ("Y", "PY"):
+        for sid in ("4.3a", "4.3b", "4.4", "4.5"):
+            out[sid] = "NA"
+        return out
+    if out.get("4.3a", "NI") not in ("Y", "PY", "NI"):
+        out["4.3b"] = "NA"
+    if out.get("4.3b", "NA") not in ("Y", "PY", "NI"):
+        out["4.4"] = "NA"
+    if out.get("4.4", "NA") not in ("Y", "PY", "NI"):
+        out["4.5"] = "NA"
+    return out
+
+
+def enforce_cascade(domain_id: Any, signals: dict[str, str],
+                    aim: str = "assignment") -> dict[str, str]:
+    """Apply the per-domain cascade enforcer. Domains 1a and 5 have no
+    conditional questions and return ``signals`` unchanged."""
+    if domain_id == "1b":
+        return enforce_cascade_1b(signals)
+    if domain_id == 2:
+        return (enforce_cascade_2_adhering(signals) if aim == "adhering"
+                else enforce_cascade_2_assignment(signals))
+    if domain_id == 3:
+        return enforce_cascade_3(signals)
+    if domain_id == 4:
+        return enforce_cascade_4(signals)
+    return dict(signals)  # 1a, 5 — no conditional questions
+
+
+# ─────────────────────────────────────────────
 # Domain definitions — signaling questions + elaborations
 # ─────────────────────────────────────────────
 _DOMAIN_1A: dict[str, Any] = {
@@ -348,8 +473,8 @@ _DOMAIN_1B: dict[str, Any] = {
          "elaboration": "Answer 'Yes' if (1) all participants were identified and recruited before the clusters were randomized, or (2) individual participants were not recruited at all but all were identified before randomization — in these cases identification/recruitment bias is not possible. Answer 'No' if (1) some or all participants were identified or recruited after randomization, or (2) there are any clusters in which no participants were recruited (empty clusters)."},
         {"id": "1b.2",
          "text": "Is it likely that selection of individual participants was affected by knowledge of the intervention assigned to the cluster?",
-         "options": list(_NA_OPTS),
-         "elaboration": "Answer this only if 1b.1 is N/PN/NI (otherwise NA). Answer 'Yes' if: (1) those recruiting individuals were aware of cluster allocation before recruitment and this is likely, consciously or subconsciously, to have affected recruitment differentially between intervention groups; (2) some participants were aware of cluster allocation before their recruitment and this is likely to have affected recruitment differentially; or (3) those identifying potential or actual participants were aware of cluster allocation and are likely to have differentially included individuals in different trial groups. Answer 'No' if all relevant parties — those identifying actual participants, those identifying potential participants, those recruiting, and potential participants — were unaware of cluster allocation at recruitment."},
+         "options": list(_BASE_OPTS),
+         "elaboration": "Answer 'Yes' if: (1) those recruiting individuals were aware of cluster allocation before recruitment and this is likely, consciously or subconsciously, to have affected recruitment differentially between intervention groups; (2) some participants were aware of cluster allocation before their recruitment and this is likely to have affected recruitment differentially; or (3) those identifying potential or actual participants were aware of cluster allocation and are likely to have differentially included individuals in different trial groups. Answer 'No' if all relevant parties — those identifying actual participants, those identifying potential participants, those recruiting, and potential participants — were unaware of cluster allocation at recruitment."},
         {"id": "1b.3",
          "text": "Were there baseline imbalances that suggest differential identification or recruitment of individual participants between intervention groups?",
          "options": list(_BASE_OPTS),
@@ -370,32 +495,32 @@ _DOMAIN_2_ASSIGNMENT: dict[str, Any] = {
          "elaboration": "In cluster-randomized trials participants may know they are receiving an intervention, or even that they are in a study, without knowing they are in a trial — so they may not know another intervention is being compared with theirs. This makes it impossible for them to cause deviations from the intended interventions that arise because of the trial context. Answer 'No' if participants are not aware they are in a study, or are aware they are in a study but not that they are in a trial. Participants are those on whom investigators seek to measure the outcome — patients, the public, health professionals, or other cluster staff."},
         {"id": "2.1b",
          "text": "Were participants aware of their assigned intervention during the trial?",
-         "options": list(_NA_OPTS),
-         "elaboration": "Answer this only if 2.1a is Y/PY/NI (otherwise NA). Answer 'Yes' if participants were aware of any part of the assigned intervention during the trial; consider all parts of the assigned intervention."},
+         "options": list(_BASE_OPTS),
+         "elaboration": "Answer 'Yes' if participants were aware of any part of the assigned intervention during the trial; consider all parts of the assigned intervention."},
         {"id": "2.2",
          "text": "Were carers and people delivering the interventions aware of participants' assigned intervention during the trial?",
          "options": list(_BASE_OPTS),
          "elaboration": "If those caring for participants or delivering the interventions are aware of the assigned intervention, then implementation of the intended intervention, or administration of non-protocol interventions, may differ between groups. Blinding carers and trial personnel, most commonly via a placebo, may prevent such differences but is rare in cluster-randomized trials."},
         {"id": "2.3",
          "text": "Were there deviations from the intended intervention that arose because of the trial context?",
-         "options": list(_NA_OPTS),
-         "elaboration": "Answer this only if 2.1b or 2.2 is Y/PY/NI (otherwise NA). The guidance mostly applies as for individually-randomized trials. Deviations arising because of the trial context are rarely reported in cluster-randomized trials and may in fact occur rarely — interventions are often aimed at clusters and cluster staff, who may lack the authority or motivation to introduce deviations, and complex interventions make such deviations harder to identify. 'No information' is appropriate in many cases, but use 'Probably yes' if it seems likely that such deviations occurred."},
+         "options": list(_BASE_OPTS),
+         "elaboration": "The guidance mostly applies as for individually-randomized trials. Deviations arising because of the trial context are rarely reported in cluster-randomized trials and may in fact occur rarely — interventions are often aimed at clusters and cluster staff, who may lack the authority or motivation to introduce deviations, and complex interventions make such deviations harder to identify. 'No information' is appropriate in many cases, but use 'Probably yes' if it seems likely that such deviations occurred."},
         {"id": "2.4",
          "text": "Were these deviations likely to have affected the outcome?",
-         "options": list(_NA_OPTS),
-         "elaboration": "Answer this only if 2.3 is Y/PY (otherwise NA). As for individually-randomized trials — deviations arising from the trial context impact the effect estimate only if they affect the outcome."},
+         "options": list(_BASE_OPTS),
+         "elaboration": "As for individually-randomized trials — deviations arising from the trial context impact the effect estimate only if they affect the outcome."},
         {"id": "2.5",
          "text": "Were these deviations from intended intervention balanced between groups?",
-         "options": list(_NA_OPTS),
-         "elaboration": "Answer this only if 2.4 is Y/PY/NI (otherwise NA). As for individually-randomized trials — unbalanced trial-context deviations bias the effect estimate more than balanced ones."},
+         "options": list(_BASE_OPTS),
+         "elaboration": "As for individually-randomized trials — unbalanced trial-context deviations bias the effect estimate more than balanced ones."},
         {"id": "2.6",
          "text": "Was an appropriate analysis used to estimate the effect of assignment to intervention?",
          "options": list(_BASE_OPTS),
          "elaboration": "Answer 'Yes' if all clusters and individuals were analysed according to the groups to which they were assigned. Where the number of individuals whose assigned group cannot be identified with certainty (or who changed clusters mid-trial) is small and unrelated to assigned group, an analysis that places all individuals in their assigned groups as far as possible is appropriate. Excluding only participants with missing outcome data is appropriate here (missing data are a separate domain). Answer 'No' if participants were analysed by the intervention received rather than assigned, if analyses exclude participants or whole clusters not receiving their assigned intervention, or if a stepped-wedge trial ignores the time trend. Excluding eligible participants after randomization is inappropriate; excluding ineligible participants whose ineligibility was confirmed after randomization and could not have been influenced by assignment can be appropriate."},
         {"id": "2.7",
          "text": "Was there potential for a substantial impact (on the result) of the failure to analyse participants in the group to which they were randomized?",
-         "options": list(_NA_OPTS),
-         "elaboration": "Answer this only if 2.6 is N/PN/NI (otherwise NA). As for individually-randomized trials, but watch for entire clusters analysed in the wrong intervention group as well as individual participants. There is no precise threshold — substantial impact is possible even with a small proportion misanalysed if the outcome is rare or the misanalysis relates to prognostic factors."},
+         "options": list(_BASE_OPTS),
+         "elaboration": "As for individually-randomized trials, but watch for entire clusters analysed in the wrong intervention group as well as individual participants. There is no precise threshold — substantial impact is possible even with a small proportion misanalysed if the outcome is rare or the misanalysis relates to prognostic factors."},
     ],
 }
 
@@ -416,20 +541,20 @@ _DOMAIN_2_ADHERING: dict[str, Any] = {
          "elaboration": "If carers or people delivering the interventions are aware of the assigned intervention, its implementation or the administration of non-protocol interventions may differ between groups. Blinding may prevent such differences. If randomized allocation was not concealed, it is likely that carers and people delivering the interventions were aware of participants' assigned intervention."},
         {"id": "2.3",
          "text": "Were important non-protocol interventions balanced across intervention groups?",
-         "options": list(_NA_OPTS),
-         "elaboration": "Answer this only if 2.1 or 2.2 is Y/PY/NI, and only if applicable (otherwise NA). Non-protocol interventions are co-interventions received in addition to the protocol-defined intervention. Answer 'Yes' if important non-protocol interventions were balanced across intervention groups. Imbalanced non-protocol interventions — at the individual or the cluster level — can bias the estimated effect of adhering to the assigned intervention. Mark 'NA' if there were no important non-protocol interventions to consider."},
+         "options": list(_BASE_OPTS),
+         "elaboration": "Non-protocol interventions are co-interventions received in addition to the protocol-defined intervention. Answer 'Yes' if important non-protocol interventions were balanced across intervention groups. Imbalanced non-protocol interventions — at the individual or the cluster level — can bias the estimated effect of adhering to the assigned intervention. If there were no important non-protocol interventions to consider, answer 'Yes' (there is no imbalance to be concerned about)."},
         {"id": "2.4",
          "text": "Were there failures in implementing the intervention that could have affected the outcome?",
-         "options": list(_NA_OPTS),
-         "elaboration": "Answer only if applicable (otherwise NA). Answer 'Yes' if the intervention was not implemented as intended in a way that could have affected the outcome — incomplete or inconsistent delivery, or departures from the protocol-specified intervention. Implementation failures are especially relevant for complex interventions delivered to whole clusters or cluster staff."},
+         "options": list(_BASE_OPTS),
+         "elaboration": "Answer 'Yes' if the intervention was not implemented as intended in a way that could have affected the outcome — incomplete or inconsistent delivery, or departures from the protocol-specified intervention. Implementation failures are especially relevant for complex interventions delivered to whole clusters or cluster staff. If implementation fidelity is not a relevant concern for this intervention, answer 'No'."},
         {"id": "2.5",
          "text": "Was there non-adherence to the assigned intervention regimen that could have affected participants' outcomes?",
-         "options": list(_NA_OPTS),
-         "elaboration": "Answer only if applicable (otherwise NA). Mostly as for individually-randomized trials. It is important to consider non-adherence and co-interventions at both the individual and the cluster level."},
+         "options": list(_BASE_OPTS),
+         "elaboration": "Mostly as for individually-randomized trials. Consider non-adherence and co-interventions at both the individual and the cluster level. If non-adherence is not a relevant concern for this intervention, answer 'No'."},
         {"id": "2.6",
          "text": "Was an appropriate analysis used to estimate the effect of adhering to the intervention?",
-         "options": list(_NA_OPTS),
-         "elaboration": "Answer this only if 2.3 is N/PN/NI, or 2.4 or 2.5 is Y/PY/NI (otherwise NA). Mostly as for individually-randomized trials — an appropriate analysis adjusts for prognostic factors and the timing of any non-protocol intervention, non-adherence, or implementation failure. When interventions are multifaceted, consider every intervention for which implementation failures could have affected the outcome, including those aimed at whole clusters and at professionals within clusters as well as at individual patients and the public."},
+         "options": list(_BASE_OPTS),
+         "elaboration": "Mostly as for individually-randomized trials — an appropriate analysis adjusts for prognostic factors and the timing of any non-protocol intervention, non-adherence, or implementation failure. When interventions are multifaceted, consider every intervention for which implementation failures could have affected the outcome, including those aimed at whole clusters and at professionals within clusters as well as at individual patients and the public."},
     ],
 }
 
@@ -449,16 +574,16 @@ _DOMAIN_3: dict[str, Any] = {
          "elaboration": "The issues here are broadly as for individually-randomized trials: 'nearly all' means missingness small enough that it could have made no important difference to the result. In cluster-randomized trials there may be particular complexities when clusters merge, split, or disappear."},
         {"id": "3.2",
          "text": "Is there evidence that the result was not biased by missing outcome data?",
-         "options": ["NA", "Y", "PY", "PN", "N"],
-         "elaboration": "Answer this only if 3.1a or 3.1b is N/PN/NI (otherwise NA). As for individually-randomized trials — evidence can come from an analysis method that corrects for bias from missing data, or from sensitivity analyses showing the result is robust to plausible assumptions about the missingness. A single imputation method (e.g., last-observation-carried-forward) does not by itself establish lack of bias."},
+         "options": list(_NO_NI_OPTS),
+         "elaboration": "As for individually-randomized trials — evidence can come from an analysis method that corrects for bias from missing data, or from sensitivity analyses showing the result is robust to plausible assumptions about the missingness. A single imputation method (e.g., last-observation-carried-forward) does not by itself establish lack of bias. This question offers no 'No information' option — answer 'No' / 'Probably no' when such evidence is absent."},
         {"id": "3.3",
          "text": "Could missingness in the outcome depend on its true value?",
-         "options": list(_NA_OPTS),
-         "elaboration": "Answer this only if 3.2 is N/PN (otherwise NA). As for individually-randomized trials — if loss to follow-up or withdrawal might be related to participants' health status, missingness could depend on the true outcome value."},
+         "options": list(_BASE_OPTS),
+         "elaboration": "As for individually-randomized trials — if loss to follow-up or withdrawal might be related to participants' health status, missingness could depend on the true outcome value."},
         {"id": "3.4",
          "text": "Is it likely that missingness in the outcome depended on its true value?",
-         "options": list(_NA_OPTS),
-         "elaboration": "Answer this only if 3.3 is Y/PY/NI (otherwise NA). As for individually-randomized trials — distinguishes 'could depend' (Some concerns) from 'likely did depend' (High). Evidence includes differential missingness proportions or reasons between groups, or trial circumstances making such dependence likely."},
+         "options": list(_BASE_OPTS),
+         "elaboration": "As for individually-randomized trials — distinguishes 'could depend' (Some concerns) from 'likely did depend' (High). Evidence includes differential missingness proportions or reasons between groups, or trial circumstances making such dependence likely."},
     ],
 }
 
@@ -478,20 +603,20 @@ _DOMAIN_4: dict[str, Any] = {
          "elaboration": "As for individually-randomized trials. Differences may arise from detection bias in passive ascertainment, or from intervention-driven extra contacts giving more chances to detect outcome events."},
         {"id": "4.3a",
          "text": "Were outcome assessors aware that a trial was taking place?",
-         "options": list(_NA_OPTS),
-         "elaboration": "Answer this only if 4.1 and 4.2 are both N/PN/NI (otherwise NA). This question applies to cluster-randomized trials in which participants report their own outcomes (e.g., a questionnaire). If they are not aware they are in a trial, their self-assessment cannot be affected by assignment even if they are aware of the intervention they received."},
+         "options": list(_BASE_OPTS),
+         "elaboration": "This question applies to cluster-randomized trials in which participants report their own outcomes (e.g., a questionnaire). If they are not aware they are in a trial, their self-assessment cannot be affected by assignment even if they are aware of the intervention they received."},
         {"id": "4.3b",
          "text": "Were outcome assessors aware of the intervention received by study participants?",
-         "options": list(_NA_OPTS),
-         "elaboration": "Answer this only if 4.3a is Y/PY/NI (otherwise NA). Answer 'No' if outcome assessors were blinded to intervention status. For participant-reported outcomes the outcome assessor IS the study participant. Where outcomes come from routine data, the individual providing the data and the individual extracting it can both be considered outcome assessors."},
+         "options": list(_BASE_OPTS),
+         "elaboration": "Answer 'No' if outcome assessors were blinded to intervention status. For participant-reported outcomes the outcome assessor IS the study participant. Where outcomes come from routine data, the individual providing the data and the individual extracting it can both be considered outcome assessors."},
         {"id": "4.4",
          "text": "Could assessment of the outcome have been influenced by knowledge of intervention received?",
-         "options": list(_NA_OPTS),
-         "elaboration": "Answer this only if 4.3b is Y/PY/NI (otherwise NA). As for individually-randomized trials — knowledge could influence participant-reported outcomes, observer-reported outcomes involving judgement, and intervention-provider decision outcomes; it is unlikely to influence all-cause mortality."},
+         "options": list(_BASE_OPTS),
+         "elaboration": "As for individually-randomized trials — knowledge could influence participant-reported outcomes, observer-reported outcomes involving judgement, and intervention-provider decision outcomes; it is unlikely to influence all-cause mortality."},
         {"id": "4.5",
          "text": "Is it likely that assessment of the outcome was influenced by knowledge of intervention received?",
-         "options": list(_NA_OPTS),
-         "elaboration": "Answer this only if 4.4 is Y/PY/NI (otherwise NA). As for individually-randomized trials — distinguishes 'could have been influenced' (Some concerns) from 'likely was influenced' (High)."},
+         "options": list(_BASE_OPTS),
+         "elaboration": "As for individually-randomized trials — distinguishes 'could have been influenced' (Some concerns) from 'likely was influenced' (High)."},
     ],
 }
 
@@ -540,12 +665,14 @@ def domains_for_aim(aim: str) -> list[dict[str, Any]]:
 _SYSTEM_PROMPT = (
     "You are an evidence-synthesis methodologist assessing risk of bias in a "
     "**cluster-randomized** trial using the Cochrane RoB 2 tool (cluster-randomized "
-    "trial extension, RoB 2 CRT). Read the PDF carefully. Answer each signaling "
-    "question with one of the response options listed for that question — Y (yes), "
-    "PY (probably yes), PN (probably no), N (no), NI (no information), or NA (not "
-    "applicable, only where offered). Provide a 1-2 sentence rationale for each "
-    "answer, quoting the paper where possible. Return ONLY a valid JSON object — "
-    "no preamble, no markdown fences."
+    "trial extension, RoB 2 CRT). Read the PDF carefully. Answer every signaling "
+    "question on the Y/PY/PN/N/NI scale — Y (yes), PY (probably yes), PN (probably "
+    "no), N (no), NI (no information) — based on what the paper reports about that "
+    "specific question. Do NOT decide whether a question is 'not applicable': the "
+    "cribsheet's conditional ('If X to Y') structure is resolved in code after you "
+    "answer. Just answer each question independently on its own merits. Provide a "
+    "1-2 sentence rationale for each answer, quoting the paper where possible. "
+    "Return ONLY a valid JSON object — no preamble, no markdown fences."
 )
 
 
@@ -598,15 +725,20 @@ Signaling questions:
 Return a JSON object with exactly this shape:
 {shape}
 
-Answer N (or PN) when the paper gives enough information to rule out the problem, and NI only when the paper is silent. Use NA only for a question whose stated precondition is not met. Rationales must be short (1-2 sentences) and quote the paper verbatim where possible."""
+Answer each question using only the response options listed for it. Answer N (or PN) when the paper gives enough information to rule out the problem, and NI only when the paper is silent. Answer every question on its own merits — do not skip a question or mark it not-applicable; the tool resolves the cribsheet's conditional structure in code. Rationales must be short (1-2 sentences) and quote the paper verbatim where possible."""
 
 
 def _assess_domain(pdf_bytes: bytes, domain: dict[str, Any],
                    judges: dict[Any, Callable[[dict[str, str]], str]],
-                   study_type: str, assessed_outcome: str,
+                   aim: str, study_type: str, assessed_outcome: str,
                    extracted_fields: dict[str, str],
                    outcome_is_override: bool = False) -> dict[str, Any]:
-    """LLM-assess one domain and return {signals, rationales, judgement, direction}."""
+    """LLM-assess one domain and return {signals, rationales, judgement, direction}.
+
+    The LLM answers every question on the Y/PY/PN/N/NI scale; ``enforce_cascade``
+    then derives ``NA`` for any question gated out by the cribsheet's conditional
+    structure, and the decision tree runs on those post-cascade signals.
+    """
     prompt = build_domain_prompt(domain, study_type, assessed_outcome,
                                   extracted_fields, outcome_is_override)
     raw = _call_with_pdf(pdf_bytes, prompt, max_tokens=8192)
@@ -615,13 +747,24 @@ def _assess_domain(pdf_bytes: bytes, domain: dict[str, Any],
     rationales: dict[str, str] = {}
     for sig in domain["signals"]:
         sid = sig["id"]
+        allowed = sig["options"]
         ans = str(raw.get(sid, "NI")).strip().upper()
-        if ans not in SIGNAL_OPTIONS:
-            logger.warning("RoB 2 CRT domain %s question %s: invalid answer %r — defaulting to NI",
+        if ans not in allowed:
+            logger.warning("RoB 2 CRT domain %s question %s: invalid answer %r — defaulting",
                             domain["id"], sid, ans)
-            ans = "NI"
+            ans = "NI" if "NI" in allowed else "N"
         signals[sid] = ans
         rationales[sid] = str(raw.get(f"{sid}_rationale", "")).strip()
+
+    # Pure-Python cascade: derive NA for gated-out conditional questions.
+    pre_cascade = dict(signals)
+    signals = enforce_cascade(domain["id"], signals, aim=aim)
+    overrides = {sid: (pre_cascade[sid], signals[sid])
+                 for sid in signals
+                 if sid in pre_cascade and pre_cascade[sid] != signals[sid]}
+    if overrides:
+        logger.debug("RoB 2 CRT D%s cascade derived NA for gated-out questions: %r",
+                     domain["id"], overrides)
 
     judgement = judges[domain["id"]](signals)
     direction = str(raw.get("direction_of_bias", "NA")).strip() or "NA"
@@ -663,7 +806,7 @@ def run(pdf_bytes: bytes,
                 progress(domain["id"])
             except Exception:
                 pass
-        result = _assess_domain(pdf_bytes, domain, judges, study_type,
+        result = _assess_domain(pdf_bytes, domain, judges, aim, study_type,
                                  assessed_outcome, extracted_fields,
                                  outcome_is_override=outcome_is_override)
         result["id"] = domain["id"]
@@ -695,14 +838,22 @@ def run(pdf_bytes: bytes,
 # ─────────────────────────────────────────────
 # Developer-view exposure
 # ─────────────────────────────────────────────
+_CASCADE_FUNCS: dict[Any, Callable] = {
+    "1b": enforce_cascade_1b,
+    3: enforce_cascade_3,
+    4: enforce_cascade_4,
+}
+
+
 def prompt_catalog() -> dict[str, Any]:
-    """Return the prompts + decision-tree source for the developer icon."""
+    """Return the prompts + decision-tree + cascade source for the developer icon."""
     import inspect
 
     def _entry(domain: dict[str, Any],
-               judges: dict[Any, Callable[[dict[str, str]], str]]) -> dict[str, Any]:
+               judges: dict[Any, Callable[[dict[str, str]], str]],
+               cascade_fn: Callable | None) -> dict[str, Any]:
         sample_fields = {k: "<extracted value>" for k in domain["relevant_fields"]}
-        return {
+        entry = {
             "id": domain["id"],
             "name": domain["name"],
             "signals": domain["signals"],
@@ -713,15 +864,28 @@ def prompt_catalog() -> dict[str, Any]:
             ),
             "decision_tree_code": inspect.getsource(judges[domain["id"]]),
         }
+        if cascade_fn is not None:
+            entry["cascade_code"] = inspect.getsource(cascade_fn)
+        return entry
 
     return {
         "tool": "Cochrane RoB 2 — cluster-randomized trials extension (RoB 2 CRT)",
         "system_prompt": _SYSTEM_PROMPT,
         "signal_options": list(SIGNAL_OPTIONS),
         "judgements": ["Low", "Some concerns", "High"],
-        "domains": [_entry(d, DOMAIN_JUDGES_ASSIGNMENT) for d in DOMAINS_ASSIGNMENT],
-        "domain2_adhering": _entry(_DOMAIN_2_ADHERING, DOMAIN_JUDGES_ADHERING),
+        "domains": [_entry(d, DOMAIN_JUDGES_ASSIGNMENT,
+                           enforce_cascade_2_assignment if d["id"] == 2
+                           else _CASCADE_FUNCS.get(d["id"]))
+                    for d in DOMAINS_ASSIGNMENT],
+        "domain2_adhering": _entry(_DOMAIN_2_ADHERING, DOMAIN_JUDGES_ADHERING,
+                                   enforce_cascade_2_adhering),
         "overall_algorithm_code": inspect.getsource(rob2_cluster_overall),
+        "na_note": (
+            "NA is not a signal answer the LLM produces — the LLM answers "
+            "every question on the Y/PY/PN/N/NI scale, and the enforce_cascade_* "
+            "functions derive NA in code for any conditional question whose "
+            "precondition is not met."
+        ),
         "aim_note": (
             "Domain 2 has two variants selected per run by the review team's "
             "aim. The 'domains' list shows the effect-of-assignment (ITT) "
