@@ -36,8 +36,8 @@ from . import paper_files
 from . import indirectness as indir_mod
 from . import imprecision as imprec_mod
 from .helpers import call_anthropic, parse_json_response
-from .rob_tools import rob2, rob2_crossover, rob2_cluster, robins_i, robins_i_v1, quadas3, quadas2
-from .reporting_guidelines import consort2025, consort_crossover, consort_cluster, strobe, stard
+from .rob_tools import rob2, rob2_crossover, rob2_cluster, robins_i, robins_i_v1, quadas3, quadas2, amstar2
+from .reporting_guidelines import consort2025, consort_crossover, consort_cluster, strobe, stard, prisma2020
 
 logger = logging.getLogger("rubricgen")
 
@@ -174,8 +174,17 @@ STUDY_TYPE_REGISTRY: dict[str, dict[str, Any]] = {
     # Reporting guideline is CONSORT 2025 base plus the Campbell et al. 2012
     # cluster-randomised-trial extension items.
     "Cluster Randomized Trial":     {"rob_tool": "rob2_cluster",   "reporting_guideline": "consort_cluster",   "initial_grade": "High"},
-    # Future (not wired yet — classification skips + refunds):
-    # "SR with Meta-Analysis":       {"rob_tool": "amstar2",         "reporting_guideline": "prisma2020",         "initial_grade": "High"},
+    # Systematic reviews — AMSTAR-2 (Shea 2017) critical appraisal + PRISMA 2020
+    # reporting checklist. AMSTAR-2 is structurally unlike the primary-study
+    # tools: it scores 16 checklist items and emits an overall *confidence*
+    # rating (High / Moderate / Low / Critically low), not a GRADE certainty.
+    # ``skip_grade`` tells the orchestrator to skip indirectness, imprecision,
+    # and the GRADE computation — those assess a body of evidence for an
+    # outcome, not a review's methodological quality. ``initial_grade`` is
+    # None (unused). AMSTAR-2 covers reviews with or without meta-analysis
+    # (items 11/12/15 handle the "No meta-analysis conducted" case).
+    "SR with Meta-Analysis":        {"rob_tool": "amstar2",        "reporting_guideline": "prisma2020",        "initial_grade": None, "skip_grade": True},
+    "SR without Meta-Analysis":     {"rob_tool": "amstar2",        "reporting_guideline": "prisma2020",        "initial_grade": None, "skip_grade": True},
 }
 
 _TOOL_RUNNERS: dict[str, Callable] = {
@@ -186,6 +195,7 @@ _TOOL_RUNNERS: dict[str, Callable] = {
     "robins_i_v1":    robins_i_v1.run,    # V1 (1 Aug 2016 cribsheet) — opt-in per run
     "quadas3":        quadas3.run,
     "quadas2":        quadas2.run,
+    "amstar2":        amstar2.run,        # AMSTAR-2 — systematic reviews
 }
 _GUIDELINE_RUNNERS: dict[str, Callable] = {
     "consort2025":       consort2025.run,
@@ -193,6 +203,7 @@ _GUIDELINE_RUNNERS: dict[str, Callable] = {
     "consort_cluster":   consort_cluster.run,
     "strobe":            strobe.run,
     "stard":             stard.run,
+    "prisma2020":        prisma2020.run,   # PRISMA 2020 — systematic reviews
 }
 # Tools that support Phase-4 estimate extraction. Used by the run-create modal
 # to pre-populate per-paper estimate selectors. Each value MUST be a callable
@@ -904,65 +915,77 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
                           "total": 0, "proportion": 0.0,
                           "note": "Reporting-guideline check failed — see server logs."}
 
-    # 6. Indirectness (GRADE PICO assessment for this single trial)
-    _notify("info", "Assessing GRADE indirectness")
+    # 6-7. GRADE pillar — indirectness, imprecision, and the GRADE computation.
+    # Skipped wholesale for tools that set cfg["skip_grade"] (AMSTAR-2): a
+    # systematic review's methodological quality is not a GRADE certainty
+    # rating, and the indirectness/imprecision modules assume a primary-study
+    # PICO. For those tools the RoB tool's overall rating (rob_overall) is the
+    # headline output and the GRADE columns stay empty.
     indirectness: dict[str, Any] = {}
     indirectness_overall = "none"
     indirectness_levels = 0
     indirectness_expl = ""
-    try:
-        indirectness, indirectness_overall, indirectness_levels, indirectness_expl = (
-            indir_mod.run(pdf_bytes, fields, classification, assessed_outcome,
-                          target_pico=target_pico)
-        )
-    except HTTPException as he:
-        msg = f"Indirectness assessment failed: {he.detail}"
-        logger.warning("Indirectness failed (run=%s paper=%s): %s",
-                       run_id, paper_id, msg)
-        _notify("warn", msg)
-        indirectness = {"error": msg}
-    except Exception as e:
-        logger.exception("Indirectness run failed (run=%s paper=%s)", run_id, paper_id)
-        _notify("warn", "Indirectness assessment failed — see server logs.")
-        indirectness = {"error": "Indirectness assessment failed."}
-
-    # 6.5 Imprecision (GRADE single-trial assessment: CI / N / events / fragility)
-    _notify("info", "Assessing GRADE imprecision")
     imprecision: dict[str, Any] = {}
     imprecision_overall = "none"
     imprecision_levels = 0
     imprecision_expl = ""
-    try:
-        imprecision, imprecision_overall, imprecision_levels, imprecision_expl = (
-            imprec_mod.run(pdf_bytes, fields, classification, assessed_outcome,
-                            thresholds=imprecision_thresholds)
-        )
-    except HTTPException as he:
-        msg = f"Imprecision assessment failed: {he.detail}"
-        logger.warning("Imprecision failed (run=%s paper=%s): %s",
-                       run_id, paper_id, msg)
-        _notify("warn", msg)
-        imprecision = {"error": msg}
-    except Exception as e:
-        logger.exception("Imprecision run failed (run=%s paper=%s)", run_id, paper_id)
-        _notify("warn", "Imprecision assessment failed — see server logs.")
-        imprecision = {"error": "Imprecision assessment failed."}
+    initial_grade: str | None = None
+    updated_grade: str | None = None
+    grade_expl: str | None = None
+    skip_grade = bool(cfg.get("skip_grade"))
 
-    # 7. GRADE — combines RoB + indirectness + imprecision downgrades
-    # ROBINS-I V2 stores preflight metadata under rob_domains["preflight"];
-    # filter to dicts that actually carry a domain judgement.
-    rob_domain_judgements = [
-        d.get("judgement", "Low")
-        for k, d in rob_domains.items()
-        if k != "preflight" and isinstance(d, dict) and "judgement" in d
-    ]
-    initial_grade = cfg["initial_grade"]
-    updated_grade, grade_expl = compute_grade(
-        initial_grade, rob_overall, rob_domain_judgements,
-        indirectness_levels=indirectness_levels,
-        indirectness_explanation=indirectness_expl,
-        imprecision_levels=imprecision_levels,
-        imprecision_explanation=imprecision_expl)
+    if not skip_grade:
+        # 6. Indirectness (GRADE PICO assessment for this single trial)
+        _notify("info", "Assessing GRADE indirectness")
+        try:
+            indirectness, indirectness_overall, indirectness_levels, indirectness_expl = (
+                indir_mod.run(pdf_bytes, fields, classification, assessed_outcome,
+                              target_pico=target_pico)
+            )
+        except HTTPException as he:
+            msg = f"Indirectness assessment failed: {he.detail}"
+            logger.warning("Indirectness failed (run=%s paper=%s): %s",
+                           run_id, paper_id, msg)
+            _notify("warn", msg)
+            indirectness = {"error": msg}
+        except Exception as e:
+            logger.exception("Indirectness run failed (run=%s paper=%s)", run_id, paper_id)
+            _notify("warn", "Indirectness assessment failed — see server logs.")
+            indirectness = {"error": "Indirectness assessment failed."}
+
+        # 6.5 Imprecision (GRADE single-trial assessment: CI / N / events / fragility)
+        _notify("info", "Assessing GRADE imprecision")
+        try:
+            imprecision, imprecision_overall, imprecision_levels, imprecision_expl = (
+                imprec_mod.run(pdf_bytes, fields, classification, assessed_outcome,
+                                thresholds=imprecision_thresholds)
+            )
+        except HTTPException as he:
+            msg = f"Imprecision assessment failed: {he.detail}"
+            logger.warning("Imprecision failed (run=%s paper=%s): %s",
+                           run_id, paper_id, msg)
+            _notify("warn", msg)
+            imprecision = {"error": msg}
+        except Exception as e:
+            logger.exception("Imprecision run failed (run=%s paper=%s)", run_id, paper_id)
+            _notify("warn", "Imprecision assessment failed — see server logs.")
+            imprecision = {"error": "Imprecision assessment failed."}
+
+        # 7. GRADE — combines RoB + indirectness + imprecision downgrades
+        # ROBINS-I V2 stores preflight metadata under rob_domains["preflight"];
+        # filter to dicts that actually carry a domain judgement.
+        rob_domain_judgements = [
+            d.get("judgement", "Low")
+            for k, d in rob_domains.items()
+            if k != "preflight" and isinstance(d, dict) and "judgement" in d
+        ]
+        initial_grade = cfg["initial_grade"]
+        updated_grade, grade_expl = compute_grade(
+            initial_grade, rob_overall, rob_domain_judgements,
+            indirectness_levels=indirectness_levels,
+            indirectness_explanation=indirectness_expl,
+            imprecision_levels=imprecision_levels,
+            imprecision_explanation=imprecision_expl)
 
     # 8. Persist
     _write_result(conn, run_id, paper_id, status="ok", filename=filename,
@@ -988,6 +1011,16 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
                    initial_grade=initial_grade,
                    updated_grade=updated_grade,
                    grade_explanation=grade_expl)
+    if skip_grade:
+        _notify("info", f"Done: {filename} — {cfg['rob_tool']} {rob_overall}, "
+                        f"reporting-guideline adherence {guideline.get('proportion')}")
+        return {
+            "status": "ok",
+            "filename": filename,
+            "study_type": study_type,
+            "rob_overall": rob_overall,
+            "guideline_proportion": guideline.get("proportion"),
+        }
     _notify("info", f"Done: {filename} — RoB {rob_overall}, indirectness {indirectness_overall}, imprecision {imprecision_overall}, GRADE {initial_grade}→{updated_grade}")
     return {
         "status": "ok",
@@ -1335,6 +1368,7 @@ def prompt_catalog() -> dict[str, Any]:
             "robins_i_v1":    robins_i_v1.prompt_catalog(),
             "quadas3":        quadas3.prompt_catalog(),
             "quadas2":        quadas2.prompt_catalog(),
+            "amstar2":        amstar2.prompt_catalog(),
         },
         "reporting_guidelines": {
             "consort2025":       consort2025.prompt_catalog(),
@@ -1342,6 +1376,7 @@ def prompt_catalog() -> dict[str, Any]:
             "consort_cluster":   consort_cluster.prompt_catalog(),
             "strobe":            strobe.prompt_catalog(),
             "stard":             stard.prompt_catalog(),
+            "prisma2020":        prisma2020.prompt_catalog(),
         },
         "indirectness": indir_mod.prompt_catalog(),
         "imprecision": imprec_mod.prompt_catalog(),
@@ -1465,6 +1500,10 @@ def flatten_result_row(result_row: dict[str, Any],
         # row actually used (run() records it under rob_domains["aim"]).
         domains_for_tool = rob2_cluster.domains_for_aim(
             rob_domains.get("aim") or "assignment")
+    elif tool == "amstar2":
+        # AMSTAR-2 — the 16 checklist items (each emits rob_d{id}_judgement +
+        # rob_{signal} columns through the generic loop below).
+        domains_for_tool = amstar2.ITEMS
     else:
         domains_for_tool = rob2.DOMAINS
 
@@ -1485,6 +1524,20 @@ def flatten_result_row(result_row: dict[str, Any],
         aim_pf = rob_domains.get("aim_preflight") or {}
         row["robins_v1_aim"] = aim_pf.get("aim", "")
         row["robins_v1_aim_rationale"] = aim_pf.get("rationale", "")
+    # AMSTAR-2 preflight columns (review composition + meta-analysis) + the
+    # overall confidence rating + critical / non-critical flaw counts. Empty
+    # for non-systematic-review rows.
+    if tool == "amstar2":
+        preflight = rob_domains.get("preflight") or {}
+        row["amstar2_confidence"] = result_row.get("rob_overall") or ""
+        row["amstar2_review_includes"] = preflight.get("review_includes", "")
+        row["amstar2_meta_analysis"] = preflight.get("meta_analysis", "")
+        row["amstar2_critical_flaws"] = sum(
+            1 for it in amstar2.ITEMS if it["critical"]
+            and (rob_domains.get(str(it["id"])) or {}).get("judgement") == "No")
+        row["amstar2_noncritical_weaknesses"] = sum(
+            1 for it in amstar2.ITEMS if not it["critical"]
+            and (rob_domains.get(str(it["id"])) or {}).get("judgement") == "No")
 
     for dom in domains_for_tool:
         d = rob_domains.get(str(dom["id"])) or {}

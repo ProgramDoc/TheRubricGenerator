@@ -625,7 +625,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
         <li>Run <strong>GRADE imprecision</strong> (CI width / sample size / events / fragility)</li>
         <li>Compute initial + updated GRADE certainty (downgrade for RoB, indirectness, and imprecision)</li>
       </ul>
-      <p style="margin:0 0 10px;font-size:12px;color:var(--muted);">Papers that aren't a supported study type are skipped. v1 supports RCTs; other study types return "not yet supported".</p>
+      <p style="margin:0 0 10px;font-size:12px;color:var(--muted);">Papers whose study type isn't supported are skipped and the per-paper credit refunded. Supported designs span randomized, non-randomized, diagnostic-accuracy, and systematic-review studies.</p>
       <div style="margin:10px 0;">
         <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px;">Tag run with project (optional)</label>
         <select id="run-project" style="width:100%;padding:6px 8px;border-radius:5px;border:1px solid var(--rule-2);background:var(--paper);color:var(--text);font-family:inherit;font-size:12px;">
@@ -897,12 +897,35 @@ const QUADAS2_DOMAIN_META = [
   { id: 3, short: 'D3: Reference Standard',  full: 'Reference Standard',  hasApplicability: true  },
   { id: 4, short: 'D4: Flow & Timing',       full: 'Flow and Timing',     hasApplicability: false },
 ];
+// AMSTAR-2 (Shea 2017) — 16 checklist items. AMSTAR-2 is not a domain-based
+// bias tool: each "domain" here is a checklist item rated Yes / Partial Yes /
+// No (items 11/12/15 also allow "No meta-analysis conducted"). The 7 critical
+// items (2, 4, 7, 9, 11, 13, 15) drive the overall confidence rating.
+const AMSTAR2_DOMAIN_META = [
+  { id: 1,  short: 'Item 1: PICO',              full: 'Research questions and inclusion criteria include the components of PICO' },
+  { id: 2,  short: 'Item 2: Protocol',          full: 'Review methods established before the review; deviations from the protocol justified', critical: true },
+  { id: 3,  short: 'Item 3: Study designs',     full: 'Selection of study designs for inclusion explained' },
+  { id: 4,  short: 'Item 4: Search',            full: 'Comprehensive literature search strategy', critical: true },
+  { id: 5,  short: 'Item 5: Selection',         full: 'Study selection performed in duplicate' },
+  { id: 6,  short: 'Item 6: Extraction',        full: 'Data extraction performed in duplicate' },
+  { id: 7,  short: 'Item 7: Excluded studies',  full: 'List of excluded studies provided with justification', critical: true },
+  { id: 8,  short: 'Item 8: Study detail',      full: 'Included studies described in adequate detail' },
+  { id: 9,  short: 'Item 9: RoB technique',     full: 'Satisfactory technique for assessing risk of bias in the included studies', critical: true },
+  { id: 10, short: 'Item 10: Funding',          full: 'Sources of funding for the included studies reported' },
+  { id: 11, short: 'Item 11: Meta-analysis',    full: 'Appropriate methods for statistical combination of results', critical: true },
+  { id: 12, short: 'Item 12: RoB impact',       full: 'Potential impact of risk of bias on the meta-analysis assessed' },
+  { id: 13, short: 'Item 13: RoB interpreted',  full: 'Risk of bias accounted for when interpreting/discussing the results', critical: true },
+  { id: 14, short: 'Item 14: Heterogeneity',    full: 'Satisfactory explanation for, and discussion of, any heterogeneity' },
+  { id: 15, short: 'Item 15: Publication bias', full: 'Adequate investigation of publication bias and discussion of its impact', critical: true },
+  { id: 16, short: 'Item 16: Conflicts',        full: 'Potential sources of conflict of interest, including review funding, reported' },
+];
 // domainMetaFor returns the appropriate domain-meta table. For ROBINS-I, the
 // optional second argument is the variant ('A' | 'B' | 'single_arm') read
 // from result.rob_domains.preflight.variant; only 'single_arm' swaps the meta.
 function domainMetaFor(tool, variant) {
   if (tool === 'quadas2')        return QUADAS2_DOMAIN_META;
   if (tool === 'quadas3')        return QUADAS3_DOMAIN_META;
+  if (tool === 'amstar2')        return AMSTAR2_DOMAIN_META;
   if (tool === 'rob2_crossover') return ROB2_CROSSOVER_DOMAIN_META;
   if (tool === 'rob2_cluster')   return ROB2_CLUSTER_DOMAIN_META;
   if (tool === 'robins_i_v1')    return ROBINS_I_V1_DOMAIN_META;
@@ -921,6 +944,11 @@ function isDxToolRow(r) {
 function isRobinsITool(t) {
   return t === 'robins_i' || t === 'robins_i_v1';
 }
+// True for the AMSTAR-2 systematic-review tool. AMSTAR-2 emits an overall
+// confidence rating, not a GRADE certainty — used to hide the GRADE /
+// indirectness / imprecision columns + sections and to pick the AMSTAR-2
+// badge palette.
+function isSrTool(t) { return t === 'amstar2'; }
 // Extract the variant string from a result row's rob_domains. Returns
 // undefined when missing (e.g. RoB 2 rows, legacy V1 ROBINS-I rows, QUADAS-3 rows).
 function variantOf(result) {
@@ -941,7 +969,23 @@ const ROB_BADGE_CLS = {
   'Insufficient information': 'rob-ni',  // QUADAS-3
   'Unclear': 'rob-ni',  // QUADAS-2 (reuses the yellow rob-ni style)
 };
-function robBadgeCls(j) { return ROB_BADGE_CLS[j] || ''; }
+// AMSTAR-2 badge palette. Its labels collide with the RoB scale — "High" is
+// *good* for AMSTAR-2 but *bad* for RoB 2 / QUADAS, and "Low" is *bad* for
+// AMSTAR-2 but *good* for RoB 2 — so AMSTAR-2 rows must never route through
+// ROB_BADGE_CLS. Covers both the overall confidence rating and the per-item
+// Yes / Partial Yes / No / No-meta-analysis ratings.
+const AMSTAR2_BADGE_CLS = {
+  'High': 'rob-low', 'Moderate': 'rob-some', 'Low': 'rob-high', 'Critically low': 'rob-critical',
+  'Yes': 'rob-low', 'Partial Yes': 'rob-some', 'No': 'rob-high',
+  'No meta-analysis conducted': 'rob-ni',
+};
+// robBadgeCls maps a judgement string to a badge CSS class. Pass the row's
+// rob_tool so AMSTAR-2 (whose labels collide with the RoB scale) is coloured
+// from its own palette; every other tool falls through to ROB_BADGE_CLS.
+function robBadgeCls(j, tool) {
+  if (tool === 'amstar2') return AMSTAR2_BADGE_CLS[j] || '';
+  return ROB_BADGE_CLS[j] || '';
+}
 // Sort domain ids (mix of numeric and string e.g. 'S') in cribsheet order
 // according to the supplied domain-meta table. IDs not present in the meta
 // table fall to the end in lexicographic order.
@@ -1547,25 +1591,33 @@ function renderResults() {
   const guidelineHeader =
     isRobinsITool(runTool) ? 'STROBE adherence' :
     (runTool === 'quadas2' || runTool === 'quadas3') ? 'STARD adherence' :
+    runTool === 'amstar2' ? 'PRISMA 2020 adherence' :
     'CONSORT adherence';
   // Show Applicability column only when at least one row uses a QUADAS variant.
   // Skip indirectness + imprecision columns on all-QUADAS runs (those modules
-  // are skipped per cfg.skip_grade_extras).
+  // are skipped per cfg.skip_grade_extras). AMSTAR-2 (systematic-review) runs
+  // additionally skip the GRADE columns — AMSTAR-2 emits a confidence rating,
+  // not a GRADE certainty (cfg.skip_grade).
   const anyDxTool = results.some(r => isDxToolRow(r));
   const allDxTool = anyDxTool && results.every(r => r.status !== 'ok' || isDxToolRow(r));
+  const anySrTool = results.some(r => isSrTool(r.rob_tool));
+  const allSrTool = anySrTool && results.every(r => r.status !== 'ok' || isSrTool(r.rob_tool));
 
-  const headerCols = ['<th class="col-study">Study</th>', '<th>Classification</th>', '<th>Risk of bias</th>'];
+  const robColHeader = allSrTool ? 'AMSTAR-2 confidence' : 'Risk of bias';
+  const headerCols = ['<th class="col-study">Study</th>', '<th>Classification</th>', `<th>${robColHeader}</th>`];
   if (anyDxTool) {
     headerCols.push('<th title="QUADAS-2 / QUADAS-3 applicability — concern that the as-conducted study does not match the review question. Click for full per-domain breakdown.">Applicability</th>');
   }
-  if (!allDxTool) {
+  if (!allDxTool && !allSrTool) {
     headerCols.push('<th title="GRADE indirectness — per-trial PICO assessment. Click for full breakdown.">Indirectness</th>');
     headerCols.push('<th title="GRADE imprecision — CI width / sample size / events / fragility. Click for full breakdown.">Imprecision</th>');
   }
   headerCols.push(`<th>${guidelineHeader}</th>`);
-  headerCols.push('<th>Initial GRADE</th>');
-  headerCols.push('<th>Updated GRADE</th>');
-  headerCols.push('<th>GRADE explanation</th>');
+  if (!allSrTool) {
+    headerCols.push('<th>Initial GRADE</th>');
+    headerCols.push('<th>Updated GRADE</th>');
+    headerCols.push('<th>GRADE explanation</th>');
+  }
   robDomainIds.forEach(did => {
     const meta = runDomainMeta.find(m => String(m.id) === String(did));
     const short = meta ? meta.short : ('RoB Domain ' + did);
@@ -1616,9 +1668,12 @@ function renderResults() {
           ? `<span class="chip" style="margin-left:6px;background:#fef3c7;border-color:#fde68a;color:#92400e;" title="ROBINS-I V1, 1 Aug 2016 cribsheet">ROBINS-I V1</span>`
           : (r.rob_tool === 'rob2_cluster')
             ? `<span class="chip" style="margin-left:6px;background:#f3e8ff;border-color:#e9d5ff;color:#6b21a8;" title="RoB 2 cluster-randomized extension (RoB 2 CRT, 2021)">RoB 2 Cluster</span>`
-            : '';
+            : (r.rob_tool === 'amstar2')
+              ? `<span class="chip" style="margin-left:6px;background:#fce7f3;border-color:#fbcfe8;color:#be185d;" title="AMSTAR-2 critical appraisal of systematic reviews (Shea 2017)">AMSTAR-2</span>`
+              : '';
 
-    const robCls = robBadgeCls(r.rob_overall);
+    const isSrRow = isSrTool(r.rob_tool);
+    const robCls = robBadgeCls(r.rob_overall, r.rob_tool);
 
     // Indirectness cell — severity badge + downgrade levels. Click opens the
     // detail modal scrolled to the indirectness section.
@@ -1634,8 +1689,8 @@ function renderResults() {
     const indirLvls = Number(r.indirectness_levels || 0);
     const indirCls = _indirSevBadge[indirSev] || 'rob-na';
     const indirLabel = _indirSevLabel[indirSev] || '—';
-    const indirCell = isDxRow
-      ? `<td class="cell-clickable" title="Indirectness is skipped for diagnostic-accuracy assessments — see CLAUDE.md."><span style="color:var(--muted);font-size:11px;">N/A</span></td>`
+    const indirCell = (isDxRow || isSrRow)
+      ? `<td title="${isSrRow ? 'Indirectness is skipped for AMSTAR-2 systematic-review appraisals.' : 'Indirectness is skipped for diagnostic-accuracy assessments — see CLAUDE.md.'}"><span style="color:var(--muted);font-size:11px;">N/A</span></td>`
       : `<td class="cell-clickable" onclick="openDetailModalById(${r.id}, 'indirectness')" title="Click for full PICO breakdown">
         <span class="rob-badge ${indirCls}">${escHtml(indirLabel)}</span>
         ${indirLvls > 0
@@ -1649,8 +1704,8 @@ function renderResults() {
     const imprecLvls = Number(r.imprecision_levels || 0);
     const imprecCls = _indirSevBadge[imprecSev] || 'rob-na';
     const imprecLabel = _indirSevLabel[imprecSev] || '—';
-    const imprecCell = isDxRow
-      ? `<td class="cell-clickable" title="Imprecision is skipped for diagnostic-accuracy assessments — see CLAUDE.md."><span style="color:var(--muted);font-size:11px;">N/A</span></td>`
+    const imprecCell = (isDxRow || isSrRow)
+      ? `<td title="${isSrRow ? 'Imprecision is skipped for AMSTAR-2 systematic-review appraisals.' : 'Imprecision is skipped for diagnostic-accuracy assessments — see CLAUDE.md.'}"><span style="color:var(--muted);font-size:11px;">N/A</span></td>`
       : `<td class="cell-clickable" onclick="openDetailModalById(${r.id}, 'imprecision')" title="Click for CI / sample / events breakdown">
         <span class="rob-badge ${imprecCls}">${escHtml(imprecLabel)}</span>
         ${imprecLvls > 0
@@ -1680,7 +1735,7 @@ function renderResults() {
     const domainCells = robDomainIds.map(did => {
       const d = (r.rob_domains || {})[did] || {};
       const j = d.judgement || '';
-      const jCls = robBadgeCls(j);
+      const jCls = robBadgeCls(j, r.rob_tool);
       const signalsHtml = d.signals
         ? Object.keys(d.signals).sort().map(sid =>
             `<span class="chip">${escHtml(sid)}=${escHtml(d.signals[sid])}</span>`).join(' ')
@@ -1708,12 +1763,13 @@ function renderResults() {
             ? `<div style="font-size:10px;margin-top:3px;color:var(--muted);">dir: ${escHtml(r.rob_direction)}</div>`
             : ''}</td>
       ${applCell}
-      ${(!allDxTool) ? indirCell : ''}
-      ${(!allDxTool) ? imprecCell : ''}
+      ${(!allDxTool && !allSrTool) ? indirCell : ''}
+      ${(!allDxTool && !allSrTool) ? imprecCell : ''}
       <td class="cell-clickable" onclick="openDetailModalById(${r.id}, 'consort')">${consort}</td>
+      ${allSrTool ? '' : `
       <td class="cell-clickable" onclick="openDetailModalById(${r.id}, 'grade')"><span class="${gradeCls(r.initial_grade)}">${escHtml(r.initial_grade || '—')}</span></td>
       <td class="cell-clickable" onclick="openDetailModalById(${r.id}, 'grade')"><span class="${gradeCls(r.updated_grade)}">${escHtml(r.updated_grade || '—')}</span></td>
-      <td class="cell-clickable" onclick="openDetailModalById(${r.id}, 'grade')" style="max-width:240px;font-size:10.5px;color:var(--muted);">${escHtml(r.grade_explanation || '')}</td>
+      <td class="cell-clickable" onclick="openDetailModalById(${r.id}, 'grade')" style="max-width:240px;font-size:10.5px;color:var(--muted);">${escHtml(r.grade_explanation || '')}</td>`}
       ${domainCells}
       <td style="max-width:220px;font-size:10.5px;">${escHtml(r.primary_outcome || '')}</td>
     </tr>`;
@@ -1780,8 +1836,10 @@ async function _openDetailModalForResult(r, anchor) {
   const year = fields.citation_year || '';
   document.getElementById('qa-detail-title').textContent = title;
   document.getElementById('qa-detail-title').title = title;
-  const subBits = [authors, journal, year, r.study_type, 'RoB ' + (r.rob_overall || '—'),
-                   'GRADE ' + (r.initial_grade || '—') + ' → ' + (r.updated_grade || '—')];
+  const subBits = isSrTool(r.rob_tool)
+    ? [authors, journal, year, r.study_type, 'AMSTAR-2 confidence: ' + (r.rob_overall || '—')]
+    : [authors, journal, year, r.study_type, 'RoB ' + (r.rob_overall || '—'),
+       'GRADE ' + (r.initial_grade || '—') + ' → ' + (r.updated_grade || '—')];
   document.getElementById('qa-detail-sub').textContent = subBits.filter(Boolean).join(' · ');
   // Render panel
   renderDetailPanel(r, anchor);
@@ -1834,10 +1892,18 @@ function renderDetailPanel(r, anchor) {
   ].map(([k, lbl]) => fields[k]
     ? `<span class="chip mod" title="${escHtml(lbl)}">${escHtml(fields[k])}</span>` : '').filter(Boolean).join(' ');
 
-  const robCls = robBadgeCls(r.rob_overall);
   const detailTool = r.rob_tool || 'rob2';
   const detailVariant = variantOf(r);
   const detailMeta = domainMetaFor(detailTool, detailVariant);
+  const isSr = isSrTool(detailTool);
+  const robCls = robBadgeCls(r.rob_overall, detailTool);
+  // AMSTAR-2 — preflight (review composition) + critical / non-critical flaw
+  // counts that drive the overall confidence rating.
+  const amstar2Preflight = (isSr && robDomains.preflight) || {};
+  const amstar2CritFlaws = isSr ? AMSTAR2_DOMAIN_META.filter(
+    m => m.critical && (robDomains[String(m.id)] || {}).judgement === 'No').length : 0;
+  const amstar2NonCrit = isSr ? AMSTAR2_DOMAIN_META.filter(
+    m => !m.critical && (robDomains[String(m.id)] || {}).judgement === 'No').length : 0;
 
   const assessedOutcome = r.assessed_outcome || r.primary_outcome || '';
   const primaryOutcome = r.primary_outcome || '';
@@ -1855,15 +1921,24 @@ function renderDetailPanel(r, anchor) {
         ${modChips ? '<div style="margin-top:4px;">' + modChips + '</div>' : ''}</div>
       <div style="color:var(--muted);font-weight:600;">${overrideActive ? 'Assessed outcome' : 'Primary outcome'}</div>
       ${outcomeBlock}
-      <div style="color:var(--muted);font-weight:600;">Overall RoB</div>
+      <div style="color:var(--muted);font-weight:600;">${isSr ? 'Overall confidence' : 'Overall RoB'}</div>
       <div><span class="rob-badge ${robCls}">${escHtml(r.rob_overall || '—')}</span>${r.rob_direction && r.rob_direction !== 'NA' ? ' <span style="color:var(--muted);font-size:11px;">(direction: ' + escHtml(r.rob_direction) + ')</span>' : ''}</div>
       <div style="color:var(--muted);font-weight:600;">${escHtml(
         isRobinsITool(detailTool) ? 'STROBE adherence' :
         (detailTool === 'quadas2' || detailTool === 'quadas3') ? 'STARD adherence' :
+        isSr ? 'PRISMA 2020 adherence' :
         'CONSORT adherence')}</div>
       <div>${(guideline.adhered != null && guideline.applicable != null) ? escHtml(guideline.adhered) + ' / ' + escHtml(guideline.applicable) + (guideline.proportion != null ? ' <span style="color:var(--muted);">(' + (guideline.proportion * 100).toFixed(0) + '%)</span>' : '') : '—'}</div>
+      ${isSr ? `
+      <div style="color:var(--muted);font-weight:600;">Review includes</div>
+      <div>${escHtml({rct:'Randomised trials only', nrsi:'Non-randomised studies only', both:'Randomised and non-randomised studies'}[amstar2Preflight.review_includes] || '—')}
+        &middot; meta-analysis ${amstar2Preflight.meta_analysis ? 'performed' : 'not performed'}</div>
+      <div style="color:var(--muted);font-weight:600;">AMSTAR-2 flaws</div>
+      <div><strong>${amstar2CritFlaws}</strong> critical flaw${amstar2CritFlaws === 1 ? '' : 's'}
+        &middot; <strong>${amstar2NonCrit}</strong> non-critical weakness${amstar2NonCrit === 1 ? '' : 'es'}
+        <div style="margin-top:3px;color:var(--muted);font-size:11px;">Critical items: 2, 4, 7, 9, 11, 13, 15 (Shea 2017 default set)</div></div>` : `
       <div style="color:var(--muted);font-weight:600;">GRADE</div>
-      <div><span class="${gradeClsOf(r.initial_grade)}">${escHtml(r.initial_grade || '—')}</span> → <span class="${gradeClsOf(r.updated_grade)}">${escHtml(r.updated_grade || '—')}</span></div>
+      <div><span class="${gradeClsOf(r.initial_grade)}">${escHtml(r.initial_grade || '—')}</span> → <span class="${gradeClsOf(r.updated_grade)}">${escHtml(r.updated_grade || '—')}</span></div>`}
       ${(detailTool === 'robins_i_v1' && robDomains.aim_preflight) ? `
       <div style="color:var(--muted);font-weight:600;">Aim of study</div>
       <div>
@@ -1893,18 +1968,21 @@ function renderDetailPanel(r, anchor) {
     detailTool === 'quadas3'     ? 'Risk of Bias (QUADAS-3 v1.2)' :
     detailTool === 'quadas2'     ? 'Risk of Bias (QUADAS-2, 2011)' :
     detailTool === 'rob2_cluster' ? 'Risk of Bias (RoB 2 Cluster, 2021)' :
+    detailTool === 'amstar2'     ? 'AMSTAR-2 — methodological quality (Shea 2017)' :
     'Risk of Bias (RoB 2)';
   const robHtml = `<section id="qa-sec-rob"><h3>${escHtml(robHeader)}</h3>
     ${domainIds.length === 0 ? '<div style="color:var(--muted);">No RoB data.</div>' : domainIds.map(did => {
       const d = robDomains[did] || {};
       const meta = detailMeta.find(m => String(m.id) === String(did)) || {};
       const j = d.judgement || '—';
-      const jCls = robBadgeCls(j);
+      const jCls = robBadgeCls(j, detailTool);
       const signals = d.signals || {};
       const rationales = d.rationales || {};
       const sigKeys = Object.keys(signals).sort();
       const body = sigKeys.length === 0
-        ? '<div style="color:var(--muted);padding:8px 0;">No signaling-question data.</div>'
+        ? `<div style="color:var(--muted);padding:8px 0;">${d.na_derived
+            ? 'Not applicable — the review did not perform a meta-analysis or quantitative synthesis, so this item is rated &ldquo;No meta-analysis conducted&rdquo; in code.'
+            : 'No signaling-question data.'}</div>`
         : sigKeys.map(sid => {
           const ans = signals[sid] || '';
           const rat = rationales[sid] || '';
@@ -1920,10 +1998,13 @@ function renderDetailPanel(r, anchor) {
         }).join('');
       const dir = (d.direction && d.direction !== 'NA') ? `<span class="qa-dir">direction: ${escHtml(d.direction)}</span>` : '';
       const opened = anchor === ('rob-d' + did) ? ' open' : '';
+      const critChip = meta.critical
+        ? '<span class="chip" style="background:#fce7f3;border-color:#fbcfe8;color:#be185d;margin-left:6px;" title="One of the 7 AMSTAR-2 critical items — a &ldquo;No&rdquo; here is a critical flaw">critical</span>'
+        : '';
       return `<details class="qa-domain" id="qa-sec-rob-d${escHtml(did)}"${opened}>
         <summary><span class="rob-badge ${jCls}">${escHtml(j)}</span>
           <span>${escHtml(meta.short || ('Domain ' + did))}: ${escHtml(meta.full || d.name || '')}</span>
-          ${dir}
+          ${critChip}${dir}
         </summary>
         <div class="qa-domain-body">${body}</div>
       </details>`;
@@ -2163,6 +2244,7 @@ function renderDetailPanel(r, anchor) {
   const guidelineHeading =
     isRobinsITool(detailTool) ? 'STROBE 2007 checklist' :
     (detailTool === 'quadas2' || detailTool === 'quadas3') ? 'STARD 2015 checklist' :
+    isSr ? 'PRISMA 2020 checklist' :
     'CONSORT 2025 checklist';
   const consortHtml = `<section id="qa-sec-consort"><h3>${escHtml(guidelineHeading)}
     <span style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:8px;">
@@ -2171,6 +2253,7 @@ function renderDetailPanel(r, anchor) {
     ${consortIds.length === 0 ? `<div style="color:var(--muted);">No ${
         isRobinsITool(detailTool) ? 'STROBE' :
         (detailTool === 'quadas2' || detailTool === 'quadas3') ? 'STARD' :
+        isSr ? 'PRISMA' :
         'CONSORT'} data.</div>` :
       Object.keys(groups).map(sec => `<div class="qa-consort-group">
         <h4>${escHtml(sec)}</h4>
@@ -2263,12 +2346,15 @@ function renderDetailPanel(r, anchor) {
 
   // QUADAS-2 / QUADAS-3 papers skip indirectness + imprecision (those modules
   // assume PICO/treatment trials, not PIRT diagnostic accuracy — see CLAUDE.md).
-  const skipGradeExtras = (detailTool === 'quadas2' || detailTool === 'quadas3');
+  // AMSTAR-2 (systematic reviews) additionally skips the whole GRADE section —
+  // a review's methodological quality is not a GRADE certainty rating.
+  const skipGradeExtras = (detailTool === 'quadas2' || detailTool === 'quadas3') || isSr;
   const indirSection  = skipGradeExtras ? '' : indirHtml;
   const imprecSection = skipGradeExtras ? '' : imprecHtml;
+  const gradeSection  = isSr ? '' : gradeHtml;
   document.getElementById('qa-detail-content').innerHTML =
     summaryHtml + robHtml + applicabilityHtml + estimateHtml +
-    indirSection + imprecSection + consortHtml + gradeHtml + fieldsHtml;
+    indirSection + imprecSection + consortHtml + gradeSection + fieldsHtml;
   // Toggle subnav buttons that don't apply to this tool.
   const navRoot = document.getElementById('qa-detail-subnav');
   if (navRoot) {
@@ -2278,6 +2364,7 @@ function renderDetailPanel(r, anchor) {
       let show = true;
       if (sec === 'indirectness' || sec === 'imprecision') show = !skipGradeExtras;
       if (sec === 'applicability' || sec === 'estimate')   show = (detailTool === 'quadas2' || detailTool === 'quadas3');
+      if (sec === 'grade')                                 show = !isSr;
       b.style.display = show ? '' : 'none';
     });
     // Inject Applicability + Estimate buttons if missing (one-time per page load)
@@ -2308,7 +2395,17 @@ function renderDetailPanel(r, anchor) {
         detailTool === 'quadas3'     ? 'QUADAS-3' :
         detailTool === 'quadas2'     ? 'QUADAS-2' :
         detailTool === 'rob2_cluster' ? 'RoB 2 Cluster' :
+        detailTool === 'amstar2'     ? 'AMSTAR-2' :
         'RoB 2';
+    }
+    // Reporting-guideline subnav button label tracks the tool's guideline.
+    const consortBtn = navRoot.querySelector('button[data-section="consort"]');
+    if (consortBtn) {
+      consortBtn.textContent =
+        isRobinsITool(detailTool) ? 'STROBE' :
+        (detailTool === 'quadas2' || detailTool === 'quadas3') ? 'STARD' :
+        isSr ? 'PRISMA' :
+        'CONSORT';
     }
   }
 
@@ -2344,7 +2441,8 @@ async function _loadSignalTextCache() {
         return [];
       };
       Object.entries(cat.rob_tools || {}).forEach(([toolKey, tool]) => {
-        (tool.domains || []).forEach(d => {
+        // RoB tools expose `domains`; AMSTAR-2 exposes `items` — same shape.
+        (tool.domains || tool.items || []).forEach(d => {
           flattenSignals(d.signals).forEach(s => {
             map[toolKey + ':' + d.id + ':' + s.id] = s.text;
           });

@@ -912,12 +912,13 @@ class TestDispatch:
         assert cfg["initial_grade"] == "High"
 
     def test_unsupported_returns_none(self):
-        # Types still not wired (registry stubs remain commented).
-        # Diagnostic Accuracy IS wired locally (→ QUADAS-3 + STARD).
-        # Cluster Randomized Trial IS wired (→ RoB 2 CRT); Stepped-Wedge is not
-        # (the CRT cribsheet covers only parallel cluster-randomized trials).
-        assert qa.dispatch("SR with Meta-Analysis") is None
+        # Types still not wired. Diagnostic Accuracy IS wired (→ QUADAS-3);
+        # Cluster Randomized Trial IS wired (→ RoB 2 CRT); the two SR types ARE
+        # wired (→ AMSTAR-2 + PRISMA 2020). Stepped-Wedge / Umbrella Review /
+        # Network Meta-Analysis are not.
         assert qa.dispatch("Stepped-Wedge Cluster RCT") is None
+        assert qa.dispatch("Umbrella Review") is None
+        assert qa.dispatch("Network Meta-Analysis") is None
         assert qa.dispatch("") is None
         assert qa.dispatch("Not A Real Study Type") is None
 
