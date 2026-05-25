@@ -11,13 +11,15 @@ A self-contained reference for implementing an automated ROBINS-I V1 (1 August 2
 
 **Source:** Sterne JAC, Hernán MA, Reeves BC, Savović J, Berkman ND, Viswanathan M, Henry D, Altman DG, Ansari MT, Boutron I, Carpenter JR, Chan A-W, Churchill R, Hróbjartsson A, Kirkham J, Jüni P, Loke YK, Pigott TD, Ramsay CR, Regidor D, Rothstein HR, Sandhu L, Santaguida PL, Schünemann HJ, Shea B, Shrier I, Tugwell P, Turner L, Valentine JC, Waddington H, Waters E, Whiting P, Higgins JPT. *The Risk Of Bias In Non-randomized Studies — of Interventions (ROBINS-I) assessment tool (version for cohort-type studies).* Version 1 August 2016. Underlying paper: Sterne JAC et al., BMJ 2016;355:i4919.
 
-**Scope:** ROBINS-I V1 (1 August 2016 cohort-type studies template). Out of scope: ROBINS-I V2 (20 November 2025 — superseded V1; covered in a separate shareable at `docs/shareable/robins_i_v2_shareable.md`); ROB 2 (which is for RCTs, separate tool); systematic-review assessment (AMSTAR-2, separate tool); QUADAS-2 / QUADAS-3 (for diagnostic test accuracy, separate tools).
+**Scope:** ROBINS-I V1 (1 August 2016 cohort-type studies template) **plus a project-specific single-arm adaptation** (§19) that mirrors V2's `single_arm` variant for V1's 5-token vocab and 5-level judgement scale. Out of scope: ROBINS-I V2 (20 November 2025 — superseded V1; covered in a separate shareable at `docs/shareable/robins_i_v2_shareable.md`); ROB 2 (which is for RCTs, separate tool); systematic-review assessment (AMSTAR-2, separate tool); QUADAS-2 / QUADAS-3 (for diagnostic test accuracy, separate tools).
+
+**Single-arm adaptation (project-specific, not in the original cribsheet).** The V1 cribsheet (1 August 2016) covers only cohort-type studies — single-arm / dose-escalation designs are out of its published scope. This implementation adds a single-arm variant (§19) so users on the V1 toolchain (e.g. the OVID team) can appraise single-arm papers without having to switch to V2 mid-review. The adaptation mirrors V2's pattern: Domain 1 is reframed as **benchmark adequacy + prognostic-mix comparability**; Domain 2 is reframed as **intervention fidelity + intent-vs-received cohort definition**; Domain 4 (Deviations from intended interventions) is set to NA in code with no LLM call (V2 retired this domain entirely; its concerns are folded into D2-SA's 2S.3). D3, D5, D6, D7 reuse cohort signals unchanged. V1's 5-token vocab (Y/PY/PN/N/NI — no WN/SN/WY/SY gradient) requires a conservative collapse documented in §19.7. The adaptation is **not officially endorsed by the ROBINS-I V1 authors** — it's a best-effort extension by the AI Researcher team for use on the V1 toolchain. The published Cochrane guidance for single-arm risk-of-bias is V2's `single_arm` variant (separate shareable).
 
 **Conservative-tree note.** V1 expresses its domain judgements as **narrative tables** (Tables 1 + 2 in §11), not as deterministic decision trees. The Python trees in §15 are conservative interpretations of those tables; reviewers will sometimes legitimately override the algorithmic mapping based on materiality, "very strongly related" judgements, and other prose-table judgement calls. §17.5 details every place the trees are charitable or conservative interpretations of the cribsheet narrative.
 
 **V1 has no preflight stage in the original cribsheet.** Unlike V2 (which runs a B1/B2/B3 + C4 preflight before any domain assessment), V1 unconditionally assesses all 7 domains. The aim of study (assessing effect of *assignment to* intervention vs effect of *starting and adhering to* intervention) is set once at the Stage-II study-spec stage and gates Domain 4 question selection. **This implementation adds one optional preflight LLM call — the aim preflight (§1.1) — that auto-determines the Stage-II aim from the paper, mechanically equivalent to V2's C4 question.** Reviewers may still set the aim manually; auto-determination only runs when no manual value is supplied.
 
-**Production integration in The AI Researcher.** This shareable doc is now mirrored by [backend/rob_tools/robins_i_v1.py](../../backend/rob_tools/robins_i_v1.py), the production module that runs inside the Quality Appraisal pipeline. V1 is selectable per-run alongside V2 (V2 is the default) via the ROBINS-I version radio in the run-create modal. The choice persists on `quality_appraisal_runs.robins_i_tool_choice` (`NULL` = V2 default for back-compat). Single-arm / Dose-Escalation papers ignore the toggle and continue to use V2's single_arm variant — V1's cribsheet is cohort-only. The production module returns the 3-tuple `(domain_results, overall, direction)` expected by the existing tool-runner contract; the aim-preflight payload (`{aim, rationale}`) is stashed in `domain_results["aim_preflight"]` so the per-paper detail view can surface how the aim was chosen (mirrors V2's `domain_results["preflight"]` convention). The reference implementation in §15 below returns a 4-tuple with `aim_rationale` as a top-level element instead — both forms are equivalent; the production wrapper just moves the rationale inside the dict to satisfy the existing call site.
+**Production integration in The AI Researcher.** This shareable doc is now mirrored by [backend/rob_tools/robins_i_v1.py](../../backend/rob_tools/robins_i_v1.py), the production module that runs inside the Quality Appraisal pipeline. V1 is selectable per-run alongside V2 (V2 is the default) via the ROBINS-I version radio in the run-create modal. The choice persists on `quality_appraisal_runs.robins_i_tool_choice` (`NULL` = V2 default for back-compat). Single-arm / Dose-Escalation papers now also honour the toggle: when V1 is selected, the project-specific single-arm variant (§19) runs; when V2 is selected (or the toggle is unset), V2's `single_arm` variant runs as before. The production module returns the 3-tuple `(domain_results, overall, direction)` expected by the existing tool-runner contract; the aim-preflight payload (`{aim, rationale}`) is stashed in `domain_results["aim_preflight"]` so the per-paper detail view can surface how the aim was chosen (mirrors V2's `domain_results["preflight"]` convention). The reference implementation in §15 below returns a 4-tuple with `aim_rationale` as a top-level element instead — both forms are equivalent; the production wrapper just moves the rationale inside the dict to satisfy the existing call site.
 
 **Cascade enforcement is in Python, not the LLM.** V1 has cascading signaling questions in Domains 1, 2, 4, and 5 — where one question's answer determines whether a downstream question is asked (NA). These cascade rules are deterministic from the cribsheet, so this implementation enforces them in pure Python (`enforce_cascade_dN_v1` functions in §15) AFTER the LLM has answered. The LLM is asked to answer every question based on its reading of the paper; Python then overrides any LLM answer to `NA` when the cribsheet's cascade rules indicate the question is gated out. This (1) prevents the LLM from incorrectly answering a substantive question when the cascade says NA, (2) catches LLM inconsistency between gating-question and downstream-question answers, and (3) ensures the same paper always produces the same cascade structure regardless of LLM stochasticity. See §18 for the design rationale and the per-domain cascade rules.
 
@@ -2058,7 +2060,7 @@ print("All ROBINS-I V1 sanity checks passed.")
 | D1 "Low" label | Plain "Low" | **"Low (except for concerns about uncontrolled confounding)"** for cohort; "Low (except for concerns about uncontrolled benchmarking)" for single-arm |
 | Aim-of-study handling | Stage-II checkbox OR §1.1 aim-preflight LLM call (single question, same protocol-deviation-accounting decision as V2's C4); gates D4 question subset | Preflight C4 selects D1 variant A vs B; D4 no longer exists |
 | Direction-of-bias options | 3 (D1) or 5 (D2+); per-domain | 6 per-domain + 1 overall (modal across domains, ties → "Unpredictable") |
-| Single-arm support | Not addressed | Project-specific `single_arm` variant of D1 + D2 |
+| Single-arm support | **Not addressed in the published cribsheet.** This implementation adds a project-specific `single_arm` variant (§19) that mirrors V2's pattern for V1's 5-token vocab + 5-level scale: D1-SA (1S.1–1S.5 benchmark adequacy), D2-SA (2S.1–2S.3 intervention fidelity + intent-vs-received), D4 marked NA in code. | Project-specific `single_arm` variant of D1 + D2 |
 
 ### 17.2 Domain mapping V1 ↔ V2
 
@@ -2071,6 +2073,20 @@ print("All ROBINS-I V1 sanity checks passed.")
 | **D5** Bias due to missing data | **D4** Bias due to missing data | Renumbered. V2 expands substantially: 11 signals (V1 had 5) with explicit MAR/MCAR/MNAR paths + complete-case vs imputation vs alternative-method branching + 4.11 sensitivity-analysis rescue. |
 | **D6** Bias in measurement of outcomes | **D5** Bias arising from measurement of the outcome | Renumbered. V2 reduces to 3 signals (V1 had 4) but adds weak/strong yes tokens on 5.3. V1 6.1 (could outcome be influenced by knowledge?) and V1 6.4 (systematic errors related to intervention?) are folded into the V2 5.1 + 5.3 decision-tree branching. |
 | **D7** Bias in selection of the reported result | **D6** Bias in selection of the reported result | Renumbered. Signal questions essentially identical (V1 7.1/7.2/7.3 ≅ V2 6.2/6.3/6.4). V2 adds 6.1 (was the result reported in accordance with a pre-determined analysis plan?) as the explicit Low-risk anchor. |
+
+### 17.3 Single-arm vocab collapse (V1 → V2)
+
+The V1 single-arm adaptation in §19 ports V2's `single_arm` signal sets into V1's 5-token vocab (no WN/SN/WY/SY gradient). Three V2-SA signals carry gradient tokens that have to collapse:
+
+| V2-SA signal | V2 vocab | V1-SA vocab | Collapse mapping |
+|--|--|--|--|
+| **1S.3** (prognostic comparability) | `NA / Y / PY / WN / SN / NI` | `NA / Y / PY / PN / N / NI` | **PN ≈ V2 WN** (most-but-not-all comparable); **N ≈ V2 SN** (materially less comparable) |
+| **2S.2** (dose modifications recorded) | `Y / PY / WN / SN / NI` | `Y / PY / PN / N / NI` | **PN ≈ V2 WN** (most exposure modifications recorded); **N ≈ V2 SN** (material detail missing) |
+| **2S.3** (intent-vs-received cohort) | `SY / WY / PN / N / NI` | `Y / PY / PN / N / NI` | **Y ≈ V2 SY** (primary analysis explicitly restricted to completers / responders — Critical); **PY ≈ V2 WY** (excludes some enrolled but not dominantly — Serious) |
+
+The 1S.3 / 2S.2 collapse loses one severity level (V2 routes WN to "Moderate floor" and SN to "Serious" separately; V1 collapses PN→Moderate and N→Serious, omitting the intermediate). The 2S.3 collapse is the most consequential — reviewers using V1-SA must answer 2S.3 with **Y only when the paper explicitly restricts the primary analysis to completers/responders** (V2-SY-equivalent → Critical). PY is the V2-WY-equivalent for borderline cases → Serious. Both decisions are documented in the per-signal elaborations and in §19.4's decision tree.
+
+This collapse is "conservative" in the same sense as the rest of V1's narrative-table interpretations (see §0 conservative-tree note): the deterministic tree picks the harsher of the two plausible V1-tokens-to-V2-bucket mappings, and reviewers may legitimately override based on the prose rationale.
 
 ---
 
@@ -2115,8 +2131,414 @@ The exact rules each `enforce_cascade_*_v1` function applies (cribsheet page ref
 
 - **D3, D6, D7**: no cascading. `enforce_cascade_v1()` returns the signals unchanged for these domains.
 
+### 18.3 Single-arm D4 NA-derivation rule
+
+For single-arm runs (§19), Domain 4 is set to `judgement: "NA"` in code with **no LLM call** — mirroring the RoB 2 Cluster NA-cascade pattern for conditional questions. V2 retired V1's D4 entirely; its concerns (intent-vs-received cohort definition) are folded into V2-SA's D2-SA question 2S.3, which V1-SA also adopts (see §19.4). The NA flag carries a `reason` field on the result dict so downstream UIs can explain why D4 was skipped. The aggregator (`robins_i_v1_overall`) excludes NA from the worst-domain calculation, so a single-arm paper with all D1-D7 (minus D4) = Low still produces overall = Low.
+
+The single-arm D1 + D2 signals (§19.3 + §19.4) **have no cribsheet cascade** — V2's published SA cribsheet specifies independent signals for each of 1S.1–1S.5 and 2S.1–2S.3, so `enforce_cascade_v1()` is bypassed when `variant == "single_arm"`. The LLM answers each SA signal independently; no Python override applies.
+
+---
+
+## 19. Single-arm adaptation (project-specific extension)
+
+V1's published cribsheet (1 August 2016) covers only cohort-type studies. This section documents the **project-specific single-arm adaptation** that ships alongside V1 cohort in [backend/rob_tools/robins_i_v1.py](../../backend/rob_tools/robins_i_v1.py). It mirrors V2's `single_arm` variant (see `docs/shareable/robins_i_v2_shareable.md` §3.3 + §4.2) but uses V1's 5-token signal vocab (Y/PY/PN/N/NI — no WN/SN/WY/SY) and 5-level judgement scale (Low / Moderate / Serious / Critical / No information). See §17.3 for the V1→V2 vocab-collapse mapping rules used by the SA decision trees.
+
+**Status.** This is a best-effort adaptation by the AI Researcher team. It is **not officially endorsed by the ROBINS-I V1 authors**. The published Cochrane guidance for single-arm risk-of-bias is V2's `single_arm` variant. The V1 SA adaptation exists so users on the V1 toolchain (e.g. the OVID team) can appraise single-arm papers without switching tools mid-review.
+
+**Initial GRADE.** Single-arm papers start at "Very low" certainty in the GRADE registry — uncontrolled designs cannot achieve higher than Very low without a comparator group. `compute_grade` clamps further downgrades at Very low. The same registry entry applies regardless of which ROBINS-I version (V1 or V2) is selected.
+
+### 19.1 Variant routing
+
+The variant is pinned at `run()` entry from `classification["study_type"]` BEFORE the preflight LLM call. This mirrors V2's pattern (see V2 shareable §2.1):
+
+```python
+SINGLE_ARM_STUDY_TYPES = frozenset({"Single-Arm Trial", "Dose-Escalation Study"})
+
+def run(pdf_bytes, extracted_fields, classification, primary_outcome, ...):
+    study_type = classification.get("study_type", "Cohort Study")
+    is_single_arm = study_type in SINGLE_ARM_STUDY_TYPES
+    if is_single_arm:
+        # benchmark preflight (§19.2) + SA domain assessment (§19.3-19.5)
+        ...
+    else:
+        # standard V1 cohort path: aim preflight (§1.1) + 7-domain assessment
+        ...
+```
+
+Variant is NOT selected from a preflight LLM answer (V2's C4 question is also not used for variant routing in V2-SA — it's recorded as metadata only). The study-type classification (from the upstream annotator classifier) is the authoritative variant selector.
+
+### 19.2 Benchmark preflight (single-arm path)
+
+Replaces the §1.1 aim preflight when the variant is single_arm. Single LLM call asks four preliminary-consideration questions adapted from V2's single-arm preflight (V2 shareable §2.3):
+
+**B1-SA.** Did the authors pre-specify a quantitative benchmark (historical control rate, performance criterion, or null hypothesis with a statistical decision rule) against which the single-arm result is being judged?
+Options: `Y / PY / PN / N` (no NI — mirrors V1's 1.1 convention; you must commit).
+
+**B2-SA.** (Only if N/PN to B1-SA) Is the absence of any pre-specified benchmark severe enough that the single-arm proportion is uninterpretable for causal inference?
+Options: `Y / PY / PN / N / NA` (NA when B1-SA was Y/PY).
+
+**B3.** Was the method of measuring the outcome inappropriate? (Reused verbatim from V2's cohort preflight.)
+Options: `Y / PY / PN / N`.
+
+**C4.** Did the analysis account for protocol deviations during follow-up?
+Options: `No` (ITT-like / modified-ITT) / `Yes` (per-protocol restricted to completers / responders).
+**Recorded as metadata only** — does NOT swap variants. Informs interpretation of D2-SA question 2S.3.
+
+**Screening short-circuit** (V2's pattern, V1 shareable §0):
+- `B2-SA ∈ {Y, PY}` → **Critical overall**, skip D1–D7 entirely. Reason: "Absence of any pre-specified benchmark is severe enough that the single-arm proportion is uninterpretable for causal inference."
+- `B3 ∈ {Y, PY}` → **Critical overall**, skip D1–D7 entirely. Reason: "The method of measuring the outcome is inappropriate."
+- Otherwise → proceed to per-domain assessment.
+
+The preflight payload is stashed in `domain_results["preflight"]` (same key V2 uses, so the per-paper detail view can render it through the shared code path). `domain_results["aim_preflight"]` is set to `None` for single-arm runs to signal "no aim preflight was run".
+
+### 19.3 Domain 1 single-arm (1S.1–1S.5) — Benchmark adequacy + prognostic-mix comparability
+
+**1S.1.** Was the implied benchmark (historical control rate, pre-specified performance criterion, or null hypothesis with a quantitative decision rule) pre-specified before data collection?
+Options: `Y / PY / PN / N` (no NI).
+Elaboration: Single-arm trials have no internal comparator. They are interpreted against an implicit benchmark — usually a historical-control response rate, a regulatory performance criterion (e.g. ORR > 30% to support accelerated approval), or a null hypothesis with a pre-specified statistical decision rule (e.g. Simon's two-stage design). Answer Y/PY if a numeric benchmark + decision rule was clearly stated in the protocol / SAP / methods, BEFORE the data were collected. Answer N/PN if no benchmark is identifiable, or if the benchmark looks chosen post-hoc to match the observed result.
+
+**1S.2.** Is the implied benchmark reasonable given current standard of care and the patient population being studied?
+Options: `Y / PY / PN / N / NI`.
+Elaboration: A pre-specified benchmark is only useful if it reflects a clinically meaningful threshold for this population. Answer Y/PY if the benchmark is consistent with contemporary published control-arm rates in comparable patients (similar disease stage, prior therapy, biomarker status). Answer N/PN if the benchmark is implausibly low (inflates apparent benefit) or implausibly high (forces a near-impossible bar). NI if no contemporary comparable estimate exists.
+
+**1S.3.** Is the cohort's measured baseline prognostic profile (stage, prior lines, ECOG/performance status, biomarker status, key comorbidities) comparable to that of the benchmark population?
+Options: `NA / Y / PY / PN / N / NI`.
+Elaboration: The single-arm proportion is biased upward if the enrolled cohort is more prognostically favourable than the benchmark population (e.g. younger, less heavily pre-treated, biomarker-enriched). Answer Y/PY when measured baseline prognostic factors are comparable. **PN when most-but-not-all prognostic factors look comparable** (V1 collapse of V2's WN). **N when at least one important prognostic factor is materially more favourable in this cohort** (V1 collapse of V2's SN). NA only when no benchmark was identified at 1S.1.
+
+**1S.4.** Did the authors address residual prognostic-mix differences quantitatively (sensitivity analyses, propensity-score adjustment to external controls, prognostic-score stratification, or similar)?
+Options: `NA / Y / PY / PN / N / NI`.
+Elaboration: Even when 1S.3 raises concerns, quantitative external-control adjustment can rescue interpretability. Examples include propensity-score weighting against an external real-world cohort, prognostic-score stratification, MAIC, or pre-specified sensitivity analyses showing the conclusion is robust to plausible prognostic differences. Answer Y/PY when such methods were used and reported. N/PN when not addressed. NA only when no benchmark was identified at 1S.1.
+
+**1S.5.** Do negative / falsification controls, external-validity considerations, or other quantitative bias analyses suggest serious uncontrolled selection-prognostic bias?
+Options: `Y / PY / PN / N` (no NI).
+Elaboration: Analogous to V2's 1A.4 / 1B.5. Answer Y/PY if a falsification analysis (e.g. testing the intervention against an outcome it shouldn't affect) suggested residual bias, or if external-validity checks revealed serious cohort-vs-benchmark mismatch. Answer N if no falsification analysis was performed and no other consideration suggests substantial uncontrolled bias — this is the typical answer.
+
+**Decision tree** ([backend/rob_tools/robins_i_v1.py:domain1_single_arm_judge](../../backend/rob_tools/robins_i_v1.py)):
+
+```python
+def domain1_single_arm_judge(signals: dict[str, str]) -> str:
+    q1 = signals.get("1S.1", "NI")
+    q2 = signals.get("1S.2", "NI")
+    q3 = signals.get("1S.3", "NI")
+    q4 = signals.get("1S.4", "NI")
+    q5 = signals.get("1S.5", "NI")
+
+    # 1S.5 dominates: falsification-control hit → Critical regardless
+    if _yes(q5):
+        return "Critical"
+
+    # 1S.1 N/PN: no pre-specified benchmark
+    if _no(q1):
+        # 1S.4 N/PN: no quantitative adjustment either → Critical
+        if _no(q4):
+            return "Critical"
+        return "Serious"
+
+    if _no_info(q1):
+        return "No information"
+
+    # 1S.1 Y/PY: benchmark pre-specified
+    if _yes(q1):
+        # 1S.3 prognostic comparability
+        if _yes(q3):
+            # 1S.2 (benchmark reasonable) decides Low-SA vs Moderate
+            if _yes(q2):
+                return LOW_D1_SA  # "Low (except for concerns about uncontrolled benchmarking)"
+            return "Moderate"
+        # V1 collapse: PN → V2-WN-equivalent (Moderate floor)
+        if q3 == "PN":
+            return "Moderate"
+        # V1 collapse: N → V2-SN-equivalent (substantial mismatch).
+        # NI on 1S.3 — silent on prognostic comparability — treated the same.
+        if q3 == "N" or _no_info(q3):
+            # 1S.4 (quantitative adjustment) can rescue
+            if _yes(q4):
+                return "Moderate"
+            return "Serious"
+
+    return "Serious"
+```
+
+Returns one of: `LOW_D1_SA` (the labelled "Low" — "Low (except for concerns about uncontrolled benchmarking)"), `Moderate`, `Serious`, `Critical`, `No information`.
+
+### 19.4 Domain 2 single-arm (2S.1–2S.3) — Intervention fidelity + intent-vs-received
+
+**2S.1.** Was the intervention well-defined (dose, schedule, duration, dose-modifications protocol) at the start of follow-up?
+Options: `Y / PY / PN / N / NI`.
+Elaboration: In a single-arm trial there is no comparator misclassification, but the single intervention must be specified precisely enough that the reported result corresponds to a reproducible regimen. Answer Y/PY when dose, schedule, duration, and dose-modification rules (reductions, holds, criteria for discontinuation) are fully reported. Answer N/PN when the intervention is described only at high level (e.g. "standard chemotherapy").
+
+**2S.2.** Were dose reductions, holds, and discontinuations recorded and reported?
+Options: `Y / PY / PN / N / NI`.
+Elaboration: Recording of treatment delivery is essential for interpreting the single-arm result. Answer Y/PY when reductions/holds/discontinuations are tabulated or otherwise reported. **PN when most exposure modifications were recorded but some detail is missing** (V1 collapse of V2's WN). **N when material exposure detail is missing such that the analyzed "intervention" is effectively undefined** (V1 collapse of V2's SN).
+
+**2S.3.** Was the analyzed cohort defined by intended treatment (everyone enrolled, ITT-like) or by received treatment (only those completing ≥X cycles / responding to treatment)?
+Options: `Y / PY / PN / N / NI`.
+Elaboration: Defining the analyzed cohort by *received* treatment (per-protocol completers, "evaluable population") selects for patients who tolerated the intervention well enough to keep receiving it — a strong selection toward responders that inflates the single-arm proportion. **Answer Y only when the primary analysis is explicitly restricted to completers / responders / evaluable population** (V1 collapse of V2's SY — Critical-routing). **Answer PY when the analyzed cohort excludes some enrolled patients for treatment-related reasons but not dominantly** (V1 collapse of V2's WY — Serious-routing). Answer N/PN when all enrolled (or all who received any dose of intervention — modified ITT) are analyzed.
+
+**Decision tree** ([backend/rob_tools/robins_i_v1.py:domain2_single_arm_judge](../../backend/rob_tools/robins_i_v1.py)):
+
+```python
+def domain2_single_arm_judge(signals: dict[str, str]) -> str:
+    q1 = signals.get("2S.1", "NI")
+    q2 = signals.get("2S.2", "NI")
+    q3 = signals.get("2S.3", "NI")
+
+    # 2S.3 dominates: cohort-definition selection bias
+    if q3 == "Y":
+        # V2-SY-equivalent — primary analysis explicitly restricted to
+        # completers/responders → Critical
+        return "Critical"
+    if q3 == "PY" or _no_info(q3):
+        # V2-WY-equivalent or unclear → Serious
+        return "Serious"
+
+    # q3 in (PN, N): cohort defined by intended treatment → low concern here
+    if _yes(q1):
+        # Well-defined intervention. 2S.2 (recording fidelity) decides.
+        if _yes(q2):
+            return "Low"
+        if q2 == "PN":
+            return "Moderate"
+        if q2 == "N":
+            return "Serious"
+        # NI on 2S.2 — measurement-fidelity uncertain
+        return "Moderate"
+
+    # 2S.1 N/PN: intervention definition unclear
+    if _no(q1):
+        return "Serious"
+    # NI on 2S.1
+    return "No information"
+```
+
+Returns one of: `Low`, `Moderate`, `Serious`, `Critical`, `No information`.
+
+### 19.5 Domains 3, 5, 6, 7 — reused from cohort
+
+For single-arm runs, D3 (Classification of interventions), D5 (Missing data), D6 (Measurement of outcomes), and D7 (Selective reporting) reuse the cohort signal sets and judges unchanged. The signal questions translate meaningfully to single-arm:
+
+- **D3** asks whether the *single* intervention was clearly defined and classified — still meaningful (a poorly-described intervention is still a problem; classification within the arm can still vary, e.g. if some patients received a slightly different protocol).
+- **D5** asks about missing outcome data — same concerns in single-arm (loss to follow-up, missing-at-random vs not).
+- **D6** asks about outcome measurement — same concerns (blinding, comparable assessment, systematic errors).
+- **D7** asks about selective reporting — same concerns (multiple-outcome selection, multiple-analysis selection, subgroup selection).
+
+The single-arm decision trees for these domains are identical to the cohort versions. The interpretation guidance is slightly adjusted in the per-domain prompt template (no comparator-arm framing), but the signal IDs (`3.1`, `3.2`, `3.3`, `5.1`–`5.5`, `6.1`–`6.4`, `7.1`–`7.3`) are unchanged so the same `enforce_cascade_v1()` rules apply (D5 has cascade; D3, D6, D7 do not).
+
+### 19.6 Domain 4 — NA for single-arm
+
+Set to `judgement: "NA"` in code with **no LLM call**. Mirrors the RoB 2 Cluster NA-cascade pattern and matches V2's design (V2 retired V1's D4 entirely; its concerns are folded into V2-SA's D2-SA question 2S.3 → V1-SA's 2S.3).
+
+The result dict carries a `reason` field for downstream UIs:
+
+```python
+domain_results["4"] = {
+    "id": 4,
+    "name": "Bias due to deviations from intended interventions",
+    "signals": {},
+    "rationales": {},
+    "judgement": "NA",
+    "direction": "NA",
+    "reason": (
+        "Not applicable to single-arm trials — V2 retired this domain "
+        "entirely; intent-vs-received cohort definition is assessed in "
+        "Domain 2-SA (question 2S.3)."
+    ),
+}
+```
+
+The aggregator (`robins_i_v1_overall`) excludes `NA` judgements from the worst-domain calculation, so a single-arm paper with all active domains = Low still produces overall = Low.
+
+### 19.7 V1 → V2 vocab-collapse rules (referenced from §17.3)
+
+See §17.3 for the full table. Short version:
+
+- V2's `WN` (weak no) collapses to V1's `PN` on signals 1S.3 and 2S.2.
+- V2's `SN` (strong no) collapses to V1's `N` on signals 1S.3 and 2S.2.
+- V2's `WY` (weak yes) collapses to V1's `PY` on signal 2S.3.
+- V2's `SY` (strong yes) collapses to V1's `Y` on signal 2S.3.
+
+For 2S.3 in particular, the V1 Y/PY distinction carries semantic weight that V1's other signals do not: a paper-aware reviewer must distinguish "primary analysis restricted to completers" (V1 Y) from "some treatment-related exclusions but not dominantly" (V1 PY). The per-signal elaboration in §19.4 instructs the LLM accordingly. Reviewers who want to override the algorithmic mapping can do so based on the prose rationale, same as for any other V1 narrative-table judgement (§0 conservative-tree note).
+
+### 19.8 Reference implementation — SA additions to the §15 single-file module
+
+Add the following to the §15 reference implementation. The cohort code stays unchanged.
+
+```python
+# ─────────────────────────────────────────────
+# Single-arm constants
+# ─────────────────────────────────────────────
+SINGLE_ARM_STUDY_TYPES = frozenset({"Single-Arm Trial", "Dose-Escalation Study"})
+
+LOW_D1_SA = "Low (except for concerns about uncontrolled benchmarking)"
 
 
+# ─────────────────────────────────────────────
+# Single-arm signal sets (port of V2-SA, collapsed to V1's 5-token vocab)
+# ─────────────────────────────────────────────
+DOMAIN1_SIGNALS_SA = [
+    # 1S.1, 1S.2, 1S.3, 1S.4, 1S.5 — full text in §19.3 above
+]
+
+DOMAIN2_SIGNALS_SA = [
+    # 2S.1, 2S.2, 2S.3 — full text in §19.4 above
+]
 
 
+# ─────────────────────────────────────────────
+# Single-arm decision trees — code in §19.3 and §19.4 above
+# ─────────────────────────────────────────────
+# def domain1_single_arm_judge(signals): ...
+# def domain2_single_arm_judge(signals): ...
+
+
+# ─────────────────────────────────────────────
+# Single-arm judge dispatch
+# ─────────────────────────────────────────────
+DOMAIN_JUDGES_SA = {
+    1: domain1_single_arm_judge,
+    2: domain2_single_arm_judge,
+    3: domain3_judge,  # reused
+    5: domain5_judge,  # reused
+    6: domain6_judge,  # reused
+    7: domain7_judge,  # reused
+    # 4: not present — set to NA in run() with no LLM call
+}
+
+
+# ─────────────────────────────────────────────
+# Benchmark preflight prompt (§19.2)
+# ─────────────────────────────────────────────
+def build_benchmark_preflight_prompt(study_type, primary_outcome, extracted_fields):
+    relevant_keys = (
+        "primary_endpoint_prespecified", "inclusion_exclusion_criteria",
+        "comparator_historical_reference", "consecutive_enrolment",
+        "outcome_definition", "outcome_ascertainment",
+        "primary_outcome_measurement", "analysis_framework",
+    )
+    relevant = {k: extracted_fields[k] for k in relevant_keys if extracted_fields.get(k)}
+    import json
+    ctx_json = json.dumps(relevant, indent=2) if relevant else "(no pre-extracted fields)"
+    return f\"\"\"You are performing the **Preliminary Considerations** screen of ROBINS-I V1 (adapted for single-arm / uncontrolled designs) on an uncontrolled clinical study.
+
+Study type: {{study_type}}
+Outcome being assessed: {{primary_outcome}}
+
+Context (fields already extracted from the paper):
+{{ctx_json}}
+
+[... full prompt body — see §19.2 above, or backend/rob_tools/robins_i_v1.py:_build_benchmark_preflight_prompt ...]
+
+Return JSON with exactly this shape:
+{{{{
+  "B1": "Y|PY|PN|N",
+  "B1_rationale": "1-2 sentences (B1-SA)",
+  "B2": "Y|PY|PN|N|NA",
+  "B2_rationale": "1-2 sentences",
+  "B3": "Y|PY|PN|N",
+  "B3_rationale": "1-2 sentences",
+  "C4": "No|Yes",
+  "C4_rationale": "1-2 sentences"
+}}}}\"\"\"
+
+
+# ─────────────────────────────────────────────
+# Single-arm run dispatch (extends the cohort run() in §15)
+# ─────────────────────────────────────────────
+def run_single_arm(pdf_bytes, extracted_fields, classification, primary_outcome,
+                   llm_call_with_pdf):
+    \"\"\"Single-arm path. Called by run() when study_type ∈ SINGLE_ARM_STUDY_TYPES.\"\"\"
+    study_type = classification.get("study_type", "Single-Arm Trial")
+
+    # Stage 1 — benchmark preflight
+    preflight = run_benchmark_preflight(
+        pdf_bytes, study_type, primary_outcome, extracted_fields,
+        llm_call_with_pdf=llm_call_with_pdf,
+    )
+    domain_results = {"preflight": preflight, "aim_preflight": None}
+
+    # Stage 2 — screening short-circuit
+    if preflight["screening_decision"] == "critical":
+        return domain_results, "Critical", "Unpredictable"
+
+    # Stage 3 — 6 active domains; D4 set to NA in code
+    active_domains = (
+        # D1-SA with DOMAIN1_SIGNALS_SA
+        # D2-SA with DOMAIN2_SIGNALS_SA
+        # D3, D5, D6, D7 reused unchanged
+    )
+    for domain in active_domains:
+        result = _assess_domain_sa(pdf_bytes, domain, ..., llm_call_with_pdf)
+        domain_results[str(domain["id"])] = result
+
+    # D4 = NA — no LLM call
+    domain_results["4"] = {
+        "id": 4, "name": "Bias due to deviations from intended interventions",
+        "signals": {}, "rationales": {}, "judgement": "NA", "direction": "NA",
+        "reason": "Not applicable to single-arm trials — V2 retired this "
+                  "domain entirely; intent-vs-received is in D2-SA's 2S.3.",
+    }
+
+    judgements = [domain_results[str(d["id"])]["judgement"] for d in active_domains]
+    overall = robins_i_v1_overall(judgements)  # excludes NA from aggregation
+    return domain_results, overall, "NA"
+
+
+def run(pdf_bytes, extracted_fields, classification, primary_outcome,
+        llm_call_with_pdf, aim=None):
+    study_type = classification.get("study_type", "Cohort Study")
+    if study_type in SINGLE_ARM_STUDY_TYPES:
+        return run_single_arm(pdf_bytes, extracted_fields, classification,
+                              primary_outcome, llm_call_with_pdf)
+    # ... existing cohort path (§15) ...
+```
+
+For the full production-quality module (with prompt builders, cascade enforcement bypass for SA, dev-view exposure, etc.), see [backend/rob_tools/robins_i_v1.py](../../backend/rob_tools/robins_i_v1.py).
+
+### 19.9 Sanity test sketches
+
+Same shape as §16 cohort tests. Drop in alongside:
+
+```python
+def test_v1_sa_d1_pre_specified_low():
+    # Best case: benchmark pre-specified + reasonable + prognostic match
+    assert domain1_single_arm_judge({
+        "1S.1": "Y", "1S.2": "Y", "1S.3": "Y", "1S.4": "Y", "1S.5": "N",
+    }) == LOW_D1_SA
+
+def test_v1_sa_d1_no_benchmark_no_adjustment_critical():
+    # No pre-specified benchmark AND no quantitative adjustment → Critical
+    assert domain1_single_arm_judge({
+        "1S.1": "N", "1S.2": "NI", "1S.3": "NI", "1S.4": "N", "1S.5": "N",
+    }) == "Critical"
+
+def test_v1_sa_d1_falsification_hit_dominates():
+    # 1S.5 falsification hit → Critical regardless of other signals
+    assert domain1_single_arm_judge({
+        "1S.1": "Y", "1S.2": "Y", "1S.3": "Y", "1S.4": "Y", "1S.5": "Y",
+    }) == "Critical"
+
+def test_v1_sa_d2_completers_only_critical():
+    # 2S.3 = Y (V2-SY-equivalent: restricted to completers) → Critical
+    assert domain2_single_arm_judge({
+        "2S.1": "Y", "2S.2": "Y", "2S.3": "Y",
+    }) == "Critical"
+
+def test_v1_sa_d2_partial_filter_serious():
+    # 2S.3 = PY (V2-WY-equivalent: some treatment-related exclusions) → Serious
+    assert domain2_single_arm_judge({
+        "2S.1": "Y", "2S.2": "Y", "2S.3": "PY",
+    }) == "Serious"
+
+def test_v1_sa_d2_itt_well_defined_low():
+    # 2S.3 = N (ITT-like), well-defined intervention, recording fidelity → Low
+    assert domain2_single_arm_judge({
+        "2S.1": "Y", "2S.2": "Y", "2S.3": "N",
+    }) == "Low"
+
+def test_v1_sa_overall_excludes_d4_na():
+    # D4 = NA must not block "Low" overall judgement
+    assert robins_i_v1_overall(
+        [LOW_D1_SA, "Low", "Low", "NA", "Low", "Low", "Low"]
+    ) == "Low"
+```
 
