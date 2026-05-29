@@ -701,7 +701,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
       <details style="margin:8px 0 4px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;background:var(--paper-2);">
         <summary style="cursor:pointer;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);">Non-randomized cohort-type (ROBINS-I V1 / V2) (optional)</summary>
         <div style="margin-top:8px;font-size:11px;color:var(--muted);line-height:1.45;">
-          For non-randomized cohort, case-control, NRSI, cross-sectional, and case-crossover papers, pick which ROBINS-I version to run. Single-arm / dose-escalation papers always use ROBINS-I V2's single_arm variant (V1's cribsheet is cohort-only).
+          For non-randomized cohort, case-control, NRSI, cross-sectional, case-crossover, single-arm, and dose-escalation papers, pick which ROBINS-I version to run. Both V2 and V1 ship a project-specific single_arm variant for uncontrolled designs (V1's is a 5-token-vocab adaptation of V2's pattern — see <a href="/api/quality-appraisal/prompts" style="color:var(--muted);text-decoration:underline;">developer view</a> for details).
         </div>
         <div style="margin-top:8px;">
           <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px;">ROBINS-I version</label>
@@ -888,6 +888,23 @@ const ROBINS_I_V1_DOMAIN_META = [
   { id: 6, short: 'D6: Outcome measure',    full: 'Bias in measurement of outcomes' },
   { id: 7, short: 'D7: Reported result',    full: 'Bias in selection of the reported result' },
 ];
+// ROBINS-I V1 (adapted) — single-arm / uncontrolled designs (Single-Arm Trial,
+// Dose-Escalation Study). Project-specific extension mirroring V2's single_arm
+// pattern but using V1's 5-token signal vocab (Y/PY/PN/N/NI — no WN/SN/WY/SY
+// gradient) and 5-level judgement scale. D1 reframes confounding as benchmark
+// adequacy + prognostic-mix comparability; D2 reframes selection as
+// intervention fidelity + intent-vs-received cohort definition. D4 is marked
+// NA in code (no LLM call) — V2 retired this domain entirely; its concerns
+// are folded into D2-SA's 2S.3. D3, D5, D6, D7 keep cohort labels unchanged.
+const ROBINS_I_V1_SA_DOMAIN_META = [
+  { id: 1, short: 'D1: Benchmarking',       full: 'Bias due to confounding — benchmark adequacy + prognostic-mix comparability (single-arm)' },
+  { id: 2, short: 'D2: Intervention',       full: 'Bias in selection — intervention fidelity + intent-vs-received cohort (single-arm)' },
+  { id: 3, short: 'D3: Classification',     full: 'Bias in classification of interventions' },
+  { id: 4, short: 'D4: Deviations',         full: 'NA — single-arm trials have no comparator group (V2 retired this domain)' },
+  { id: 5, short: 'D5: Missing data',       full: 'Bias due to missing data' },
+  { id: 6, short: 'D6: Outcome measure',    full: 'Bias in measurement of outcomes' },
+  { id: 7, short: 'D7: Reported result',    full: 'Bias in selection of the reported result' },
+];
 // QUADAS-2 (Whiting 2011) — 4 domains. D1-D3 carry RoB + applicability;
 // D4 (Flow and Timing) is RoB-only. Same hasApplicability shape as QUADAS-3
 // so the detail-modal applicability section reuses the same render path.
@@ -920,15 +937,17 @@ const AMSTAR2_DOMAIN_META = [
   { id: 16, short: 'Item 16: Conflicts',        full: 'Potential sources of conflict of interest, including review funding, reported' },
 ];
 // domainMetaFor returns the appropriate domain-meta table. For ROBINS-I, the
-// optional second argument is the variant ('A' | 'B' | 'single_arm') read
-// from result.rob_domains.preflight.variant; only 'single_arm' swaps the meta.
+// optional second argument is the variant ('A' | 'B' | 'single_arm' for V2;
+// 'cohort' | 'single_arm' for V1) read from result.rob_domains.preflight.variant
+// (single_arm path) or implied by the presence of result.rob_domains.aim_preflight
+// (V1 cohort path). Only 'single_arm' swaps the meta.
 function domainMetaFor(tool, variant) {
   if (tool === 'quadas2')        return QUADAS2_DOMAIN_META;
   if (tool === 'quadas3')        return QUADAS3_DOMAIN_META;
   if (tool === 'amstar2')        return AMSTAR2_DOMAIN_META;
   if (tool === 'rob2_crossover') return ROB2_CROSSOVER_DOMAIN_META;
   if (tool === 'rob2_cluster')   return ROB2_CLUSTER_DOMAIN_META;
-  if (tool === 'robins_i_v1')    return ROBINS_I_V1_DOMAIN_META;
+  if (tool === 'robins_i_v1')    return variant === 'single_arm' ? ROBINS_I_V1_SA_DOMAIN_META : ROBINS_I_V1_DOMAIN_META;
   if (tool === 'robins_i')       return variant === 'single_arm' ? ROBINS_I_SA_DOMAIN_META : ROBINS_I_DOMAIN_META;
   return ROB2_DOMAIN_META;
 }
@@ -968,6 +987,7 @@ const ROB_BADGE_CLS = {
   'No information': 'rob-ni',  // ROBINS-I V1 (5-level scale: Low/Moderate/Serious/Critical/No information)
   'Insufficient information': 'rob-ni',  // QUADAS-3
   'Unclear': 'rob-ni',  // QUADAS-2 (reuses the yellow rob-ni style)
+  'NA': 'rob-ni',  // ROBINS-I V1 single-arm: D4 (Deviations) is set to NA in code with no LLM call (reuses the muted rob-ni style)
 };
 // AMSTAR-2 badge palette. Its labels collide with the RoB scale — "High" is
 // *good* for AMSTAR-2 but *bad* for RoB 2 / QUADAS, and "Low" is *bad* for
@@ -1946,6 +1966,19 @@ function renderDetailPanel(r, anchor) {
         <span style="color:var(--muted);font-size:11px;margin-left:6px;">(§1.1 aim preflight — auto-determined)</span>
         ${robDomains.aim_preflight.rationale ? `<div style="margin-top:4px;color:var(--muted);font-size:11px;line-height:1.45;">${escHtml(robDomains.aim_preflight.rationale)}</div>` : ''}
       </div>` : ''}
+      ${(detailTool === 'robins_i_v1' && detailVariant === 'single_arm' && robDomains.preflight) ? `
+      <div style="color:var(--muted);font-weight:600;">Single-arm variant</div>
+      <div>
+        <span class="chip" style="background:var(--paper-2);border:1px solid var(--rule-2);font-size:11px;">benchmark preflight</span>
+        <span style="color:var(--muted);font-size:11px;margin-left:6px;">(B1-SA / B2-SA / B3 — V1 single-arm adaptation)</span>
+        <div style="margin-top:4px;display:flex;gap:10px;flex-wrap:wrap;font-size:11px;">
+          <span><strong>B1-SA:</strong> ${escHtml(robDomains.preflight.B1 || '—')}</span>
+          <span><strong>B2-SA:</strong> ${escHtml(robDomains.preflight.B2 || '—')}</span>
+          <span><strong>B3:</strong> ${escHtml(robDomains.preflight.B3 || '—')}</span>
+          <span><strong>C4 (metadata only):</strong> ${escHtml(robDomains.preflight.C4 || '—')}</span>
+        </div>
+        ${robDomains.preflight.screening_decision === 'critical' ? `<div style="margin-top:4px;color:#b91c1c;font-size:11px;font-weight:600;">Short-circuited to Critical — ${escHtml(robDomains.preflight.screening_reason || '')}</div>` : ''}
+      </div>` : ''}
       ${(detailTool === 'rob2_cluster' && robDomains.aim) ? `
       <div style="color:var(--muted);font-weight:600;">Analysis aim</div>
       <div>
@@ -1982,7 +2015,9 @@ function renderDetailPanel(r, anchor) {
       const body = sigKeys.length === 0
         ? `<div style="color:var(--muted);padding:8px 0;">${d.na_derived
             ? 'Not applicable — the review did not perform a meta-analysis or quantitative synthesis, so this item is rated &ldquo;No meta-analysis conducted&rdquo; in code.'
-            : 'No signaling-question data.'}</div>`
+            : (d.judgement === 'NA' && d.reason)
+              ? escHtml(d.reason)
+              : 'No signaling-question data.'}</div>`
         : sigKeys.map(sid => {
           const ans = signals[sid] || '';
           const rat = rationales[sid] || '';
@@ -2695,6 +2730,39 @@ function _renderDevRobTool(tool, sectionNum) {
   }
   if (tool.preflight_prompt_template) {
     html += `<details><summary>Preflight prompt (selects variant A / B / single-arm)</summary><pre>${escHtml(tool.preflight_prompt_template)}</pre></details>`;
+  }
+  // ROBINS-I V1 — aim preflight (cohort path) + benchmark preflight (SA path)
+  if (tool.aim_preflight_prompt) {
+    html += `<details><summary>Aim preflight prompt (cohort path — §1.1)</summary><pre>${escHtml(tool.aim_preflight_prompt)}</pre></details>`;
+  }
+  if (tool.aim_preflight_code) {
+    html += `<details><summary>Aim preflight code (cohort path)</summary><pre>${escHtml(tool.aim_preflight_code)}</pre></details>`;
+  }
+  if (tool.benchmark_preflight_prompt) {
+    html += `<details><summary>Benchmark preflight prompt (single-arm path — B1-SA / B2-SA / B3)</summary><pre>${escHtml(tool.benchmark_preflight_prompt)}</pre></details>`;
+  }
+  if (tool.benchmark_preflight_code) {
+    html += `<details><summary>Benchmark preflight code (single-arm path)</summary><pre>${escHtml(tool.benchmark_preflight_code)}</pre></details>`;
+  }
+  if (Array.isArray(tool.domains_single_arm) && tool.domains_single_arm.length) {
+    html += `<details><summary>Single-arm domains (${tool.domains_single_arm.length} — D4 is NA in code, no LLM call)</summary>`;
+    tool.domains_single_arm.forEach(sa => {
+      html += `<details style="margin-left:14px;"><summary>D${escHtml(sa.id)} — ${escHtml(sa.name)}</summary>`;
+      if (sa.na_in_code) {
+        html += `<div style="font-size:11.5px;color:var(--muted);padding:6px 0;font-style:italic;">Marked NA in code (no LLM call). V2 retired this domain entirely; intent-vs-received cohort definition is folded into D2-SA's 2S.3.</div>`;
+      }
+      if (sa.signals && sa.signals.length) {
+        html += `<details style="margin-left:14px;"><summary>Signals (${sa.signals.length})</summary>${_renderSignalsList(sa.signals)}</details>`;
+      }
+      if (sa.prompt_template) {
+        html += `<details style="margin-left:14px;"><summary>Per-domain prompt</summary><pre>${escHtml(sa.prompt_template)}</pre></details>`;
+      }
+      if (sa.decision_tree_code) {
+        html += `<details style="margin-left:14px;"><summary>Decision tree code</summary><pre>${escHtml(sa.decision_tree_code)}</pre></details>`;
+      }
+      html += `</details>`;
+    });
+    html += `</details>`;
   }
 
   const renderCodeVariants = (variants, summaryLabel) => {

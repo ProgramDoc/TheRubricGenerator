@@ -1766,9 +1766,12 @@ class TestQuadas2PromptCatalogWired:
 
 
 class TestRobinsIV1Dispatch:
-    """robins_i_tool_override='robins_i_v1' on non-randomized cohort-type
-    papers swaps cfg['rob_tool'] without mutating the module-level registry.
-    Override is ignored for randomized / diagnostic / single-arm study types."""
+    """robins_i_tool_override='robins_i_v1' on any ROBINS-I-dispatched paper
+    swaps cfg['rob_tool'] without mutating the module-level registry. Applies
+    to both cohort and single-arm study types — V1 ships its own single_arm
+    variant (project-specific extension; see backend/rob_tools/robins_i_v1.py
+    SINGLE_ARM_STUDY_TYPES). Override is still ignored for randomized /
+    diagnostic study types."""
 
     def test_robins_i_v1_in_tool_runners(self):
         assert "robins_i_v1" in qa._TOOL_RUNNERS
@@ -1939,6 +1942,556 @@ class TestRobinsIV1PromptCatalogWired:
         assert len(v2["domains"]) == 6
         # V1 includes the §1.1 aim preflight; V2 has the B1/B2/B3/C4 preflight
         assert "aim_preflight_prompt" in v1
+
+
+# ═════════════════════════════════════════════
+# ROBINS-I V1 — single-arm adaptation (project-specific extension)
+# Mirrors V2's single_arm pattern; uses V1's 5-token vocab + 5-level scale.
+# ═════════════════════════════════════════════
+class TestRobinsIV1SingleArmConstants:
+    """SINGLE_ARM_STUDY_TYPES + LOW_D1_SA constants match V2 for parity."""
+
+    def test_single_arm_study_types_match_v2(self):
+        # V1 and V2 must agree on which study types route to single_arm so
+        # the per-run toggle behaves consistently.
+        from backend.rob_tools import robins_i as v2
+        assert robins_i_v1.SINGLE_ARM_STUDY_TYPES == v2.SINGLE_ARM_STUDY_TYPES
+
+    def test_low_d1_sa_label_matches_v2(self):
+        from backend.rob_tools import robins_i as v2
+        assert robins_i_v1.LOW_D1_SA == v2.LOW_D1_SA
+        assert "uncontrolled benchmarking" in robins_i_v1.LOW_D1_SA
+
+
+class TestRobinsIV1SingleArmDomain1Judge:
+    """V1 single-arm D1 decision tree — benchmark adequacy + prognostic-mix."""
+
+    def test_pre_specified_benchmark_with_full_match_returns_low_sa(self):
+        # Best case: benchmark pre-specified (Y), reasonable (Y), prognostic
+        # match (Y), no falsification hit → LOW_D1_SA label
+        out = robins_i_v1.domain1_single_arm_judge({
+            "1S.1": "Y", "1S.2": "Y", "1S.3": "Y", "1S.4": "Y", "1S.5": "N",
+        })
+        assert out == robins_i_v1.LOW_D1_SA
+
+    def test_falsification_hit_dominates_to_critical(self):
+        # 1S.5 Y/PY → Critical regardless of other signals (matches V2)
+        assert robins_i_v1.domain1_single_arm_judge({
+            "1S.1": "Y", "1S.2": "Y", "1S.3": "Y", "1S.4": "Y", "1S.5": "Y",
+        }) == "Critical"
+
+    def test_no_benchmark_no_adjustment_is_critical(self):
+        # 1S.1 = N (no pre-specified benchmark) AND 1S.4 = N (no adjustment)
+        # → Critical (V2 collapses WN/SN to a finer gradient; V1 uses PN/N)
+        assert robins_i_v1.domain1_single_arm_judge({
+            "1S.1": "N", "1S.2": "NI", "1S.3": "NI", "1S.4": "N", "1S.5": "N",
+        }) == "Critical"
+
+    def test_no_benchmark_but_quantitative_adjustment_is_serious(self):
+        # 1S.1 = N AND 1S.4 = Y (sensitivity analyses rescue partially)
+        # → Serious (not rescued to Moderate without a pre-specified benchmark)
+        assert robins_i_v1.domain1_single_arm_judge({
+            "1S.1": "N", "1S.2": "NI", "1S.3": "NI", "1S.4": "Y", "1S.5": "N",
+        }) == "Serious"
+
+    def test_no_info_on_benchmark_returns_no_information(self):
+        # V1's 5-level scale uniquely surfaces "No information" as a judgement
+        # (V2 retired this). 1S.1 has no NI option in the prompt — but if a
+        # downstream caller invokes the judge with NI, V1 returns NI.
+        assert robins_i_v1.domain1_single_arm_judge({
+            "1S.1": "NI", "1S.2": "NI", "1S.3": "NI", "1S.4": "NI", "1S.5": "N",
+        }) == "No information"
+
+    def test_pn_on_prognostic_match_is_moderate_floor(self):
+        # V1 collapse: PN ≈ V2's WN (most-but-not-all comparable) → Moderate
+        # floor, regardless of 1S.4 quantitative adjustment
+        assert robins_i_v1.domain1_single_arm_judge({
+            "1S.1": "Y", "1S.2": "Y", "1S.3": "PN", "1S.4": "Y", "1S.5": "N",
+        }) == "Moderate"
+
+    def test_n_on_prognostic_match_rescued_by_adjustment(self):
+        # V1 collapse: N ≈ V2's SN (materially less comparable) → Serious by
+        # default, but 1S.4 Y (quantitative adjustment) rescues to Moderate
+        assert robins_i_v1.domain1_single_arm_judge({
+            "1S.1": "Y", "1S.2": "Y", "1S.3": "N", "1S.4": "Y", "1S.5": "N",
+        }) == "Moderate"
+
+    def test_n_on_prognostic_match_unrescued_is_serious(self):
+        # 1S.3 = N AND 1S.4 = N → Serious
+        assert robins_i_v1.domain1_single_arm_judge({
+            "1S.1": "Y", "1S.2": "Y", "1S.3": "N", "1S.4": "N", "1S.5": "N",
+        }) == "Serious"
+
+    def test_benchmark_unreasonable_but_prognostic_match_is_moderate(self):
+        # 1S.1 = Y, 1S.3 = Y (prognostic match), 1S.2 = PN (benchmark not
+        # really reasonable) → Moderate (not Low-SA)
+        assert robins_i_v1.domain1_single_arm_judge({
+            "1S.1": "Y", "1S.2": "PN", "1S.3": "Y", "1S.4": "Y", "1S.5": "N",
+        }) == "Moderate"
+
+
+class TestRobinsIV1SingleArmDomain2Judge:
+    """V1 single-arm D2 decision tree — intervention fidelity + intent-vs-received."""
+
+    def test_completers_only_cohort_is_critical(self):
+        # 2S.3 = Y (V1 collapse of V2's SY: primary analysis restricted to
+        # completers/responders) → Critical
+        assert robins_i_v1.domain2_single_arm_judge({
+            "2S.1": "Y", "2S.2": "Y", "2S.3": "Y",
+        }) == "Critical"
+
+    def test_partial_filter_cohort_is_serious(self):
+        # 2S.3 = PY (V1 collapse of V2's WY: excludes some enrolled for
+        # treatment-related reasons but not dominantly) → Serious
+        assert robins_i_v1.domain2_single_arm_judge({
+            "2S.1": "Y", "2S.2": "Y", "2S.3": "PY",
+        }) == "Serious"
+
+    def test_no_info_on_cohort_definition_is_serious(self):
+        # 2S.3 = NI → Serious (mirrors V2's WY routing)
+        assert robins_i_v1.domain2_single_arm_judge({
+            "2S.1": "Y", "2S.2": "Y", "2S.3": "NI",
+        }) == "Serious"
+
+    def test_itt_cohort_with_well_defined_intervention_is_low(self):
+        # 2S.3 = N (ITT-like), 2S.1 = Y (well-defined), 2S.2 = Y (recorded) → Low
+        assert robins_i_v1.domain2_single_arm_judge({
+            "2S.1": "Y", "2S.2": "Y", "2S.3": "N",
+        }) == "Low"
+
+    def test_itt_cohort_with_partial_recording_is_moderate(self):
+        # 2S.3 = N, 2S.1 = Y, 2S.2 = PN (V1 collapse of WN) → Moderate
+        assert robins_i_v1.domain2_single_arm_judge({
+            "2S.1": "Y", "2S.2": "PN", "2S.3": "N",
+        }) == "Moderate"
+
+    def test_itt_cohort_with_missing_recording_is_serious(self):
+        # 2S.3 = N, 2S.1 = Y, 2S.2 = N (V1 collapse of SN) → Serious
+        assert robins_i_v1.domain2_single_arm_judge({
+            "2S.1": "Y", "2S.2": "N", "2S.3": "N",
+        }) == "Serious"
+
+    def test_intervention_undefined_is_serious(self):
+        # 2S.1 = N (intervention not well-defined) → Serious regardless of
+        # 2S.2 (when 2S.3 is N/PN)
+        assert robins_i_v1.domain2_single_arm_judge({
+            "2S.1": "N", "2S.2": "Y", "2S.3": "N",
+        }) == "Serious"
+
+    def test_no_info_on_intervention_returns_no_information(self):
+        # 2S.1 = NI AND 2S.3 in (PN, N) → No information
+        assert robins_i_v1.domain2_single_arm_judge({
+            "2S.1": "NI", "2S.2": "NI", "2S.3": "N",
+        }) == "No information"
+
+
+class TestRobinsIV1SingleArmOverall:
+    """robins_i_v1_overall must exclude NA judgements (single-arm D4)
+    and normalize LOW_D1_SA to "Low" for aggregation."""
+
+    def test_na_d4_does_not_block_low_overall(self):
+        # All active domains = Low + D4 = NA → overall = Low
+        out = robins_i_v1.robins_i_v1_overall(
+            [robins_i_v1.LOW_D1_SA, "Low", "Low", "NA", "Low", "Low", "Low"]
+        )
+        assert out == "Low"
+
+    def test_critical_dominates_even_with_na_d4(self):
+        out = robins_i_v1.robins_i_v1_overall(
+            [robins_i_v1.LOW_D1_SA, "Critical", "Low", "NA", "Low", "Low", "Low"]
+        )
+        assert out == "Critical"
+
+    def test_serious_with_na_d4(self):
+        out = robins_i_v1.robins_i_v1_overall(
+            ["Low", "Serious", "Low", "NA", "Low", "Low", "Low"]
+        )
+        assert out == "Serious"
+
+    def test_all_na_returns_no_information(self):
+        # Edge case: every domain NA → "No information"
+        assert robins_i_v1.robins_i_v1_overall(
+            ["NA", "NA", "NA", "NA", "NA", "NA", "NA"]
+        ) == "No information"
+
+    def test_low_d1_sa_aggregates_as_low(self):
+        # The labelled "Low (except for concerns about uncontrolled benchmarking)"
+        # must aggregate as "Low" — not block the all-low → Low branch.
+        assert robins_i_v1.robins_i_v1_overall(
+            [robins_i_v1.LOW_D1_SA, "Low", "Low", "Low", "Low", "Low", "Low"]
+        ) == "Low"
+
+    def test_cohort_aggregation_unchanged(self):
+        # Regression: cohort path (no NA, no LOW_D1_SA) still works
+        assert robins_i_v1.robins_i_v1_overall(
+            ["Low", "Low", "Low", "Low", "Low", "Low", "Low"]
+        ) == "Low"
+        assert robins_i_v1.robins_i_v1_overall(
+            ["Low", "Moderate", "Low", "Low", "Low", "Low", "Low"]
+        ) == "Moderate"
+
+
+class TestRobinsIV1SingleArmBenchmarkPreflight:
+    """V1 benchmark preflight (single-arm path) — replaces aim preflight.
+    Mirrors V2's run_preflight return shape so the orchestrator + frontend
+    code can consume both uniformly."""
+
+    def _stub_call(self, monkeypatch, raw):
+        monkeypatch.setattr(
+            robins_i_v1, "_call_with_pdf",
+            lambda pdf, prompt, max_tokens=8192: raw,
+        )
+
+    def test_proceed_when_benchmark_specified(self, monkeypatch):
+        self._stub_call(monkeypatch, {
+            "B1": "Y", "B2": "NA", "B3": "N", "C4": "No",
+            "B1_rationale": "Simon two-stage design...",
+            "B2_rationale": "", "B3_rationale": "", "C4_rationale": "",
+        })
+        out = robins_i_v1.run_benchmark_preflight(
+            b"", "Single-Arm Trial", "outcome", {})
+        assert out["screening_decision"] == "proceed"
+        assert out["variant"] == "single_arm"
+        assert out["B1"] == "Y"
+
+    def test_b2_sa_yes_short_circuits_critical(self, monkeypatch):
+        self._stub_call(monkeypatch, {
+            "B1": "N", "B2": "Y", "B3": "N", "C4": "No",
+            "B1_rationale": "", "B2_rationale": "", "B3_rationale": "", "C4_rationale": "",
+        })
+        out = robins_i_v1.run_benchmark_preflight(
+            b"", "Single-Arm Trial", "outcome", {})
+        assert out["screening_decision"] == "critical"
+        assert "benchmark" in out["screening_reason"].lower()
+        assert out["variant"] == "single_arm"
+
+    def test_b3_yes_short_circuits_critical(self, monkeypatch):
+        self._stub_call(monkeypatch, {
+            "B1": "Y", "B2": "NA", "B3": "Y", "C4": "No",
+            "B1_rationale": "", "B2_rationale": "", "B3_rationale": "", "C4_rationale": "",
+        })
+        out = robins_i_v1.run_benchmark_preflight(
+            b"", "Single-Arm Trial", "outcome", {})
+        assert out["screening_decision"] == "critical"
+        assert "outcome" in out["screening_reason"].lower()
+        assert out["variant"] == "single_arm"
+
+    def test_invalid_tokens_default_to_safe_values(self, monkeypatch):
+        # Garbage answers from LLM → conservative defaults; no crash
+        self._stub_call(monkeypatch, {
+            "B1": "bogus", "B2": "??", "B3": "wat", "C4": "maybe",
+        })
+        out = robins_i_v1.run_benchmark_preflight(
+            b"", "Single-Arm Trial", "outcome", {})
+        # B1 conservative default = "N" (no benchmark identified)
+        assert out["B1"] == "N"
+        # B2 conservative default = "NA"
+        assert out["B2"] == "NA"
+
+    def test_c4_recorded_as_metadata_only(self, monkeypatch):
+        # C4 should be recorded but does NOT swap variants for single-arm
+        self._stub_call(monkeypatch, {
+            "B1": "Y", "B2": "NA", "B3": "N", "C4": "Yes",
+        })
+        out = robins_i_v1.run_benchmark_preflight(
+            b"", "Single-Arm Trial", "outcome", {})
+        assert out["C4"] == "Yes"
+        assert out["variant"] == "single_arm"  # NOT swapped
+
+    def test_benchmark_preflight_prompt_is_framed_around_benchmark(self):
+        prompt = robins_i_v1._build_benchmark_preflight_prompt(
+            "Single-Arm Trial", "ORR at 6 months", {})
+        # The prompt must be framed around the benchmark concept + the SA
+        # preflight questions B1-SA / B2-SA / B3.
+        assert "benchmark" in prompt.lower()
+        assert "B1-SA" in prompt
+        assert "B2-SA" in prompt
+        assert "B3" in prompt
+        # The variant pin note: C4 is metadata only, does NOT swap variants
+        assert "metadata" in prompt.lower()
+        # Primary outcome is interpolated
+        assert "ORR at 6 months" in prompt
+
+
+class TestRobinsIV1SingleArmRunDispatch:
+    """run() dispatches by classification['study_type'] BEFORE the preflight."""
+
+    def _stub_calls(self, monkeypatch, preflight_raw, domain_raw):
+        """Stub _call_with_pdf to return preflight_raw on the first call and
+        domain_raw on subsequent calls."""
+        state = {"calls": 0}
+
+        def fake(pdf, prompt, max_tokens=8192):
+            state["calls"] += 1
+            if state["calls"] == 1:
+                return preflight_raw
+            return domain_raw
+
+        monkeypatch.setattr(robins_i_v1, "_call_with_pdf", fake)
+
+    def test_cohort_study_routes_to_cohort_path(self, monkeypatch):
+        # Cohort study → aim preflight (not benchmark preflight)
+        self._stub_calls(monkeypatch,
+            preflight_raw={"aim": "assignment_to", "rationale": "ITT"},
+            domain_raw={
+                "1.1": "N", "1.2": "N", "1.3": "N", "1.4": "N", "1.5": "N", "1.6": "N", "1.7": "N", "1.8": "N",
+                "2.1": "N", "2.2": "N", "2.3": "N", "2.4": "Y", "2.5": "N",
+                "3.1": "Y", "3.2": "Y", "3.3": "N",
+                "4.1": "N", "4.2": "N",
+                "5.1": "Y", "5.2": "N", "5.3": "N", "5.4": "N", "5.5": "N",
+                "6.1": "N", "6.2": "N", "6.3": "Y", "6.4": "N",
+                "7.1": "N", "7.2": "N", "7.3": "N",
+                "direction_of_bias": "NA",
+            })
+        domain_results, overall, direction = robins_i_v1.run(
+            b"", {}, {"study_type": "Cohort Study"}, "outcome")
+        # Cohort path → aim_preflight populated, preflight not set
+        assert domain_results.get("aim_preflight") is not None
+        assert domain_results["aim_preflight"]["aim"] == "assignment_to"
+        # All 7 domains present
+        for did in ("1", "2", "3", "4", "5", "6", "7"):
+            assert did in domain_results
+
+    def test_single_arm_routes_to_sa_path(self, monkeypatch):
+        # Single-Arm Trial → benchmark preflight + SA D1/D2 + D4=NA in code
+        self._stub_calls(monkeypatch,
+            preflight_raw={"B1": "Y", "B2": "NA", "B3": "N", "C4": "No"},
+            domain_raw={
+                "1S.1": "Y", "1S.2": "Y", "1S.3": "Y", "1S.4": "Y", "1S.5": "N",
+                "2S.1": "Y", "2S.2": "Y", "2S.3": "N",
+                "3.1": "Y", "3.2": "Y", "3.3": "N",
+                "5.1": "Y", "5.2": "N", "5.3": "N", "5.4": "N", "5.5": "N",
+                "6.1": "N", "6.2": "N", "6.3": "Y", "6.4": "N",
+                "7.1": "N", "7.2": "N", "7.3": "N",
+                "direction_of_bias": "NA",
+            })
+        domain_results, overall, direction = robins_i_v1.run(
+            b"", {}, {"study_type": "Single-Arm Trial"}, "outcome")
+        # SA path → preflight populated (V2 shape), aim_preflight = None
+        assert domain_results.get("preflight") is not None
+        assert domain_results["preflight"]["variant"] == "single_arm"
+        assert domain_results.get("aim_preflight") is None
+        # D4 = NA in code with no LLM call
+        assert domain_results["4"]["judgement"] == "NA"
+        assert "single-arm" in domain_results["4"]["reason"].lower()
+        # D1 + D2 carry the SA variant marker
+        assert domain_results["1"].get("variant") == "single_arm"
+        assert domain_results["2"].get("variant") == "single_arm"
+        # Overall = Low (D1=LOW_D1_SA, D2=Low, D3/D5/D6/D7=Low, D4=NA excluded)
+        assert overall == "Low"
+
+    def test_dose_escalation_also_routes_to_sa_path(self, monkeypatch):
+        self._stub_calls(monkeypatch,
+            preflight_raw={"B1": "Y", "B2": "NA", "B3": "N", "C4": "Yes"},
+            domain_raw={
+                "1S.1": "Y", "1S.2": "Y", "1S.3": "Y", "1S.4": "Y", "1S.5": "N",
+                "2S.1": "Y", "2S.2": "Y", "2S.3": "N",
+                "3.1": "Y", "3.2": "Y", "3.3": "N",
+                "5.1": "Y", "5.2": "N", "5.3": "N", "5.4": "N", "5.5": "N",
+                "6.1": "N", "6.2": "N", "6.3": "Y", "6.4": "N",
+                "7.1": "N", "7.2": "N", "7.3": "N",
+                "direction_of_bias": "NA",
+            })
+        domain_results, overall, direction = robins_i_v1.run(
+            b"", {}, {"study_type": "Dose-Escalation Study"}, "outcome")
+        assert domain_results["preflight"]["variant"] == "single_arm"
+        assert domain_results["4"]["judgement"] == "NA"
+
+    def test_sa_preflight_short_circuit_returns_critical_skipping_domains(self, monkeypatch):
+        # B2-SA = Y → Critical overall, D1-D7 NOT assessed
+        call_count = {"n": 0}
+
+        def fake(pdf, prompt, max_tokens=8192):
+            call_count["n"] += 1
+            # Only the preflight call should ever run
+            return {"B1": "N", "B2": "Y", "B3": "N", "C4": "No"}
+
+        monkeypatch.setattr(robins_i_v1, "_call_with_pdf", fake)
+        domain_results, overall, direction = robins_i_v1.run(
+            b"", {}, {"study_type": "Single-Arm Trial"}, "outcome")
+        assert overall == "Critical"
+        # Only the preflight LLM call should have happened — domains skipped
+        assert call_count["n"] == 1
+        assert domain_results["preflight"]["screening_decision"] == "critical"
+
+
+class TestRobinsIV1SingleArmDispatchGateLifted:
+    """The quality_appraisal.py gate that previously blocked V1 for single-arm
+    has been lifted — robins_i_tool_override='robins_i_v1' on a Single-Arm
+    Trial paper now swaps the tool to V1."""
+
+    def test_dispatch_gate_no_longer_blocks_single_arm(self):
+        # Confirms the registry/dispatcher don't reject SA → V1 routing.
+        # appraise_paper's override block at line 773-780 used to require
+        # `study_type not in robins_i.SINGLE_ARM_STUDY_TYPES`. After the
+        # lift, the swap applies whenever cfg["rob_tool"] == "robins_i".
+        import inspect
+        src = inspect.getsource(qa.appraise_paper)
+        # The stale gate condition must be gone
+        assert "study_type not in robins_i.SINGLE_ARM_STUDY_TYPES" not in src
+        # Tool runners must include both V1 and V2
+        assert qa._TOOL_RUNNERS["robins_i_v1"] is robins_i_v1.run
+
+    def test_sa_registry_entry_initial_grade_is_very_low(self):
+        # Single-arm should start at Very low GRADE regardless of V1 / V2 tool.
+        cfg = qa.STUDY_TYPE_REGISTRY["Single-Arm Trial"]
+        assert cfg["initial_grade"] == "Very low"
+        cfg = qa.STUDY_TYPE_REGISTRY["Dose-Escalation Study"]
+        assert cfg["initial_grade"] == "Very low"
+
+
+class TestRobinsIV1SingleArmPromptCatalog:
+    """prompt_catalog() exposes the new SA fields so the developer view
+    can surface them."""
+
+    def test_catalog_includes_single_arm_study_types(self):
+        cat = robins_i_v1.prompt_catalog()
+        assert "single_arm_study_types" in cat
+        assert "Single-Arm Trial" in cat["single_arm_study_types"]
+        assert "Dose-Escalation Study" in cat["single_arm_study_types"]
+
+    def test_catalog_includes_low_d1_sa_label(self):
+        cat = robins_i_v1.prompt_catalog()
+        assert cat["domain_1_low_label_single_arm"] == robins_i_v1.LOW_D1_SA
+
+    def test_catalog_includes_benchmark_preflight_prompt_and_code(self):
+        cat = robins_i_v1.prompt_catalog()
+        assert "benchmark_preflight_prompt" in cat
+        assert "B1-SA" in cat["benchmark_preflight_prompt"]
+        assert "benchmark_preflight_code" in cat
+        assert "run_benchmark_preflight" in cat["benchmark_preflight_code"]
+
+    def test_catalog_includes_sa_domains_with_d4_na_marker(self):
+        cat = robins_i_v1.prompt_catalog()
+        assert "domains_single_arm" in cat
+        sa_doms = cat["domains_single_arm"]
+        # 7 entries (D1, D2, D3, D4, D5, D6, D7) — D4 has the na_in_code flag
+        ids = {d["id"] for d in sa_doms}
+        assert ids == {1, 2, 3, 4, 5, 6, 7}
+        d4 = next(d for d in sa_doms if d["id"] == 4)
+        assert d4.get("na_in_code") is True
+        # D1-SA has the SA signals (1S.1 … 1S.5)
+        d1 = next(d for d in sa_doms if d["id"] == 1)
+        d1_ids = {s["id"] for s in d1["signals"]}
+        assert d1_ids == {"1S.1", "1S.2", "1S.3", "1S.4", "1S.5"}
+        # D2-SA has 2S.1 … 2S.3
+        d2 = next(d for d in sa_doms if d["id"] == 2)
+        d2_ids = {s["id"] for s in d2["signals"]}
+        assert d2_ids == {"2S.1", "2S.2", "2S.3"}
+
+
+class TestRobinsIV1SingleArmFlattenForExport:
+    """flatten_result_row emits the new SA preflight columns + signal
+    columns alongside the existing cohort columns."""
+
+    def _make_v1_sa_row(self):
+        return {
+            "paper_id": 101,
+            "filename": "v1_sa_test.pdf",
+            "status": "ok",
+            "study_type": "Single-Arm Trial",
+            "rob_tool": "robins_i_v1",
+            "primary_outcome": "ORR at 6 months",
+            "classification": {"major_category": "Interventional", "subcategory": "Single-arm phase 2"},
+            "extracted_fields": {"citation_title": "V1 SA test paper"},
+            "rob_domains": {
+                "preflight": {
+                    "B1": "Y", "B2": "NA", "B3": "N", "C4": "No",
+                    "variant": "single_arm",
+                    "screening_decision": "proceed",
+                    "screening_reason": "",
+                    "rationales": {"B1": "Simon two-stage design", "B2": "", "B3": "", "C4": "ITT"},
+                },
+                "aim_preflight": None,
+                "1": {"judgement": robins_i_v1.LOW_D1_SA, "variant": "single_arm",
+                      "signals": {"1S.1": "Y", "1S.2": "Y", "1S.3": "Y", "1S.4": "Y", "1S.5": "N"}},
+                "2": {"judgement": "Low", "variant": "single_arm",
+                      "signals": {"2S.1": "Y", "2S.2": "Y", "2S.3": "N"}},
+                "3": {"judgement": "Low",
+                      "signals": {"3.1": "Y", "3.2": "Y", "3.3": "N"}},
+                "4": {"judgement": "NA", "signals": {}, "rationales": {},
+                      "reason": "Not applicable to single-arm trials"},
+                "5": {"judgement": "Low", "signals": {"5.1": "Y", "5.2": "N", "5.3": "N", "5.4": "N", "5.5": "N"}},
+                "6": {"judgement": "Low", "signals": {"6.1": "N", "6.2": "N", "6.3": "Y", "6.4": "N"}},
+                "7": {"judgement": "Low", "signals": {"7.1": "N", "7.2": "N", "7.3": "N"}},
+            },
+            "rob_overall": "Low",
+            "rob_direction": "NA",
+            "guideline": {"adhered": 18, "applicable": 22, "proportion": 0.82},
+            "guideline_adhered": 18, "guideline_applicable": 22, "guideline_proportion": 0.82,
+            "initial_grade": "Very low", "updated_grade": "Very low",
+            "grade_explanation": "Single-arm: starts at Very low; no further downgrade.",
+        }
+
+    def test_sa_flatten_emits_benchmark_preflight_columns(self):
+        row = qa.flatten_result_row(self._make_v1_sa_row())
+        assert row["robins_v1_b1"] == "Y"
+        assert row["robins_v1_b2"] == "NA"
+        assert row["robins_v1_b3"] == "N"
+        assert row["robins_v1_c4"] == "No"
+        assert row["robins_v1_variant"] == "single_arm"
+        assert row["robins_v1_screening_decision"] == "proceed"
+
+    def test_sa_flatten_emits_sa_signal_columns(self):
+        row = qa.flatten_result_row(self._make_v1_sa_row())
+        # SA D1 signal columns
+        assert row["rob_1S.1"] == "Y"
+        assert row["rob_1S.3"] == "Y"
+        assert row["rob_1S.5"] == "N"
+        # SA D2 signal columns
+        assert row["rob_2S.1"] == "Y"
+        assert row["rob_2S.3"] == "N"
+
+    def test_sa_flatten_preserves_cohort_signal_columns_as_blank(self):
+        # SA rows have empty cells for cohort 1.1/2.1 (they're not in the
+        # signal dict for SA runs), but the columns are still emitted via the
+        # union DOMAINS dispatch — verifying they don't crash
+        row = qa.flatten_result_row(self._make_v1_sa_row())
+        # Cohort 1.1 was not answered in the SA path — should default to ""
+        assert row["rob_1.1"] == ""
+        # Cohort 2.1 likewise
+        assert row["rob_2.1"] == ""
+
+    def test_sa_flatten_d4_is_na(self):
+        row = qa.flatten_result_row(self._make_v1_sa_row())
+        assert row["rob_d4_judgement"] == "NA"
+
+    def test_sa_flatten_d1_low_label_preserved(self):
+        row = qa.flatten_result_row(self._make_v1_sa_row())
+        # The SA D1 "Low (except for concerns about uncontrolled benchmarking)"
+        # label is verbatim in the CSV cell (downstream UI tags it as "Low" badge)
+        assert row["rob_d1_judgement"] == robins_i_v1.LOW_D1_SA
+
+    def test_cohort_flatten_still_excludes_sa_preflight_when_empty(self):
+        # Backward compat: V1 cohort rows (preflight not set) should leave
+        # SA preflight columns blank
+        cohort_row = {
+            "paper_id": 102, "filename": "v1_cohort.pdf", "status": "ok",
+            "study_type": "Cohort Study", "rob_tool": "robins_i_v1",
+            "primary_outcome": "mortality", "classification": {},
+            "extracted_fields": {}, "rob_overall": "Low", "rob_direction": "NA",
+            "guideline_adhered": 1, "guideline_applicable": 1, "guideline_proportion": 1.0,
+            "initial_grade": "Low", "updated_grade": "Low",
+            "grade_explanation": "",
+            "rob_domains": {
+                "aim_preflight": {"aim": "assignment_to", "rationale": "ITT"},
+                "1": {"judgement": "Low", "signals": {"1.1": "N"}},
+                "2": {"judgement": "Low", "signals": {"2.1": "N"}},
+                "3": {"judgement": "Low", "signals": {}},
+                "4": {"judgement": "Low", "signals": {}, "aim": "assignment_to"},
+                "5": {"judgement": "Low", "signals": {}},
+                "6": {"judgement": "Low", "signals": {}},
+                "7": {"judgement": "Low", "signals": {}},
+            },
+        }
+        row = qa.flatten_result_row(cohort_row)
+        # Aim preflight present
+        assert row["robins_v1_aim"] == "assignment_to"
+        # Benchmark preflight columns present but empty (preflight key absent)
+        assert row["robins_v1_b1"] == ""
+        assert row["robins_v1_b2"] == ""
+        # Variant cell shows "cohort" sentinel (aim_preflight is present)
+        assert row["robins_v1_variant"] == "cohort"
 
 
 # ═════════════════════════════════════════════

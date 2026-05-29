@@ -12,8 +12,22 @@ Underlying paper: Sterne JAC et al., BMJ 2016;355:i4919.
 Parallel to ``robins_i.py`` (V2). Selected per-run via
 ``quality_appraisal_runs.robins_i_tool_choice`` — default is V2;
 ``"robins_i_v1"`` opts in to V1 (used by the OVID team and other ongoing V1
-workflows). Single-arm study types are NOT routed here — V1's cribsheet is
-cohort-only; single-arm stays on V2's single_arm variant regardless of toggle.
+workflows).
+
+**Cohort variant** (the original V1 cribsheet scope) — 7 domains with the
+§1.1 aim preflight; D4 is aim-gated.
+
+**Single-arm variant** (project-specific extension; mirrors V2's `single_arm`
+adaptation for V1's 5-token vocab) — selected when
+``classification["study_type"] in SINGLE_ARM_STUDY_TYPES``. The §1.1 aim
+preflight is replaced by a benchmark preflight (B1-SA / B2-SA / B3); D1 is
+reframed as benchmark adequacy + prognostic-mix comparability (1S.1–1S.5)
+and D2 as intervention fidelity + intent-vs-received cohort definition
+(2S.1–2S.3). D4 is marked NA in code with no LLM call (V2 retired this
+domain entirely; its concerns are folded into D2-SA's 2S.3). D3, D5, D6,
+D7 reuse the cohort signals + judges unchanged. V1's 5-token signal vocab
+(Y/PY/PN/N/NI) cannot express V2's WN/SN/WY/SY gradient — the conservative
+mapping is documented in ``docs/shareable/robins_i_v1_shareable.md`` §17.
 
 This module ports the self-contained reference implementation in
 ``docs/shareable/robins_i_v1_shareable.md`` (§15) and adapts it to the
@@ -22,9 +36,11 @@ project's tool-runner contract:
   ``run(pdf_bytes, extracted_fields, classification, primary_outcome, *,
         progress=None, target_pico=None) -> (domain_results, overall, direction)``
 
-The §1.1 aim preflight LLM call lives inside ``run()`` and its output is
-stashed in ``domain_results["aim_preflight"]`` so the per-paper detail view
-can surface the rationale (mirrors V2's ``domain_results["preflight"]`` key).
+The §1.1 aim preflight LLM call (cohort path) or benchmark preflight LLM call
+(single-arm path) lives inside ``run()`` and its output is stashed in
+``domain_results["aim_preflight"]`` (cohort) or ``domain_results["preflight"]``
+(single-arm) so the per-paper detail view can surface the rationale (mirrors
+V2's ``domain_results["preflight"]`` convention).
 """
 from __future__ import annotations
 
@@ -45,6 +61,19 @@ logger = logging.getLogger(__name__)
 SIGNAL_OPTIONS = ("Y", "PY", "PN", "N", "NI")
 JUDGEMENTS = ("Low", "Moderate", "Serious", "Critical", "No information")
 AIMS = ("assignment_to", "starting_and_adhering")
+
+# Single-arm variant — selected at run() entry from classification["study_type"]
+# BEFORE the aim preflight (mirrors V2's pattern in robins_i.py:120). When this
+# matches, the aim preflight is skipped and replaced by the benchmark preflight
+# (B1-SA / B2-SA / B3); D1 + D2 use the SA signal sets + judges; D4 is set to
+# NA in code with no LLM call.
+SINGLE_ARM_STUDY_TYPES = frozenset({"Single-Arm Trial", "Dose-Escalation Study"})
+
+# Domain 1 'Low' label for the single-arm variant — replaces plain "Low" since
+# uncontrolled-confounding-by-indication is N/A; what remains is residual
+# uncertainty about whether the implied benchmark / external control truly
+# matches the cohort's prognostic profile. Same string V2 uses for parity.
+LOW_D1_SA = "Low (except for concerns about uncontrolled benchmarking)"
 
 
 # Per-question response-option subsets
@@ -248,19 +277,188 @@ def domain7_judge(signals: dict[str, str]) -> str:
     return "Low"
 
 
+def domain1_single_arm_judge(signals: dict[str, str]) -> str:
+    """V1 D1 single-arm — Benchmark adequacy + prognostic-mix comparability.
+
+    Project-specific adaptation that mirrors V2's
+    ``domain1_variant_single_arm_judge`` (see ``robins_i.py:263``) but uses
+    V1's 5-token signal vocabulary (Y/PY/PN/N/NI — no WN/SN gradient) and
+    5-level judgement scale.
+
+    Single-arm trials have no internal comparator. Classical
+    confounding-by-indication is N/A; the domain instead assesses:
+
+    1. **Benchmark adequacy** — was the implied comparison (historical
+       control rate, performance criterion, or null hypothesis decision
+       rule) pre-specified and reasonable for the population? (1S.1, 1S.2)
+    2. **Prognostic-mix comparability** — is the cohort's measured baseline
+       prognostic profile comparable to the benchmark population, and did
+       authors address residual differences? (1S.3, 1S.4)
+
+    1S.5 (negative / falsification controls / external-validity) serves the
+    same Critical-elevating role as 1A.4 / 1B.5 in V2's cohort variants.
+
+    Signaling questions:
+      1S.1  Implied benchmark pre-specified before data collection?
+      1S.2  Implied benchmark reasonable for this population?
+      1S.3  Cohort's baseline prognostic profile comparable to benchmark?
+      1S.4  Quantitative adjustment to external controls / sensitivity analyses?
+      1S.5  Negative / falsification controls suggest serious uncontrolled
+            selection-prognostic bias?
+
+    V1-vs-V2 vocab note: V2's 1S.3 accepts WN ("most-but-not-all comparable")
+    and SN ("materially less comparable"); V1 collapses both into PN/N. The
+    tree maps V1's PN → V2's WN-equivalent (Moderate floor) and V1's N →
+    V2's SN-equivalent (Serious unless 1S.4 rescues), per the conservative
+    interpretation rule in ``docs/shareable/robins_i_v1_shareable.md`` §17.
+
+    Returns Low (with the LOW_D1_SA label), Moderate, Serious, Critical, or
+    No information.
+    """
+    q1 = signals.get("1S.1", "NI")
+    q2 = signals.get("1S.2", "NI")
+    q3 = signals.get("1S.3", "NI")
+    q4 = signals.get("1S.4", "NI")
+    q5 = signals.get("1S.5", "NI")
+
+    # 1S.5 dominates: falsification-control hit → Critical regardless
+    if _yes(q5):
+        return "Critical"
+
+    # 1S.1 N/PN: no pre-specified benchmark
+    if _no(q1):
+        # 1S.4 N/PN: no quantitative adjustment either → Critical
+        if _no(q4):
+            return "Critical"
+        return "Serious"
+
+    if _no_info(q1):
+        return "No information"
+
+    # 1S.1 Y/PY: benchmark pre-specified
+    if _yes(q1):
+        # 1S.3 prognostic comparability
+        if _yes(q3):
+            # 1S.2 (benchmark reasonable) decides Low-SA vs Moderate
+            if _yes(q2):
+                return LOW_D1_SA
+            return "Moderate"
+        # V1 collapse: PN → V2-WN-equivalent (Moderate floor)
+        if q3 == "PN":
+            return "Moderate"
+        # V1 collapse: N → V2-SN-equivalent (substantial mismatch).
+        # NI on 1S.3 — silent on prognostic comparability — treated the same.
+        if q3 == "N" or _no_info(q3):
+            # 1S.4 (quantitative adjustment) can rescue
+            if _yes(q4):
+                return "Moderate"
+            return "Serious"
+
+    return "Serious"
+
+
+def domain2_single_arm_judge(signals: dict[str, str]) -> str:
+    """V1 D2 single-arm — Intervention fidelity + intent-vs-received cohort.
+
+    Project-specific adaptation that mirrors V2's
+    ``domain2_variant_single_arm_judge`` (see ``robins_i.py:384``) but uses
+    V1's 5-token signal vocabulary (no SY/WY gradient on 2S.3, no WN/SN
+    gradient on 2S.2) and 5-level judgement scale.
+
+    With no comparator, classical differential misclassification by group
+    is meaningless. What remains is whether the intervention was
+    well-defined, whether dose modifications / discontinuations were
+    recorded, and crucially whether the analyzed cohort was defined by
+    *intended* treatment (ITT-like) or *received* treatment (per-protocol —
+    risks selection toward responders).
+
+    Signaling questions:
+      2S.1  Intervention well-defined (dose, schedule, duration,
+            dose-modifications protocol) at start of follow-up?
+      2S.2  Were dose reductions, holds, and discontinuations recorded
+            and reported?
+      2S.3  Was the analyzed cohort defined by intended treatment (everyone
+            enrolled, ITT-like) or by received treatment (only those
+            completing ≥X cycles / responding)?
+
+    V1-vs-V2 vocab note: V2's 2S.3 uses SY/WY/PN/N/NI where SY = "explicitly
+    restricted to completers/responders" → Critical and WY = "excludes some
+    enrolled but not dominantly for treatment reasons" → Serious. V1
+    collapses both into Y/PY. To preserve the V2 severity gradient under V1's
+    vocab, the tree treats **Y as the V2-SY-equivalent** (the strongest
+    statement available) → Critical, and **PY as the V2-WY-equivalent** →
+    Serious. Reviewers should answer 2S.3 with Y only when the paper
+    explicitly restricts the primary analysis to completers/responders.
+
+    V2's 2S.2 accepts WN/SN gradient; V1 collapses to PN/N. The tree maps
+    PN → V2-WN-equivalent (Moderate) and N → V2-SN-equivalent (Serious).
+
+    Returns Low, Moderate, Serious, Critical, or No information.
+    """
+    q1 = signals.get("2S.1", "NI")
+    q2 = signals.get("2S.2", "NI")
+    q3 = signals.get("2S.3", "NI")
+
+    # 2S.3 dominates: cohort-definition selection bias
+    if q3 == "Y":
+        # V2-SY-equivalent — primary analysis explicitly restricted to
+        # completers/responders → Critical
+        return "Critical"
+    if q3 == "PY" or _no_info(q3):
+        # V2-WY-equivalent or unclear → Serious (intervention-definition
+        # quality does not rescue cohort-filter bias)
+        return "Serious"
+
+    # q3 in (PN, N): cohort defined by intended treatment → low concern here
+    if _yes(q1):
+        # Well-defined intervention. 2S.2 (recording fidelity) decides.
+        if _yes(q2):
+            return "Low"
+        if q2 == "PN":
+            return "Moderate"
+        if q2 == "N":
+            return "Serious"
+        # NI on 2S.2 — measurement-fidelity uncertain
+        return "Moderate"
+
+    # 2S.1 N/PN: intervention definition unclear
+    if _no(q1):
+        return "Serious"
+    # NI on 2S.1
+    return "No information"
+
+
 def robins_i_v1_overall(domain_judgements: list[str]) -> str:
-    """Overall risk-of-bias per V1 Table 3."""
+    """Overall risk-of-bias per V1 Table 3.
+
+    Single-arm runs mark D4 as ``NA`` in code (V2 retired the deviations
+    domain entirely; its concerns are folded into D2-SA's 2S.3). NA
+    judgements are excluded from aggregation. The single-arm Domain 1
+    label (LOW_D1_SA) is normalized to "Low" for aggregation since the
+    caveat in the label is reported in the per-domain detail.
+    """
     if not domain_judgements:
         return "No information"
-    if any(j == "Critical" for j in domain_judgements):
-        return "Critical"
-    if any(j == "Serious" for j in domain_judgements):
-        return "Serious"
-    if all(j == "Low" for j in domain_judgements):
-        return "Low"
-    if all(j == "No information" for j in domain_judgements):
+
+    def _norm(j: str) -> str:
+        # LOW_D1_SA = "Low (except for concerns about uncontrolled
+        # benchmarking)" — V2's footnote pattern; aggregates as "Low".
+        if j.startswith("Low"):
+            return "Low"
+        return j
+
+    active = [_norm(j) for j in domain_judgements if j and j != "NA"]
+    if not active:
         return "No information"
-    if all(j in ("Low", "Moderate") for j in domain_judgements):
+    if any(j == "Critical" for j in active):
+        return "Critical"
+    if any(j == "Serious" for j in active):
+        return "Serious"
+    if all(j == "Low" for j in active):
+        return "Low"
+    if all(j == "No information" for j in active):
+        return "No information"
+    if all(j in ("Low", "Moderate") for j in active):
         return "Moderate"
     return "No information"
 
@@ -270,6 +468,20 @@ DOMAIN_JUDGES = {
     2: domain2_judge,
     3: domain3_judge,
     # 4: dispatched separately because it takes aim= kwarg
+    5: domain5_judge,
+    6: domain6_judge,
+    7: domain7_judge,
+}
+
+
+# Single-arm judge dispatch. D1 and D2 use the SA-specific decision trees;
+# D3/D5/D6/D7 reuse the cohort judges unchanged (those domain concerns
+# transfer meaningfully to single-arm). D4 is intentionally absent — it's
+# set to NA in run() with no LLM call.
+DOMAIN_JUDGES_SINGLE_ARM: dict[int, Callable[[dict[str, str]], str]] = {
+    1: domain1_single_arm_judge,
+    2: domain2_single_arm_judge,
+    3: domain3_judge,
     5: domain5_judge,
     6: domain6_judge,
     7: domain7_judge,
@@ -442,14 +654,43 @@ DOMAIN7_SIGNALS: list[dict[str, Any]] = [
 ]
 
 
+DOMAIN1_SIGNALS_SINGLE_ARM: list[dict[str, Any]] = [
+    {"id": "1S.1", "text": "Was the implied benchmark (historical control rate, pre-specified performance criterion, or null hypothesis with a quantitative decision rule) pre-specified before data collection?", "options": list(_BASIC_NO_NI), "elaboration": "Single-arm trials have no internal comparator. They are interpreted against an implicit benchmark — usually a historical-control response rate, a regulatory performance criterion (e.g. ORR > 30% to support accelerated approval), or a null hypothesis with a pre-specified statistical decision rule (e.g. Simon's two-stage design). Answer Y/PY if a numeric benchmark + decision rule was clearly stated in the protocol / SAP / methods, BEFORE the data were collected. Answer N/PN if no benchmark is identifiable, or if the benchmark looks chosen post-hoc to match the observed result. There is no NI option — commit to one of Y/PY/PN/N (matches V1's 1.1 convention)."},
+    {"id": "1S.2", "text": "Is the implied benchmark reasonable given current standard of care and the patient population being studied?", "options": list(_BASIC), "elaboration": "A pre-specified benchmark is only useful if it reflects a clinically meaningful threshold for this population. Answer Y/PY if the benchmark is consistent with contemporary published control-arm rates in comparable patients (similar disease stage, prior therapy, biomarker status). Answer N/PN if the benchmark is implausibly low (inflates apparent benefit) or implausibly high (forces a near-impossible bar). NI if no contemporary comparable estimate exists."},
+    {"id": "1S.3", "text": "Is the cohort's measured baseline prognostic profile (stage, prior lines, ECOG/performance status, biomarker status, key comorbidities) comparable to that of the benchmark population?", "options": list(_BASIC_NA), "elaboration": "The single-arm proportion is biased upward if the enrolled cohort is more prognostically favourable than the benchmark population (e.g. younger, less heavily pre-treated, biomarker-enriched). Answer Y/PY when measured baseline prognostic factors are comparable. **PN when most-but-not-all prognostic factors look comparable** (V1 collapse of V2's WN). **N when at least one important prognostic factor is materially more favourable in this cohort** (V1 collapse of V2's SN). NA only when no benchmark was identified at 1S.1."},
+    {"id": "1S.4", "text": "Did the authors address residual prognostic-mix differences quantitatively (sensitivity analyses, propensity-score adjustment to external controls, prognostic-score stratification, or similar)?", "options": list(_BASIC_NA), "elaboration": "Even when 1S.3 raises concerns, quantitative external-control adjustment can rescue interpretability. Examples include propensity-score weighting against an external real-world cohort, prognostic-score stratification, MAIC, or pre-specified sensitivity analyses showing the conclusion is robust to plausible prognostic differences. Answer Y/PY when such methods were used and reported. N/PN when not addressed. NA only when no benchmark was identified at 1S.1."},
+    {"id": "1S.5", "text": "Do negative / falsification controls, external-validity considerations, or other quantitative bias analyses suggest serious uncontrolled selection-prognostic bias?", "options": list(_BASIC_NO_NI), "elaboration": "Analogous to V2's 1A.4 / 1B.5. Answer Y/PY if a falsification analysis (e.g. testing the intervention against an outcome it shouldn't affect) suggested residual bias, or if external-validity checks revealed serious cohort-vs-benchmark mismatch. Answer N if no falsification analysis was performed and no other consideration suggests substantial uncontrolled bias — this is the typical answer."},
+]
+
+DOMAIN2_SIGNALS_SINGLE_ARM: list[dict[str, Any]] = [
+    {"id": "2S.1", "text": "Was the intervention well-defined (dose, schedule, duration, dose-modifications protocol) at the start of follow-up?", "options": list(_BASIC), "elaboration": "In a single-arm trial there is no comparator misclassification, but the single intervention must be specified precisely enough that the reported result corresponds to a reproducible regimen. Answer Y/PY when dose, schedule, duration, and dose-modification rules (reductions, holds, criteria for discontinuation) are fully reported. Answer N/PN when the intervention is described only at high level (e.g. 'standard chemotherapy')."},
+    {"id": "2S.2", "text": "Were dose reductions, holds, and discontinuations recorded and reported?", "options": list(_BASIC), "elaboration": "Recording of treatment delivery is essential for interpreting the single-arm result. Answer Y/PY when reductions/holds/discontinuations are tabulated or otherwise reported. **PN when most exposure modifications were recorded but some detail is missing** (V1 collapse of V2's WN). **N when material exposure detail is missing such that the analyzed 'intervention' is effectively undefined** (V1 collapse of V2's SN)."},
+    {"id": "2S.3", "text": "Was the analyzed cohort defined by intended treatment (everyone enrolled, ITT-like) or by received treatment (only those completing ≥X cycles / responding to treatment)?", "options": list(_BASIC), "elaboration": "Defining the analyzed cohort by *received* treatment (per-protocol completers, 'evaluable population') selects for patients who tolerated the intervention well enough to keep receiving it — a strong selection toward responders that inflates the single-arm proportion. **Answer Y only when the primary analysis is explicitly restricted to completers / responders / evaluable population** (V1 collapse of V2's SY — Critical-routing). **Answer PY when the analyzed cohort excludes some enrolled patients for treatment-related reasons but not dominantly** (V1 collapse of V2's WY — Serious-routing). Answer N/PN when all enrolled (or all who received any dose of intervention — modified ITT) are analyzed."},
+]
+
+
 DOMAINS: list[dict[str, Any]] = [
-    {"id": 1, "name": "Bias due to confounding", "signals": DOMAIN1_SIGNALS, "direction_options": ("NA", "Favours experimental", "Favours comparator", "Unpredictable"), "relevant_fields": ["confounders_measured", "adjustment_method", "exposure_definition", "comparator_group", "immortal_time_bias", "confounding_control", "consecutive_enrolment"]},
-    {"id": 2, "name": "Bias in selection of participants into the study", "signals": DOMAIN2_SIGNALS, "direction_options": ("NA", "Favours experimental", "Favours comparator", "Towards null", "Away from null", "Unpredictable"), "relevant_fields": ["case_source", "control_selection", "sampling_method", "loss_to_follow_up", "immortal_time_bias"]},
+    {"id": 1, "name": "Bias due to confounding", "signals": DOMAIN1_SIGNALS, "signals_single_arm": DOMAIN1_SIGNALS_SINGLE_ARM, "direction_options": ("NA", "Favours experimental", "Favours comparator", "Unpredictable"), "relevant_fields": ["confounders_measured", "adjustment_method", "exposure_definition", "comparator_group", "comparator_historical_reference", "primary_endpoint_prespecified", "immortal_time_bias", "confounding_control", "consecutive_enrolment"]},
+    {"id": 2, "name": "Bias in selection of participants into the study", "signals": DOMAIN2_SIGNALS, "signals_single_arm": DOMAIN2_SIGNALS_SINGLE_ARM, "direction_options": ("NA", "Favours experimental", "Favours comparator", "Towards null", "Away from null", "Unpredictable"), "relevant_fields": ["case_source", "control_selection", "sampling_method", "loss_to_follow_up", "immortal_time_bias", "exposure_definition", "intervention_classification", "escalation_scheme", "dose_levels", "expansion_cohort"]},
     {"id": 3, "name": "Bias in classification of interventions", "signals": DOMAIN3_SIGNALS, "direction_options": ("NA", "Favours experimental", "Favours comparator", "Towards null", "Away from null", "Unpredictable"), "relevant_fields": ["exposure_definition", "exposure_measurement", "exposure_ascertainment", "intervention_classification"]},
     {"id": 4, "name": "Bias due to deviations from intended interventions", "signals": DOMAIN4_SIGNALS, "aim_gated": True, "direction_options": ("NA", "Favours experimental", "Favours comparator", "Towards null", "Away from null", "Unpredictable"), "relevant_fields": ["intervention_classification", "loss_to_follow_up", "co_interventions", "adherence"]},
     {"id": 5, "name": "Bias due to missing data", "signals": DOMAIN5_SIGNALS, "direction_options": ("NA", "Favours experimental", "Favours comparator", "Towards null", "Away from null", "Unpredictable"), "relevant_fields": ["loss_to_follow_up", "missing_data_handling", "attrition_rate"]},
     {"id": 6, "name": "Bias in measurement of outcomes", "signals": DOMAIN6_SIGNALS, "direction_options": ("NA", "Favours experimental", "Favours comparator", "Towards null", "Away from null", "Unpredictable"), "relevant_fields": ["outcome_ascertainment", "outcome_definition", "assessor_blinding"]},
     {"id": 7, "name": "Bias in selection of the reported result", "signals": DOMAIN7_SIGNALS, "direction_options": ("NA", "Favours experimental", "Favours comparator", "Towards null", "Away from null", "Unpredictable"), "relevant_fields": ["outcome_definition", "statistical_analysis", "pre_registered_protocol"]},
+]
+
+
+# Single-arm DOMAINS view (used by the SA dispatch in run() and by
+# prompt_catalog()). D4 is intentionally absent; the orchestrator marks D4
+# as NA in code. D1 and D2 use the SA signal sets; D3, D5, D6, D7 inherit
+# the cohort signals unchanged.
+DOMAINS_SINGLE_ARM: list[dict[str, Any]] = [
+    {"id": 1, "name": "Bias due to confounding — benchmark adequacy + prognostic-mix comparability (single-arm)", "signals": DOMAIN1_SIGNALS_SINGLE_ARM, "direction_options": ("NA", "Favours experimental", "Favours benchmark", "Unpredictable"), "relevant_fields": ["confounders_measured", "adjustment_method", "exposure_definition", "comparator_historical_reference", "primary_endpoint_prespecified", "consecutive_enrolment"]},
+    {"id": 2, "name": "Bias in classification of interventions — intervention fidelity + intent-vs-received cohort (single-arm)", "signals": DOMAIN2_SIGNALS_SINGLE_ARM, "direction_options": ("NA", "Favours experimental", "Towards null", "Away from null", "Unpredictable"), "relevant_fields": ["exposure_definition", "exposure_measurement", "intervention_classification", "escalation_scheme", "dose_levels", "expansion_cohort", "adherence"]},
+    {"id": 3, "name": "Bias in classification of interventions", "signals": DOMAIN3_SIGNALS, "direction_options": ("NA", "Favours experimental", "Towards null", "Away from null", "Unpredictable"), "relevant_fields": ["exposure_definition", "exposure_measurement", "exposure_ascertainment", "intervention_classification"]},
+    {"id": 5, "name": "Bias due to missing data", "signals": DOMAIN5_SIGNALS, "direction_options": ("NA", "Favours experimental", "Towards null", "Away from null", "Unpredictable"), "relevant_fields": ["loss_to_follow_up", "missing_data_handling", "attrition_rate"]},
+    {"id": 6, "name": "Bias in measurement of outcomes", "signals": DOMAIN6_SIGNALS, "direction_options": ("NA", "Favours experimental", "Towards null", "Away from null", "Unpredictable"), "relevant_fields": ["outcome_ascertainment", "outcome_definition", "assessor_blinding"]},
+    {"id": 7, "name": "Bias in selection of the reported result", "signals": DOMAIN7_SIGNALS, "direction_options": ("NA", "Favours experimental", "Towards null", "Away from null", "Unpredictable"), "relevant_fields": ["outcome_definition", "statistical_analysis", "pre_registered_protocol"]},
 ]
 
 
@@ -476,6 +717,17 @@ def _signals_for_domain(domain: dict[str, Any], aim: str) -> list[dict[str, Any]
             return [s for s in domain["signals"] if s["id"] in ("4.1", "4.2")]
         if aim == "starting_and_adhering":
             return [s for s in domain["signals"] if s["id"] in ("4.3", "4.4", "4.5", "4.6")]
+    return domain["signals"]
+
+
+def _signals_for_domain_single_arm(domain: dict[str, Any]) -> list[dict[str, Any]]:
+    """For the single-arm variant: D1 + D2 swap to their SA signal sets;
+    D3, D5, D6, D7 keep cohort signals unchanged. D4 is not asked (NA in
+    code; never reaches this helper)."""
+    if domain.get("id") == 1 and domain.get("signals_single_arm"):
+        return domain["signals_single_arm"]
+    if domain.get("id") == 2 and domain.get("signals_single_arm"):
+        return domain["signals_single_arm"]
     return domain["signals"]
 
 
@@ -545,21 +797,172 @@ def determine_aim(pdf_bytes: bytes,
     return {"aim": aim_raw, "rationale": rationale}
 
 
+# ─────────────────────────────────────────────
+# Benchmark preflight (single-arm path) — replaces the aim preflight when
+# the variant is single_arm. Mirrors V2's _build_preflight_prompt_single_arm
+# (robins_i.py:1431) but stays in V1's 4-token preflight scale (Y/PY/PN/N —
+# preflight has no NI to match V1's 1.1 convention).
+# ─────────────────────────────────────────────
+_BENCHMARK_PREFLIGHT_RELEVANT_KEYS = (
+    "primary_endpoint_prespecified",
+    "inclusion_exclusion_criteria",
+    "comparator_historical_reference",
+    "consecutive_enrolment",
+    "outcome_definition",
+    "outcome_ascertainment",
+    "primary_outcome_measurement",
+    "analysis_framework",
+)
+
+
+def _build_benchmark_preflight_prompt(study_type: str,
+                                      primary_outcome: str,
+                                      extracted_fields: dict[str, str]) -> str:
+    relevant = {k: extracted_fields[k] for k in _BENCHMARK_PREFLIGHT_RELEVANT_KEYS
+                if extracted_fields.get(k)}
+    ctx_json = json.dumps(relevant, indent=2) if relevant else "(no pre-extracted fields)"
+
+    return f"""You are performing the **Preliminary Considerations** screen of ROBINS-I V1 (adapted for single-arm / uncontrolled designs) on an uncontrolled clinical study.
+
+Study type: {study_type}
+Outcome being assessed: {primary_outcome}
+
+Context (fields already extracted from the paper):
+{ctx_json}
+
+This study has **no comparator group** — every participant received the intervention. Risk of bias is therefore not about confounding-by-indication (which requires a comparator) but about whether the implied benchmark for interpretation (historical control rate, performance criterion, or null hypothesis with a decision rule) was pre-specified and reasonable.
+
+Answer four preliminary-consideration questions:
+
+**B1-SA. Did the authors pre-specify a quantitative benchmark (historical control rate, performance criterion, or null hypothesis with a statistical decision rule) against which the single-arm result is being judged?**
+Options: Y / PY / PN / N
+Elaboration: Examples of pre-specified benchmarks include: a Simon two-stage design with a numeric response-rate threshold; an FDA accelerated-approval ORR threshold cited in the protocol; a published historical control rate that the trial was powered against. Answer Y/PY if such a benchmark is clearly identifiable in the protocol/SAP/methods. Answer N/PN if no benchmark is stated, or if the benchmark looks post-hoc.
+
+**B2-SA. (Only if N/PN to B1-SA) Is the absence of any pre-specified benchmark severe enough that the single-arm proportion is uninterpretable for causal inference?**
+Options: Y / PY / PN / N
+Elaboration: Y/PY when the result is reported as a bare proportion with no reference point at all, such that any interpretation depends entirely on post-hoc comparisons. This short-circuits to Critical risk of bias.
+
+**B3. Was the method of measuring the outcome inappropriate?**
+Options: Y / PY / PN / N
+Elaboration: Identify methods of outcome measurement unsuitable for the outcome they evaluate. Answer Y/PY if (1) important outcome values fall outside levels detectable by the method; (2) the instrument has demonstrated poor reliability/validity; or (3) measurement methods are not interpretable for the question. In most circumstances answer N/PN.
+
+**C4. Did the analysis account for protocol deviations during follow-up (e.g. participants who discontinued the intervention or switched to another therapy)?**
+Options: No (the analysis is an intention-to-treat / modified-ITT analysis of all enrolled) / Yes (the analysis is a per-protocol analysis restricted to those who completed treatment / responded)
+Note: For single-arm studies this answer is recorded as metadata only. It informs interpretation of D2-SA question 2S.3 but does NOT swap any variant — single-arm papers always use the single_arm variant of D1 and D2.
+
+Return JSON with exactly this shape:
+{{
+  "B1": "Y|PY|PN|N",
+  "B1_rationale": "1-2 sentences quoting the paper (answer to B1-SA)",
+  "B2": "Y|PY|PN|N|NA",
+  "B2_rationale": "1-2 sentences (or 'NA' if B1 was Y/PY)",
+  "B3": "Y|PY|PN|N",
+  "B3_rationale": "1-2 sentences quoting the paper",
+  "C4": "No|Yes",
+  "C4_rationale": "1-2 sentences explaining whether the analysis is ITT-like or per-protocol-like"
+}}"""
+
+
+def run_benchmark_preflight(pdf_bytes: bytes,
+                            study_type: str,
+                            primary_outcome: str,
+                            extracted_fields: dict[str, str]) -> dict[str, Any]:
+    """Run the V1 single-arm benchmark preflight. Mirrors V2's
+    ``run_preflight`` return shape so the orchestrator + frontend code can
+    consume both uniformly.
+
+    Returns a dict with::
+
+        {
+          "B1": "Y|PY|PN|N",
+          "B2": "Y|PY|PN|N|NA",
+          "B3": "Y|PY|PN|N",
+          "C4": "No|Yes",
+          "rationales": {"B1": ..., "B2": ..., "B3": ..., "C4": ...},
+          "screening_decision": "proceed" | "critical",
+          "screening_reason": str,
+          "variant": "single_arm",
+        }
+    """
+    prompt = _build_benchmark_preflight_prompt(
+        study_type, primary_outcome, extracted_fields)
+    raw = _call_with_pdf(pdf_bytes, prompt, max_tokens=2048)
+
+    def _opt(key: str, default: str = "N", allowed: tuple = ("Y", "PY", "PN", "N")) -> str:
+        v = str(raw.get(key, default)).strip().upper()
+        if v not in allowed:
+            return default
+        return v
+
+    b1 = _opt("B1")
+    b2 = _opt("B2", default="NA", allowed=("Y", "PY", "PN", "N", "NA"))
+    b3 = _opt("B3")
+    c4_raw = str(raw.get("C4", "No")).strip().lower()
+    c4 = "Yes" if c4_raw.startswith("y") else "No"
+
+    rationales = {
+        "B1": str(raw.get("B1_rationale", "")).strip(),
+        "B2": str(raw.get("B2_rationale", "")).strip(),
+        "B3": str(raw.get("B3_rationale", "")).strip(),
+        "C4": str(raw.get("C4_rationale", "")).strip(),
+    }
+
+    if b2 in ("Y", "PY"):
+        return {
+            "B1": b1, "B2": b2, "B3": b3, "C4": c4,
+            "rationales": rationales,
+            "screening_decision": "critical",
+            "screening_reason": (
+                "B2-SA: Absence of any pre-specified benchmark is severe "
+                "enough that the single-arm proportion is uninterpretable "
+                "for causal inference."
+            ),
+            "variant": "single_arm",
+        }
+    if b3 in ("Y", "PY"):
+        return {
+            "B1": b1, "B2": b2, "B3": b3, "C4": c4,
+            "rationales": rationales,
+            "screening_decision": "critical",
+            "screening_reason": (
+                "B3: The method of measuring the outcome is inappropriate."
+            ),
+            "variant": "single_arm",
+        }
+
+    return {
+        "B1": b1, "B2": b2, "B3": b3, "C4": c4,
+        "rationales": rationales,
+        "screening_decision": "proceed",
+        "screening_reason": "",
+        "variant": "single_arm",
+    }
+
+
 def build_domain_prompt(domain: dict[str, Any],
                         study_type: str,
                         primary_outcome: str,
                         extracted_fields: dict[str, str],
                         aim: str = "assignment_to",
-                        target_pico: dict[str, str] | None = None) -> str:
-    """Per-domain prompt for ROBINS-I V1."""
-    signals = _signals_for_domain(domain, aim)
+                        target_pico: dict[str, str] | None = None,
+                        variant: str = "cohort") -> str:
+    """Per-domain prompt for ROBINS-I V1.
+
+    ``variant``: ``"cohort"`` (default — original V1 7-domain layout) or
+    ``"single_arm"`` (D1/D2 use the SA signal sets; aim is irrelevant since
+    D4 is skipped in code).
+    """
+    if variant == "single_arm":
+        signals = _signals_for_domain_single_arm(domain)
+    else:
+        signals = _signals_for_domain(domain, aim)
 
     relevant = {k: extracted_fields[k] for k in domain.get("relevant_fields", [])
                 if extracted_fields.get(k)}
     ctx_json = json.dumps(relevant, indent=2) if relevant else "(no pre-extracted fields)"
 
     aim_block = ""
-    if domain.get("aim_gated"):
+    if variant != "single_arm" and domain.get("aim_gated"):
         aim_block = (
             f"\nAim of study: {aim}\n"
             '- "assignment_to" → answer signaling questions 4.1 and 4.2 only.\n'
@@ -569,6 +972,15 @@ def build_domain_prompt(domain: dict[str, Any],
     pico_block = ""
     if target_pico:
         pico_block = "\nTarget PICO (user-supplied):\n" + json.dumps(target_pico, indent=2) + "\n"
+
+    variant_block = ""
+    if variant == "single_arm":
+        variant_block = (
+            "\nVariant: single_arm — this is an uncontrolled / single-arm design with no comparator. "
+            "Domain 1 is reframed as benchmark adequacy + prognostic-mix comparability; Domain 2 is reframed as "
+            "intervention fidelity + intent-vs-received cohort definition. Domain 4 (Deviations from intended "
+            "interventions) is NOT assessed for single-arm — it has no meaning without a comparator group.\n"
+        )
 
     q_lines = []
     for sig in signals:
@@ -592,7 +1004,7 @@ def build_domain_prompt(domain: dict[str, Any],
 
 Study type: {study_type}
 Outcome being assessed: {primary_outcome}
-{aim_block}{pico_block}
+{aim_block}{variant_block}{pico_block}
 Context (fields already extracted from the paper):
 {ctx_json}
 
@@ -613,12 +1025,17 @@ def _assess_domain(pdf_bytes: bytes, domain: dict[str, Any],
                    study_type: str, primary_outcome: str,
                    extracted_fields: dict[str, str],
                    aim: str = "assignment_to",
-                   target_pico: dict[str, str] | None = None) -> dict[str, Any]:
+                   target_pico: dict[str, str] | None = None,
+                   variant: str = "cohort") -> dict[str, Any]:
     prompt = build_domain_prompt(
-        domain, study_type, primary_outcome, extracted_fields, aim, target_pico)
+        domain, study_type, primary_outcome, extracted_fields, aim, target_pico,
+        variant=variant)
     raw = _call_with_pdf(pdf_bytes, prompt, max_tokens=8192)
 
-    signals_for_this = _signals_for_domain(domain, aim)
+    if variant == "single_arm":
+        signals_for_this = _signals_for_domain_single_arm(domain)
+    else:
+        signals_for_this = _signals_for_domain(domain, aim)
     signals: dict[str, str] = {}
     rationales: dict[str, str] = {}
     for sig in signals_for_this:
@@ -632,17 +1049,22 @@ def _assess_domain(pdf_bytes: bytes, domain: dict[str, Any],
         signals[sid] = ans
         rationales[sid] = str(raw.get(f"{sid}_rationale", "")).strip()
 
-    # Python-side cascade enforcement.
-    pre_cascade = dict(signals)
-    signals = enforce_cascade(domain["id"], signals, aim=aim)
-    overrides = {sid: (pre_cascade[sid], signals[sid])
-                 for sid in signals
-                 if sid in pre_cascade and pre_cascade[sid] != signals[sid]}
-    if overrides:
-        logger.debug("ROBINS-I V1 D%s cascade enforcement overrode LLM answers: %r",
-                     domain["id"], overrides)
+    # Python-side cascade enforcement. The cohort cascades (D1/D2/D4/D5) only
+    # apply when variant == "cohort"; the SA D1/D2 signal sets have no
+    # cribsheet cascade (every SA signal is independently answered).
+    if variant != "single_arm":
+        pre_cascade = dict(signals)
+        signals = enforce_cascade(domain["id"], signals, aim=aim)
+        overrides = {sid: (pre_cascade[sid], signals[sid])
+                     for sid in signals
+                     if sid in pre_cascade and pre_cascade[sid] != signals[sid]}
+        if overrides:
+            logger.debug("ROBINS-I V1 D%s cascade enforcement overrode LLM answers: %r",
+                         domain["id"], overrides)
 
-    if domain["id"] == 4:
+    if variant == "single_arm":
+        judgement = DOMAIN_JUDGES_SINGLE_ARM[domain["id"]](signals)
+    elif domain["id"] == 4:
         judgement = domain4_judge(signals, aim=aim)
     else:
         judgement = DOMAIN_JUDGES[domain["id"]](signals)
@@ -655,8 +1077,10 @@ def _assess_domain(pdf_bytes: bytes, domain: dict[str, Any],
         "judgement": judgement,
         "direction": direction,
     }
-    if domain.get("aim_gated"):
+    if variant != "single_arm" and domain.get("aim_gated"):
         out["aim"] = aim
+    if variant == "single_arm" and domain["id"] in (1, 2):
+        out["variant"] = "single_arm"
     return out
 
 
@@ -670,26 +1094,102 @@ def run(pdf_bytes: bytes,
         ) -> tuple[dict[str, Any], str, str]:
     """Run ROBINS-I V1 against a non-randomized study.
 
-    Pipeline:
+    Pipeline (cohort variant — default):
       1. Aim preflight (§1.1) — single LLM call, auto-determines the Stage-II
          aim from the paper. Skipped when ``aim`` is explicitly supplied.
       2. Per-domain assessments — 7 domains, one LLM call each.
 
+    Pipeline (single-arm variant — when
+    ``classification["study_type"] in SINGLE_ARM_STUDY_TYPES``):
+      1. Benchmark preflight (B1-SA/B2-SA/B3) — single LLM call. If
+         B2-SA=Y/PY or B3=Y/PY, short-circuit to Critical (D1-D7 skipped).
+      2. Per-domain assessments — 6 active domains (D1, D2, D3, D5, D6, D7);
+         D4 is marked NA in code with no LLM call. D1 + D2 use the SA signal
+         sets + SA judges. D3, D5, D6, D7 reuse cohort signals + judges.
+
     Returns ``(domain_results, overall_judgement, overall_direction)``.
 
-    ``domain_results["aim_preflight"]`` carries ``{"aim", "rationale"}`` so
-    the per-paper detail view can surface how the aim was chosen. Mirrors
-    V2's ``domain_results["preflight"]`` convention.
+    For the cohort variant, ``domain_results["aim_preflight"]`` carries
+    ``{"aim", "rationale"}``. For the single-arm variant,
+    ``domain_results["preflight"]`` carries the full benchmark preflight
+    payload (B1/B2/B3/C4 + rationales + variant + screening decision +
+    reason) — same shape V2 uses, so the frontend detail-modal path is
+    shared.
     """
     study_type = classification.get("study_type", "Cohort Study")
+    is_single_arm = study_type in SINGLE_ARM_STUDY_TYPES
 
-    # Stage 1 — aim preflight
     if progress:
         try:
             progress(0)
         except Exception:
             pass
 
+    # ─── Single-arm path ─────────────────────────────────────────────
+    if is_single_arm:
+        if aim is not None:
+            logger.info("ROBINS-I V1: ignoring aim=%r for single-arm study type %r "
+                        "(aim is irrelevant without a comparator)", aim, study_type)
+        preflight = run_benchmark_preflight(
+            pdf_bytes, study_type, primary_outcome, extracted_fields)
+        domain_results: dict[str, Any] = {"preflight": preflight, "aim_preflight": None}
+
+        # Stage 2 — screening short-circuit (mirrors V2's pattern)
+        if preflight["screening_decision"] == "critical":
+            return domain_results, "Critical", "Unpredictable"
+
+        # Stage 3 — six active domains; D4 set to NA in code
+        for domain in DOMAINS_SINGLE_ARM:
+            if progress:
+                try:
+                    progress(domain["id"])
+                except Exception:
+                    pass
+            result = _assess_domain(
+                pdf_bytes, domain, study_type, primary_outcome,
+                extracted_fields, aim="assignment_to", target_pico=target_pico,
+                variant="single_arm",
+            )
+            result["id"] = domain["id"]
+            result["name"] = domain["name"]
+            domain_results[str(domain["id"])] = result
+
+        # D4 = NA — V2 retired the deviations domain entirely; its concerns
+        # are folded into D2-SA's 2S.3 (intent-vs-received cohort definition).
+        domain_results["4"] = {
+            "id": 4,
+            "name": "Bias due to deviations from intended interventions",
+            "signals": {},
+            "rationales": {},
+            "judgement": "NA",
+            "direction": "NA",
+            "reason": (
+                "Not applicable to single-arm trials — V2 retired this "
+                "domain entirely; intent-vs-received cohort definition is "
+                "assessed in Domain 2-SA (question 2S.3)."
+            ),
+        }
+
+        domain_judgements = [domain_results[str(d["id"])]["judgement"]
+                             for d in DOMAINS_SINGLE_ARM]
+        overall = robins_i_v1_overall(domain_judgements)
+
+        dirs = [domain_results[str(d["id"])]["direction"]
+                for d in DOMAINS_SINGLE_ARM
+                if domain_results[str(d["id"])]["direction"] not in ("", "NA")]
+        if not dirs:
+            overall_direction = "NA"
+        else:
+            counts = Counter(dirs).most_common()
+            if len(counts) > 1 and counts[0][1] == counts[1][1]:
+                overall_direction = "Unpredictable"
+            else:
+                overall_direction = counts[0][0]
+
+        return domain_results, overall, overall_direction
+
+    # ─── Cohort path ─────────────────────────────────────────────────
+    # Stage 1 — aim preflight
     if aim is None:
         aim_payload = determine_aim(pdf_bytes, primary_outcome, extracted_fields)
         aim = aim_payload["aim"]
@@ -698,7 +1198,7 @@ def run(pdf_bytes: bytes,
             raise ValueError(f"aim must be None or one of {AIMS}; got {aim!r}")
         aim_payload = {"aim": aim, "rationale": "Manually supplied; preflight skipped."}
 
-    domain_results: dict[str, Any] = {"aim_preflight": aim_payload}
+    domain_results = {"aim_preflight": aim_payload}
 
     # Stage 2 — seven domains
     for domain in DOMAINS:
@@ -770,6 +1270,47 @@ def prompt_catalog() -> dict[str, Any]:
             entry["cascade_code"] = inspect.getsource(cascade_funcs[dom["id"]])
         domains_meta.append(entry)
 
+    # Single-arm variant developer-view payload — mirrors the cohort entry
+    # shape but uses the SA signal sets + SA judges for D1 + D2 (D3, D5, D6,
+    # D7 reuse cohort signals + judges; D4 is set to NA in code).
+    sa_judge_funcs = {
+        1: domain1_single_arm_judge,
+        2: domain2_single_arm_judge,
+        3: domain3_judge,
+        5: domain5_judge,
+        6: domain6_judge,
+        7: domain7_judge,
+    }
+    sa_domains_meta: list[dict[str, Any]] = []
+    for dom in DOMAINS_SINGLE_ARM:
+        prompt_template = build_domain_prompt(
+            dom, "Single-Arm Trial", "<primary_outcome>", {},
+            aim="assignment_to", variant="single_arm",
+        )
+        sa_domains_meta.append({
+            "id": dom["id"],
+            "name": dom["name"],
+            "signals": dom["signals"],
+            "relevant_fields": dom.get("relevant_fields", []),
+            "direction_options": list(dom.get("direction_options", ("NA",))),
+            "prompt_template": prompt_template,
+            "decision_tree_code": inspect.getsource(sa_judge_funcs[dom["id"]]),
+        })
+    sa_domains_meta.append({
+        "id": 4,
+        "name": "Bias due to deviations from intended interventions",
+        "signals": [],
+        "relevant_fields": [],
+        "direction_options": ["NA"],
+        "prompt_template": None,
+        "decision_tree_code": (
+            "# D4 = NA for single-arm runs (no LLM call). V2 retired this\n"
+            "# domain entirely; intent-vs-received cohort definition is\n"
+            "# folded into D2-SA's 2S.3."
+        ),
+        "na_in_code": True,
+    })
+
     return {
         "tool": "ROBINS-I V1 (1 August 2016)",
         "system_prompt": _SYSTEM_PROMPT,
@@ -781,4 +1322,13 @@ def prompt_catalog() -> dict[str, Any]:
         "aim_preflight_code": inspect.getsource(determine_aim),
         "domains": domains_meta,
         "overall_algorithm_code": inspect.getsource(robins_i_v1_overall),
+        # Single-arm variant — project-specific extension mirroring V2's
+        # single_arm adaptation for V1's 5-token vocab. Developer-view UI
+        # detects these keys and renders a parallel single-arm section.
+        "single_arm_study_types": sorted(SINGLE_ARM_STUDY_TYPES),
+        "domain_1_low_label_single_arm": LOW_D1_SA,
+        "benchmark_preflight_prompt": _build_benchmark_preflight_prompt(
+            "Single-Arm Trial", "<primary_outcome>", {}),
+        "benchmark_preflight_code": inspect.getsource(run_benchmark_preflight),
+        "domains_single_arm": sa_domains_meta,
     }

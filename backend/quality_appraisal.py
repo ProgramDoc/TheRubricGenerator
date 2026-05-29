@@ -706,11 +706,12 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
     (currently QUADAS-3) is used. Override is ignored for non-diagnostic
     study types so a stray param can't reroute an RCT to a QUADAS tool.
 
-    ``robins_i_tool_override`` selects between ROBINS-I V2 and V1 for
-    non-randomized cohort-type papers (``'robins_i'`` for V2 (default) or
-    ``'robins_i_v1'`` for V1). Ignored for randomized / diagnostic /
-    single-arm study types (V1's cribsheet is cohort-only; single-arm uses
-    V2's single_arm variant).
+    ``robins_i_tool_override`` selects between ROBINS-I V2 and V1 for any
+    ROBINS-I-dispatched paper (``'robins_i'`` for V2 (default) or
+    ``'robins_i_v1'`` for V1). Applies to both cohort and single-arm study
+    types — V1 ships its own single_arm variant (project-specific extension
+    mirroring V2's single_arm adaptation for V1's 5-token vocab). Ignored
+    for randomized / diagnostic study types.
 
     ``rob2_cluster_aim`` selects the RoB 2 CRT Domain 2 variant for
     cluster-randomized trials (``'assignment'`` for the intention-to-treat
@@ -767,12 +768,12 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
         else:
             logger.warning("Unknown tool_override %r for paper %s — falling back to %s",
                             tool_override, paper_id, cfg["rob_tool"])
-    # Per-run tool override for ROBINS-I cohort-type papers (V2 vs V1).
-    # Only applies when (a) the registry default is robins_i, AND
-    # (b) the study type is NOT single-arm (V1's cribsheet is cohort-only).
+    # Per-run tool override for ROBINS-I papers (V2 vs V1). Applies to both
+    # cohort and single-arm study types — V1 now ships its own single-arm
+    # variant (project-specific extension; see backend/rob_tools/robins_i_v1.py
+    # SINGLE_ARM_STUDY_TYPES) that mirrors V2's pattern for V1's 5-token vocab.
     if (cfg is not None and robins_i_tool_override
-            and cfg.get("rob_tool") == "robins_i"
-            and study_type not in robins_i.SINGLE_ARM_STUDY_TYPES):
+            and cfg.get("rob_tool") == "robins_i"):
         if robins_i_tool_override in ("robins_i", "robins_i_v1"):
             cfg = {**cfg, "rob_tool": robins_i_tool_override}
         else:
@@ -1488,7 +1489,24 @@ def flatten_result_row(result_row: dict[str, Any],
     if tool == "robins_i":
         domains_for_tool = robins_i.DOMAINS
     elif tool == "robins_i_v1":
-        domains_for_tool = robins_i_v1.DOMAINS
+        # Pick the cohort DOMAINS list as the base, then append SA-only
+        # signals for D1 + D2 so a CSV that includes both cohort and SA rows
+        # gets the union of columns (matches the V2 pattern in robins_i.py
+        # where DOMAIN1 signals = A + B + single_arm union).
+        domains_for_tool = []
+        for d in robins_i_v1.DOMAINS:
+            if d["id"] == 1 and d.get("signals_single_arm"):
+                domains_for_tool.append({
+                    **d,
+                    "signals": d["signals"] + d["signals_single_arm"],
+                })
+            elif d["id"] == 2 and d.get("signals_single_arm"):
+                domains_for_tool.append({
+                    **d,
+                    "signals": d["signals"] + d["signals_single_arm"],
+                })
+            else:
+                domains_for_tool.append(d)
     elif tool == "quadas3":
         domains_for_tool = quadas3.DOMAINS
     elif tool == "quadas2":
@@ -1519,11 +1537,22 @@ def flatten_result_row(result_row: dict[str, Any],
         row["robins_screening_decision"] = preflight.get("screening_decision", "")
         row["robins_screening_reason"] = preflight.get("screening_reason", "")
     # ROBINS-I V1 aim-preflight columns (§1.1 — auto-determined Stage-II aim
-    # of study + rationale). Empty for V2 / RoB 2 / QUADAS rows.
+    # of study + rationale). Empty for V2 / RoB 2 / QUADAS rows. The
+    # single-arm path of V1 stashes aim_preflight = None and uses preflight
+    # instead (mirroring V2) — also emit the SA preflight columns so a single
+    # CSV can carry both V1 cohort + V1 SA rows.
     if tool == "robins_i_v1":
         aim_pf = rob_domains.get("aim_preflight") or {}
         row["robins_v1_aim"] = aim_pf.get("aim", "")
         row["robins_v1_aim_rationale"] = aim_pf.get("rationale", "")
+        preflight = rob_domains.get("preflight") or {}
+        row["robins_v1_b1"] = preflight.get("B1", "")
+        row["robins_v1_b2"] = preflight.get("B2", "")
+        row["robins_v1_b3"] = preflight.get("B3", "")
+        row["robins_v1_c4"] = preflight.get("C4", "")
+        row["robins_v1_variant"] = preflight.get("variant") or ("cohort" if aim_pf else "")
+        row["robins_v1_screening_decision"] = preflight.get("screening_decision", "")
+        row["robins_v1_screening_reason"] = preflight.get("screening_reason", "")
     # AMSTAR-2 preflight columns (review composition + meta-analysis) + the
     # overall confidence rating + critical / non-critical flaw counts. Empty
     # for non-systematic-review rows.
