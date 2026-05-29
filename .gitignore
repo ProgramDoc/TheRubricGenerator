@@ -9,3 +9,6 @@ __pycache__/
 .env
 venv/
 .venv/
+
+# Claude Code (local tooling state — agent worktrees, local settings; never commit)
+.claude/
