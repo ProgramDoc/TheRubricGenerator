@@ -656,6 +656,40 @@ def _appraise_paper_with_estimates(conn, run_id: int, paper_id: int,
     }
 
 
+def appraise_rob_only(pdf_bytes: bytes, fields: dict, classification: dict,
+                      assessed_outcome: str, cfg: dict, *,
+                      outcome_is_override: bool = False,
+                      rob2_cluster_aim: str | None = None,
+                      progress: Callable[[Any], None] | None = None):
+    """Run *only* the registered risk-of-bias tool for an already-classified
+    paper, returning ``(rob_domains, rob_overall, rob_direction)``.
+
+    This is the reusable RoB dispatch shared by :func:`appraise_paper` and the
+    Synthesis pipeline (``backend/synthesis.py``), so risk-of-bias methodology
+    stays single-sourced through ``STUDY_TYPE_REGISTRY`` + ``_TOOL_RUNNERS``.
+    The caller supplies the already-computed ``classification`` and ``fields``
+    (no re-classification / no double charge). Raises ``ValueError`` if the
+    tool is registered but not implemented; propagates tool exceptions.
+    """
+    rob_runner = _TOOL_RUNNERS.get(cfg["rob_tool"])
+    if rob_runner is None:
+        raise ValueError(
+            f"RoB tool '{cfg['rob_tool']}' is registered but not yet implemented.")
+    rob_kwargs: dict[str, Any] = {}
+    if progress is not None:
+        rob_kwargs["progress"] = progress
+    # rob2 / rob2_crossover / rob2_cluster accept outcome_is_override so Domain 1
+    # can be framed around per-trial randomization for a reviewer-picked outcome.
+    if cfg["rob_tool"] in ("rob2", "rob2_crossover", "rob2_cluster"):
+        rob_kwargs["outcome_is_override"] = outcome_is_override
+    # RoB 2 Cluster also takes the per-run analysis aim (ITT vs per-protocol).
+    if cfg["rob_tool"] == "rob2_cluster":
+        rob_kwargs["aim"] = (
+            "adhering" if str(rob2_cluster_aim or "").strip().lower() == "adhering"
+            else "assignment")
+    return rob_runner(pdf_bytes, fields, classification, assessed_outcome, **rob_kwargs)
+
+
 def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
                    run_id: int, paper_id: int,
                    on_progress: Callable[[str, str], None] | None = None,
@@ -853,26 +887,13 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
         return {"status": "skipped", "error": msg}
 
     _notify("info", f"Running risk-of-bias assessment ({cfg['rob_tool']})")
-    # rob2 and rob2_crossover accept outcome_is_override so Domain 1 can be
-    # framed around per-trial randomization when the assessed outcome is a
-    # reviewer pick rather than the paper's primary. Other tools (ROBINS-I,
-    # QUADAS-3) don't accept that kwarg yet — gate it.
-    rob_kwargs: dict[str, Any] = {
-        "progress": lambda domain_id: _notify(
-            "progress", f"RoB {cfg['rob_tool']} domain {domain_id}"),
-    }
-    if cfg["rob_tool"] in ("rob2", "rob2_crossover", "rob2_cluster"):
-        rob_kwargs["outcome_is_override"] = outcome_is_override
-    # RoB 2 Cluster also takes the per-run analysis aim (ITT vs per-protocol),
-    # which picks the Domain 2 variant.
-    if cfg["rob_tool"] == "rob2_cluster":
-        rob_kwargs["aim"] = (
-            "adhering" if str(rob2_cluster_aim or "").strip().lower() == "adhering"
-            else "assignment")
     try:
-        rob_domains, rob_overall, rob_direction = rob_runner(
-            pdf_bytes, fields, classification, assessed_outcome,
-            **rob_kwargs,
+        rob_domains, rob_overall, rob_direction = appraise_rob_only(
+            pdf_bytes, fields, classification, assessed_outcome, cfg,
+            outcome_is_override=outcome_is_override,
+            rob2_cluster_aim=rob2_cluster_aim,
+            progress=lambda domain_id: _notify(
+                "progress", f"RoB {cfg['rob_tool']} domain {domain_id}"),
         )
     except HTTPException as he:
         msg = f"Risk-of-bias assessment failed: {he.detail}"
