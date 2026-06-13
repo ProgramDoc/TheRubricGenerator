@@ -27,6 +27,7 @@ from fastapi import HTTPException
 
 from backend import annotator as annotator_mod
 from backend import billing as bill_mod
+from backend import collections as collections_mod
 from backend import quality_appraisal as qa_mod
 from backend import synthesis_codegen as codegen
 from backend import synthesis_stats as stats
@@ -742,6 +743,11 @@ def run_synthesis(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
                 "UPDATE synthesis_reviews SET status='complete', phase=NULL, credits_refunded=?, completed_at=CURRENT_TIMESTAMP WHERE id=?",
                 (total_refunded, review_id))
             c.commit()
+        # Auto 'selected' folder: mirror the included studies into a collection.
+        try:
+            collections_mod.sync_review_selected(c, review_id)
+        except Exception:
+            logger.exception("sync_review_selected failed for review %s", review_id)
         log_event(c, review_id, "info", "Synthesis complete.", {"refunded": total_refunded})
     finally:
         c.close()

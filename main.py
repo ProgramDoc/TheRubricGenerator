@@ -65,6 +65,8 @@ from backend.quality_appraisal import QUALITY_APPRAISAL_TABLES_SQL
 from backend import quality_appraisal as qa_mod
 from backend.synthesis import SYNTHESIS_TABLES_SQL
 from backend import synthesis as synthesis_mod
+from backend.collections import COLLECTIONS_TABLES_SQL
+from backend import collections as collections_mod
 from backend.review import GRADE_REVIEWS_TABLES_SQL
 from backend import review as review_mod
 from backend.extension import EXTENSION_TABLES_SQL
@@ -411,6 +413,9 @@ def init_db() -> None:
         # Synthesis: systematic review + meta-analysis (mirrors QA's run/results/events)
         conn.executescript(SYNTHESIS_TABLES_SQL)
         synthesis_mod.migrate_synthesis_columns(conn)
+        # Paper collections: "folders" of papers inside a project (manual + the
+        # auto 'selected' folder that mirrors a review's included studies).
+        conn.executescript(COLLECTIONS_TABLES_SQL)
         # 3-judge adjudication: human-review queue for grade disagreements
         conn.executescript(GRADE_REVIEWS_TABLES_SQL)
         conn.executescript(EXTENSION_TABLES_SQL)
@@ -638,6 +643,23 @@ def _migrate_challenge_columns_v2(conn) -> None:
         # Lets the Library + Annotator render rows that don't have a downloaded PDF.
         if not column_exists(conn, "papers", "pdf_status"):
             conn.execute("ALTER TABLE papers ADD COLUMN pdf_status TEXT NOT NULL DEFAULT 'present'")
+        # Papers: bibliographic / MEDLINE metadata. Populated by search import and by
+        # the "Map to PubMed" tool (backend/paper_mapping.py). Lets uploaded PDFs be
+        # properly indexed against PubMed/MEDLINE and drives Synthesis study identity.
+        for _col, _ddl in (
+            ("pmid", "ALTER TABLE papers ADD COLUMN pmid TEXT"),
+            ("doi", "ALTER TABLE papers ADD COLUMN doi TEXT"),
+            ("journal", "ALTER TABLE papers ADD COLUMN journal TEXT"),
+            ("pub_date", "ALTER TABLE papers ADD COLUMN pub_date TEXT"),
+            ("authors", "ALTER TABLE papers ADD COLUMN authors TEXT"),
+            ("abstract", "ALTER TABLE papers ADD COLUMN abstract TEXT"),
+            ("mesh_terms_json", "ALTER TABLE papers ADD COLUMN mesh_terms_json TEXT"),
+            # medline_status — 'unmapped' | 'mapped' | 'no_match' | 'ambiguous' | 'manual'
+            ("medline_status", "ALTER TABLE papers ADD COLUMN medline_status TEXT NOT NULL DEFAULT 'unmapped'"),
+            ("medline_fetched_at", "ALTER TABLE papers ADD COLUMN medline_fetched_at TIMESTAMP"),
+        ):
+            if not column_exists(conn, "papers", _col):
+                conn.execute(_ddl)
         # pdf_fetch_runs: per-run mode + credit cost so refunds know how much
         # to give back. Older rows pre-date the firecrawl mode and default to
         # 'fetch' / 2 credits/paper.
@@ -4069,6 +4091,7 @@ def api_library_papers(project: str | None = None,
                        source: str | None = None,
                        status: str | None = None,
                        q: str | None = None,
+                       collection: str | None = None,
                        limit: int = 200,
                        rubricgen_session: str | None = Cookie(default=None),
                        x_api_key: str | None = Header(default=None, alias="X-API-Key")):
@@ -4094,6 +4117,7 @@ def api_library_papers(project: str | None = None,
         rows = conn.execute(
             f"""SELECT p.id, p.filename, p.sha256, p.project_id,
                        p.created_at, p.source, p.external_url, p.pdf_status,
+                       p.pmid, p.doi, p.journal, p.pub_date, p.medline_status,
                        a.status     AS ann_status,
                        a.updated_at AS ann_updated_at,
                        (SELECT COUNT(*) FROM rubrics r       WHERE r.paper_id=p.id AND r.user_id=?) AS rubric_count,
@@ -4126,6 +4150,20 @@ def api_library_papers(project: str | None = None,
             "SELECT id, paper_ids_json FROM annotator_custom_runs WHERE user_id=?",
             (user["id"],),
         ).fetchall()
+        # Collections ("folders") for this user, optionally scoped to a project,
+        # plus per-paper membership so cards can show their folders.
+        proj_for_coll = None
+        if project and project != "unassigned":
+            try:
+                proj_for_coll = int(project)
+            except ValueError:
+                proj_for_coll = None
+        coll_list = collections_mod.list_collections(conn, user["id"], proj_for_coll)
+        cm_rows = conn.execute(
+            "SELECT m.collection_id, m.paper_id FROM paper_collection_members m "
+            "JOIN paper_collections c ON c.id = m.collection_id WHERE c.user_id=?",
+            (user["id"],),
+        ).fetchall()
     finally:
         conn.close()
 
@@ -4144,6 +4182,26 @@ def api_library_papers(project: str | None = None,
         except Exception:
             continue
 
+    # Collection membership: collections per paper + the optional filter set.
+    coll_name_by_id = {c["id"]: c for c in coll_list}
+    colls_by_pid: dict[int, list[dict]] = {}
+    for r in cm_rows:
+        c = coll_name_by_id.get(r["collection_id"])
+        if c:
+            colls_by_pid.setdefault(r["paper_id"], []).append(
+                {"id": c["id"], "name": c["name"], "kind": c["kind"]}
+            )
+    collection_filter_ids: set[int] | None = None
+    if collection:
+        try:
+            cid_filter = int(collection)
+        except ValueError:
+            cid_filter = None
+        if cid_filter is not None and cid_filter in coll_name_by_id:
+            collection_filter_ids = {r["paper_id"] for r in cm_rows if r["collection_id"] == cid_filter}
+        else:
+            collection_filter_ids = set()
+
     # Build the result list with normalized projects + filter application.
     q_lower = (q or "").strip().lower()
     out: list[dict] = []
@@ -4160,7 +4218,11 @@ def api_library_papers(project: str | None = None,
         d["source"] = d.get("source") or "upload"
         d["pdf_status"] = d.get("pdf_status") or "present"
         d["external_url"] = d.get("external_url")
+        d["medline_status"] = d.get("medline_status") or "unmapped"
+        d["collections"] = colls_by_pid.get(d["id"], [])
         # Filters
+        if collection_filter_ids is not None and d["id"] not in collection_filter_ids:
+            continue
         if q_lower and q_lower not in (d["filename"] or "").lower():
             continue
         if project:
@@ -4191,8 +4253,193 @@ def api_library_papers(project: str | None = None,
     return {
         "papers": out,
         "projects": [{"id": p["id"], "name": p["name"]} for p in proj_rows],
+        "collections": coll_list,
         "total": len(out),
     }
+
+
+# ── Paper collections ("folders") ────────────────────────────────────────────
+
+class CollectionCreate(BaseModel):
+    name: str
+    project_id: int | None = None
+    description: str | None = None
+
+
+class CollectionPatch(BaseModel):
+    name: str
+
+
+def _require_owned_collection(conn, cid: int, user_id: int) -> dict:
+    c = collections_mod.get_collection(conn, cid, user_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    return c
+
+
+@app.get("/api/collections")
+def api_collections_list(project: int | None = None,
+                         rubricgen_session: str | None = Cookie(default=None),
+                         x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    conn = get_db()
+    try:
+        return {"collections": collections_mod.list_collections(conn, user["id"], project)}
+    finally:
+        conn.close()
+
+
+@app.get("/api/collections/{cid}/papers")
+def api_collection_papers(cid: int,
+                          rubricgen_session: str | None = Cookie(default=None),
+                          x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    conn = get_db()
+    try:
+        _require_owned_collection(conn, cid, user["id"])
+        return {"paper_ids": collections_mod.collection_paper_ids(conn, cid)}
+    finally:
+        conn.close()
+
+
+@app.post("/api/collections", status_code=201)
+def api_collection_create(body: CollectionCreate,
+                          rubricgen_session: str | None = Cookie(default=None),
+                          x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+    conn = get_db()
+    try:
+        if body.project_id is not None:
+            owns = conn.execute(
+                "SELECT 1 FROM projects WHERE id=? AND user_id=?", (body.project_id, user["id"])
+            ).fetchone()
+            if not owns:
+                raise HTTPException(status_code=404, detail="Project not found")
+        cid = collections_mod.create_collection(
+            conn, user["id"], body.project_id, name, kind="manual", description=body.description
+        )
+        return {"id": cid, "name": name, "kind": "manual", "project_id": body.project_id, "paper_count": 0}
+    finally:
+        conn.close()
+
+
+@app.patch("/api/collections/{cid}")
+def api_collection_rename(cid: int, body: CollectionPatch,
+                          rubricgen_session: str | None = Cookie(default=None),
+                          x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+    conn = get_db()
+    try:
+        _require_owned_collection(conn, cid, user["id"])
+        collections_mod.rename_collection(conn, cid, name)
+        return {"ok": True, "id": cid, "name": name}
+    finally:
+        conn.close()
+
+
+@app.delete("/api/collections/{cid}")
+def api_collection_delete(cid: int,
+                          rubricgen_session: str | None = Cookie(default=None),
+                          x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    conn = get_db()
+    try:
+        _require_owned_collection(conn, cid, user["id"])
+        collections_mod.delete_collection(conn, cid)
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.post("/api/collections/{cid}/papers/{pid}", status_code=201)
+def api_collection_add_paper(cid: int, pid: int,
+                             rubricgen_session: str | None = Cookie(default=None),
+                             x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    conn = get_db()
+    try:
+        _require_owned_collection(conn, cid, user["id"])
+        owns = conn.execute(
+            "SELECT 1 FROM papers WHERE id=? AND user_id=?", (pid, user["id"])
+        ).fetchone()
+        if not owns:
+            raise HTTPException(status_code=404, detail="Paper not found")
+        collections_mod.add_paper(conn, cid, pid, source="manual")
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.delete("/api/collections/{cid}/papers/{pid}")
+def api_collection_remove_paper(cid: int, pid: int,
+                                rubricgen_session: str | None = Cookie(default=None),
+                                x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    conn = get_db()
+    try:
+        _require_owned_collection(conn, cid, user["id"])
+        collections_mod.remove_paper(conn, cid, pid)
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+def _scrub_paper_from_json_lists(conn, user_id: int, paper_id: int) -> None:
+    """Remove a deleted paper_id from the denormalized JSON paper-id lists that
+    aren't covered by a FK cascade.
+
+    Per-row references (synthesis_studies.paper_id, paper_collection_members.paper_id,
+    rubrics, evaluations, challenge_papers, paper_projects) all have
+    ``ON DELETE CASCADE`` and clean themselves up. But two columns store paper ids
+    as a JSON blob with no FK — ``synthesis_reviews.paper_ids_json`` (+ paper_count)
+    and ``annotator_custom_runs.paper_ids_json`` — so they go stale on delete unless
+    we scrub them here. This is what keeps the Synthesis tab in sync when a PDF is
+    deleted from the Library.
+    """
+    needle = f"%{paper_id}%"  # cheap prefilter; exact match done in Python below
+    for r in conn.execute(
+        "SELECT id, paper_ids_json, paper_count FROM synthesis_reviews "
+        "WHERE user_id=? AND paper_ids_json LIKE ?",
+        (user_id, needle),
+    ).fetchall():
+        try:
+            ids = json.loads(r["paper_ids_json"] or "[]")
+        except Exception:
+            continue
+        new_ids = [i for i in ids if int(i) != paper_id]
+        if len(new_ids) != len(ids):
+            conn.execute(
+                "UPDATE synthesis_reviews SET paper_ids_json=?, paper_count=? WHERE id=?",
+                (json.dumps(new_ids), len(new_ids), r["id"]),
+            )
+    for r in conn.execute(
+        "SELECT id, paper_ids_json FROM annotator_custom_runs "
+        "WHERE user_id=? AND paper_ids_json LIKE ?",
+        (user_id, needle),
+    ).fetchall():
+        try:
+            ids = json.loads(r["paper_ids_json"] or "[]")
+        except Exception:
+            continue
+        new_ids = [i for i in ids if int(i) != paper_id]
+        if len(new_ids) != len(ids):
+            conn.execute(
+                "UPDATE annotator_custom_runs SET paper_ids_json=? WHERE id=?",
+                (json.dumps(new_ids), r["id"]),
+            )
 
 
 @app.delete("/api/papers/{pid}")
@@ -4207,6 +4454,9 @@ def delete_paper(pid: int, rubricgen_session: str | None = Cookie(default=None))
     if row:
         paper_files_mod.delete_paper_file(row, PAPERS_DIR)
     with conn:
+        # FK cascade removes synthesis_studies / collection members / rubrics / etc.;
+        # scrub the JSON blobs (review + custom-run paper-id lists) that have no FK.
+        _scrub_paper_from_json_lists(conn, user["id"], pid)
         conn.execute("DELETE FROM papers WHERE id=? AND user_id=?", (pid, user["id"]))
         conn.commit()
     conn.close()
@@ -9262,6 +9512,11 @@ def api_synth_patch_study(study_id: int, body: SynthesisStudyPatch,
                  (body.exclude_reason if decision == "exclude" else ""),
                  body.note, study_id))
             conn.commit()
+        # Keep the auto 'selected' folder in sync with the override.
+        try:
+            collections_mod.sync_review_selected(conn, row["review_id"])
+        except Exception:
+            logger.exception("sync_review_selected failed after override (review %s)", row["review_id"])
     finally:
         conn.close()
     return {"ok": True}
