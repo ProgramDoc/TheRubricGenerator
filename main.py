@@ -65,6 +65,8 @@ from backend.quality_appraisal import QUALITY_APPRAISAL_TABLES_SQL
 from backend import quality_appraisal as qa_mod
 from backend.synthesis import SYNTHESIS_TABLES_SQL
 from backend import synthesis as synthesis_mod
+from backend import synthesis_agents as agents_mod
+from backend import table_render as table_render_mod
 from backend.collections import COLLECTIONS_TABLES_SQL
 from backend import collections as collections_mod
 from backend.review import GRADE_REVIEWS_TABLES_SQL
@@ -9322,6 +9324,189 @@ def api_synth_prompts(rubricgen_session: str | None = Cookie(default=None),
     user = require_user(rubricgen_session, x_api_key)
     require_active_seat(user, "general")
     return synthesis_mod.prompt_catalog()
+
+
+# --- Independently-servable synthesis agents (pure math; no LLM/credits) ---
+
+@app.post("/api/agents/pool")
+def api_agents_pool(body: dict = Body(...),
+                    rubricgen_session: str | None = Cookie(default=None),
+                    x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Meta-analysis pooling agent: pool effect sizes for one outcome under a
+    PICO. Composable with /api/agents/grade. See backend/synthesis_agents.py."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    try:
+        return agents_mod.pool_effects(body or {})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/agents/grade")
+def api_agents_grade(body: dict = Body(...),
+                     rubricgen_session: str | None = Cookie(default=None),
+                     x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """GRADE certainty agent: rate a pooled body of evidence (downgrade for any
+    design, upgrade for non-randomized). Accepts a pool_result to chain from."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    try:
+        return agents_mod.grade_certainty(body or {})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/agents/sof")
+def api_agents_sof(body: dict = Body(...),
+                   rubricgen_session: str | None = Cookie(default=None),
+                   x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Table-5 producer: pool -> grade -> assemble one GRADE Summary-of-Findings
+    row (relative + absolute effects, certainty, per-domain reasons)."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    try:
+        return agents_mod.sof(body or {})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/agents/appraise")
+def api_agents_appraise(body: dict = Body(...),
+                        rubricgen_session: str | None = Cookie(default=None),
+                        x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Single-study risk-of-bias agent (-> Table 3). Classifies the paper,
+    extracts the fields the routed RoB tool needs, runs the design-routed tool
+    (RoB 2 / ROBINS-I / QUADAS-3 / AMSTAR-2), and returns the tool's per-domain
+    judgements + overall. Credit-gated (classify + prefill + RoB); admins bypass.
+    Body: {paper_id, study_type?, assessed_outcome?, outcome_is_override?,
+    rob2_cluster_aim?}."""
+    body = body or {}
+    pid = body.get("paper_id")
+    if not pid:
+        raise HTTPException(400, "paper_id is required")
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    is_admin = user.get("role") == "admin"
+    cost = annotator_mod.CREDIT_COST_CLASSIFY + synthesis_mod.CREDIT_COST_SYNTH_ROB
+    conn = get_db()
+    try:
+        pdf_bytes, filename = annotator_mod.load_paper_pdf(
+            conn, PAPERS_DIR, int(pid), user["id"], is_admin=is_admin)
+        _annotator_ai_gate(conn, user, cost, f"Agent appraise (RoB): {filename}")
+    finally:
+        conn.close()
+
+    try:
+        classification = annotator_mod.classify_study_design(pdf_bytes)
+        if not isinstance(classification, dict):
+            classification = {}
+        study_type = body.get("study_type") or classification.get("study_type")
+        if body.get("study_type"):
+            classification["study_type"] = study_type  # honour a reviewer override
+        cfg = qa_mod.dispatch(study_type or "")
+        if not cfg or not cfg.get("rob_tool"):
+            _refund_annotator(user, cost, "agent-appraise", filename)
+            raise HTTPException(400, f"no RoB tool for study type: {study_type!r}")
+        fields = annotator_mod.prefill_fields(pdf_bytes, study_type)
+        if not isinstance(fields, dict):
+            fields = {}
+        assessed_outcome = (body.get("assessed_outcome")
+                            or fields.get("primary_outcome_definition")
+                            or "primary outcome")
+        rob_domains, rob_overall, rob_direction = qa_mod.appraise_rob_only(
+            pdf_bytes, fields, classification, assessed_outcome, cfg,
+            outcome_is_override=bool(body.get("outcome_is_override")),
+            rob2_cluster_aim=body.get("rob2_cluster_aim"))
+        return {"paper_id": int(pid), "study_type": study_type,
+                "rob_tool": cfg["rob_tool"], "assessed_outcome": assessed_outcome,
+                "domains": rob_domains, "overall": rob_overall, "direction": rob_direction}
+    except HTTPException:
+        raise
+    except Exception as e:
+        _refund_annotator(user, cost, "agent-appraise", filename)
+        logger.error("Agent appraise failed: %s", e)
+        raise HTTPException(502, f"Appraisal failed: {e}")
+
+
+@app.post("/api/agents/extract")
+def api_agents_extract(body: dict = Body(...),
+                       rubricgen_session: str | None = Cookie(default=None),
+                       x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Extraction agent. mode='characteristics' -> classify + prefill the study's
+    T1/T2 fields. mode='outcome-data' -> per-study effect-size data points
+    (raw + computed yi/vi) for one outcome, ready to POST to /api/agents/pool.
+    Credit-gated; admins bypass. Body: {paper_id, mode, study_type?,
+    outcome?{name,measure,continuity_correction?}, pico?}."""
+    body = body or {}
+    pid = body.get("paper_id")
+    mode = body.get("mode", "characteristics")
+    if not pid:
+        raise HTTPException(400, "paper_id is required")
+    if mode not in ("characteristics", "outcome-data"):
+        raise HTTPException(400, "mode must be 'characteristics' or 'outcome-data'")
+    outcome = body.get("outcome") or {}
+    if mode == "outcome-data" and not (outcome.get("name") and outcome.get("measure")):
+        raise HTTPException(400, "outcome-data mode requires outcome.name and outcome.measure")
+
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    is_admin = user.get("role") == "admin"
+    cost = (annotator_mod.CREDIT_COST_CLASSIFY + annotator_mod.CREDIT_COST_PREFILL
+            if mode == "characteristics" else synthesis_mod.CREDIT_COST_SYNTH_EXTRACT)
+    conn = get_db()
+    try:
+        pdf_bytes, filename = annotator_mod.load_paper_pdf(
+            conn, PAPERS_DIR, int(pid), user["id"], is_admin=is_admin)
+        _annotator_ai_gate(conn, user, cost, f"Agent extract ({mode}): {filename}")
+    finally:
+        conn.close()
+
+    try:
+        if mode == "characteristics":
+            classification = annotator_mod.classify_study_design(pdf_bytes)
+            study_type = body.get("study_type") or (
+                classification.get("study_type") if isinstance(classification, dict) else "")
+            fields = annotator_mod.prefill_fields(pdf_bytes, study_type) if study_type else {}
+            return {"paper_id": int(pid), "mode": mode, "study_type": study_type,
+                    "classification": classification, "fields": fields}
+        # outcome-data: extract numeric rows, then compute yi/vi for pooling
+        measure = outcome["measure"]
+        correction = float(outcome.get("continuity_correction", 0.5))
+        rows = synthesis_mod.extract_outcome_data(pdf_bytes, outcome["name"], measure, body.get("pico") or {})
+        for r in rows:
+            r.update(synthesis_mod.compute_effect_for_point(measure, r.get("raw") or {}, correction))
+        return {"paper_id": int(pid), "mode": mode, "measure": measure,
+                "outcome": outcome["name"], "data_points": rows}
+    except HTTPException:
+        raise
+    except Exception as e:
+        _refund_annotator(user, cost, f"agent-extract-{mode}", filename)
+        logger.error("Agent extract failed: %s", e)
+        raise HTTPException(502, f"Extraction failed: {e}")
+
+
+@app.post("/api/agents/render/table5")
+def api_agents_render_table5(body: dict = Body(...),
+                             rubricgen_session: str | None = Cookie(default=None),
+                             x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Render ASCO Table 5 (GRADE Summary-of-Findings) from a list of sof_row
+    JSON objects (from /api/agents/sof) -> {columns, rows, html, csv}. Pure."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    body = body or {}
+    return table_render_mod.render_table5(body.get("sof_rows") or [], body.get("pico"))
+
+
+@app.post("/api/agents/render/table3")
+def api_agents_render_table3(body: dict = Body(...),
+                             rubricgen_session: str | None = Cookie(default=None),
+                             x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Render ASCO Table 3 (Risk of Bias) from a list of /api/agents/appraise
+    outputs, grouped into one tool-routed sub-table per RoB tool. Pure."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    body = body or {}
+    return table_render_mod.render_table3(body.get("appraisals") or [])
 
 
 @app.post("/api/synthesis/reviews")

@@ -523,6 +523,13 @@ def pool_outcome(conn, review_id: int, outcome: dict, points: list[dict],
         mid_benefit=_coerce_num(outcome.get("mid_benefit")),
         mid_harm=_coerce_num(outcome.get("mid_harm")),
         is_binary=measure in ("OR", "RR", "RD"),
+        # Body-of-evidence GRADE extras. The automatic large-effect upgrade for
+        # observational evidence works from `pooled` alone; the rest activate
+        # once these per-outcome fields are added to the schema / UI (L2/L3).
+        baseline_risk_per_1000=_coerce_num(outcome.get("baseline_risk_per_1000")),
+        dose_response=outcome.get("dose_response"),
+        opposing_confounding=bool(outcome.get("opposing_confounding")),
+        overrides=outcome.get("grade_overrides") or None,
     )
 
     # Code generation.

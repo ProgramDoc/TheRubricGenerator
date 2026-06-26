@@ -964,6 +964,40 @@ _ROB_SEVERITY = {
 }
 
 
+@dataclass
+class GradeConfig:
+    """Tunable operating points for the GRADE certainty engine.
+
+    Defaults follow core GRADE (GRADE Handbook, Schünemann 2013; JCE GRADE
+    guidelines 1–8 and 11). Exposed as a dataclass so a methodologist / the UI
+    can adjust thresholds without editing the engine. ``inspect.getsource`` on
+    the engine functions plus this config fully document the maths.
+    """
+    # Imprecision — Optimal Information Size rules of thumb.
+    ois_binary_events: int = 300        # binary: <300 (events≈) -> OIS unmet
+    ois_total_n: int = 400              # continuous: <400 participants -> OIS unmet
+    # Inconsistency — I^2 / Cochran-Q.
+    i2_serious: float = 50.0            # I^2 > 50% (with Q p<threshold) -> -1
+    i2_very_serious: float = 75.0       # I^2 > 75% -> consider -2
+    q_p_threshold: float = 0.10
+    # Risk of bias — share of pooled weight in studies with concerns.
+    rob_high_weight_2: float = 0.50     # >=50% weight at high/serious -> -2
+    rob_high_weight_1: float = 0.25     # >=25% high OR >=50% some -> -1
+    rob_some_weight_1: float = 0.50
+    # Publication bias — only meaningful with enough studies.
+    pubbias_min_studies: int = 10       # core GRADE: do not assess below ~10 studies
+    egger_p: float = 0.10
+    trimfill_min_imputed: int = 2
+    # Upgrade (non-randomized / observational evidence only).
+    large_effect_1: float = 2.0         # RR/OR >=2 or <=0.5 -> +1
+    large_effect_2: float = 5.0         # RR/OR >=5 or <=0.2 -> +2
+    require_ci_for_large_effect: bool = True   # CI must also exclude the null
+    upgrade_requires_no_downgrade: bool = True # rate up only absent rate-down factors
+
+
+_DEFAULT_GRADE_CONFIG = GradeConfig()
+
+
 def _grade_index(level: str) -> int:
     try:
         return GRADE_LEVELS.index(level)
@@ -971,7 +1005,8 @@ def _grade_index(level: str) -> int:
         return 0
 
 
-def _rob_across_studies(per_study_rob: Sequence[str], weights: Sequence[float] | None) -> tuple[int, str]:
+def _rob_across_studies(per_study_rob: Sequence[str], weights: Sequence[float] | None,
+                        cfg: GradeConfig = _DEFAULT_GRADE_CONFIG) -> tuple[int, str]:
     """Weighted RoB-across-studies downgrade (0/1/2)."""
     sev = np.array([_ROB_SEVERITY.get((r or "").strip().lower(), 1) for r in per_study_rob], float)
     if sev.size == 0:
@@ -980,14 +1015,15 @@ def _rob_across_studies(per_study_rob: Sequence[str], weights: Sequence[float] |
     w = w / w.sum()
     frac_serious = float(w[sev >= 2].sum())
     frac_some = float(w[sev >= 1].sum())
-    if frac_serious >= 0.5:
+    if frac_serious >= cfg.rob_high_weight_2:
         return 2, f"most of the weight ({frac_serious:.0%}) is in studies at high/serious risk of bias"
-    if frac_serious >= 0.25 or frac_some >= 0.5:
+    if frac_serious >= cfg.rob_high_weight_1 or frac_some >= cfg.rob_some_weight_1:
         return 1, f"a substantial share of weight ({frac_some:.0%}) is in studies with risk-of-bias concerns"
     return 0, "most weight is in low risk-of-bias studies"
 
 
-def _inconsistency_downgrade(het: dict, subgroup: dict | None) -> tuple[int, str]:
+def _inconsistency_downgrade(het: dict, subgroup: dict | None,
+                             cfg: GradeConfig = _DEFAULT_GRADE_CONFIG) -> tuple[int, str]:
     if het.get("status") != "ok":
         return 0, "single study — inconsistency not assessable"
     i2 = het.get("I2", 0.0) or 0.0
@@ -995,23 +1031,24 @@ def _inconsistency_downgrade(het: dict, subgroup: dict | None) -> tuple[int, str
     explained = bool(subgroup and subgroup.get("status") == "ok" and subgroup.get("p_between", 1.0) < 0.05)
     if explained:
         return 0, f"heterogeneity (I²={i2:.0f}%) explained by subgroup differences"
-    if i2 > 75 and p < 0.10:
+    if i2 > cfg.i2_very_serious and p < cfg.q_p_threshold:
         return 1, f"considerable heterogeneity (I²={i2:.0f}%, p={p:.3f})"
-    if i2 > 50 and p < 0.10:
+    if i2 > cfg.i2_serious and p < cfg.q_p_threshold:
         return 1, f"substantial unexplained heterogeneity (I²={i2:.0f}%)"
     return 0, f"acceptable consistency (I²={i2:.0f}%)"
 
 
 def _imprecision_downgrade(pooled: dict, measure: str, total_n: float,
                            mid_benefit: float | None, mid_harm: float | None,
-                           is_binary: bool) -> tuple[int, str]:
+                           is_binary: bool,
+                           cfg: GradeConfig = _DEFAULT_GRADE_CONFIG) -> tuple[int, str]:
     lo, hi = pooled.get("ci_low"), pooled.get("ci_high")
-    null = 0.0 if measure not in LOG_MEASURES else 0.0  # log scale null = 0
+    null = 0.0  # the analysis-scale null is 0 for all difference / log / z measures
     crosses_null = lo is not None and hi is not None and lo <= null <= hi
     # optimal information size heuristic
-    ois_fail = total_n is not None and total_n < (300 if is_binary else 400)
+    ois_fail = total_n is not None and total_n < (cfg.ois_binary_events if is_binary else cfg.ois_total_n)
     if mid_benefit is not None and mid_harm is not None and lo is not None and hi is not None:
-        # CI crosses both MIDs -> very serious
+        # CI (back-transformed to the display scale) crosses both MIDs -> very serious
         d_lo = back_transform(lo, measure)
         d_hi = back_transform(hi, measure)
         if d_lo <= mid_harm and d_hi >= mid_benefit:
@@ -1030,13 +1067,143 @@ def _imprecision_downgrade(pooled: dict, measure: str, total_n: float,
     return 0, "adequately precise"
 
 
-def _pubbias_downgrade(egger: dict | None, trimfill: dict | None) -> tuple[int, str]:
-    if egger and egger.get("status") == "ok" and egger.get("p", 1.0) < 0.10:
+def _pubbias_downgrade(egger: dict | None, trimfill: dict | None, k_studies: int = 0,
+                       cfg: GradeConfig = _DEFAULT_GRADE_CONFIG) -> tuple[int, str]:
+    # Core GRADE: small-study / funnel methods are unreliable below ~10 studies.
+    if k_studies and k_studies < cfg.pubbias_min_studies:
+        return 0, f"not formally assessed (<{cfg.pubbias_min_studies} studies)"
+    if egger and egger.get("status") == "ok" and egger.get("p", 1.0) < cfg.egger_p:
         return 1, f"funnel asymmetry (Egger p={egger['p']:.3f})"
-    if trimfill and trimfill.get("status") == "ok" and trimfill.get("n_imputed", 0) >= 2:
+    if trimfill and trimfill.get("status") == "ok" and trimfill.get("n_imputed", 0) >= cfg.trimfill_min_imputed:
         return 1, f"trim-and-fill imputed {trimfill['n_imputed']} missing studies"
     return 0, "no strong evidence of publication bias"
 
+
+# ---------------------------------------------------------------------------
+# Upgrade domains — non-randomized / observational evidence only
+# ---------------------------------------------------------------------------
+
+def _large_effect_upgrade(pooled: dict, measure: str,
+                          cfg: GradeConfig = _DEFAULT_GRADE_CONFIG) -> tuple[int, str]:
+    """Large magnitude of effect (ratio measures only) -> 0 / +1 / +2.
+
+    Core GRADE: +1 when RR/OR >=2 or <=0.5; +2 when >=5 or <=0.2, from
+    consistent evidence with no obvious confounders. ``pooled`` is on the
+    analysis (log) scale, so we back-transform to the display ratio first. When
+    ``require_ci_for_large_effect`` is set, the confidence bound nearer the null
+    must also exclude no-effect (guards against an imprecise point estimate).
+    """
+    if measure not in ("OR", "RR", "IRR", "HR"):
+        return 0, "large-effect criterion applies to ratio measures (OR/RR/HR/IRR)"
+    est = pooled.get("estimate")
+    if est is None:
+        return 0, "no pooled estimate"
+    ratio = back_transform(est, measure) if measure in LOG_MEASURES else float(est)
+    if ratio <= 0:
+        return 0, "non-positive ratio"
+    # Normalise to a ratio >= 1 and locate the CI bound nearer the null (1.0).
+    if ratio >= 1.0:
+        r, near = ratio, pooled.get("ci_low")
+        near_r = back_transform(near, measure) if (near is not None and measure in LOG_MEASURES) else near
+    else:
+        r = 1.0 / ratio
+        hi = pooled.get("ci_high")
+        hi_r = back_transform(hi, measure) if (hi is not None and measure in LOG_MEASURES) else hi
+        near_r = (1.0 / hi_r) if hi_r else None
+
+    def clears(threshold: float) -> bool:
+        if not cfg.require_ci_for_large_effect:
+            return r >= threshold
+        return r >= threshold and near_r is not None and near_r >= 1.0
+
+    if clears(cfg.large_effect_2):
+        return 2, f"very large effect ({measure}≈{r:.1f}); CI excludes no-effect"
+    if clears(cfg.large_effect_1):
+        return 1, f"large effect ({measure}≈{r:.1f})"
+    return 0, f"effect magnitude below the large-effect threshold ({measure}≈{r:.1f})"
+
+
+def _dose_response_upgrade(metaregression: dict | None, manual: bool | None = None,
+                           moderator_name: str = "dose") -> tuple[int, str]:
+    """Dose-response gradient -> 0 / +1.
+
+    ``manual`` (True/False) lets the assessor assert a gradient directly.
+    Otherwise auto-detect from a meta-regression on a dose moderator: a slope
+    significant at p<0.05 in the named (or any non-intercept) coefficient.
+    """
+    if manual is not None:
+        return (1, "dose-response gradient (assessor judgement)") if manual else (0, "no dose-response gradient")
+    if not metaregression or metaregression.get("status") != "ok":
+        return 0, "no dose moderator modelled"
+    coefs = metaregression.get("coefficients", [])
+    target = next((c for c in coefs
+                   if c.get("name", "").lower() in (moderator_name.lower(), "dose", "dose_level")), None)
+    if target is None:
+        target = next((c for c in coefs
+                       if c.get("name") != "intercept" and (c.get("p") if c.get("p") is not None else 1) < 0.05), None)
+    if target and target.get("p") is not None and target["p"] < 0.05:
+        return 1, f"significant dose-response gradient ({target['name']}, p={target['p']:.3f})"
+    return 0, "no significant dose-response gradient"
+
+
+def _opposing_confounding_upgrade(manual: bool) -> tuple[int, str]:
+    """All plausible residual confounding would reduce the observed effect (or
+    create a spurious effect where none is observed) -> 0 / +1. A judgement the
+    assessor asserts; there is no automatable signal for it."""
+    if manual:
+        return 1, "plausible residual confounding would only attenuate the observed effect"
+    return 0, "not applicable"
+
+
+# ---------------------------------------------------------------------------
+# Anticipated absolute effects (Table 5 / Summary-of-Findings)
+# ---------------------------------------------------------------------------
+
+def absolute_effects(measure: str, pooled: dict, baseline_per_1000: float | None) -> dict | None:
+    """Anticipated absolute effects per 1000 for a dichotomous outcome.
+
+    ``baseline_per_1000`` is the assumed comparator (control) risk per 1000.
+    ``pooled`` is on the analysis scale; ratio measures are back-transformed.
+    Returns the intervention risk, the risk difference (CI propagated from the
+    relative-effect CI), and NNT/NNH. Returns ``None`` when not computable.
+    """
+    if baseline_per_1000 is None or measure not in ("RR", "OR", "RD", "IRR"):
+        return None
+    acr = baseline_per_1000 / 1000.0
+    if measure != "RD" and not (0.0 < acr < 1.0):
+        return None
+
+    def apply(analysis_val):
+        if analysis_val is None:
+            return None
+        if measure == "RD":
+            return acr + float(analysis_val)            # RD is already absolute
+        rel = back_transform(analysis_val, measure)      # RR/OR/IRR display ratio
+        if measure in ("RR", "IRR"):
+            return acr * rel
+        odds = acr / (1.0 - acr) * rel                   # OR -> absolute via odds
+        return odds / (1.0 + odds)
+
+    est, lo, hi = (apply(pooled.get(k)) for k in ("estimate", "ci_low", "ci_high"))
+    if est is None:
+        return None
+    rd = est - acr
+    rd_lo = None if lo is None else lo - acr
+    rd_hi = None if hi is None else hi - acr
+    return {
+        "baseline_per_1000": round(baseline_per_1000, 1),
+        "intervention_per_1000": round(est * 1000, 1),
+        "risk_difference_per_1000": round(rd * 1000, 1),
+        "rd_ci_per_1000": [None if rd_lo is None else round(rd_lo * 1000, 1),
+                           None if rd_hi is None else round(rd_hi * 1000, 1)],
+        "nnt": None if rd == 0 else round(1.0 / abs(rd)),
+        "favours": "intervention" if rd < 0 else ("comparator" if rd > 0 else "neither"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Certainty combiner
+# ---------------------------------------------------------------------------
 
 def grade_body_of_evidence(*, initial: str, per_study_rob: Sequence[str],
                            weights: Sequence[float] | None, heterogeneity: dict,
@@ -1047,34 +1214,88 @@ def grade_body_of_evidence(*, initial: str, per_study_rob: Sequence[str],
                            indirectness_reason: str = "",
                            mid_benefit: float | None = None,
                            mid_harm: float | None = None,
-                           is_binary: bool = False) -> dict[str, Any]:
-    """Combine the five downgradeable GRADE domains into a body-of-evidence
-    certainty rating. This completes the domains the per-paper Quality
-    Appraisal explicitly defers (inconsistency, publication bias)."""
-    rob_lv, rob_reason = _rob_across_studies(per_study_rob, weights)
-    inc_lv, inc_reason = _inconsistency_downgrade(heterogeneity, subgroup)
-    imp_lv, imp_reason = _imprecision_downgrade(pooled, measure, total_n or 0.0,
-                                                mid_benefit, mid_harm, is_binary)
-    pub_lv, pub_reason = _pubbias_downgrade(egger, trimfill)
-    ind_lv = max(0, int(indirectness_levels))
+                           is_binary: bool = False,
+                           # --- upgrade inputs (non-randomized evidence) ---
+                           is_randomized: bool | None = None,
+                           dose_response: bool | None = None,
+                           opposing_confounding: bool = False,
+                           metaregression: dict | None = None,
+                           # --- Table-5 absolute effects ---
+                           baseline_risk_per_1000: float | None = None,
+                           # --- assessor pins (domain key -> signed levels) ---
+                           overrides: dict | None = None,
+                           cfg: GradeConfig | None = None) -> dict[str, Any]:
+    """Rate the certainty of a pooled body of evidence on the GRADE scale.
+
+    Starts at ``initial`` (RCT=High, observational=Low). Rates DOWN for the five
+    core domains (risk of bias, inconsistency, indirectness, imprecision,
+    publication bias) for any design, and — for non-randomized evidence with no
+    rate-down factors — rates UP for large effect, dose-response gradient, and
+    plausible opposing confounding. ``overrides`` lets an assessor pin any
+    domain by key (e.g. ``{"imprecision": 2, "large_effect": 1}``).
+    """
+    cfg = cfg or _DEFAULT_GRADE_CONFIG
+    overrides = overrides or {}
+    if is_randomized is None:
+        is_randomized = (initial == "High")
+    k = len(per_study_rob)
+
+    def _pin(domain_key: str, levels: int, reason: str) -> tuple[int, str]:
+        if domain_key in overrides:
+            return max(0, int(overrides[domain_key])), (reason + " [overridden]").strip()
+        return levels, reason
+
+    # --- downgrades (all designs) ---
+    rob_lv, rob_reason = _pin("risk_of_bias", *_rob_across_studies(per_study_rob, weights, cfg))
+    inc_lv, inc_reason = _pin("inconsistency", *_inconsistency_downgrade(heterogeneity, subgroup, cfg))
+    imp_lv, imp_reason = _pin("imprecision", *_imprecision_downgrade(
+        pooled, measure, total_n or 0.0, mid_benefit, mid_harm, is_binary, cfg))
+    pub_lv, pub_reason = _pin("publication_bias", *_pubbias_downgrade(egger, trimfill, k, cfg))
+    ind_lv, ind_reason = _pin("indirectness", max(0, int(indirectness_levels)),
+                              indirectness_reason or ("no serious indirectness"
+                                                      if int(indirectness_levels) == 0 else "indirectness concerns"))
 
     domains = [
-        {"domain": "Risk of bias", "downgrade": rob_lv, "reason": rob_reason},
-        {"domain": "Inconsistency", "downgrade": inc_lv, "reason": inc_reason},
-        {"domain": "Indirectness", "downgrade": ind_lv,
-         "reason": indirectness_reason or ("no serious indirectness" if ind_lv == 0 else "indirectness concerns")},
-        {"domain": "Imprecision", "downgrade": imp_lv, "reason": imp_reason},
-        {"domain": "Publication bias", "downgrade": pub_lv, "reason": pub_reason},
+        {"domain": "Risk of bias", "kind": "downgrade", "downgrade": rob_lv, "upgrade": 0, "reason": rob_reason},
+        {"domain": "Inconsistency", "kind": "downgrade", "downgrade": inc_lv, "upgrade": 0, "reason": inc_reason},
+        {"domain": "Indirectness", "kind": "downgrade", "downgrade": ind_lv, "upgrade": 0, "reason": ind_reason},
+        {"domain": "Imprecision", "kind": "downgrade", "downgrade": imp_lv, "upgrade": 0, "reason": imp_reason},
+        {"domain": "Publication bias", "kind": "downgrade", "downgrade": pub_lv, "upgrade": 0, "reason": pub_reason},
     ]
-    total = sum(d["downgrade"] for d in domains)
+    total_down = sum(d["downgrade"] for d in domains)
+
+    # --- upgrades (non-randomized evidence only) ---
+    total_up = 0
+    can_upgrade = (not is_randomized and initial == "Low"
+                   and (total_down == 0 or not cfg.upgrade_requires_no_downgrade))
+    if can_upgrade:
+        le_lv, le_reason = _pin("large_effect", *_large_effect_upgrade(pooled, measure, cfg))
+        dr_lv, dr_reason = _pin("dose_response", *_dose_response_upgrade(metaregression, dose_response))
+        oc_lv, oc_reason = _pin("opposing_confounding", *_opposing_confounding_upgrade(opposing_confounding))
+        for name, lv, reason in (("Large effect", le_lv, le_reason),
+                                 ("Dose-response gradient", dr_lv, dr_reason),
+                                 ("Opposing plausible confounding", oc_lv, oc_reason)):
+            domains.append({"domain": name, "kind": "upgrade", "downgrade": 0, "upgrade": lv, "reason": reason})
+            total_up += lv
+
     start = _grade_index(initial)
-    final_idx = min(len(GRADE_LEVELS) - 1, start + total)
+    final_idx = max(0, min(len(GRADE_LEVELS) - 1, start + total_down - total_up))
     final = GRADE_LEVELS[final_idx]
+
     fired = [f"{d['domain'].lower()} (−{d['downgrade']}: {d['reason']})"
              for d in domains if d["downgrade"] > 0]
+    raised = [f"{d['domain'].lower()} (+{d['upgrade']}: {d['reason']})"
+              for d in domains if d["upgrade"] > 0]
+    parts = [f"Initial certainty {initial}"]
     if fired:
-        explanation = f"Initial certainty {initial}; downgraded {total} level(s) for " + "; ".join(fired) + f". Final certainty: {final}."
-    else:
-        explanation = f"Initial certainty {initial}; no serious concerns across GRADE domains. Final certainty: {final}."
-    return {"initial": initial, "final": final, "total_downgrade": total,
-            "domains": domains, "explanation": explanation}
+        parts.append(f"downgraded {total_down} level(s) for " + "; ".join(fired))
+    if raised:
+        parts.append(f"upgraded {total_up} level(s) for " + "; ".join(raised))
+    if not fired and not raised:
+        parts.append("no serious concerns across GRADE domains")
+    explanation = ". ".join(parts) + f". Final certainty: {final}."
+
+    return {"initial": initial, "final": final,
+            "total_downgrade": total_down, "total_upgrade": total_up,
+            "domains": domains, "explanation": explanation,
+            "absolute_effects": absolute_effects(measure, pooled, baseline_risk_per_1000)}

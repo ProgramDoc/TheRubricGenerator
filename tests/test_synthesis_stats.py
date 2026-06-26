@@ -231,6 +231,86 @@ class TestGrade:
         assert g["final"] == "Very low"  # cannot go below
 
 
+class TestGradeUpgrade:
+    """GRADE rating-up for non-randomized / observational evidence."""
+
+    def _clean_het(self):
+        return {"status": "ok", "I2": 5.0, "p": 0.8, "tau2_REML": 0.0}
+
+    def test_large_effect_upgrades_observational(self):
+        # RR≈3, CI excludes null, no rate-down factors -> Low upgrades to Moderate.
+        pooled = {"estimate": math.log(3.0), "ci_low": math.log(2.0), "ci_high": math.log(4.5)}
+        g = ss.grade_body_of_evidence(
+            initial="Low", per_study_rob=["Low", "Low", "Low"],
+            weights=[1, 1, 1], heterogeneity=self._clean_het(), pooled=pooled,
+            measure="RR", total_n=5000, is_binary=True)
+        assert g["total_downgrade"] == 0
+        assert g["total_upgrade"] == 1
+        assert g["final"] == "Moderate"
+
+    def test_very_large_effect_two_levels(self):
+        pooled = {"estimate": math.log(6.0), "ci_low": math.log(2.5), "ci_high": math.log(14.0)}
+        g = ss.grade_body_of_evidence(
+            initial="Low", per_study_rob=["Low", "Low"],
+            weights=[1, 1], heterogeneity=self._clean_het(), pooled=pooled,
+            measure="RR", total_n=5000, is_binary=True)
+        assert g["total_upgrade"] == 2
+        assert g["final"] == "High"
+
+    def test_dose_response_manual_upgrade(self):
+        pooled = {"estimate": math.log(1.4), "ci_low": math.log(1.1), "ci_high": math.log(1.8)}
+        g = ss.grade_body_of_evidence(
+            initial="Low", per_study_rob=["Low", "Low", "Low"],
+            weights=[1, 1, 1], heterogeneity=self._clean_het(), pooled=pooled,
+            measure="RR", total_n=5000, is_binary=True, dose_response=True)
+        assert g["total_upgrade"] == 1
+        assert g["final"] == "Moderate"
+
+    def test_no_upgrade_when_downgraded(self):
+        # A serious imprecision concern (crosses null + below OIS) blocks rating-up.
+        pooled = {"estimate": math.log(3.0), "ci_low": math.log(0.9), "ci_high": math.log(10.0)}
+        g = ss.grade_body_of_evidence(
+            initial="Low", per_study_rob=["Low", "Low"],
+            weights=[1, 1], heterogeneity=self._clean_het(), pooled=pooled,
+            measure="RR", total_n=80, is_binary=True)
+        assert g["total_downgrade"] >= 1
+        assert g["total_upgrade"] == 0
+
+    def test_rct_never_upgraded(self):
+        pooled = {"estimate": math.log(6.0), "ci_low": math.log(3.0), "ci_high": math.log(12.0)}
+        g = ss.grade_body_of_evidence(
+            initial="High", per_study_rob=["Low", "Low"],
+            weights=[1, 1], heterogeneity=self._clean_het(), pooled=pooled,
+            measure="RR", total_n=5000, is_binary=True)
+        assert g["total_upgrade"] == 0
+        assert g["final"] == "High"
+
+    def test_override_pins_a_domain(self):
+        pooled = {"estimate": math.log(1.2), "ci_low": math.log(1.05), "ci_high": math.log(1.4)}
+        g = ss.grade_body_of_evidence(
+            initial="High", per_study_rob=["Low", "Low"],
+            weights=[1, 1], heterogeneity=self._clean_het(), pooled=pooled,
+            measure="RR", total_n=5000, is_binary=True,
+            overrides={"indirectness": 2})
+        ind = next(d for d in g["domains"] if d["domain"] == "Indirectness")
+        assert ind["downgrade"] == 2
+        assert g["final"] == "Low"  # High − 2
+
+
+class TestAbsoluteEffects:
+    def test_rr_absolute_effects_per_1000(self):
+        pooled = {"estimate": math.log(0.5), "ci_low": math.log(0.35), "ci_high": math.log(0.7)}
+        ae = ss.absolute_effects("RR", pooled, baseline_per_1000=200.0)
+        assert ae["intervention_per_1000"] == 100.0     # 200 × 0.5
+        assert ae["risk_difference_per_1000"] == -100.0
+        assert ae["nnt"] == 10
+        assert ae["favours"] == "intervention"
+
+    def test_absolute_effects_none_for_continuous(self):
+        assert ss.absolute_effects("SMD", {"estimate": 0.3}, 200.0) is None
+        assert ss.absolute_effects("RR", {"estimate": 0.0}, None) is None
+
+
 class TestEdgeCases:
     def test_empty(self):
         assert ss.pool([], "MD")["status"] == "no_studies"
