@@ -439,6 +439,7 @@ function renderExtraction() {
 }
 function measureKeys(m){ return ({MD:['m1','sd1','n1','m2','sd2','n2'],SMD:['m1','sd1','n1','m2','sd2','n2'],
   OR:['events1','total1','events2','total2'],RR:['events1','total1','events2','total2'],RD:['events1','total1','events2','total2'],
+  HR:['hr','ci_lower','ci_upper'],
   ZCOR:['r','n'],PLOGIT:['events','n'],PFT:['events','n'],IRR:['events','person_time']})[m]||[]; }
 async function patchDP(id, body){ await fetch('/api/synthesis/data-points/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
 async function patchDPRaw(id, key, val){ const raw={}; raw[key]=val===''?null:parseFloat(val);
@@ -472,14 +473,14 @@ function renderMeta() {
 function pooledStr(p, m){ if(!p||p.status!=='ok')return '—';
   const bt = v=>backTransform(v,m);
   return `<b>${fmt(bt(p.estimate),2)}</b> [${fmt(bt(p.ci_low),2)}, ${fmt(bt(p.ci_high),2)}], p=${fmt(p.p,3)}`; }
-function backTransform(v,m){ if(['OR','RR','IRR'].includes(m))return Math.exp(v); if(m==='ZCOR')return Math.tanh(v); if(m==='PLOGIT')return 1/(1+Math.exp(-v)); return v; }
+function backTransform(v,m){ if(['OR','RR','IRR','HR'].includes(m))return Math.exp(v); if(m==='ZCOR')return Math.tanh(v); if(m==='PLOGIT')return 1/(1+Math.exp(-v)); return v; }
 
 function renderSensitivity() {
   const r = currentReview, el = document.getElementById('pane-sensitivity');
   const blocks = (r.results||[]).filter(res=>res.sensitivity&&res.sensitivity.leave_one_out).map(res=>{
     const oc=(r.outcomes||[]).find(o=>o.id===res.outcome_id)||{}; const loo=res.sensitivity.leave_one_out, infl=res.sensitivity.influence||[];
     return `<div class="card"><h3>${esc(oc.name)} — leave-one-out</h3>
-      ${renderForest({measure:oc.effect_measure, log_axis:['OR','RR','IRR'].includes(oc.effect_measure), null_value:res.forest.null_value,
+      ${renderForest({measure:oc.effect_measure, log_axis:['OR','RR','IRR','HR'].includes(oc.effect_measure), null_value:res.forest.null_value,
         studies: loo.map(x=>({label:'– '+x.omitted, es:x.es, lo:x.lo, hi:x.hi, weight:1/loo.length})), pooled:{}, het_line:''})}
       <table class="grid" style="margin-top:8px"><thead><tr><th>Study</th><th>Std resid</th><th>DFFITS</th><th>Cook's D</th><th>Influential</th></tr></thead><tbody>${
         infl.map(i=>`<tr><td>${esc(i.label)}</td><td>${fmt(i.std_residual,2)}</td><td>${fmt(i.dffits,2)}</td><td>${fmt(i.cooks_distance,3)}</td><td>${i.influential?'<span class="badge b-high">yes</span>':''}</td></tr>`).join('')}
@@ -654,6 +655,7 @@ function renderWizStep(){
 }
 const MEASURES={continuous:[['SMD','Standardized mean diff (Hedges g)'],['MD','Mean difference']],
   binary:[['OR','Odds ratio'],['RR','Risk ratio'],['RD','Risk difference']],
+  time_to_event:[['HR','Hazard ratio']],
   correlation:[['ZCOR','Correlation (Fisher z)']],single_arm:[['PLOGIT','Proportion (logit)'],['PFT','Proportion (Freeman-Tukey)'],['IRR','Incidence rate']]};
 function addOutcomeRow(){ const i=outcomeCount++;
   const html=`<div class="outcome-row" id="orow-${i}">

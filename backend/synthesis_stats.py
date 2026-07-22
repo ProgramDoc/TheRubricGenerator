@@ -44,7 +44,7 @@ from scipy import optimize, stats
 # ---------------------------------------------------------------------------
 
 # Measures whose analysis scale is logarithmic (back-transform with exp).
-LOG_MEASURES = {"OR", "RR", "IRR", "PLOGIT"}
+LOG_MEASURES = {"OR", "RR", "IRR", "PLOGIT", "HR"}
 # Measures back-transformed with tanh (Fisher z).
 Z_MEASURES = {"ZCOR"}
 # Freeman-Tukey double-arcsine proportion.
@@ -55,7 +55,7 @@ LINEAR_MEASURES = {"MD", "SMD", "RD"}
 # Null (no-effect) value on the *display* scale, per measure.
 NULL_VALUE = {
     "MD": 0.0, "SMD": 0.0, "RD": 0.0,
-    "OR": 1.0, "RR": 1.0, "IRR": 1.0,
+    "OR": 1.0, "RR": 1.0, "IRR": 1.0, "HR": 1.0,
     "ZCOR": 0.0, "PLOGIT": None, "PFT": None,
 }
 
@@ -63,6 +63,7 @@ CONTINUOUS_MEASURES = {"MD", "SMD"}
 BINARY_MEASURES = {"OR", "RR", "RD"}
 CORRELATION_MEASURES = {"ZCOR"}
 SINGLE_ARM_MEASURES = {"PLOGIT", "PFT", "IRR"}
+TIME_TO_EVENT_MEASURES = {"HR"}
 
 
 def measure_is_log(measure: str) -> bool:
@@ -71,7 +72,7 @@ def measure_is_log(measure: str) -> bool:
 
 def display_uses_log_axis(measure: str) -> bool:
     """Forest/funnel x-axis is log-scaled for ratio measures."""
-    return measure in {"OR", "RR", "IRR"}
+    return measure in {"OR", "RR", "IRR", "HR"}
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +263,34 @@ def incidence_rate_log(events, person_time) -> EffectSize | None:
     return EffectSize(yi, vi, "IRR", n=person_time, raw={"events": events, "person_time": person_time})
 
 
+# --- time-to-event --------------------------------------------------------
+
+def hazard_ratio(hr=None, ci_lower=None, ci_upper=None, *,
+                 loghr=None, se=None, o_e=None, v=None) -> EffectSize | None:
+    """Log hazard ratio for a time-to-event outcome.
+
+    Accepts, in priority order (a HR is NEVER derived from a 2x2 count table):
+      1. log-rank observed-minus-expected ``o_e`` + variance ``v`` (Peto:
+         yi = (O-E)/V, vi = 1/V);
+      2. a reported log-HR ``loghr`` + its standard error ``se``;
+      3. a reported ``hr`` + 95% ``ci_lower``/``ci_upper`` (yi = ln HR, and the
+         SE is recovered from the CI width on the log scale).
+    """
+    if _finite(o_e, v) and float(v) > 0:
+        oe, vv = float(o_e), float(v)
+        return EffectSize(oe / vv, 1.0 / vv, "HR", raw={"o_e": o_e, "v": v})
+    if _finite(loghr, se) and float(se) > 0:
+        return EffectSize(float(loghr), float(se) ** 2, "HR", raw={"loghr": loghr, "se": se})
+    if _finite(hr, ci_lower, ci_upper) and float(hr) > 0 and float(ci_lower) > 0 and float(ci_upper) > 0:
+        lo, hi = sorted((float(ci_lower), float(ci_upper)))
+        se_ln = (math.log(hi) - math.log(lo)) / (2.0 * _z_crit())
+        if se_ln <= 0:
+            return None
+        return EffectSize(math.log(float(hr)), se_ln ** 2, "HR",
+                          raw={"hr": hr, "ci_lower": ci_lower, "ci_upper": ci_upper})
+    return None
+
+
 # --- dispatch -------------------------------------------------------------
 
 def effect_size(measure: str, row: dict[str, Any], correction: float = 0.5) -> EffectSize | None:
@@ -292,6 +321,9 @@ def effect_size(measure: str, row: dict[str, Any], correction: float = 0.5) -> E
         return proportion_double_arcsine(g("events"), g("n"))
     if measure == "IRR":
         return incidence_rate_log(g("events"), g("person_time"))
+    if measure == "HR":
+        return hazard_ratio(g("hr"), g("ci_lower"), g("ci_upper"),
+                            loghr=g("loghr"), se=g("se"), o_e=g("o_e"), v=g("v"))
     raise ValueError(f"unknown measure {measure!r}")
 
 
@@ -462,6 +494,40 @@ def tau2_reml(yi: np.ndarray, vi: np.ndarray) -> float:
     return max(0.0, float(res.x))
 
 
+def tau2_paule_mandel(yi: np.ndarray, vi: np.ndarray, *,
+                      max_iter: int = 200, tol: float = 1e-7) -> float:
+    """Paule-Mandel (empirical-Bayes) tau^2 estimator.
+
+    Solves the generalized-Q estimating equation ``sum w_i (y_i - mu)^2 = k - 1``
+    (with ``w_i = 1/(v_i + tau^2)`` and mu the weighted mean) by bisection.
+    Clamped at 0; less biased than DL under real heterogeneity.
+    """
+    k = yi.size
+    if k < 2:
+        return 0.0
+
+    def gstat(t2: float) -> float:
+        w = 1.0 / (vi + t2)
+        mu = (w * yi).sum() / w.sum()
+        return float((w * (yi - mu) ** 2).sum()) - (k - 1)
+
+    if gstat(0.0) <= 0:
+        return 0.0
+    lo, hi = 0.0, 10.0 * float(vi.max()) + 10.0
+    while gstat(hi) > 0 and hi < 1e12:
+        hi *= 2.0
+    for _ in range(max_iter):
+        mid = 0.5 * (lo + hi)
+        g = gstat(mid)
+        if abs(g) < tol:
+            return mid
+        if g > 0:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
 def q_profile_tau2_ci(yi: np.ndarray, vi: np.ndarray, alpha: float = 0.05) -> tuple[float, float]:
     """Q-profile (generalized Q) confidence interval for tau^2."""
     k = yi.size
@@ -500,7 +566,7 @@ def heterogeneity(yis: Sequence[float], vis: Sequence[float], alpha: float = 0.0
     if k < 2:
         return {"status": "insufficient_studies", "k": k,
                 "Q": None, "df": max(0, k - 1), "p": None,
-                "I2": None, "tau2_DL": 0.0, "tau2_REML": 0.0, "H": None}
+                "I2": None, "tau2_DL": 0.0, "tau2_REML": 0.0, "tau2_PM": 0.0, "H": None}
     q, _ = _q_statistic(yi, vi)
     df = k - 1
     i2 = max(0.0, (q - df) / q) * 100.0 if q > 0 else 0.0
@@ -508,11 +574,12 @@ def heterogeneity(yis: Sequence[float], vis: Sequence[float], alpha: float = 0.0
     p = float(stats.chi2.sf(q, df))
     t2_dl = tau2_dersimonian_laird(yi, vi)
     t2_reml = tau2_reml(yi, vi)
+    t2_pm = tau2_paule_mandel(yi, vi)
     tau2_ci = q_profile_tau2_ci(yi, vi, alpha)
     return {
         "status": "ok", "k": k, "Q": q, "df": df, "p": p,
         "I2": i2, "H": h, "tau": math.sqrt(t2_reml),
-        "tau2_DL": t2_dl, "tau2_REML": t2_reml,
+        "tau2_DL": t2_dl, "tau2_REML": t2_reml, "tau2_PM": t2_pm,
         "tau2_ci_low": tau2_ci[0], "tau2_ci_high": tau2_ci[1],
         "low_power": k == 2,
     }
@@ -530,7 +597,7 @@ def pool(effects: Sequence[EffectSize], measure: str, *,
     heterogeneity, and per-study weight breakdowns ready for a forest plot.
 
     ``model`` in {fixed, random, both}. ``fe_method`` in {IV, MH} (MH only for
-    binary). ``tau2_method`` in {DL, REML}.
+    binary). ``tau2_method`` in {DL, REML, PM}.
     """
     effects = [e for e in effects if e is not None and _finite(e.yi, e.vi) and e.vi > 0]
     k = len(effects)
@@ -542,7 +609,8 @@ def pool(effects: Sequence[EffectSize], measure: str, *,
     het = heterogeneity(yi, vi, alpha)
     tau2 = 0.0
     if k >= 2:
-        tau2 = het["tau2_REML"] if tau2_method.upper() == "REML" else het["tau2_DL"]
+        _tau2_key = {"REML": "tau2_REML", "DL": "tau2_DL", "PM": "tau2_PM"}
+        tau2 = het[_tau2_key.get(tau2_method.upper(), "tau2_REML")]
 
     out: dict[str, Any] = {"status": "ok", "k": k, "measure": measure,
                            "heterogeneity": het, "model": model,

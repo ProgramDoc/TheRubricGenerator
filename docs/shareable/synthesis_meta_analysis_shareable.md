@@ -1,6 +1,6 @@
 # Synthesis — Systematic Review + Meta-Analysis — Sharable Methodology Reference
 
-Contains: the full pair-wise meta-analysis methodology used by the Synthesis feature — the study-screening and effect-size-extraction LLM prompts, every effect-size formula (continuous, binary, correlation, single-arm), the pooling models (inverse-variance fixed effect, Mantel-Haenszel, random effects with DerSimonian-Laird and REML), heterogeneity statistics (Cochran's Q, I², τ², H, Q-profile CI), publication-bias methods (funnel data, Egger's regression test, Duval-Tweedie trim-and-fill), subgroup analysis + mixed-effects meta-regression, sensitivity analysis (leave-one-out + influence diagnostics), and the GRADE body-of-evidence certainty combiner — plus a turnkey single-file Python reference implementation and framework-free tests.
+Contains: the full pair-wise meta-analysis methodology used by the Synthesis feature — the study-screening and effect-size-extraction LLM prompts, every effect-size formula (continuous, binary, time-to-event / hazard ratio, correlation, single-arm), the pooling models (inverse-variance fixed effect, Mantel-Haenszel, random effects with DerSimonian-Laird, REML, and Paule-Mandel τ²), heterogeneity statistics (Cochran's Q, I², τ², H, Q-profile CI), publication-bias methods (funnel data, Egger's regression test, Duval-Tweedie trim-and-fill), subgroup analysis + mixed-effects meta-regression, sensitivity analysis (leave-one-out + influence diagnostics), and the GRADE body-of-evidence certainty combiner — plus a turnkey single-file Python reference implementation and framework-free tests.
 
 **Source.** Standard pair-wise meta-analysis methodology as described in:
 - Borenstein M, Hedges LV, Higgins JPT, Rothstein HR. *Introduction to Meta-Analysis.* Wiley, 2009. (Effect sizes, inverse-variance pooling, Q/I²/τ².)
@@ -25,6 +25,16 @@ Contains: the full pair-wise meta-analysis methodology used by the Synthesis fea
 ## Revision notes
 
 Substantive changes to the methodology in this document, newest-first, so downstream implementations (e.g. forks maintained by other teams) can see what changed and why. Cosmetic / wording-only edits are not logged.
+
+### 2026-07-22 — Hazard ratio (time-to-event) + Paule-Mandel τ²
+
+**What changed.** Added two engine capabilities. (1) **Hazard ratio (HR)** — a time-to-event effect measure pooled on the log scale (new §3.5). It is **never derived from a 2×2 table**; it takes a reported HR + 95% CI, a reported log-HR + SE, or a log-rank O-E + variance V (Peto). Wired end-to-end: measure metadata + effect-size dispatch, the extraction field spec (`hr`/`ci_lower`/`ci_upper`, plus `o_e`/`v`), the measure registry, and R code export via `metagen(TE, seTE, sm="HR")`. (2) **Paule-Mandel τ²** — a third between-study-variance estimator (new §5 subsection) selectable via `tau2_method="PM"` alongside DL and REML; solved by bisection of the generalized-Q estimating equation `Σ wᵢ(yᵢ−μ)² = k−1`.
+
+**Why.** HR is the standard measure for survival/time-to-event outcomes (oncology, cardiology) and was previously unsupported. PM is less biased than DL under real heterogeneity and needs no likelihood optimizer, giving reviewers a robust third option.
+
+**Impact.** Purely additive — no change to any existing measure, pooling result, or the DL/REML defaults. New optional fields (`tau2_PM` in the heterogeneity dict; the HR measure and its `o_e`/`v`/`loghr`/`se` inputs). No stored results are affected.
+
+**Sections touched:** front matter (Contains), §3.5 (new), §5 (PM subsection), §10 reference implementation (`hazard_ratio`, `tau2_pm`), §11 tests.
 
 ### 2026-06-12 — Initial publication
 
@@ -243,6 +253,19 @@ yi = ln(events / person_time)
 vi = 1 / events
 ```
 
+### 3.5 Time-to-event — hazard ratio (HR)
+
+A hazard ratio is pooled on the **log** scale (like OR/RR/IRR) and is **never derived from a 2×2 count table** — it needs the survival-analysis output. Three input forms, in priority order:
+
+```
+1. log-rank O-E + variance V (Peto):   yi = (O − E) / V ,      vi = 1 / V
+2. reported log-HR + its SE:            yi = ln(HR)_reported ,  vi = SE²
+3. reported HR + 95% CI:                yi = ln(HR) ,
+                                        vi = ((ln(CI_upper) − ln(CI_lower)) / (2·z_{0.975}))²
+```
+
+Back-transform for display with `exp(yi)`; the no-effect value is 1. Most trials report form 3 (HR + CI); the extraction prompt asks for `hr`, `ci_lower`, `ci_upper` (and accepts `o_e`/`v` when a log-rank O-E is given instead).
+
 ---
 
 ## 4. Pooling
@@ -319,6 +342,13 @@ C       = Σ wᵢ - Σ wᵢ² / Σ wᵢ
         where μ̂(τ²) = Σ wᵢyᵢ / Σ wᵢ , wᵢ = 1/(vᵢ + τ²)
 ```
 maximized with a bounded 1-D optimizer on `[0, 10·max(vᵢ) + 10]`.
+
+**Paule-Mandel τ²** (empirical Bayes) — solve the generalized-Q estimating equation for the τ² at which the weighted residual sum equals the degrees of freedom:
+
+```
+find τ² ≥ 0  such that  Σ wᵢ(τ²)·(yᵢ - μ̂(τ²))² = k - 1 ,   wᵢ(τ²) = 1/(vᵢ + τ²)
+```
+The left side is monotone-decreasing in τ², so bisect on `[0, large]`; if it is already ≤ k−1 at τ²=0, return 0. PM is less biased than DL under real heterogeneity and, unlike REML, needs no likelihood optimizer. All three estimators are exposed (`tau2_DL` / `tau2_REML` / `tau2_PM`); the pooling model selects one via `tau2_method ∈ {DL, REML, PM}` (REML default).
 
 **Q-profile CI for τ²** (Viechtbauer) — the generalized Q statistic `Q_gen(τ²) = Σ wᵢ(τ²)·(yᵢ - μ̂(τ²))²` is monotone-decreasing in τ²; solve `Q_gen(τ²) = χ²_{1-α/2, df}` for the lower bound and `Q_gen(τ²) = χ²_{α/2, df}` for the upper bound (root-find on `[0, large]`).
 
@@ -460,7 +490,7 @@ import numpy as np
 from scipy import optimize, stats
 
 Z95 = float(stats.norm.ppf(0.975))
-LOG_MEASURES = {"OR", "RR", "IRR"}
+LOG_MEASURES = {"OR", "RR", "IRR", "HR"}
 
 # ── 3. effect sizes ────────────────────────────────────────────────────────
 def smd_hedges_g(m1, sd1, n1, m2, sd2, n2):
@@ -513,6 +543,17 @@ def proportion_ft(e, n):
 def incidence_rate_log(e, pt):
     return math.log(e/pt), 1.0/e
 
+def hazard_ratio(hr=None, ci_lower=None, ci_upper=None, loghr=None, se=None, o_e=None, v=None):
+    if o_e is not None and v is not None and v > 0:      # log-rank Peto
+        return o_e / v, 1.0 / v
+    if loghr is not None and se is not None and se > 0:  # reported log-HR + SE
+        return loghr, se**2
+    if hr and ci_lower and ci_upper and hr > 0 and ci_lower > 0 and ci_upper > 0:
+        lo, hi = sorted((ci_lower, ci_upper))
+        s = (math.log(hi) - math.log(lo)) / (2*Z95)
+        return (math.log(hr), s**2) if s > 0 else None
+    return None
+
 def back_transform(yi, measure):
     if measure in LOG_MEASURES: return math.exp(yi)
     if measure == "PLOGIT": return 1/(1+math.exp(-yi))
@@ -538,13 +579,26 @@ def tau2_reml(yi, vi):
     up = max(10*float(vi.max()), 10*tau2_dl(yi, vi)+1, 10)
     return max(0.0, float(optimize.minimize_scalar(neg_ll, bounds=(0, up), method="bounded").x))
 
+def tau2_pm(yi, vi, tol=1e-7, max_iter=200):     # Paule-Mandel (empirical Bayes)
+    k = yi.size
+    if k < 2: return 0.0
+    g = lambda t2: float(((1/(vi+t2)) * (yi - ((1/(vi+t2))*yi).sum()/(1/(vi+t2)).sum())**2).sum()) - (k-1)
+    if g(0.0) <= 0: return 0.0
+    lo, hi = 0.0, 10*float(vi.max()) + 10
+    while g(hi) > 0 and hi < 1e12: hi *= 2
+    for _ in range(max_iter):
+        mid = 0.5*(lo+hi); gm = g(mid)
+        if abs(gm) < tol: return mid
+        lo, hi = (mid, hi) if gm > 0 else (lo, mid)
+    return 0.5*(lo+hi)
+
 def heterogeneity(yi, vi):
     yi, vi = np.asarray(yi, float), np.asarray(vi, float); k = yi.size
-    if k < 2: return {"k": k, "Q": None, "I2": None, "tau2_REML": 0.0, "df": max(0, k-1)}
+    if k < 2: return {"k": k, "Q": None, "I2": None, "tau2_REML": 0.0, "tau2_PM": 0.0, "df": max(0, k-1)}
     q, _ = _q(yi, vi); df = k-1
     return {"k": k, "Q": q, "df": df, "p": float(stats.chi2.sf(q, df)),
             "I2": max(0.0, (q-df)/q)*100 if q > 0 else 0.0, "H": math.sqrt(q/df),
-            "tau2_DL": tau2_dl(yi, vi), "tau2_REML": tau2_reml(yi, vi)}
+            "tau2_DL": tau2_dl(yi, vi), "tau2_REML": tau2_reml(yi, vi), "tau2_PM": tau2_pm(yi, vi)}
 
 # ── 4. pooling ─────────────────────────────────────────────────────────────
 def iv_pool(yi, vi, tau2=0.0, knapp=False):
@@ -570,7 +624,8 @@ def mantel_haenszel_or(tables):
 
 def pool(yi, vi, model="random", tau2_method="REML", knapp=False):
     het = heterogeneity(yi, vi)
-    tau2 = (het["tau2_REML"] if tau2_method == "REML" else het["tau2_DL"]) if het["k"] >= 2 else 0.0
+    _key = {"REML": "tau2_REML", "DL": "tau2_DL", "PM": "tau2_PM"}.get(tau2_method.upper(), "tau2_REML")
+    tau2 = het[_key] if het["k"] >= 2 else 0.0
     return {"fixed": iv_pool(yi, vi, 0.0), "random": iv_pool(yi, vi, tau2, knapp),
             "heterogeneity": het}
 
@@ -716,6 +771,17 @@ g = ma.grade_body("High", ["High","High","Some concerns"], [1,1,1],
                   {"I2":80.0,"p":0.001}, {"ci_low":-0.1,"ci_high":0.6}, "SMD", 120,
                   egger={"p":0.02})
 assert g["final"] == "Very low"
+
+# Hazard ratio: reported HR + 95% CI -> log scale; not from a 2x2
+hr = ma.hazard_ratio(hr=0.75, ci_lower=0.60, ci_upper=0.94)
+assert abs(hr[0] - math.log(0.75)) < 1e-9
+assert abs(ma.hazard_ratio(o_e=-5.0, v=20.0)[0] + 0.25) < 1e-9   # Peto (O-E)/V
+assert ma.back_transform(hr[0], "HR") == 0.75 or abs(math.exp(hr[0]) - 0.75) < 1e-9
+
+# Paule-Mandel tau^2: > 0 on heterogeneous data, selectable in pool()
+yh = np.array([0.1,0.9,0.3,-0.2,0.6]); vh = np.array([0.05,0.04,0.06,0.05,0.03])
+assert ma.tau2_pm(yh, vh) > 0
+assert abs(ma.pool(yh, vh, tau2_method="PM")["random"]["tau2"] - ma.tau2_pm(yh, vh)) < 1e-9
 ```
 
 ---

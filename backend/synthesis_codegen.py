@@ -25,6 +25,7 @@ _META_FN = {
     "PLOGIT": ("metaprop", 'sm = "PLOGIT"'),
     "PFT": ("metaprop", 'sm = "PFT"'),
     "IRR": ("metarate", 'sm = "IRLN"'),
+    "HR": ("metagen", 'sm = "HR"'),
 }
 
 R_PREAMBLE = [
@@ -48,6 +49,15 @@ def _num(x: Any) -> str:
         return repr(float(x))
     except (TypeError, ValueError):
         return "NA"
+
+
+def _se(vi: Any) -> Any:
+    """Standard error from a sampling variance (for the metagen TE/seTE columns)."""
+    try:
+        v = float(vi)
+        return v ** 0.5 if v > 0 else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _rvec(values: Sequence[Any]) -> str:
@@ -108,6 +118,12 @@ def _r_dataframe(measure: str, studies: list[dict]) -> str:
             f"  event = {_rvec([r.get('events') for r in raw])}",
             f"  time = {_rvec([r.get('person_time') for r in raw])}",
         ]
+    elif measure == "HR":
+        # Generic inverse-variance: metagen consumes the log-HR (TE) + its SE.
+        cols += [
+            f"  TE = {_rvec([s.get('yi') for s in studies])}",
+            f"  seTE = {_rvec([_se(s.get('vi')) for s in studies])}",
+        ]
     sub = [s.get("subgroup") for s in studies]
     if any(v is not None for v in sub):
         cols.append(f"  subgroup = {_rstrvec(sub)}")
@@ -135,6 +151,8 @@ def _r_meta_call(measure: str, model: str, tau2_method: str, fe_method: str) -> 
         args = ["event = dat$event", "n = dat$n"]
     elif fn == "metarate":
         args = ["event = dat$event", "time = dat$time"]
+    elif fn == "metagen":
+        args = ["TE = dat$TE", "seTE = dat$seTE"]
     args += ["studlab = dat$study", sm,
              f'method.tau = "{tau2_method.upper()}"',
              f"common = {common}", f"random = {random}"]

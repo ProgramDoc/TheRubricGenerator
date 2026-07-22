@@ -223,6 +223,7 @@ def _set_status(conn, review_id: int, status: str, phase: str | None = None) -> 
 OUTCOME_TYPE_MEASURES = {
     "continuous": ["SMD", "MD"],
     "binary": ["OR", "RR", "RD"],
+    "time_to_event": ["HR"],
     "correlation": ["ZCOR"],
     "single_arm": ["PLOGIT", "PFT", "IRR"],
 }
@@ -230,17 +231,21 @@ OUTCOME_TYPE_MEASURES = {
 MEASURE_LABELS = {
     "MD": "Mean difference", "SMD": "Standardized mean difference (Hedges' g)",
     "OR": "Odds ratio", "RR": "Risk ratio", "RD": "Risk difference",
+    "HR": "Hazard ratio",
     "ZCOR": "Correlation (Fisher z)", "PLOGIT": "Proportion (logit)",
     "PFT": "Proportion (Freeman-Tukey)", "IRR": "Incidence rate",
 }
 
-# Required numeric keys per measure, for the needs_review flag.
+# Required numeric keys per measure, for the needs_review flag. HR is reported
+# directly (HR + 95% CI) rather than computed from a 2x2 — the engine also
+# accepts log-HR + SE or log-rank O-E + V when present.
 _REQUIRED_KEYS = {
     "MD": ["m1", "sd1", "n1", "m2", "sd2", "n2"],
     "SMD": ["m1", "sd1", "n1", "m2", "sd2", "n2"],
     "OR": ["events1", "total1", "events2", "total2"],
     "RR": ["events1", "total1", "events2", "total2"],
     "RD": ["events1", "total1", "events2", "total2"],
+    "HR": ["hr", "ci_lower", "ci_upper"],
     "ZCOR": ["r", "n"],
     "PLOGIT": ["events", "n"],
     "PFT": ["events", "n"],
@@ -253,7 +258,7 @@ def supported_measures() -> dict[str, Any]:
         "outcome_types": OUTCOME_TYPE_MEASURES,
         "measure_labels": MEASURE_LABELS,
         "models": ["fixed", "random", "both"],
-        "tau2_methods": ["REML", "DL"],
+        "tau2_methods": ["REML", "DL", "PM"],
         "fe_methods": ["IV", "MH"],
         "re_ci_methods": ["wald", "knapp_hartung"],
     }
@@ -352,6 +357,11 @@ def _extract_field_spec(measure: str) -> str:
     if measure in ("OR", "RR", "RD"):
         return ('"events1": intervention-arm event count, "total1": intervention-arm total,\n'
                 '   "events2": comparator-arm event count, "total2": comparator-arm total')
+    if measure == "HR":
+        return ('"hr": the reported hazard ratio (intervention vs comparator), '
+                '"ci_lower" and "ci_upper": its 95% confidence-interval bounds. Report '
+                'the HR verbatim; if instead the paper gives a log-rank O-E and variance '
+                'V, use "o_e" and "v" — never derive a HR from a 2x2 table')
     if measure == "ZCOR":
         return '"r": Pearson correlation, "n": sample size'
     if measure in ("PLOGIT", "PFT"):

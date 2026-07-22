@@ -10,6 +10,7 @@ hand-computable fixtures.
 
 import math
 
+import numpy as np
 import pytest
 
 from backend import synthesis_stats as ss
@@ -112,6 +113,32 @@ class TestEffectSizes:
         assert e.yi == pytest.approx(math.log(15 / 1000))
         assert e.vi == pytest.approx(1 / 15)
 
+    def test_hazard_ratio_from_ci(self):
+        # HR + 95% CI -> yi = ln(HR), SE recovered from the CI width on the log scale.
+        e = ss.effect_size("HR", {"hr": 0.75, "ci_lower": 0.60, "ci_upper": 0.94})
+        assert e.measure == "HR"
+        assert e.yi == pytest.approx(math.log(0.75))
+        se = (math.log(0.94) - math.log(0.60)) / (2 * ss._z_crit())
+        assert e.vi == pytest.approx(se ** 2)
+        assert ss.back_transform(e.yi, "HR") == pytest.approx(0.75)
+
+    def test_hazard_ratio_peto_oe_v(self):
+        e = ss.hazard_ratio(o_e=-5.0, v=20.0)
+        assert e.yi == pytest.approx(-0.25) and e.vi == pytest.approx(0.05)
+
+    def test_hazard_ratio_loghr_se(self):
+        e = ss.hazard_ratio(loghr=-0.3, se=0.1)
+        assert e.yi == pytest.approx(-0.3) and e.vi == pytest.approx(0.01)
+
+    def test_hazard_ratio_not_from_2x2(self):
+        # A 2x2 count table alone yields no HR.
+        assert ss.effect_size("HR", {"events1": 10, "total1": 100,
+                                     "events2": 20, "total2": 100}) is None
+
+    def test_hr_is_log_and_ratio_axis(self):
+        assert ss.measure_is_log("HR") and ss.display_uses_log_axis("HR")
+        assert ss.NULL_VALUE["HR"] == 1.0
+
 
 class TestPooling:
     def test_fixed_inverse_variance(self):
@@ -133,6 +160,43 @@ class TestPooling:
         assert res["k"] == 1
         assert res["heterogeneity"]["status"] == "insufficient_studies"
         assert res["random"]["estimate"] == pytest.approx(0.5)
+
+
+class TestEngineExtras:
+    """Paule-Mandel tau^2 + hazard-ratio pooling."""
+
+    HET = (np.array([0.1, 0.9, 0.3, -0.2, 0.6]), np.array([0.05, 0.04, 0.06, 0.05, 0.03]))
+
+    def test_tau2_paule_mandel_positive(self):
+        yi, vi = self.HET
+        pm = ss.tau2_paule_mandel(yi, vi)
+        assert pm > 0
+        # PM sits in the same ballpark as DL/REML on a clearly heterogeneous set.
+        assert abs(pm - ss.tau2_dersimonian_laird(yi, vi)) < 0.2
+
+    def test_tau2_paule_mandel_zero_when_homogeneous(self):
+        yi = np.array([0.2, 0.2, 0.2]); vi = np.array([0.05, 0.05, 0.05])
+        assert ss.tau2_paule_mandel(yi, vi) == 0.0
+
+    def test_heterogeneity_exposes_pm(self):
+        yi, vi = self.HET
+        het = ss.heterogeneity(yi, vi)
+        assert "tau2_PM" in het and het["tau2_PM"] > 0
+
+    def test_pool_selects_pm(self):
+        yi, vi = self.HET
+        eff = [ss.EffectSize(float(y), float(v), "MD") for y, v in zip(yi, vi)]
+        res = ss.pool(eff, "MD", tau2_method="PM")
+        assert res["random"]["tau2"] == pytest.approx(ss.tau2_paule_mandel(yi, vi))
+
+    def test_pool_hr_back_transforms_to_ratio(self):
+        effects = [ss.effect_size("HR", {"hr": h, "ci_lower": lo, "ci_upper": hi})
+                   for h, lo, hi in [(0.75, 0.60, 0.94), (0.80, 0.65, 0.98), (0.70, 0.52, 0.95)]]
+        res = ss.pool(effects, "HR", model="random")
+        assert res["forest"]["log_axis"] is True
+        # Every forest study renders on the ratio (display) scale.
+        assert res["forest"]["studies"][0]["es"] == pytest.approx(0.75, abs=1e-6)
+        assert 0.6 < ss.back_transform(res["random"]["estimate"], "HR") < 0.9
 
 
 class TestPublicationBias:
