@@ -14,6 +14,15 @@ Ships two agents so far:
   Methodology: ``docs/shareable/pooling_meta_analysis_shareable.md``.
 """
 
+from .grade import (
+    GRADE_LEVELS,
+    GradeConfig,
+    absolute_effects,
+    grade_body,
+    sof_row,
+)
+from .grade_assess import grade_from_pooled, grade_from_studies
+from .grade_prep import grade_bodies, grade_one_body, rob_labels_for_body
 from .pooling import (
     eggers_test,
     grade_pooling_inputs,
@@ -77,4 +86,15 @@ __all__ = [
     "build_alias_index",
     "match_outcome_name",
     "apply_canonical_map",
+    # GRADE certainty agent
+    "grade_body",
+    "sof_row",
+    "absolute_effects",
+    "GradeConfig",
+    "GRADE_LEVELS",
+    "grade_bodies",
+    "grade_one_body",
+    "rob_labels_for_body",
+    "grade_from_pooled",
+    "grade_from_studies",
 ]

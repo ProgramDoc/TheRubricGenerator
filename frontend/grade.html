@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GRADE Agent — The AI Researcher</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#fff; --ink:#1a1d23; --muted:#6b7280; --line:#e5e7eb;
+    --accent:#6d5ae6; --accent2:#0ea5a4; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+    --high:#16a34a; --mod:#65a30d; --low:#d97706; --vlow:#dc2626;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#f4f5f7;color:var(--ink)}
+  #topbar{display:flex;align-items:center;gap:6px;background:var(--bg);padding:8px 12px;color:#fff}
+  .brand{font-weight:700;font-size:13px;margin-right:8px}
+  .brand span{color:#a78bfa}
+  #topbar nav{display:flex;gap:2px}
+  #topbar nav a{font-size:11px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:4px 8px;border-radius:4px}
+  #topbar nav a.active{color:#fff;background:rgba(255,255,255,.09)}
+  .tb-btn{background:rgba(255,255,255,.08);color:#fff;border:1px solid rgba(255,255,255,.16);border-radius:5px;font-size:11px;font-weight:600;padding:5px 10px;cursor:pointer}
+  .tb-btn:hover{background:rgba(255,255,255,.16)}
+  #wrap{display:grid;grid-template-columns:minmax(420px,1fr) minmax(420px,1fr);gap:16px;padding:16px;max-width:1500px;margin:0 auto}
+  @media(max-width:980px){#wrap{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+  h1{font-size:16px;margin:0 0 2px}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:0 0 10px}
+  .sub{color:var(--muted);font-size:12px;margin:0 0 14px;line-height:1.5}
+  label{display:block;font-size:11px;font-weight:600;color:var(--muted);margin:8px 0 3px}
+  input,select,textarea{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:12px;font-family:inherit}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+  table{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:6px}
+  th,td{border:1px solid var(--line);padding:4px 6px;text-align:center}
+  th{background:#f9fafb;font-weight:600;color:var(--muted);font-size:10.5px}
+  td input,td select{border:none;padding:3px;text-align:center;border-radius:0}
+  .btn{background:var(--accent);color:#fff;border:none;border-radius:7px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer}
+  .btn:hover{filter:brightness(1.08)}
+  .btn.ghost{background:#fff;color:var(--accent);border:1px solid var(--accent)}
+  .btn.sm{padding:5px 9px;font-size:11px}
+  .muted{color:var(--muted);font-size:11px}
+  .pips{font-size:20px;letter-spacing:2px}
+  .pill{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:700;color:#fff}
+  .c-High{background:var(--high)} .c-Moderate{background:var(--mod)} .c-Low{background:var(--low)} .c-Very.low,.c-Verylow{background:var(--vlow)}
+  .domain{display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:12px}
+  .domain:last-child{border-bottom:none}
+  .dlv{font-family:var(--mono);font-weight:700;white-space:nowrap}
+  .dlv.down{color:var(--vlow)} .dlv.up{color:var(--high)} .dlv.zero{color:var(--muted)}
+  .dreason{color:var(--muted);font-size:11px;margin-top:1px}
+  .abs td{text-align:right} .abs td:first-child{text-align:left;color:var(--muted)}
+  .runrow{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--line);font-size:12px;cursor:pointer}
+  .runrow:hover{background:#fafafc}
+  .toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#1a1d23;color:#fff;padding:9px 16px;border-radius:8px;font-size:12px;opacity:0;transition:.2s;pointer-events:none}
+  .toast.show{opacity:1}
+  details{margin-top:8px} summary{cursor:pointer;font-size:11px;font-weight:600;color:var(--accent)}
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <a href="/" class="tb-btn" style="margin-right:6px">&larr; Lab</a>
+  <div class="brand">The AI <span>Researcher</span></div>
+  <nav>
+    <a href="/dashboard">Dashboard</a>
+    <a href="/challenges">Challenges</a>
+    <a href="/annotator">Annotator</a>
+    <a href="/quality-appraisal">Quality Appraisal</a>
+    <a href="/grade" class="active">GRADE</a>
+    <a href="/analytics">Analytics</a>
+    <a href="/library">Library</a>
+  </nav>
+  <span id="user-display" class="muted" style="font-family:var(--mono);color:rgba(255,255,255,.55)"></span>
+  <div style="flex:1"></div>
+  <button class="tb-btn" onclick="loadRuns()">&#8635; Runs</button>
+  <button class="tb-btn" onclick="logout()" style="color:#f87171;border-color:rgba(248,113,113,.3)">Sign out</button>
+</div>
+
+<div id="wrap">
+  <!-- ── INPUT ──────────────────────────────────────────── -->
+  <div>
+    <div class="card">
+      <h1>GRADE — body-of-evidence certainty</h1>
+      <p class="sub">Rate the certainty of a pooled outcome. Enter per-study arm data and risk of bias
+      (the pooling engine computes the effect + heterogeneity), add the review judgments, and the agent
+      rates the five downgrade + three upgrade domains and computes the absolute effects. One outcome =
+      one body of evidence — grade randomized and non-randomized evidence separately.</p>
+
+      <div class="row3">
+        <div><label>Outcome name</label><input id="f-outcome" placeholder="e.g. All-cause mortality"></div>
+        <div><label>Comparison</label><input id="f-comparison" placeholder="Drug vs placebo"></div>
+        <div><label>Timeframe</label><input id="f-timeframe" placeholder="12 months"></div>
+      </div>
+      <div class="row3">
+        <div>
+          <label>Effect measure</label>
+          <select id="f-measure">
+            <option value="RR">RR (risk ratio)</option>
+            <option value="OR">OR (odds ratio)</option>
+            <option value="RD">RD (risk difference)</option>
+            <option value="IRR">IRR (incidence rate ratio)</option>
+            <option value="MD">MD (mean difference)</option>
+            <option value="SMD">SMD (standardized MD)</option>
+          </select>
+        </div>
+        <div>
+          <label>Design (starting certainty)</label>
+          <select id="f-design">
+            <option value="rct">RCT → High</option>
+            <option value="nrs">Non-randomized → Low</option>
+          </select>
+        </div>
+        <div><label>Studies</label><button class="btn ghost sm" style="margin-top:2px" onclick="addRow()">+ Add study</button></div>
+      </div>
+
+      <div id="binary-block">
+        <table id="study-table">
+          <thead><tr>
+            <th>Study</th><th>Int events</th><th>Int N</th><th>Ctrl events</th><th>Ctrl N</th>
+            <th>Risk of bias</th><th></th>
+          </tr></thead>
+          <tbody id="study-body"></tbody>
+        </table>
+      </div>
+      <div id="cont-block" style="display:none">
+        <table id="cont-table">
+          <thead><tr>
+            <th>Study</th><th>Int mean</th><th>Int SD</th><th>Int N</th><th>Ctrl mean</th><th>Ctrl SD</th><th>Ctrl N</th>
+            <th>Risk of bias</th><th></th>
+          </tr></thead>
+          <tbody id="cont-body"></tbody>
+        </table>
+      </div>
+      <p class="muted" style="margin-top:6px">Leave a cell blank to drop a study from that field. Continuous measures (MD/SMD) have no per-1000 absolute effects.</p>
+    </div>
+
+    <div class="card">
+      <h2>Review judgments</h2>
+      <div class="row3">
+        <div><label>Assumed / control risk (per 1000)</label><input id="f-baseline" type="number" placeholder="e.g. 200"></div>
+        <div><label>MID benefit</label><input id="f-midb" type="number" step="any" placeholder="optional"></div>
+        <div><label>MID harm</label><input id="f-midh" type="number" step="any" placeholder="optional"></div>
+      </div>
+      <div class="row3">
+        <div>
+          <label>Indirectness</label>
+          <select id="f-indirect">
+            <option value="">Auto-assess (LLM)</option>
+            <option value="0">None (0)</option>
+            <option value="1">Serious (−1)</option>
+            <option value="2">Very serious (−2)</option>
+          </select>
+        </div>
+        <div>
+          <label>Dose-response (NRS)</label>
+          <select id="f-dose"><option value="">—</option><option value="true">Yes (+1)</option><option value="false">No</option></select>
+        </div>
+        <div>
+          <label>Opposing confounding (NRS)</label>
+          <select id="f-oppose"><option value="false">No</option><option value="true">Yes (+1)</option></select>
+        </div>
+      </div>
+      <details>
+        <summary>Target PICO (for auto-indirectness)</summary>
+        <div class="row"><div><label>Population</label><input id="f-pop"></div><div><label>Intervention</label><input id="f-int"></div></div>
+        <div class="row"><div><label>Comparator</label><input id="f-comp"></div><div><label>Outcome</label><input id="f-out"></div></div>
+      </details>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button class="btn" onclick="preview()">Grade this outcome</button>
+        <button class="btn ghost" onclick="saveRun()">Save run</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Saved runs</h2>
+      <div id="runs-list"><p class="muted">Loading…</p></div>
+    </div>
+  </div>
+
+  <!-- ── RESULT ─────────────────────────────────────────── -->
+  <div>
+    <div class="card" id="result-card">
+      <h2>Result</h2>
+      <p class="muted" id="result-empty">Enter study data and click <b>Grade this outcome</b> to see the certainty rating and absolute effects.</p>
+      <div id="result" style="display:none"></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200);}
+async function api(path, opts){
+  const r = await fetch(path, Object.assign({headers:{'Content-Type':'application/json'}}, opts||{}));
+  if(!r.ok){let e;try{e=await r.json()}catch{e={detail:r.statusText}} throw new Error(typeof e.detail==='string'?e.detail:JSON.stringify(e.detail));}
+  return r.json();
+}
+function logout(){document.cookie='rubricgen_session=;max-age=0;path=/';location.href='/login';}
+
+const ROB_OPTS = ['Low','Some concerns','Moderate','Serious','High','Critical','No information'];
+function robSelect(v){return `<select class="rob">${ROB_OPTS.map(o=>`<option ${o===v?'selected':''}>${o}</option>`).join('')}</select>`;}
+
+let rowN = 0;
+function addRow(binary=true, data={}){
+  rowN++;
+  const id = 'A'.charCodeAt(0);
+  const label = data.study_id || ('Study '+rowN);
+  if(isContinuous()){
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td><input class="sid" value="${label}"></td>
+      <td><input class="mi" type="number" step="any"></td><td><input class="sdi" type="number" step="any"></td><td><input class="ni" type="number"></td>
+      <td><input class="mc" type="number" step="any"></td><td><input class="sdc" type="number" step="any"></td><td><input class="nc" type="number"></td>
+      <td>${robSelect('Low')}</td><td><button class="btn sm ghost" onclick="this.closest('tr').remove()">×</button></td>`;
+    $('cont-body').appendChild(tr);
+  } else {
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td><input class="sid" value="${label}"></td>
+      <td><input class="ei" type="number"></td><td><input class="ni" type="number"></td>
+      <td><input class="ec" type="number"></td><td><input class="nc" type="number"></td>
+      <td>${robSelect('Low')}</td><td><button class="btn sm ghost" onclick="this.closest('tr').remove()">×</button></td>`;
+    $('study-body').appendChild(tr);
+  }
+}
+function isContinuous(){return ['MD','SMD'].includes($('f-measure').value);}
+function onMeasureChange(){
+  const cont=isContinuous();
+  $('binary-block').style.display=cont?'none':'';
+  $('cont-block').style.display=cont?'':'none';
+  const body=cont?$('cont-body'):$('study-body');
+  if(!body.children.length){addRow();addRow();addRow();}
+}
+$('f-measure').addEventListener('change',()=>{ $('study-body').innerHTML='';$('cont-body').innerHTML='';rowN=0;onMeasureChange(); });
+
+function num(v){const n=parseFloat(v);return isFinite(n)?n:null;}
+function collect(){
+  const cont=isContinuous();
+  const studies=[]; const rob=[];
+  const rows=(cont?$('cont-body'):$('study-body')).querySelectorAll('tr');
+  rows.forEach(tr=>{
+    const sid=tr.querySelector('.sid').value||undefined;
+    let s={study_id:sid, design:$('f-design').value==='rct'?'RCT':'cohort'};
+    if(cont){
+      s.mean_int=num(tr.querySelector('.mi').value); s.sd_int=num(tr.querySelector('.sdi').value); s.n_int=num(tr.querySelector('.ni').value);
+      s.mean_ctrl=num(tr.querySelector('.mc').value); s.sd_ctrl=num(tr.querySelector('.sdc').value); s.n_ctrl=num(tr.querySelector('.nc').value);
+    } else {
+      s.events_int=num(tr.querySelector('.ei').value); s.n_int=num(tr.querySelector('.ni').value);
+      s.events_ctrl=num(tr.querySelector('.ec').value); s.n_ctrl=num(tr.querySelector('.nc').value);
+    }
+    studies.push(s); rob.push(tr.querySelector('.rob').value);
+  });
+  const body={
+    studies, measure:$('f-measure').value,
+    per_study_rob:rob,
+    outcome_name:$('f-outcome').value||undefined,
+    comparison:$('f-comparison').value||undefined,
+    timepoint:$('f-timeframe').value||undefined,
+    design_class:$('f-design').value,
+    baseline_risk_per_1000:num($('f-baseline').value),
+    mid_benefit:num($('f-midb').value), mid_harm:num($('f-midh').value),
+    dose_response:$('f-dose').value===''?undefined:($('f-dose').value==='true'),
+    opposing_confounding:$('f-oppose').value==='true',
+    outcome:{name:$('f-outcome').value||undefined, timeframe:$('f-timeframe').value||undefined},
+  };
+  const ind=$('f-indirect').value;
+  if(ind!=='') body.indirectness_levels=parseInt(ind);
+  return body;
+}
+function targetPico(){
+  const p={population:$('f-pop').value,intervention:$('f-int').value,comparator:$('f-comp').value,outcome:$('f-out').value};
+  return Object.values(p).some(v=>v&&v.trim())?p:null;
+}
+
+function pipStr(level){const n={High:4,Moderate:3,Low:2,'Very low':1}[level]||0;return '⊕'.repeat(n)+'⊝'.repeat(4-n);}
+function cls(level){return 'c-'+(level||'').replace(/\s/g,'');}
+
+function renderGrade(g, sof){
+  const rel=sof&&sof.relative_effect||{};
+  const ae=g.absolute_effects;
+  let domHtml=g.domains.map(d=>{
+    const lv=d.downgrade||d.upgrade; const dir=d.upgrade?'up':(d.downgrade?'down':'zero');
+    const sign=d.upgrade?('+'+d.upgrade):(d.downgrade?('−'+d.downgrade):'0');
+    return `<div class="domain"><div><b>${d.domain}</b><div class="dreason">${d.reason||''}</div></div><div class="dlv ${dir}">${sign}</div></div>`;
+  }).join('');
+  let absHtml='';
+  if(ae){
+    absHtml=`<h2 style="margin-top:16px">Anticipated absolute effects (per 1000)</h2>
+      <table class="abs">
+        <tr><td>Assumed risk (control)</td><td>${ae.baseline_per_1000}</td></tr>
+        <tr><td>Risk with intervention</td><td>${ae.intervention_per_1000}</td></tr>
+        <tr><td>Risk difference (95% CI)</td><td>${ae.risk_difference_per_1000} (${ae.rd_ci_per_1000[0]} to ${ae.rd_ci_per_1000[1]})</td></tr>
+        <tr><td>NNT</td><td>${ae.nnt==null?'—':ae.nnt}</td></tr>
+        <tr><td>Favours</td><td>${ae.favours}</td></tr>
+      </table>`;
+  }
+  const relTxt = rel.estimate!=null ? `${rel.estimate.toFixed(3)} (95% CI ${rel.ci_low!=null?rel.ci_low.toFixed(3):'?'} to ${rel.ci_high!=null?rel.ci_high.toFixed(3):'?'})` : '—';
+  $('result-empty').style.display='none';
+  const r=$('result'); r.style.display='';
+  r.innerHTML=`
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+      <span class="pips">${pipStr(g.final)}</span>
+      <span class="pill ${cls(g.final)}">${g.final}</span>
+      <span class="muted">from ${g.initial}${g.total_downgrade?` (−${g.total_downgrade})`:''}${g.total_upgrade?` (+${g.total_upgrade})`:''}</span>
+    </div>
+    <div style="font-size:12px;margin-bottom:12px"><b>${$('f-measure').value}</b> ${relTxt} · k=${sof?sof.n_studies:'?'} · N=${sof?sof.n_participants||'?':'?'}</div>
+    <h2>GRADE domains</h2>${domHtml}
+    ${absHtml}
+    <p class="muted" style="margin-top:14px;line-height:1.5">${g.explanation||''}</p>`;
+}
+
+async function preview(){
+  try{
+    const body=collect(); body.target_pico=targetPico();
+    // Stateless preview does not auto-assess indirectness; if left on Auto, note it.
+    const out=await api('/api/agents/grade-sof',{method:'POST',body:JSON.stringify(body)});
+    renderGrade(out.grade, out.sof_row);
+    if(body.indirectness_levels===undefined) toast('Previewed with indirectness = 0 (auto-assess runs on Save)');
+  }catch(e){toast('Error: '+e.message);}
+}
+
+async function saveRun(){
+  try{
+    const b=collect();
+    const payload={
+      name:($('f-outcome').value||'GRADE run'),
+      auto_indirectness:$('f-indirect').value==='',
+      target_pico:targetPico()||undefined,
+      rob_by_study:Object.fromEntries((b.studies||[]).map((s,i)=>[s.study_id, b.per_study_rob[i]])),
+      bodies:[b],
+    };
+    const detail=await api('/api/grade/runs',{method:'POST',body:JSON.stringify(payload)});
+    toast('Saved run #'+detail.id);
+    const res=detail.results&&detail.results[0];
+    if(res&&res.grade) renderGrade(res.grade, res.sof);
+    loadRuns();
+  }catch(e){toast('Error: '+e.message);}
+}
+
+async function loadRuns(){
+  try{
+    const runs=await api('/api/grade/runs');
+    const el=$('runs-list');
+    if(!runs.length){el.innerHTML='<p class="muted">No saved runs yet.</p>';return;}
+    el.innerHTML=runs.map(r=>`<div class="runrow" onclick="openRun(${r.id})">
+        <span>${r.name||'(untitled)'} <span class="muted">· ${r.n_bodies} bodies · ${r.status}</span></span>
+        <span class="muted">${(r.created_at||'').slice(0,16).replace('T',' ')}</span></div>`).join('');
+  }catch(e){$('runs-list').innerHTML='<p class="muted">Sign in to see runs.</p>';}
+}
+async function openRun(id){
+  try{
+    const d=await api('/api/grade/runs/'+id);
+    const res=d.results&&d.results[0];
+    if(res&&res.grade){renderGrade(res.grade, res.sof); toast('Loaded run #'+id+' — export: /api/grade/runs/'+id+'/csv');}
+  }catch(e){toast('Error: '+e.message);}
+}
+
+async function init(){
+  try{const me=await api('/api/auth/me');$('user-display').textContent=me.email||'';}catch{}
+  onMeasureChange();
+  loadRuns();
+}
+init();
+</script>
+</body>
+</html>

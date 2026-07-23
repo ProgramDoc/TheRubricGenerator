@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import Cookie, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Body, Cookie, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -63,6 +63,10 @@ from backend import annotator as annotator_mod
 from backend import paper_files as paper_files_mod
 from backend.quality_appraisal import QUALITY_APPRAISAL_TABLES_SQL
 from backend import quality_appraisal as qa_mod
+from backend.synthesis.grade_agent import GRADE_TABLES_SQL
+from backend.synthesis import grade_agent as grade_mod
+from backend.synthesis import grade_assess as grade_assess_mod
+from backend.synthesis.pooling import pool_outcome as synthesis_pool_outcome
 from backend.review import GRADE_REVIEWS_TABLES_SQL
 from backend import review as review_mod
 from backend.extension import EXTENSION_TABLES_SQL
@@ -406,6 +410,8 @@ def init_db() -> None:
         # Idempotent ALTER TABLEs for indirectness + target-PICO columns added
         # in the GRADE-indirectness rollout. Safe on both new and existing DBs.
         qa_mod.migrate_qa_columns(conn)
+        # GRADE agent: body-of-evidence certainty runs (consumes the pooling agent)
+        conn.executescript(GRADE_TABLES_SQL)
         # 3-judge adjudication: human-review queue for grade disagreements
         conn.executescript(GRADE_REVIEWS_TABLES_SQL)
         conn.executescript(EXTENSION_TABLES_SQL)
@@ -1180,6 +1186,15 @@ def quality_appraisal_page(rubricgen_session: str | None = Cookie(default=None))
     if not user:
         return RedirectResponse("/login", status_code=302)
     return FileResponse(str(FRONTEND / "quality-appraisal.html"), media_type="text/html")
+
+
+@app.get("/grade", include_in_schema=False)
+def grade_page(rubricgen_session: str | None = Cookie(default=None)):
+    """GRADE agent — body-of-evidence certainty (consumes the pooling agent)."""
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return FileResponse(str(FRONTEND / "grade.html"), media_type="text/html")
 
 
 @app.get("/review", include_in_schema=False)
@@ -8920,6 +8935,266 @@ def api_qa_run_xlsx(run_id: int,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="quality_appraisal_{run_id}.xlsx"'},
     )
+
+
+# ===========================================================================
+# GRADE agent — body-of-evidence certainty (consumes the pooling agent)
+# ===========================================================================
+
+@app.post("/api/agents/grade")
+def api_agents_grade(body: dict = Body(default=None),
+                     rubricgen_session: str | None = Cookie(default=None),
+                     x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Rate one pooled body of evidence on the GRADE scale (stateless).
+
+    Body: either a precomputed ``pool_result`` or raw ``studies`` + ``measure``,
+    plus ``per_study_rob`` and the human judgments (``baseline_risk_per_1000``,
+    ``mid_benefit``/``mid_harm``, ``indirectness_levels``+``reason``,
+    ``dose_response``, ``opposing_confounding``, ``overrides``). Pure — no model
+    call, no persistence; indirectness defaults to 0 when omitted (use the run
+    endpoint for hybrid auto-indirectness). See backend/synthesis/grade_agent.py.
+    """
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    try:
+        return grade_mod.grade_certainty(body or {})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/agents/grade-sof")
+def api_agents_grade_sof(body: dict = Body(default=None),
+                         rubricgen_session: str | None = Cookie(default=None),
+                         x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Grade one body and assemble its Summary-of-Findings row. Returns {pool, grade, sof_row}."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    try:
+        return grade_mod.sof(body or {})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class GradeRunPayload(BaseModel):
+    # Each body: {studies|pool_result, measure?, outcome_name?, comparison?,
+    # timepoint?, design_class?, plus per-outcome judgments}.
+    bodies: list[dict]
+    name: str | None = None
+    project_id: int | None = None
+    rob_by_study: dict[str, str] | None = None
+    target_pico: dict[str, str] | None = None
+    auto_indirectness: bool = True
+
+
+@app.post("/api/grade/runs")
+def api_grade_run_create(body: GradeRunPayload,
+                         rubricgen_session: str | None = Cookie(default=None),
+                         x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Grade a set of pooled bodies and persist the run.
+
+    Each body is pooled server-side (when only ``studies`` are given), RoB is joined
+    from ``rob_by_study``, indirectness is hybrid (reviewer value wins; otherwise
+    auto-assessed via one model call when ``auto_indirectness`` is on and a target
+    PICO is available). Charges 2 cr per body that actually uses auto-indirectness;
+    admins bypass. Refunds on failure.
+    """
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    bodies_in = body.bodies or []
+    if not bodies_in:
+        raise HTTPException(400, "bodies must be a non-empty list")
+    if len(bodies_in) > 100:
+        raise HTTPException(400, "at most 100 bodies per run")
+
+    is_admin = user.get("role") == "admin"
+    target_pico = body.target_pico or None
+    have_pico = bool(target_pico and any((target_pico.get(k) or "").strip()
+                                         for k in ("population", "intervention", "comparator", "outcome")))
+
+    # Pool each body (pure) and split reviewer-supplied judgments from the pooled result.
+    pooled_bodies: list[dict] = []
+    judgments_by_outcome: dict[str, dict] = {}
+    _JUDGMENT_KEYS = {"baseline_risk_per_1000", "mid_benefit", "mid_harm",
+                      "indirectness_levels", "indirectness_reason", "dose_response",
+                      "opposing_confounding", "overrides", "initial", "subgroup",
+                      "metaregression", "outcome", "study_context"}
+    try:
+        for b in bodies_in:
+            pr = b.get("pool_result")
+            if not (pr and isinstance(pr, dict) and pr.get("pooled")):
+                studies = b.get("studies")
+                measure = b.get("measure") or (pr or {}).get("measure")
+                if not studies or not measure:
+                    raise ValueError("each body needs a pooled 'pool_result' or 'studies' + 'measure'")
+                pr = synthesis_pool_outcome(
+                    studies, measure, model=b.get("model", "random"),
+                    tau2_method=b.get("tau2_method", "REML"),
+                    outcome_name=b.get("outcome_name"),
+                    favorable_direction=b.get("favorable_direction", "lower"))
+            wrapped = {
+                "outcome_name": b.get("outcome_name") or pr.get("outcome_name"),
+                "comparison": b.get("comparison"),
+                "timepoint": b.get("timepoint"),
+                "design_class": b.get("design_class") or pr.get("design_class"),
+                "measure": pr.get("measure"),
+                "k": pr.get("k"),
+                "pooled": pr,
+                "warnings": [],
+            }
+            pooled_bodies.append(wrapped)
+            key = " | ".join(str(wrapped.get(k) or "").strip().lower()
+                             for k in ("outcome_name", "comparison", "timepoint"))
+            judgments_by_outcome[key] = {k: b[k] for k in _JUDGMENT_KEYS if k in b}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    # Count bodies that will trigger the LLM indirectness pass (reviewer value absent).
+    auto_bodies = 0
+    if body.auto_indirectness:
+        for wrapped in pooled_bodies:
+            key = " | ".join(str(wrapped.get(k) or "").strip().lower()
+                             for k in ("outcome_name", "comparison", "timepoint"))
+            if judgments_by_outcome.get(key, {}).get("indirectness_levels") is None:
+                auto_bodies += 1
+    cost = auto_bodies * grade_mod.CREDIT_COST_GRADE_INDIRECTNESS
+
+    conn = get_db()
+    try:
+        if cost:
+            _annotator_ai_gate(conn, user, cost, f"GRADE run ({auto_bodies} auto-indirectness)")
+        run_id = grade_mod.create_run(
+            conn, user["id"], name=body.name, project_id=body.project_id,
+            target_pico=target_pico, auto_indirectness=body.auto_indirectness,
+            n_bodies=len(pooled_bodies))
+        grade_mod.log_event(conn, run_id, "run_started",
+                            f"Grading {len(pooled_bodies)} bodies of evidence")
+        try:
+            results = grade_assess_mod.grade_from_pooled(
+                pooled_bodies, rob_by_study=body.rob_by_study or None,
+                judgments_by_outcome=judgments_by_outcome,
+                target_pico=target_pico if have_pico else None,
+                auto_indirectness=body.auto_indirectness)
+            for wrapped, res in zip(pooled_bodies, results):
+                grade_mod.save_result(conn, run_id, res)
+                grade_mod.log_event(conn, run_id, "body_done",
+                                    f"{res.get('outcome_name') or 'outcome'}: "
+                                    f"{(res.get('grade') or {}).get('final') or 'not graded'}")
+            grade_mod.finalize_run(conn, run_id, "complete")
+        except Exception as e:  # noqa: BLE001
+            grade_mod.finalize_run(conn, run_id, "failed", str(e))
+            if cost and not is_admin:
+                bill.refund_credits(conn, user["id"], cost, "GRADE run failed")
+            logger.exception("GRADE run %s failed", run_id)
+            raise HTTPException(500, "GRADE run failed")
+        detail = grade_mod.get_run_detail(conn, run_id, user["id"], is_admin)
+    finally:
+        conn.close()
+    return detail
+
+
+@app.get("/api/grade/runs")
+def api_grade_runs_list(rubricgen_session: str | None = Cookie(default=None),
+                        x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    conn = get_db()
+    try:
+        return grade_mod.list_runs(conn, user["id"], user.get("role") == "admin")
+    finally:
+        conn.close()
+
+
+@app.get("/api/grade/runs/{run_id}")
+def api_grade_run_get(run_id: int,
+                      rubricgen_session: str | None = Cookie(default=None),
+                      x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    conn = get_db()
+    try:
+        detail = grade_mod.get_run_detail(conn, run_id, user["id"], user.get("role") == "admin")
+    finally:
+        conn.close()
+    if detail is None:
+        raise HTTPException(404, "run not found")
+    return detail
+
+
+@app.get("/api/grade/runs/{run_id}/events")
+def api_grade_run_events(run_id: int, after: int = 0,
+                         rubricgen_session: str | None = Cookie(default=None),
+                         x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    conn = get_db()
+    try:
+        if grade_mod._load_run(conn, run_id, user["id"], user.get("role") == "admin") is None:
+            raise HTTPException(404, "run not found")
+        rows = conn.execute(
+            """SELECT id, event_type, message, detail_json, created_at
+                 FROM grade_events WHERE run_id=? AND id > ?
+                ORDER BY id ASC LIMIT 500""", (run_id, int(after))).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        try:
+            detail = json.loads(r["detail_json"]) if r["detail_json"] else None
+        except Exception:
+            detail = None
+        out.append({"id": r["id"], "event_type": r["event_type"], "message": r["message"],
+                    "detail": detail, "created_at": r["created_at"]})
+    return out
+
+
+@app.delete("/api/grade/runs/{run_id}")
+def api_grade_run_delete(run_id: int,
+                         rubricgen_session: str | None = Cookie(default=None),
+                         x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    conn = get_db()
+    try:
+        ok = grade_mod.soft_delete_run(conn, run_id, user["id"], user.get("role") == "admin")
+    finally:
+        conn.close()
+    if not ok:
+        raise HTTPException(404, "run not found")
+    return {"deleted": True}
+
+
+@app.get("/api/grade/runs/{run_id}/csv")
+def api_grade_run_csv(run_id: int,
+                      rubricgen_session: str | None = Cookie(default=None),
+                      x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    import csv
+    import io
+    detail = api_grade_run_get(run_id, rubricgen_session, x_api_key)
+    rows = grade_mod.flatten_for_export(detail)
+    if not rows:
+        raise HTTPException(404, "no results to export")
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+    writer.writeheader()
+    for r in rows:
+        writer.writerow({k: (v if v is not None else "") for k, v in r.items()})
+    return Response(content=buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="grade_{run_id}.csv"'})
+
+
+@app.get("/api/grade/runs/{run_id}/xlsx")
+def api_grade_run_xlsx(run_id: int,
+                       rubricgen_session: str | None = Cookie(default=None),
+                       x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    from backend import exports as exports_mod
+    detail = api_grade_run_get(run_id, rubricgen_session, x_api_key)
+    rows = grade_mod.flatten_for_export(detail)
+    if not rows:
+        raise HTTPException(404, "no results to export")
+    xlsx_bytes = exports_mod.export_xlsx(rows, title="GRADE Evidence Profile")
+    return Response(content=xlsx_bytes,
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="grade_{run_id}.xlsx"'})
 
 
 @app.get("/api/ground-truth")
