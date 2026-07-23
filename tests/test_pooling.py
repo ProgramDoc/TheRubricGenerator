@@ -13,8 +13,8 @@ import math
 
 import pytest
 
-from backend.synthesis import pooling as pl
-from backend.synthesis.pooling import (
+from backend.evidence_synthesis import pooling as pl
+from backend.evidence_synthesis.pooling import (
     eggers_test,
     grade_pooling_inputs,
     pool_outcome,

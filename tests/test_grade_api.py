@@ -111,7 +111,7 @@ class TestGradeRuns:
     def test_hybrid_auto_indirectness(self, client, admin_user, monkeypatch):
         # Stub the LLM auto-assessor to return a fixed serious-indirectness level.
         # Admin bypasses the credit gate on the auto-indirectness pass.
-        import backend.synthesis.grade_indirectness as gi
+        import backend.evidence_synthesis.grade_indirectness as gi
 
         def _fake(target_pico, body_ctx):
             return ({"population": {"judgement": "not_direct", "rationale": "surrogate"}},
@@ -141,7 +141,7 @@ class TestGradeRuns:
         assert res["indirectness"] is not None  # detail persisted
 
     def test_reviewer_overrides_auto(self, client, test_user, monkeypatch):
-        import backend.synthesis.grade_indirectness as gi
+        import backend.evidence_synthesis.grade_indirectness as gi
 
         def _boom(target_pico, body_ctx):  # must NOT be called
             raise AssertionError("auto-assessor should not run when reviewer supplied a level")

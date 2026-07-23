@@ -766,7 +766,7 @@ Then grouping (§9.1) is unchanged except its key-builder reads
 
 ## 10. Turnkey reference implementation
 
-The **production** module (`backend/synthesis/pooling.py`) uses **numpy** for the numeric core and **`scipy.stats`** for the distribution functions — that is the recommended implementation on any stack that can `pip install numpy scipy`. The distribution calls map directly:
+The **production** module (`backend/evidence_synthesis/pooling.py`) uses **numpy** for the numeric core and **`scipy.stats`** for the distribution functions — that is the recommended implementation on any stack that can `pip install numpy scipy`. The distribution calls map directly:
 
 | Purpose | `scipy.stats` call |
 |---|---|

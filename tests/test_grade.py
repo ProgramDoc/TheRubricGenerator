@@ -1,4 +1,4 @@
-"""Tests for the GRADE body-of-evidence certainty agent (backend/synthesis/grade.py).
+"""Tests for the GRADE body-of-evidence certainty agent (backend/evidence_synthesis/grade.py).
 
 Two layers:
 
@@ -16,8 +16,8 @@ import math
 
 import pytest
 
-from backend.synthesis import pool_outcome
-from backend.synthesis.grade import (
+from backend.evidence_synthesis import pool_outcome
+from backend.evidence_synthesis.grade import (
     GRADE_LEVELS,
     absolute_effects,
     grade_body,

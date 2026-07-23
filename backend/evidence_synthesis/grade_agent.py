@@ -7,7 +7,7 @@ engine. Two responsibilities, kept out of ``main.py`` (which stays a router):
    accept a request body carrying either a precomputed ``pool_result`` OR raw
    ``studies`` (+ ``measure``), plus the RoB labels + human judgments, and return
    the GRADE record (and, for ``sof``, the Summary-of-Findings row). Mirrors the
-   driscoll ``synthesis_agents`` glue, rewired to ``backend.synthesis.grade``.
+   driscoll ``synthesis_agents`` glue, rewired to ``backend.evidence_synthesis.grade``.
 
 2. **Persistence** — ``GRADE_TABLES_SQL`` (grade_runs / grade_results /
    grade_events) + the CRUD helpers a run needs. Follows this repo's

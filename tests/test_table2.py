@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import pytest
 
-from backend.synthesis import table2 as t2
-from backend.synthesis import table2_extract as tx
-from backend.synthesis.table2 import (
+from backend.evidence_synthesis import table2 as t2
+from backend.evidence_synthesis import table2_extract as tx
+from backend.evidence_synthesis.table2 import (
     FAVOURS_COMPARATOR,
     FAVOURS_INTERVENTION,
     NO_DIFFERENCE,

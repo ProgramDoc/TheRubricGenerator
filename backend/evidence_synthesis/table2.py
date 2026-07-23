@@ -8,7 +8,7 @@ the top-level ``assemble_table2`` composer.
 
 It has NO model dependency and imports only the standard library, so it can be unit
 -tested in isolation. The model-touching extraction wiring lives in
-``backend/synthesis/table2_extract.py``.
+``backend/evidence_synthesis/table2_extract.py``.
 
 Full methodology + rationale: ``docs/shareable/table2_evidence_table_shareable.md``.
 """

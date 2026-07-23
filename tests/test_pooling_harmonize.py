@@ -7,8 +7,8 @@ grouping, and the LLM clusterer's parsing (mocked text caller).
 
 from __future__ import annotations
 
-from backend.synthesis import pooling_harmonize as ph
-from backend.synthesis.pooling_prep import group_into_bodies, pool_extractions
+from backend.evidence_synthesis import pooling_harmonize as ph
+from backend.evidence_synthesis.pooling_prep import group_into_bodies, pool_extractions
 
 
 def _rct(author, name, est=0.6):
@@ -124,7 +124,7 @@ class TestHarmonizeEndToEnd:
 # ─────────────────────────────────────────────
 class TestLLMClusterer:
     def test_cluster_map_from_llm(self, monkeypatch):
-        import backend.synthesis.pooling_extract as pe
+        import backend.evidence_synthesis.pooling_extract as pe
 
         def fake_call(messages, system, max_tokens=None):
             return ('{"clusters":[{"canonical":"All-cause mortality",'
@@ -134,13 +134,13 @@ class TestLLMClusterer:
         assert m["death from any cause"] == "All-cause mortality"
 
     def test_cluster_failure_returns_empty(self, monkeypatch):
-        import backend.synthesis.pooling_extract as pe
+        import backend.evidence_synthesis.pooling_extract as pe
         monkeypatch.setattr(pe.helpers_mod, "call_anthropic",
                             lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
         assert pe.cluster_outcome_names_map(["a", "b"]) == {}
 
     def test_harmonize_llm_merges(self, monkeypatch):
-        import backend.synthesis.pooling_extract as pe
+        import backend.evidence_synthesis.pooling_extract as pe
 
         def fake_call(messages, system, max_tokens=None):
             return ('{"clusters":[{"canonical":"All-cause mortality",'
@@ -150,7 +150,7 @@ class TestLLMClusterer:
         assert len(pool_extractions(harm)) == 1
 
     def test_pool_studies_with_llm_harmonization(self, monkeypatch):
-        import backend.synthesis.pooling_extract as pe
+        import backend.evidence_synthesis.pooling_extract as pe
 
         def fake_call(messages, system, max_tokens=None):
             return ('{"clusters":[{"canonical":"All-cause mortality",'
@@ -160,7 +160,7 @@ class TestLLMClusterer:
         assert len(bodies) == 1 and bodies[0]["k"] == 3
 
     def test_dictionary_first_then_llm_only_for_gaps(self, monkeypatch):
-        import backend.synthesis.pooling_extract as pe
+        import backend.evidence_synthesis.pooling_extract as pe
         seen = {"names": None}
 
         def fake_call(messages, system, max_tokens=None):

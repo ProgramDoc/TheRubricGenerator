@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from backend.synthesis import pooling_prep as pp
+from backend.evidence_synthesis import pooling_prep as pp
 
 
 def _rct(author, year, oc):
@@ -230,7 +230,7 @@ class TestUnknownDesignAndDirection:
 # ─────────────────────────────────────────────
 class TestOutcomeDataExtraction:
     def test_shapes_one_study_dict(self, monkeypatch):
-        import backend.synthesis.pooling_extract as pe
+        import backend.evidence_synthesis.pooling_extract as pe
 
         def fake_call(pdf_bytes, prompt, max_tokens=None):
             return {"study_type": "Randomized Controlled Trial", "citation_authors": "Smith",
@@ -243,14 +243,14 @@ class TestOutcomeDataExtraction:
         assert len(study["outcomes"]) == 1 and study["outcomes"][0]["events_int"] == 12
 
     def test_bad_response_yields_empty_outcomes(self, monkeypatch):
-        import backend.synthesis.pooling_extract as pe
+        import backend.evidence_synthesis.pooling_extract as pe
         monkeypatch.setattr(pe.annotator_mod, "_call_with_pdf",
                             lambda *a, **k: "not a dict")
         study = pe.extract_outcome_data(b"%PDF-fake")
         assert study["outcomes"] == []
 
     def test_pool_from_pdfs_end_to_end(self, monkeypatch):
-        import backend.synthesis.pooling_extract as pe
+        import backend.evidence_synthesis.pooling_extract as pe
 
         def fake_call(pdf_bytes, prompt, max_tokens=None):
             return {"study_type": "RCT", "outcomes": [
@@ -276,7 +276,7 @@ class TestDualMode:
         assert pp.study_is_poolable({"outcomes": []}) is False
 
     def test_injected_study_uses_no_model_call(self, monkeypatch):
-        import backend.synthesis.pooling_extract as pe
+        import backend.evidence_synthesis.pooling_extract as pe
         calls = {"n": 0}
 
         def spy(*a, **k):
@@ -290,7 +290,7 @@ class TestDualMode:
         assert study["outcomes"][0]["events_int"] == 12
 
     def test_missing_extraction_triggers_self_extract(self, monkeypatch):
-        import backend.synthesis.pooling_extract as pe
+        import backend.evidence_synthesis.pooling_extract as pe
         calls = {"n": 0}
 
         def fake_call(pdf_bytes, prompt, max_tokens=None):
@@ -307,7 +307,7 @@ class TestDualMode:
         assert study["citation_authors"] == "Jones"     # priming tags carried in
 
     def test_force_extract_overrides_injected(self, monkeypatch):
-        import backend.synthesis.pooling_extract as pe
+        import backend.evidence_synthesis.pooling_extract as pe
         calls = {"n": 0}
         monkeypatch.setattr(pe.annotator_mod, "_call_with_pdf",
                             lambda *a, **k: calls.__setitem__("n", calls["n"] + 1) or {"outcomes": []})
@@ -317,7 +317,7 @@ class TestDualMode:
         assert calls["n"] == 1                          # re-extract even though injected was poolable
 
     def test_pool_studies_mixed_batch(self, monkeypatch):
-        import backend.synthesis.pooling_extract as pe
+        import backend.evidence_synthesis.pooling_extract as pe
 
         def fake_call(pdf_bytes, prompt, max_tokens=None):
             return {"study_type": "RCT", "outcomes": [
@@ -336,14 +336,14 @@ class TestDualMode:
         assert len(bodies) == 1 and bodies[0]["k"] == 2   # one from injected, one self-extracted
 
     def test_prompt_includes_person_time_fields(self):
-        import backend.synthesis.pooling_extract as pe
+        import backend.evidence_synthesis.pooling_extract as pe
         # The extraction prompt schema must carry person-time so IRR self-extracts.
         assert "time_int" in pe._OUTCOME_DATA_PROMPT
         assert "time_ctrl" in pe._OUTCOME_DATA_PROMPT
         assert "person-time" in pe._OUTCOME_DATA_PROMPT
 
     def test_self_extracted_rate_outcome_pools_as_irr(self, monkeypatch):
-        import backend.synthesis.pooling_extract as pe
+        import backend.evidence_synthesis.pooling_extract as pe
 
         def fake_call(pdf_bytes, prompt, max_tokens=None):
             return {"study_type": "RCT", "outcomes": [
