@@ -6,7 +6,7 @@
 
 ---
 
-## Current State (May 12, 2026)
+## Current State (July 23, 2026)
 
 ### Codebase Summary
 
@@ -88,6 +88,7 @@
 - **3-judge adjudication pipeline:** Replaces the single-judge + shadow-regrade flow. Judge 1 (Anthropic) → Judge 2 (OpenAI w/ Claude fallback) → Judge 3 (Gemini), with majority-of-3 vote per question. 3-way splits drop into a human review queue (`backend/review.py` + `frontend/review.html`). The `shadow_regrade` name is preserved as a thin alias for un-migrated call sites
 - **Quality Appraisal — non-randomized study designs:** Extends the v1 RCT-only pipeline to also handle Cohort, Case-Control, Non-Randomized Trial, Cross-Sectional (Analytical), and Case-Crossover designs. Each maps to ROBINS-I (2016) + STROBE 2007 + Low initial GRADE. New tools: `backend/rob_tools/robins_i.py` (7 domains, 5-level Low/Moderate/Serious/Critical/No information judgement) and `backend/reporting_guidelines/strobe.py` (22-item checklist). Mixed-tool runs render the column set from the first successful row's tool; non-matching domain cells show `—`
 - **Quality Appraisal — diagnostic test accuracy (QUADAS-3 v1.2):** Adds the Diagnostic Accuracy classification to the pipeline. New tool `backend/rob_tools/quadas3.py` (4 domains × 20 signaling questions transcribed verbatim from the docx + dual RoB and applicability assessment + 3-level Low/High/Insufficient information scale) and `backend/reporting_guidelines/stard.py` (STARD 2015, 34 entries). Per-estimate path — a single paper can produce multiple `quality_appraisal_results` rows, one per Phase-4 sensitivity/specificity estimate, surfaced via a new `POST /api/quality-appraisal/extract-estimates` endpoint + run-create modal estimate selector. Optional review-level context (Phases 1+2 — synthesis question + ideal trial) threaded into applicability prompts. GRADE indirectness and imprecision are skipped for diagnostic-accuracy assessments (cfg.`skip_grade_extras=True`) since the existing modules assume PICO/treatment trials, not PIRT
+- **Evidence synthesis — GRADE agent (body-of-evidence certainty):** The synthesis stack (`backend/synthesis/`) builds ASCO guideline evidence tables. On top of the **pooling** (meta-analysis) agent, the new **GRADE agent** (`backend/synthesis/grade.py`, stdlib-only) rates the certainty of a pooled outcome (High → Very low) via the 5 downgrade + 3 upgrade domains and computes the anticipated absolute effects (assumed risk → risk with intervention → risk difference → NNT) for the Summary-of-Findings row. Consumes the pooling result + per-study RoB (joined by `study_id`) + reviewer judgments; **hybrid indirectness** (reviewer value wins, else one LLM auto-assessment). Stateless `POST /api/agents/grade` + `/grade-sof` and persisted `POST /api/grade/runs` (+ list/detail/events/csv/xlsx/delete); page `frontend/grade.html` (`/grade`). Methodology mirrored to `docs/shareable/grade_certainty_shareable.md` for the OVID fork
 - **Rubric Generator hardening (April 26):** Default model bumped to `claude-sonnet-4-6` (env-overridable). 3-attempt retry with 1s/2s backoff on the batched generator (`_generator_with_retry`) — skips retry on permanent errors (400, 401, 403, 413). Domain composition split per batch via largest-remainder allocation (`_split_composition_for_batches`) so per-key totals are exact across batches
 
 ---
@@ -665,6 +666,42 @@ The Quality Appraisal pipeline supported RCTs and 5 non-randomized study types b
 - Structured Phase 1 + Phase 2 inputs (collected as one free-text field in v1, not the tables in the docx).
 - QUADAS-C — separate tool from QUADAS-3, for comparative-accuracy reviews of two index tests.
 - Editing / overriding AI judgements in the UI (consistent with the rest of Quality Appraisal v1).
+
+### GRADE Agent — Body-of-Evidence Certainty (July 23, 2026)
+
+The Quality Appraisal pipeline rates GRADE for a **single trial** (RoB + indirectness + imprecision). The evidence-synthesis stack works one layer up — on the **body of evidence** — building ASCO-style guideline evidence tables. The **pooling agent** (`backend/synthesis/pooling*.py`, prior work) meta-analyses per-study effect sizes into a pooled estimate + heterogeneity + small-study tests for one outcome, but makes **no certainty decisions**. This sprint added the **GRADE agent** — "Component D" — that consumes the pooled numbers + per-study risk of bias + a few reviewer judgments and produces the GRADE certainty (⊕⊕⊕⊕ High → ⊕⊝⊝⊝ Very low) plus the anticipated absolute effects for the Summary-of-Findings row (ASCO "Table 5"). It was a **port + adapter** of an earlier prototype onto the current `backend/synthesis/` package and the new pooling contract, not a green-field build.
+
+**New module `backend/synthesis/grade.py`** (pure, **stdlib-only** — consumes the pooling result's plain floats, so it stays importable without numpy/scipy or the LLM chain):
+- **Starting certainty by design** (`_initial_from_design`): RCT = High, non-randomized = Low, single-arm/dose-escalation = Very low (GRADE 3).
+- **Five downgrade domains**, each an inspectable decision function: risk of bias (weighted across studies by pooled weight, *not* averaged — GRADE 4), inconsistency (I² + Cochran-Q, subgroup-explained aware — GRADE 7), indirectness (a supplied 0/1/2 integer — GRADE 8), imprecision (natural-scale CI vs null / MIDs + Optimal-Information-Size rule of thumb — GRADE 6), publication bias (Egger p / trim-and-fill, gated at k ≥ 10 — GRADE 5).
+- **Three upgrade domains** (GRADE 9) — large effect (≥2-fold → +1, ≥5-fold → +2, CI must exclude null), dose-response gradient, opposing plausible confounding — behind the **gate** that restricts upgrades to non-randomized evidence starting at Low with no rate-down factors. RCT evidence is never upgraded.
+- **`GradeConfig`** dataclass holds every threshold (OIS 300 events / 400 N, I² 50/75, Egger p 0.10, large-effect 2.0/5.0, …) so a methodologist can tune without editing the trees.
+- **Certainty combiner**: `start + Σdown − Σup`, clamped to [Very low, High]; per-domain **`overrides`** (`{"imprecision": 2}`) pin any domain.
+- **`absolute_effects`** (GRADE 12): assumed risk → risk with intervention (RR/IRR: `acr×rel`; OR: via odds; RD: additive) → risk difference + propagated 95% CI → NNT, per 1000. Continuous measures (MD/SMD) return `None`.
+- **`sof_row`** assembles the Summary-of-Findings row (relative + absolute effects, certainty, per-domain reasons).
+- **Natural-scale contract**: the pooling engine hands over the relative effect + CI already back-transformed; every GRADE decision reads the natural-scale CI directly (null = 1.0 for ratios, 0.0 for differences), so no `back_transform` dance.
+
+**Bridge + orchestration**:
+- `backend/synthesis/grade_prep.py` (pure): `grade_bodies(...)` joins per-study RoB labels by `study_id` onto the pooled `studies[]` (order-aligned with `weight_pct`), maps quality-appraisal overall labels (`Low`/`Some concerns`/`Moderate`/`Serious`/`High`/`Critical`/`Insufficient information`) via `_ROB_SEVERITY`, and calls `grade_body` per body.
+- `backend/synthesis/grade_indirectness.py` (**the only model call**): hybrid body-level indirectness auto-assessor. Reuses `backend/indirectness.py`'s four PICO subdomains + count-based severity tree, lifted from a single PDF to a *text description of the pooled body* (no single paper exists for a body of evidence). Runs **only when the reviewer omits `indirectness_levels`** — reviewer input always wins.
+- `backend/synthesis/grade_assess.py`: orchestrator (`grade_from_pooled` / `grade_from_studies`) that resolves the hybrid indirectness before grading and attaches the per-subdomain detail.
+
+**Persistence + API** (`backend/synthesis/grade_agent.py` + `main.py`):
+- New tables `grade_runs` / `grade_results` / `grade_events` (`GRADE_TABLES_SQL`, executed in `init_db`) — mirrors the `quality_appraisal_runs/results/events` idiom (PostgreSQL DDL, `?` placeholders, `created_at`/`completed_at`, soft-delete via `deleted_at`).
+- Stateless: `POST /api/agents/grade` + `POST /api/agents/grade-sof` — accept either a precomputed `pool_result` or raw `studies` + `measure` (pooled server-side), plus RoB + judgments; return the GRADE dict (+ SoF row).
+- Persisted: `POST /api/grade/runs` (pools each body, joins RoB, resolves hybrid indirectness, persists) + `GET /api/grade/runs[/{id}]` + `/{id}/events?after=` + `/{id}/csv` + `/{id}/xlsx` + `DELETE`. Seat tiers match Quality Appraisal (engineer to create, general to read). Credit gate: 2 cr per body that actually uses auto-indirectness (reviewer-supplied indirectness is free); admins bypass; refund on failure.
+- **Export-route gotcha avoided**: the QA `.csv`/`.xlsx` routes 422 because the `{run_id:int}` route captures `"1.csv"` first (a latent, untested bug). GRADE uses slash-form paths (`/runs/{id}/csv`) instead.
+
+**Frontend** `frontend/grade.html` (route `/grade`): a single-outcome grader — per-study arm-data table + RoB dropdowns + review judgments (baseline risk, MIDs, indirectness override, NRS dose/confounding, target PICO) → "Grade this outcome" (stateless preview) / "Save run" (persisted). Result panel renders ⊕ pips + certainty pill + per-domain downgrade/upgrade reasons + the absolute-effects table + saved-runs list. GRADE nav link added across all ~21 HTML pages.
+
+**Shareable methodology** `docs/shareable/grade_certainty_shareable.md`: self-contained transcription (starting certainty, all 8 domains with `GradeConfig` thresholds as plain Python, the upgrade gate, absolute-effect formulas, the pooling→GRADE hand-off contract, the hybrid-indirectness prompt) + a turnkey dependency-free reference implementation + plain-`assert` tests. Per the project convention, this is how the methodology propagates to the OVID fork.
+
+**Tests** — `tests/test_grade.py` (25 cases: engine golden numbers incl. RR=0.5/baseline 200 → intervention 100, RD −100, NNT 10; stacked downgrades → Very low; NRS large effect RR≈3 → Low→Moderate; RCT never upgraded; clamp at Very low; single-arm → Very low; end-to-end `pool_outcome` → `grade_body`) + `tests/test_grade_api.py` (8 cases: stateless endpoints, run lifecycle, hybrid auto-indirectness fires when omitted, reviewer value overrides auto). **Full suite: 854 passed.** Verified end-to-end in the browser (RR=0.5 body → ⊕⊕⊕⊕ High, run persisted). Committed as `c9353bc` on `claude/grade-agent`, stacked on `claude/pooling-meta-analysis-agent`.
+
+**Out of scope (v1)**:
+- Inconsistency/publication-bias beyond what a single pooled estimate exposes (I²/Q, Egger/trim-and-fill); no network / indirect-comparison reasoning, no baseline-risk indirectness, no six-threshold imprecision EtD framing.
+- OIS is a rule of thumb (300 events / 400 N), not a formal Optimal/Review Information Size.
+- Mixing designs — RCT and non-randomized evidence are graded as separate bodies (the pooling `design_class` already separates them).
 
 ### Annotator Custom Extraction & Analytics (April 16, 2026)
 
