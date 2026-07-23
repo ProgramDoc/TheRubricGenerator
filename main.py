@@ -67,6 +67,8 @@ from backend.synthesis.grade_agent import GRADE_TABLES_SQL
 from backend.synthesis import grade_agent as grade_mod
 from backend.synthesis import grade_assess as grade_assess_mod
 from backend.synthesis.pooling import pool_outcome as synthesis_pool_outcome
+from backend.synthesis import SYNTHESIS_TABLES_SQL
+from backend import synthesis as synthesis_mod
 from backend.review import GRADE_REVIEWS_TABLES_SQL
 from backend import review as review_mod
 from backend.extension import EXTENSION_TABLES_SQL
@@ -412,6 +414,9 @@ def init_db() -> None:
         qa_mod.migrate_qa_columns(conn)
         # GRADE agent: body-of-evidence certainty runs (consumes the pooling agent)
         conn.executescript(GRADE_TABLES_SQL)
+        # Synthesis: systematic review + meta-analysis (mirrors QA's run/results/events)
+        conn.executescript(SYNTHESIS_TABLES_SQL)
+        synthesis_mod.migrate_synthesis_columns(conn)
         # 3-judge adjudication: human-review queue for grade disagreements
         conn.executescript(GRADE_REVIEWS_TABLES_SQL)
         conn.executescript(EXTENSION_TABLES_SQL)
@@ -1196,6 +1201,14 @@ def grade_page(rubricgen_session: str | None = Cookie(default=None)):
         return RedirectResponse("/login", status_code=302)
     return FileResponse(str(FRONTEND / "grade.html"), media_type="text/html")
 
+
+@app.get("/synthesis", include_in_schema=False)
+def synthesis_page(rubricgen_session: str | None = Cookie(default=None)):
+    """Synthesis — systematic review + meta-analysis."""
+    user = _get_user_from_token(rubricgen_session)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return FileResponse(str(FRONTEND / "synthesis.html"), media_type="text/html")
 
 @app.get("/review", include_in_schema=False)
 def review_page(rubricgen_session: str | None = Cookie(default=None)):
@@ -9198,6 +9211,549 @@ def api_grade_run_xlsx(run_id: int,
 
 
 @app.get("/api/ground-truth")
+
+# Synthesis — systematic review + meta-analysis
+# ═══════════════════════════════════════════════════════════════════════════
+class SynthesisPicoPayload(BaseModel):
+    population: str | None = None
+    intervention: str | None = None
+    comparator: str | None = None
+    outcomes: list[str] | None = None
+    study_designs: list[str] | None = None
+
+
+class SynthesisOutcomePayload(BaseModel):
+    name: str
+    outcome_type: str            # continuous | binary | correlation | single_arm
+    effect_measure: str          # MD|SMD|OR|RR|RD|ZCOR|PLOGIT|PFT|IRR
+    model_choice: str = "random"
+    tau2_method: str = "REML"
+    fe_method: str | None = None
+    re_ci_method: str = "wald"
+    continuity_correction: float = 0.5
+    subgroup_field: str | None = None
+    mid_benefit: str | None = None
+    mid_harm: str | None = None
+
+
+class SynthesisRunPayload(BaseModel):
+    paper_ids: list[int]
+    project_id: int | None = None
+    title: str | None = None
+    pico: SynthesisPicoPayload | None = None
+    inclusion: str | None = None
+    exclusion: str | None = None
+    outcomes: list[SynthesisOutcomePayload]
+    run_rob: bool = True
+    prisma_manual_counts: dict[str, int] | None = None
+
+
+class SynthesisStudyPatch(BaseModel):
+    decision: str | None = None          # include | exclude
+    exclude_reason: str | None = None    # PRISMA category
+    note: str | None = None
+
+
+class SynthesisDataPointPatch(BaseModel):
+    raw: dict[str, float | None] | None = None
+    included_in_pool: bool | None = None
+    subgroup_value: str | None = None
+
+
+class SynthesisOutcomePatch(BaseModel):
+    model_choice: str | None = None
+    tau2_method: str | None = None
+    fe_method: str | None = None
+    re_ci_method: str | None = None
+    subgroup_field: str | None = None
+    mid_benefit: str | None = None
+    mid_harm: str | None = None
+
+
+def _synth_load_review(conn, review_id: int, user_id: int, is_admin: bool) -> dict:
+    row = conn.execute("SELECT * FROM synthesis_reviews WHERE id=? AND deleted_at IS NULL",
+                       (review_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "review not found")
+    d = {k: row[k] for k in row.keys()}
+    if d["user_id"] != user_id and not is_admin:
+        raise HTTPException(403, "access denied")
+    return d
+
+
+def _synth_jload(s, default):
+    try:
+        return json.loads(s) if s else default
+    except Exception:
+        return default
+
+
+def _synth_detail(conn, review_id: int) -> dict:
+    rv = conn.execute("SELECT * FROM synthesis_reviews WHERE id=?", (review_id,)).fetchone()
+    review = {k: rv[k] for k in rv.keys()}
+    review["pico"] = _synth_jload(review.pop("pico_json", None), {})
+    review["eligibility_criteria"] = _synth_jload(review.pop("eligibility_criteria_json", None), None)
+    review["prisma_manual_counts"] = _synth_jload(review.pop("prisma_manual_counts_json", None), {})
+    review["paper_ids"] = _synth_jload(review.pop("paper_ids_json", None), [])
+
+    studies = []
+    for r in conn.execute("SELECT * FROM synthesis_studies WHERE review_id=? ORDER BY id", (review_id,)).fetchall():
+        s = {k: r[k] for k in r.keys()}
+        s["classification"] = _synth_jload(s.pop("classification_json", None), {})
+        s["screening"] = _synth_jload(s.pop("screening_json", None), [])
+        s["rob_domains"] = _synth_jload(s.pop("rob_domains_json", None), {})
+        studies.append(s)
+
+    outcomes = [{k: r[k] for k in r.keys()} for r in conn.execute(
+        "SELECT * FROM synthesis_outcomes WHERE review_id=? ORDER BY sort_order, id", (review_id,)).fetchall()]
+
+    data_points = []
+    for r in conn.execute("SELECT * FROM synthesis_data_points WHERE review_id=? ORDER BY outcome_id, study_id", (review_id,)).fetchall():
+        p = {k: r[k] for k in r.keys()}
+        p["raw"] = _synth_jload(p.pop("raw_json", None), {})
+        p["moderator"] = _synth_jload(p.pop("moderator_json", None), {})
+        data_points.append(p)
+
+    results = []
+    for r in conn.execute("SELECT * FROM synthesis_results WHERE review_id=?", (review_id,)).fetchall():
+        res = {k: r[k] for k in r.keys()}
+        for col in ("fixed", "random", "heterogeneity", "publication_bias", "subgroup",
+                    "metaregression", "sensitivity", "forest", "grade"):
+            res[col] = _synth_jload(res.pop(col + "_json", None), {})
+        res["code_blocks"] = _synth_jload(res.pop("code_blocks_json", None), [])
+        results.append(res)
+
+    review["studies"] = studies
+    review["outcomes"] = outcomes
+    review["data_points"] = data_points
+    review["results"] = results
+    review["prisma"] = synthesis_mod.compute_prisma_counts(conn, review_id)
+    return review
+
+
+@app.get("/api/synthesis/supported-measures")
+def api_synth_supported(rubricgen_session: str | None = Cookie(default=None),
+                        x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    return synthesis_mod.supported_measures()
+
+
+@app.get("/api/synthesis/prompts")
+def api_synth_prompts(rubricgen_session: str | None = Cookie(default=None),
+                      x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Developer view: screening/extraction prompts + the exact source of every
+    statistics function and the code generator. Visible to every signed-in user."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    return synthesis_mod.prompt_catalog()
+
+
+@app.post("/api/synthesis/reviews")
+def api_synth_create(body: SynthesisRunPayload,
+                     rubricgen_session: str | None = Cookie(default=None),
+                     x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Create a synthesis review and start the pipeline.
+
+    Charges upfront for screening + extraction + RoB across all papers; the
+    worker refunds extraction/RoB for excluded papers. Inline for ≤1 paper,
+    background thread otherwise.
+    """
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    paper_ids = [int(p) for p in (body.paper_ids or [])]
+    if not paper_ids:
+        raise HTTPException(400, "paper_ids must be a non-empty list")
+    if len(paper_ids) > 100:
+        raise HTTPException(400, "at most 100 papers per review")
+    if not body.outcomes:
+        raise HTTPException(400, "at least one outcome is required")
+    for oc in body.outcomes:
+        if oc.outcome_type not in synthesis_mod.OUTCOME_TYPE_MEASURES:
+            raise HTTPException(400, f"unknown outcome_type: {oc.outcome_type}")
+        if oc.effect_measure not in synthesis_mod.OUTCOME_TYPE_MEASURES[oc.outcome_type]:
+            raise HTTPException(400, f"measure {oc.effect_measure} not valid for {oc.outcome_type}")
+
+    is_admin = user.get("role") == "admin"
+    conn = get_db()
+    try:
+        placeholders = ",".join("?" * len(paper_ids))
+        owned = conn.execute(
+            f"SELECT id FROM papers WHERE user_id=? AND id IN ({placeholders})",
+            (user["id"], *paper_ids)).fetchall()
+        owned_ids = [r["id"] for r in owned]
+        missing = [p for p in paper_ids if p not in owned_ids]
+        if missing:
+            raise HTTPException(400, f"unknown or unowned paper ids: {missing}")
+
+        total_cost = synthesis_mod.estimate_cost(len(paper_ids), len(body.outcomes), body.run_rob)
+        _annotator_ai_gate(conn, user, total_cost,
+                           f"Synthesis review ({len(paper_ids)} papers, {len(body.outcomes)} outcomes)")
+
+        pico = {}
+        if body.pico is not None:
+            pico = {"population": (body.pico.population or "").strip(),
+                    "intervention": (body.pico.intervention or "").strip(),
+                    "comparator": (body.pico.comparator or "").strip(),
+                    "outcomes": body.pico.outcomes or [oc.name for oc in body.outcomes],
+                    "study_designs": body.pico.study_designs or []}
+        if body.inclusion or body.exclusion:
+            pico["inclusion_text"] = (body.inclusion or "").strip()
+            pico["exclusion_text"] = (body.exclusion or "").strip()
+        prisma_manual = json.dumps({k: int(v) for k, v in (body.prisma_manual_counts or {}).items()})
+
+        with conn:
+            cur = conn.execute(
+                """INSERT INTO synthesis_reviews
+                     (user_id, project_id, title, paper_ids_json, paper_count,
+                      status, pico_json, run_rob, prisma_manual_counts_json, credit_cost)
+                   VALUES (?,?,?,?,?,'pending',?,?,?,?) RETURNING id""",
+                (user["id"], body.project_id, (body.title or "Untitled review"),
+                 json.dumps(paper_ids), len(paper_ids), json.dumps(pico),
+                 1 if body.run_rob else 0, prisma_manual, total_cost))
+            review_id = cur.lastrowid
+            for i, oc in enumerate(body.outcomes):
+                conn.execute(
+                    """INSERT INTO synthesis_outcomes
+                         (review_id, name, outcome_type, effect_measure, model_choice,
+                          tau2_method, fe_method, re_ci_method, continuity_correction,
+                          subgroup_field, mid_benefit, mid_harm, sort_order)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (review_id, oc.name, oc.outcome_type, oc.effect_measure, oc.model_choice,
+                     oc.tau2_method, oc.fe_method, oc.re_ci_method, oc.continuity_correction,
+                     oc.subgroup_field, oc.mid_benefit, oc.mid_harm, i))
+            conn.commit()
+    finally:
+        conn.close()
+
+    if len(paper_ids) <= 1:
+        synthesis_mod.run_synthesis(get_db, PAPERS_DIR, user["id"], is_admin, review_id)
+        return {"review_id": review_id, "status": "complete"}
+    synthesis_mod.run_synthesis_async(get_db, PAPERS_DIR, user["id"], is_admin, review_id)
+    return {"review_id": review_id, "status": "running"}
+
+
+@app.get("/api/synthesis/reviews")
+def api_synth_list(rubricgen_session: str | None = Cookie(default=None),
+                   x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """SELECT r.id, r.title, r.project_id, r.paper_count, r.status, r.phase,
+                      r.credit_cost, r.credits_refunded, r.error_message,
+                      r.created_at, r.completed_at, p.name AS project_name,
+                      (SELECT COUNT(*) FROM synthesis_outcomes o WHERE o.review_id=r.id) AS outcome_count
+                 FROM synthesis_reviews r
+            LEFT JOIN projects p ON p.id = r.project_id
+                WHERE r.user_id=? AND r.deleted_at IS NULL
+                ORDER BY r.created_at DESC LIMIT 50""",
+            (user["id"],)).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
+@app.get("/api/synthesis/reviews/{review_id:int}")
+def api_synth_get(review_id: int,
+                  rubricgen_session: str | None = Cookie(default=None),
+                  x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    is_admin = user.get("role") == "admin"
+    conn = get_db()
+    try:
+        _synth_load_review(conn, review_id, user["id"], is_admin)
+        return _synth_detail(conn, review_id)
+    finally:
+        conn.close()
+
+
+@app.get("/api/synthesis/reviews/{review_id}/events")
+def api_synth_events(review_id: int, after: int = 0,
+                     rubricgen_session: str | None = Cookie(default=None),
+                     x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    is_admin = user.get("role") == "admin"
+    conn = get_db()
+    try:
+        _synth_load_review(conn, review_id, user["id"], is_admin)
+        rows = conn.execute(
+            """SELECT id, event_type, message, detail_json, created_at
+                 FROM synthesis_events WHERE review_id=? AND id > ?
+                ORDER BY id ASC LIMIT 500""",
+            (review_id, int(after))).fetchall()
+    finally:
+        conn.close()
+    return [{"id": r["id"], "event_type": r["event_type"], "message": r["message"],
+             "detail": _synth_jload(r["detail_json"], None), "created_at": r["created_at"]}
+            for r in rows]
+
+
+@app.get("/api/synthesis/reviews/{review_id}/prisma")
+def api_synth_prisma(review_id: int,
+                     rubricgen_session: str | None = Cookie(default=None),
+                     x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    is_admin = user.get("role") == "admin"
+    conn = get_db()
+    try:
+        _synth_load_review(conn, review_id, user["id"], is_admin)
+        return synthesis_mod.compute_prisma_counts(conn, review_id)
+    finally:
+        conn.close()
+
+
+@app.patch("/api/synthesis/studies/{study_id}")
+def api_synth_patch_study(study_id: int, body: SynthesisStudyPatch,
+                          rubricgen_session: str | None = Cookie(default=None),
+                          x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Override a screening decision. No charge."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    is_admin = user.get("role") == "admin"
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT s.*, r.user_id AS owner FROM synthesis_studies s "
+                           "JOIN synthesis_reviews r ON r.id=s.review_id WHERE s.id=?",
+                           (study_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "study not found")
+        if row["owner"] != user["id"] and not is_admin:
+            raise HTTPException(403, "access denied")
+        decision = (body.decision or row["screening_decision"] or "").strip().lower()
+        if decision not in ("include", "exclude"):
+            raise HTTPException(400, "decision must be include or exclude")
+        with conn:
+            conn.execute(
+                """UPDATE synthesis_studies
+                      SET screening_decision=?, status=?, prisma_exclusion_reason=?,
+                          screening_reason=COALESCE(?, screening_reason), decision_overridden=1
+                    WHERE id=?""",
+                (decision, "included" if decision == "include" else "excluded",
+                 (body.exclude_reason if decision == "exclude" else ""),
+                 body.note, study_id))
+            conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+@app.patch("/api/synthesis/data-points/{dp_id}")
+def api_synth_patch_datapoint(dp_id: int, body: SynthesisDataPointPatch,
+                              rubricgen_session: str | None = Cookie(default=None),
+                              x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Edit extracted numbers / inclusion. Recomputes yi/vi. No charge."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    is_admin = user.get("role") == "admin"
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT dp.*, o.effect_measure, o.continuity_correction, r.user_id AS owner "
+            "FROM synthesis_data_points dp "
+            "JOIN synthesis_outcomes o ON o.id=dp.outcome_id "
+            "JOIN synthesis_reviews r ON r.id=dp.review_id WHERE dp.id=?",
+            (dp_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "data point not found")
+        if row["owner"] != user["id"] and not is_admin:
+            raise HTTPException(403, "access denied")
+        raw = _synth_jload(row["raw_json"], {})
+        if body.raw is not None:
+            raw.update({k: v for k, v in body.raw.items()})
+        eff = synthesis_mod.compute_effect_for_point(
+            row["effect_measure"], raw, float(row["continuity_correction"] or 0.5))
+        included = row["included_in_pool"] if body.included_in_pool is None else (1 if body.included_in_pool else 0)
+        subgroup = row["subgroup_value"] if body.subgroup_value is None else body.subgroup_value
+        needs_review = 1 if eff.get("yi") is None else 0
+        with conn:
+            conn.execute(
+                """UPDATE synthesis_data_points
+                      SET raw_json=?, yi=?, vi=?, continuity_applied=?, included_in_pool=?,
+                          subgroup_value=?, needs_review=?, edited_by_user=1
+                    WHERE id=?""",
+                (json.dumps(raw), eff.get("yi"), eff.get("vi"),
+                 1 if eff.get("continuity_applied") else 0, included, subgroup,
+                 needs_review, dp_id))
+            conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "yi": eff.get("yi"), "vi": eff.get("vi")}
+
+
+@app.patch("/api/synthesis/outcomes/{outcome_id}")
+def api_synth_patch_outcome(outcome_id: int, body: SynthesisOutcomePatch,
+                            rubricgen_session: str | None = Cookie(default=None),
+                            x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Change an outcome's model/measure options (re-pool afterwards)."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    is_admin = user.get("role") == "admin"
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT o.*, r.user_id AS owner FROM synthesis_outcomes o "
+                           "JOIN synthesis_reviews r ON r.id=o.review_id WHERE o.id=?",
+                           (outcome_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "outcome not found")
+        if row["owner"] != user["id"] and not is_admin:
+            raise HTTPException(403, "access denied")
+        fields = {k: getattr(body, k) for k in
+                  ("model_choice", "tau2_method", "fe_method", "re_ci_method",
+                   "subgroup_field", "mid_benefit", "mid_harm")
+                  if getattr(body, k) is not None}
+        if fields:
+            sets = ", ".join(f"{k}=?" for k in fields)
+            with conn:
+                conn.execute(f"UPDATE synthesis_outcomes SET {sets} WHERE id=?",
+                             (*fields.values(), outcome_id))
+                conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+@app.post("/api/synthesis/reviews/{review_id}/pool")
+def api_synth_repool(review_id: int,
+                     rubricgen_session: str | None = Cookie(default=None),
+                     x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Re-run pooling + bias + sensitivity + GRADE from current data points.
+    Free, synchronous (no LLM)."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    is_admin = user.get("role") == "admin"
+    conn = get_db()
+    try:
+        _synth_load_review(conn, review_id, user["id"], is_admin)
+        synthesis_mod.repool_review(conn, review_id)
+        return _synth_detail(conn, review_id)
+    finally:
+        conn.close()
+
+
+@app.post("/api/synthesis/reviews/{review_id}/eligibility")
+def api_synth_eligibility(review_id: int, body: dict = Body(...),
+                          rubricgen_session: str | None = Cookie(default=None),
+                          x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Save reviewer-edited eligibility criteria. No charge."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    is_admin = user.get("role") == "admin"
+    conn = get_db()
+    try:
+        _synth_load_review(conn, review_id, user["id"], is_admin)
+        with conn:
+            conn.execute("UPDATE synthesis_reviews SET eligibility_criteria_json=? WHERE id=?",
+                         (json.dumps(body), review_id))
+            conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+@app.delete("/api/synthesis/reviews/{review_id}")
+def api_synth_delete(review_id: int,
+                     rubricgen_session: str | None = Cookie(default=None),
+                     x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    is_admin = user.get("role") == "admin"
+    conn = get_db()
+    try:
+        _synth_load_review(conn, review_id, user["id"], is_admin)
+        with conn:
+            conn.execute("UPDATE synthesis_reviews SET deleted_at=CURRENT_TIMESTAMP WHERE id=?",
+                         (review_id,))
+            conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+@app.get("/api/synthesis/reviews/{review_id}/code/{outcome_id}.{ext}")
+def api_synth_code(review_id: int, outcome_id: int, ext: str,
+                   rubricgen_session: str | None = Cookie(default=None),
+                   x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Download the generated R (.R) or Python (.py) analysis script."""
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    is_admin = user.get("role") == "admin"
+    if ext not in ("R", "py"):
+        raise HTTPException(404, "use .R or .py")
+    conn = get_db()
+    try:
+        _synth_load_review(conn, review_id, user["id"], is_admin)
+        row = conn.execute("SELECT r_code, python_code FROM synthesis_results WHERE outcome_id=?",
+                           (outcome_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "no results for this outcome")
+        code = row["r_code"] if ext == "R" else row["python_code"]
+    finally:
+        conn.close()
+    return Response(content=code or "",
+                    media_type="text/plain",
+                    headers={"Content-Disposition": f'attachment; filename="meta_analysis_{outcome_id}.{ext}"'})
+
+
+def _synth_flatten_for_export(conn, review_id: int) -> list[dict]:
+    return synthesis_mod.flatten_for_export(conn, review_id)
+
+
+@app.get("/api/synthesis/reviews/{review_id}.csv")
+def api_synth_csv(review_id: int,
+                  rubricgen_session: str | None = Cookie(default=None),
+                  x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    import csv
+    import io
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    is_admin = user.get("role") == "admin"
+    conn = get_db()
+    try:
+        _synth_load_review(conn, review_id, user["id"], is_admin)
+        rows = _synth_flatten_for_export(conn, review_id)
+    finally:
+        conn.close()
+    if not rows:
+        raise HTTPException(404, "no results to export")
+    fieldnames = list({k for r in rows for k in r.keys()})
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=fieldnames)
+    writer.writeheader()
+    for r in rows:
+        writer.writerow({k: (r.get(k) if r.get(k) is not None else "") for k in fieldnames})
+    return Response(content=buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="synthesis_{review_id}.csv"'})
+
+
+@app.get("/api/synthesis/reviews/{review_id}.xlsx")
+def api_synth_xlsx(review_id: int,
+                   rubricgen_session: str | None = Cookie(default=None),
+                   x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    from backend import exports as exports_mod
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "general")
+    is_admin = user.get("role") == "admin"
+    conn = get_db()
+    try:
+        _synth_load_review(conn, review_id, user["id"], is_admin)
+        rows = _synth_flatten_for_export(conn, review_id)
+    finally:
+        conn.close()
+    if not rows:
+        raise HTTPException(404, "no results to export")
+    xlsx_bytes = exports_mod.export_xlsx(rows, title="Synthesis")
+    return Response(content=xlsx_bytes,
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="synthesis_{review_id}.xlsx"'})
+
+
+
+
 def api_get_ground_truth(rubric_id: int | None = None, challenge_id: int | None = None,
                          rubricgen_session: str | None = Cookie(default=None)):
     """Get ground truth annotations for a rubric or challenge."""
