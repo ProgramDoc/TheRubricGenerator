@@ -15,7 +15,8 @@ A self-contained reference for the **pooling agent** — the body-of-evidence en
 
 **Scope.** This document covers **only the pooling step**: per-study effect sizes → one pooled estimate + heterogeneity + small-study tests, for a single outcome and a single body of evidence. Out of scope:
 
-- **GRADE certainty rating** (the 5 downgrade + 3 upgrade domains), **absolute effects**, **baseline risk**, and **MIDs** — that is the separate **GRADE agent** (Component D). This module exposes a `grade_pooling_inputs()` hand-off of raw numbers but makes **no certainty decisions**.
+- **GRADE certainty rating** (the 5 downgrade + 3 upgrade domains), **absolute effects**, **baseline risk**, and **MIDs** — that is the separate **GRADE agent** (Component D). This module hands the GRADE agent its `pool_outcome()` result dict (§8) and makes **no certainty decisions**.
+- **Judging risk of bias.** Per-study risk-of-bias labels are *carried* through the pooler onto the study records (§7, §9.3) so the GRADE agent can weight them, but nothing here maps a label to a severity or a downgrade. Producing the labels is the risk-of-bias instrument's job; interpreting them is the GRADE agent's.
 - **Effect-size extraction** — the per-study numbers arrive from an upstream extraction / evidence-table agent (see the companion `table2_evidence_table_shareable.md`). The pooling **math never calls a model**; the only model touch in this agent is the optional *outcome-data extraction pass* (§9) that pulls raw arm numbers when they aren't already extracted. The assembly bridge and the pooling engine are pure.
 - **Mixing designs.** Do **not** pool RCTs and non-randomized studies into one estimate — GRADE rates them as separate bodies of evidence. Call the pooler once per body.
 - **Network / indirect comparisons**, multivariate/multiple-outcome pooling, individual-participant-data meta-analysis, and dose-response meta-regression.
@@ -30,66 +31,6 @@ A self-contained reference for the **pooling agent** — the body-of-evidence en
 
 ---
 
-## Revision notes
-
-Substantive changes to the methodology in this document, newest-first, so downstream implementations (e.g. forks maintained by other teams) can see what changed and why. Cosmetic / wording-only edits are not logged.
-
-### 2026-07-12 — Person-time in the outcome-data extraction prompt (IRR end-to-end)
-
-**What changed.** The outcome-data extraction prompt (§9.4) now captures **person-time**: a new `outcome_type: "rate"`, the fields `time_int`/`time_ctrl` (arm person-time, e.g. person-years) added to the schema, and guidance that an incidence rate ratio needs person-time (events + an arm *size* is "binary", not "rate"). The bridge's study-input mapping (§9.3) is now **target-aware** — an IRR body pulls the person-time arms (`events_*`/`time_*`), never a 2×2; a raw person-time study with no reported metric **infers IRR**. Together with the prior IRR person-time engine change, this makes IRR pool **end-to-end from a self-extracted PDF**, not only from pre-computed IRR+CI.
-
-**Why.** The previous change made the engine *reject* IRR-from-counts but left no way to *supply* person-time through extraction, so self-extracted IRR outcomes couldn't pool. This closes the loop.
-
-**Impact.** Additive — new optional fields (`time_int`/`time_ctrl`, `outcome_type:"rate"`); no change to RR/OR/RD/MD/SMD/HR behaviour or to existing stored results. Studies already carrying person-time now pool as IRR instead of being dropped.
-
-**Sections touched:** §9.3 (target-aware mapping + IRR inference), §9.4 (prompt: "rate" type, person-time fields).
-
-### 2026-07-12 — IRR person-time, conservative unknown-design, direction propagation
-
-**What changed.** Three correctness/robustness fixes from an implementation review, plus two doc caveats. (1) **IRR** is no longer computed from a 2×2 count table — it needs **person-time** (`time_int`/`time_ctrl`, alias `pyears_*`): `yᵢ=ln((a/T₁)/(c/T₂))`, `vᵢ=1/a+1/c`. A study requesting IRR from bare counts is dropped with a named warning; the pre-computed IRR+CI path is unaffected (§2.2b). Previously IRR reused the risk-ratio-from-counts formula, silently ignoring differential follow-up. (2) **Unknown study designs** (labels the mapper doesn't recognize) are kept in their own `unknown` body — never merged with an `rct`/`nrs` body — and the body result now carries a `warnings` entry naming the raw label. (3) **`favorable_direction`** is read from the outcome objects and propagated through `pool_body` into `pool_outcome` (was defaulting to `"lower"` at the bridge). Doc adds: an explicit IRR-needs-person-time caveat and a note that **comparison harmonization is lexical only** (unlike outcomes).
-
-**Why.** Implementation-review feedback: IRR from counts is statistically wrong (person-time not modeled); unknown designs should be handled conservatively rather than silently pooled as a clean body; and per-outcome direction must survive the extraction→pool bridge for correct downstream interpretation.
-
-**Impact.** IRR is the one behaviour change that can alter results: an IRR body previously (incorrectly) pooled from counts will now either use person-time / pre-computed CIs or drop those studies — re-run any IRR-from-counts pooling. RR/OR/RD/MD/SMD/HR pooling is unchanged. The unknown-design and direction changes are additive (new `warnings`/`favorable_direction` fields on the body result). New body-result keys: `favorable_direction`, `warnings`.
-
-**Sections touched:** §2.2 (IRR removed from the 2×2 table), new §2.2b, §9.1–9.3 (unknown-design + direction), §10 turnkey (`_irr`), §11 tests, §12 platform notes, front-matter callout.
-
-### 2026-07-12 — Added outcome harmonization (§9.7)
-
-**What changed.** Added §9.7 "Outcome harmonization" — a layer that maps differently-worded outcomes onto one canonical outcome *before* grouping, so synonyms ("All-cause mortality" / "Death from any cause" / "Overall mortality") pool into one body instead of three. Two layered modes: a **deterministic reviewer-dictionary/alias pass** (pure, zero model calls — exact-normalized then conservative token-subset / Jaccard fuzzy matching, with a report of unmatched names) and an **LLM outcome-name clustering** fallback (one batch call over the distinct still-unresolved names, constrained to reviewer target labels, forbidden from merging distinct constructs). Grouping (§9.1) now keys on `canonical_outcome` when present. Wired into `pool_studies(outcome_targets=..., harmonize_llm=...)`. §9.2 updated to point at §9.7 for the synonym case; new §9.7 includes the clustering prompt + a pure dictionary-mode reference.
-
-**Why.** The §9.1 grouping key is lexical (normalized name) — it merges case/punctuation variants but not synonyms, so the same clinical outcome worded differently across studies would not pool. Harmonization closes that gap while guarding against the opposite error (mis-merging genuinely different outcomes).
-
-**Impact.** Additive and opt-in — with no `outcome_targets` and `harmonize_llm=False`, behaviour is unchanged (grouping on normalized verbatim names). New pure module `pooling_harmonize.py`; LLM clusterer in `pooling_extract.py`. No stored results affected.
-
-**Sections touched:** front matter (Contains), §9.2 (synonym note), new §9.7.
-
-### 2026-07-12 — Added the extraction → pooled-outcome bridge + dual-mode (§9)
-
-**What changed.** Added §9 "From extraction to a pooled outcome (the assembly bridge)" documenting how many studies' per-study extraction outputs are absorbed and combined into pooled results: the `group_into_bodies` → `pool_body` → `pool_extractions` flow, the two enforced grouping rules (design-class separation so RCTs and non-randomized studies never share a body; single-measure-per-body with named exclusion of unreconcilable metrics), the raw-data-preferred study-input mapping, the one **outcome-data extraction prompt** that pulls raw arm numbers, and a pure-Python bridge reference implementation. Added §9.5 **dual-mode**: the pooling data comes from the extraction agent when present (zero model calls), and the pooling agent **self-extracts from the PDF as a fallback** when a study's extraction elements are missing (`study_is_poolable` gate → `prepare_study` → `pool_studies`), mirroring Table 2's injected-vs-isolation contract. Renumbered the old §9/§10/§11 (reference impl / tests / platform notes) to §10/§11/§12.
-
-**Why.** The pooling engine pools one already-assembled body; nothing previously documented how per-study extractions get regrouped into bodies and routed to the pooler — the "combine them to pool" step — nor how the agent should behave when the extraction elements are unavailable. This closes both gaps.
-
-**Impact.** Additive — no change to the pooling math, formulas, decision logic, result schema, or GRADE hand-off; no stored results affected. New modules `pooling_prep.py` (pure) + `pooling_extract.py` (dual-mode orchestrator + one outcome-data model call) in the production code.
-
-**Sections touched:** front matter (Contains + two callouts + scope), new §9 (incl. §9.5 dual-mode), renumbered §10–§12.
-
-### 2026-07-12 — Production module adopts numpy + scipy
-
-**What changed.** The production module now uses **numpy** for the vectorized numeric core and **`scipy.stats`** for the χ² / Student-t / normal distribution functions, replacing the hand-rolled Numerical-Recipes shims. The methodology, formulas, decision logic, result schema, and GRADE hand-off are **unchanged** — this is an implementation/accuracy change only (e.g. the prediction-interval t-multiplier is now exact rather than a Cornish-Fisher approximation with ~3e-3 error at df=3). The stdlib shims are retained in §10 as a **dependency-free variant** for forks that cannot add scipy; the two agree to plotting precision.
-
-**Why.** To lift an artificial "standard-library-only" constraint: an agent may use more than the stdlib, and exact, well-tested distribution functions are more trustworthy and maintainable than hand-rolled ones.
-
-**Impact.** No change to any pooled estimate, heterogeneity value, or output shape beyond floating-point-level precision differences in tail p-values / the df=3 prediction interval. No stored results need re-running. Adds `numpy` + `scipy` to the platform's requirements.
-
-**Sections touched:** front matter (Contains + callouts), §10 (intro + scipy mapping table + variant framing), §11.
-
-### 2026-07-12 — Initial publication
-
-Self-contained pooling (meta-analysis) methodology: per-study effect-size formulas for OR/RR/IRR/RD/MD/SMD/HR (from 2×2 counts, mean/SD/N, or pre-computed estimate+CI); inverse-variance fixed- and random-effects pooling with DL / REML / PM τ² estimators; the heterogeneity summary (Q, I², H², τ², prediction interval); Egger's regression and Duval-Tweedie trim-and-fill; the result schema and GRADE hand-off contract; a turnkey single-file Python reference implementation and plain-`assert` tests. The reference module's self-checks pass on CPython 3.12.
-
----
-
 ## 1. Core principle
 
 One call to the pooler = **one outcome**, **one body of evidence**. It takes a list of per-study effect data and produces a single result object:
@@ -97,7 +38,7 @@ One call to the pooler = **one outcome**, **one body of evidence**. It takes a l
 ```
 pool_outcome(studies, measure) -> {
     fixed / random pooled estimate (+ 95% CI, back-transformed for ratios),
-    per-study weights,
+    per-study weights, each carrying that study's risk-of-bias label,
     heterogeneity (Q, df, Q-p, I², H², τ², prediction interval),
     publication_bias (Egger, trim-and-fill),
     arm totals, warnings
@@ -105,6 +46,10 @@ pool_outcome(studies, measure) -> {
 ```
 
 Everything downstream — imprecision, inconsistency, publication-bias, large-effect upgrade, and absolute effects — reads off this object. The pooler makes **no GRADE decision**; it only computes the numbers GRADE consumes.
+
+**Risk of bias passes through; it is never judged here.** Each per-study input may carry a `rob` label (and a `rob_source`); the pooler copies both onto that study's output record next to the `weight_pct` it computed, and does nothing else with them — no severity mapping, no thresholds, no downgrade. Those are the GRADE agent's.
+
+The pooler carries the label because it is the only component that knows the *pooled* order. Studies without usable data are dropped, so a label list supplied alongside `studies[]` misaligns after the first drop and every label past it shifts by one — silently, and in a way that is indistinguishable from a correct result. Attaching the label to the record it describes makes dropping and reordering harmless.
 
 Two stages, both pure Python:
 
@@ -281,13 +226,14 @@ Returns the deficient side, `n_imputed`, and the adjusted random-effects estimat
 ```json
 {
   "measure": "RR", "scale": "log", "model": "random",
-  "outcome_name": null, "favorable_direction": "lower",
+  "outcome_name": null, "favorable_direction": "lower", "design_class": "rct",
   "k": 4,
   "warnings": ["continuity correction (+0.5) applied: Smith 2019", "..."],
   "studies": [
     {"study_id": "...", "design": "...", "yi": -0.61, "vi": 0.05, "se": 0.22,
      "estimate": 0.54, "ci_lower": 0.35, "ci_upper": 0.84,
-     "weight_pct": 27.3, "note": null}
+     "weight_pct": 27.3, "note": null,
+     "rob": "Low", "rob_source": "tool"}
   ],
   "fixed":  {"yi": -0.52, "se": 0.11, "z": -4.7, "p": 2.6e-6,
              "estimate": 0.59, "ci_lower": 0.48, "ci_upper": 0.74},
@@ -310,22 +256,50 @@ Returns the deficient side, `n_imputed`, and the adjusted random-effects estimat
 }
 ```
 
-Studies without usable data are dropped from `k` and named in `warnings` (never silently discarded).
+Studies without usable data are dropped from `k` and named in `warnings` (never silently discarded) — which is exactly why `rob` rides **on** the study record rather than in a list beside it.
+
+`design_class` (`"rct"` / `"nrs"` / `"unknown"`) is the design class of the body, echoed from the grouping rule that built it (§9.2). It sets GRADE's starting certainty. Echoing it here means the consumer reads the class the grouper *enforced*, rather than re-deriving it by inspecting the `studies[].design` labels — two independent classifiers that can disagree.
+
+`rob` is the per-study overall risk-of-bias label **for this outcome** (§9.3 resolves it), carried verbatim. `rob_source` records its provenance: `user_outcome` (reviewer, for this specific outcome), `user_study` (reviewer, study-level), `tool` (a risk-of-bias instrument), or `missing`. Note that `tool` records *who produced* the label, not what scope it has — an instrument-supplied study-level label is still `tool`.
+
+**Accepted `rob` vocabulary.** The label is a string and is passed through verbatim. These are the overall judgements the standard instruments emit:
+
+| Instrument | Overall labels |
+|---|---|
+| RoB 2 (incl. cross-over, cluster extensions) | `Low` / `Some concerns` / `High` |
+| ROBINS-I V2 | `Low` / `Moderate` / `Serious` / `Critical` |
+| ROBINS-I V1 | `Low` / `Moderate` / `Serious` / `Critical` / `No information` |
+| QUADAS-2 | `Low` / `High` / `Unclear` |
+| QUADAS-3 | `Low` / `High` / `Insufficient information` |
+
+ROBINS-I's qualified Domain-1 labels — "Low (except for concerns about uncontrolled confounding)" and "…about uncontrolled benchmarking)" — are also accepted and treated as `Low` downstream. A label outside this vocabulary is still carried; the consumer treats an unrecognized string conservatively, so it yields a *middling* judgement rather than a clean one.
+
+> **⚠ A confidence rating is not a risk-of-bias rating.** Do not put a critical-appraisal *confidence* score in this field. AMSTAR-2 is the trap: it rates a systematic review's confidence as `High` / `Moderate` / `Low` / `Critically low`, where **`High` is good** — the opposite polarity to every instrument in the table above. Feeding an AMSTAR-2 rating into `rob` inverts the judgement, so the best-appraised reviews become the ones that trigger a downgrade. Systematic reviews are not primary studies and do not belong in a pooled body of evidence in the first place: exclude them at the source rather than translating their scale.
+
+> **This is a breaking change for implementations built on an earlier version of this document.** Every entry of `studies[]` now carries `rob` and `rob_source`, read from the corresponding per-study input, and the result carries `design_class`. Earlier versions rebuilt each per-study record from a fixed field list, so a `rob` attached to an input study was **silently stripped** and never appeared in the result — a caller could supply risk-of-bias labels and have them vanish without a warning. Carry both fields through every effect-size path. An implementation that emits `studies[]` without them produces a body the GRADE agent rejects: it reads the label off the study record and raises on a body of evidence that has none, rather than rating it as though risk of bias were clean.
 
 ---
 
 ## 8. GRADE hand-off contract
 
-`grade_pooling_inputs(result)` surfaces exactly the numbers the GRADE agent reads — **no decisions**:
+**The hand-off object is the whole `pool_outcome(...)` result dict.** The GRADE agent reads these fields off it — **no decisions**:
 
-| Field | Feeds GRADE domain |
+| Pooled field | Feeds GRADE domain |
 |---|---|
-| `pooled_estimate`, `ci_lower`, `ci_upper` | Imprecision; Large-effect upgrade; Absolute effects |
-| `i2`, `tau2`, `q_p`, `prediction_interval` | Inconsistency |
-| `total_n`, `events_int`, `events_ctrl` | Imprecision (OIS); Absolute effects |
-| `egger_p`, `egger_adequate_power`, `trim_fill_n_imputed`, `trim_fill_adjusted_estimate` | Publication bias |
+| `measure`, `k` | scale; inconsistency (single study → n/a); publication-bias gate |
+| `design_class` | Starting certainty |
+| `pooled.estimate`, `pooled.ci_lower`, `pooled.ci_upper` | Imprecision; Large-effect upgrade; Absolute effects |
+| `heterogeneity.i2`, `heterogeneity.q_p`, `heterogeneity.tau2`, `heterogeneity.prediction_interval` | Inconsistency |
+| `studies[].study_id`, `studies[].design`, `studies[].weight_pct` | Weighting; single-arm detection |
+| `studies[].rob`, `studies[].rob_source` | **Risk of bias** |
+| `totals.n_int`, `totals.n_ctrl`, `totals.events_int`, `totals.events_ctrl` | Imprecision (OIS); Absolute effects |
+| `publication_bias.egger.p`, `publication_bias.egger.adequate_power`, `publication_bias.trim_fill.n_imputed`, `publication_bias.trim_fill.adjusted_estimate` | Publication bias |
 
 The GRADE agent applies thresholds and makes the up/down-grade calls itself. This keeps pooling and GRADE sharing one contract without pooling ever "deciding" certainty.
+
+`grade_pooling_inputs(result)` is a **flattened convenience view** of the same numbers — useful for forest plots, summary tables, and exports. It is *not* the hand-off object: it carries no `studies[]`, so it cannot convey risk of bias or per-study weights.
+
+> **This is a breaking change for implementations built on an earlier version of this document.** The hand-off object is the **whole `pool_outcome(...)` result dict**, not `grade_pooling_inputs(result)`. Earlier versions of this document named the flat helper as the hand-off; it carries no `studies[]`, `heterogeneity`, `publication_bias`, `totals`, or `design_class`, so an implementation wired through it starved the GRADE agent of the risk-of-bias, inconsistency, publication-bias, and Optimal-Information-Size inputs listed above. Two further corrections in the same helper: `total_n` now **sums both arms**, where it previously reported the intervention arm only and so halved the Optimal Information Size — converting a met threshold into an unmet one and manufacturing an imprecision downgrade; and `design_class` now appears on the result itself, where it previously existed only on the body wrapper one level above.
 
 ---
 
@@ -361,6 +335,25 @@ Timepoints are separate bodies by default (don't pool 6-month with 12-month); pa
 ### 9.3 Study-input mapping (raw data wins)
 
 For each outcome object, the bridge builds a `pool_outcome` input, **preferring raw arm data** and falling back to the reported `effect_estimate` + `ci_lower`/`ci_upper` only when its metric matches the body's measure. The raw-data choice is **target-aware**: a 2×2 body (OR/RR/RD) takes `events_int/n_int/events_ctrl/n_ctrl`; an **IRR body takes person-time** (`events_int/time_int/events_ctrl/time_ctrl`) — a 2×2 count table is *not* accepted for IRR (it can't make one), so a would-be IRR study with only counts is excluded with a person-time-naming reason; a continuous body takes `mean/SD/N`. With no reported metric, a raw-data study's measure is inferred (2×2 → RR, person-time → IRR, mean/SD → MD). This is why raw arm numbers are worth extracting even when a paper also prints an effect.
+
+**Risk of bias is resolved per (study × outcome), and rides out on the study input.** A body is keyed on an outcome, and RoB 2 / ROBINS-I are outcome-specific instruments — Domain 4 (measurement of the outcome) and Domain 5 (selection of the reported result) genuinely differ between outcomes, and GRADE rates risk of bias per outcome. One trial can be `Low` for mortality and `High` for an unblinded subjective outcome. So the bridge resolves the label **per body**, not once per study, in this precedence:
+
+| # | Source | `rob_source` |
+|---|---|---|
+| 1 | `oc["rob"]` — the outcome object's own label | `user_outcome` |
+| 2 | `study["rob_by_outcome"][<this body's outcome>]` | `user_outcome` |
+| 3 | `study["rob"]` — one study-level label | `user_study` |
+| 4 | nothing found | `missing` |
+
+An explicitly supplied `rob_source` (on the outcome object or the study) always wins over the inferred value — that is how an automated risk-of-bias instrument stamps `tool`.
+
+**`rob_by_outcome` keys are free text, matched by the same rule that groups the bodies.** They come from wherever the appraisal recorded its assessed outcome, so they carry the same wording variation as extraction's outcome names. Match them on the **canonical outcome** when harmonization (§9.7) has run, and on the normalized name otherwise — never on the raw string. Harmonizing outcome names *without* harmonizing the risk-of-bias keys is worse than not harmonizing at all: the body's outcome becomes "All-cause mortality" while the appraisal's key stays "Death from any cause", the lookup misses, every study resolves `missing`, and a fully-appraised body is downgraded as unappraised.
+
+**Matching is exact-after-normalization, not fuzzy.** §9.7's conservative matcher is the sanctioned semantic layer; it runs once, over the whole review, where a reviewer can inspect its report. A second, independent fuzzy pass at the risk-of-bias step would let a label attach to an outcome the grouper did not consider the same outcome — and a wrong `High` on the wrong body is a worse error than a `missing` that is counted conservatively and named in the reason string.
+
+**Know which granularity your appraisal actually produces.** An appraisal pipeline that emits one record per (study × outcome) populates `rob_by_outcome` directly, and tier 2 resolves for every body it covered. A pipeline that appraises each study's *primary* outcome alone resolves tier 2 for that outcome and `missing` for every other body — correct and conservative, but it means secondary-outcome bodies carry an unappraised weight fraction, which the GRADE agent names explicitly in its reason string. Either appraise per outcome, or supply a study-level `rob` (tier 3) and accept that it is the primary outcome's judgement applied to all of them.
+
+**Key the map on a clean outcome label.** An appraisal record often carries a composed description of what was assessed — "Quality of life — measured as KCCQ total symptom score — at 8 months" — because a longer string makes a better prompt for the instrument. That string is not a key: it will not match a body's outcome name after normalization, and every lookup silently misses. Key `rob_by_outcome` on the short label ("Quality of life") and keep the composed form as an audit field.
 
 ### 9.4 The outcome-data extraction prompt (the one model call)
 
@@ -507,9 +500,87 @@ def _canon(measure):  # reuse the pooling reference's _canon / study_effect / po
     return (measure or "").upper()
 
 
-def outcome_to_study_input(study_level, oc, target_measure):
+# CANONICAL_KEY is defined in §9.7; harmonization stamps it onto outcome objects and
+# this module prefers it wherever an outcome name is used as a key.
+CANONICAL_KEY = "canonical_outcome"
+
+
+def resolve_rob(study_level, oc, outcome_key=None):
+    """Resolve the risk-of-bias label for one (study x outcome) pair.
+
+    Returns ``(label, source)``. ``outcome_key`` is the body's outcome name -- the
+    canonical one when harmonization (§9.7) has run. Precedence: the outcome object's
+    own label, then the study's per-outcome map, then a study-level label, then
+    nothing. An explicit ``rob_source`` on either dict always wins over the inferred
+    value (that is how an instrument stamps "tool"). Nothing here judges the label.
+    """
+    oc = oc or {}
+    explicit = oc.get("rob_source") or study_level.get("rob_source")
+
+    def _out(label, inferred):
+        label = str(label).strip() if label is not None else ""
+        if not label:
+            return None, "missing"
+        return label, (explicit or inferred)
+
+    if oc.get("rob"):                                          # 1. outcome object
+        return _out(oc["rob"], "user_outcome")
+
+    table = study_level.get("rob_by_outcome") or {}            # 2. per-outcome map
+    if table:
+        key = oc.get(CANONICAL_KEY) or outcome_key or oc.get("name") or oc.get("outcome_name")
+        hit = {_norm(k): k for k in table}.get(_norm(key))
+        if hit is not None and table.get(hit):
+            return _out(table[hit], "user_outcome")
+
+    if study_level.get("rob"):                                 # 3. study-level
+        return _out(study_level["rob"], "user_study")
+    return None, "missing"                                     # 4. nothing
+
+
+def attach_rob(studies, records, id_key="study_id"):
+    """Merge risk-of-bias records onto study dicts, BEFORE harmonization (§9.7).
+
+    ``records``: [{"study_id": ..., "outcome": <str or None>, "rob": <label>,
+                   "rob_source": <"tool"|"user_outcome"|"user_study">}, ...].
+    A record with an ``outcome`` populates that study's ``rob_by_outcome`` map; one
+    without becomes the study-level ``rob``. Pure -- no I/O, no judgement. This is the
+    seam an appraisal-database adapter targets.
+
+    Order matters: attach_rob -> harmonize_by_targets -> group_into_bodies. Attaching
+    after harmonization leaves the rob_by_outcome keys un-canonicalized, so every
+    lookup misses and an appraised body reads as unappraised.
+    """
+    by_id = {}
+    for r in records or []:
+        sid = r.get(id_key) or r.get("study_id")
+        if not sid or not r.get("rob"):
+            continue
+        slot = by_id.setdefault(str(sid), {"rob_by_outcome": {}})
+        if r.get("outcome"):
+            slot["rob_by_outcome"][r["outcome"]] = r["rob"]
+        else:
+            slot["rob"] = r["rob"]
+        if r.get("rob_source"):
+            slot["rob_source"] = r["rob_source"]
+    out = []
+    for s in studies:
+        add = by_id.get(str(s.get("study_id") or s.get("citation_authors") or ""))
+        if not add:
+            out.append(s); continue
+        s2 = dict(s)
+        s2["rob_by_outcome"] = {**(s.get("rob_by_outcome") or {}), **add["rob_by_outcome"]}
+        for k in ("rob", "rob_source"):
+            if add.get(k) and not s2.get(k):
+                s2[k] = add[k]
+        out.append(s2)
+    return out
+
+
+def outcome_to_study_input(study_level, oc, target_measure, outcome_key=None):
     base = {"study_id": study_level.get("study_id") or study_level.get("citation_authors"),
             "design": study_level.get("study_type") or study_level.get("design")}
+    base["rob"], base["rob_source"] = resolve_rob(study_level, oc, outcome_key)
     for src in (oc, study_level):
         if _has(src, _BIN):
             base.update({k: _num(src.get(k)) for k in _BIN}); return base
@@ -535,7 +606,7 @@ def group_into_bodies(studies, include_timepoint=True):
         for oc in outs:
             if not isinstance(oc, dict):
                 continue
-            name = oc.get("name") or oc.get("outcome_name")
+            name = oc.get(CANONICAL_KEY) or oc.get("name") or oc.get("outcome_name")
             comp = oc.get("comparison") or s.get("population_comparator")
             tim = oc.get("timing") or oc.get("outcome_timing")
             key = (_norm(name), _norm(comp), _norm(tim) if include_timepoint else "", dcls)
@@ -566,9 +637,15 @@ def _choose_measure(members, override):
 
 def pool_body(body, measure=None, model="random", tau2_method="REML"):
     target = _choose_measure(body["members"], measure)
-    inputs, excluded = [], []
+    inputs, excluded, warnings = [], [], []
+    if body["design_class"] == "unknown":
+        raw = {(s.get("study_type") or s.get("design")) for s, _oc in body["members"]}
+        warnings.append("unrecognized study design(s), kept in their own body: "
+                        + ", ".join(sorted(str(r) for r in raw if r)))
+    direction = None
     for s, oc in body["members"]:
-        si = outcome_to_study_input(s, oc, target)
+        direction = direction or oc.get("favorable_direction")
+        si = outcome_to_study_input(s, oc, target, body["outcome_name"])
         label = s.get("study_id") or s.get("citation_authors")
         if si is None:
             m = _canon(oc.get("effect_metric"))
@@ -578,9 +655,13 @@ def pool_body(body, measure=None, model="random", tau2_method="REML"):
             inputs.append(si)
     out = {"outcome_name": body["outcome_name"], "comparison": body["comparison"],
            "timepoint": body["timepoint"], "design_class": body["design_class"],
-           "measure": target, "k": len(inputs), "excluded": excluded, "pooled": None}
+           "measure": target, "favorable_direction": direction or "lower",
+           "k": len(inputs), "excluded": excluded, "warnings": warnings, "pooled": None}
     if target and inputs:
-        out["pooled"] = pool_outcome(inputs, target, model=model, tau2_method=tau2_method)
+        out["pooled"] = pool_outcome(inputs, target, model=model, tau2_method=tau2_method,
+                                     outcome_name=body["outcome_name"],
+                                     favorable_direction=out["favorable_direction"],
+                                     design_class=body["design_class"])
     return out
 
 
@@ -725,6 +806,12 @@ def apply_canonical_map(studies, name_to_canonical):
                         oc = {**oc, CANONICAL_KEY: canon}
                 new.append(oc)
             s2["outcomes"] = new
+        # Risk-of-bias keys are outcome names too (§9.3). Canonicalizing the outcomes
+        # but not these breaks every per-outcome lookup: the body becomes the canonical
+        # name while the key stays an alias, so an appraised body reads as unappraised.
+        if isinstance(s.get("rob_by_outcome"), dict):
+            s2["rob_by_outcome"] = {(name_to_canonical.get(_norm(k)) or k): v
+                                    for k, v in s["rob_by_outcome"].items()}
         out.append(s2)
     return out
 
@@ -751,6 +838,9 @@ def harmonize_by_targets(studies, targets, fuzzy=True):
                 nm = oc.get("name") or oc.get("outcome_name")
                 if nm:
                     names[nm] = names.get(nm, 0) + 1
+        for k in (s.get("rob_by_outcome") or {}):   # RoB keys are outcome names too
+            if k:
+                names[k] = names.get(k, 0) + 1
     for nm, cnt in names.items():
         canon = match_outcome_name(nm, index, fuzzy)
         if canon:
@@ -766,7 +856,7 @@ Then grouping (§9.1) is unchanged except its key-builder reads
 
 ## 10. Turnkey reference implementation
 
-The **production** module (`backend/evidence_synthesis/pooling.py`) uses **numpy** for the numeric core and **`scipy.stats`** for the distribution functions — that is the recommended implementation on any stack that can `pip install numpy scipy`. The distribution calls map directly:
+The **production** module (`backend/synthesis/pooling.py`) uses **numpy** for the numeric core and **`scipy.stats`** for the distribution functions — that is the recommended implementation on any stack that can `pip install numpy scipy`. The distribution calls map directly:
 
 | Purpose | `scipy.stats` call |
 |---|---|
@@ -1016,11 +1106,18 @@ def _cont(s, m):
 
 
 def _counts(s, yi, vi, note):
+    # Every effect-size path funnels through here, so this is the single place that
+    # decides which input fields survive into the pooled record.
+    rob = str(s.get("rob")).strip() if s.get("rob") is not None else ""
     return {"study_id": s.get("study_id") or s.get("id") or s.get("name"),
             "design": s.get("design") or s.get("study_type"),
             "n_int": _num(s.get("n_int")), "n_ctrl": _num(s.get("n_ctrl")),
             "events_int": _num(s.get("events_int")), "events_ctrl": _num(s.get("events_ctrl")),
-            "yi": yi, "vi": vi, "note": note}
+            "yi": yi, "vi": vi, "note": note,
+            # Carried, never interpreted. The only normalization is that a blank label
+            # means "missing"; a supplied rob_source is passed through untouched.
+            "rob": rob or None,
+            "rob_source": s.get("rob_source") or ("missing" if not rob else None)}
 
 
 # --- pooling + tau2 --------------------------------------------------------
@@ -1180,7 +1277,8 @@ def _block(t, se, is_log):
 
 
 def pool_outcome(studies: Iterable[dict], measure: str, *, model="random",
-                 tau2_method="REML", outcome_name=None, favorable_direction="lower"):
+                 tau2_method="REML", outcome_name=None, favorable_direction="lower",
+                 design_class=None):
     m = _canon(measure); is_log = m in _LOG
     prep, warn = [], []
     for i, s in enumerate(studies):
@@ -1194,6 +1292,7 @@ def pool_outcome(studies: Iterable[dict], measure: str, *, model="random",
         prep.append(e)
     res = {"measure": m, "scale": "log" if is_log else "raw", "model": model,
            "outcome_name": outcome_name, "favorable_direction": favorable_direction,
+           "design_class": design_class,
            "k": len(prep), "warnings": warn, "studies": [], "fixed": None, "random": None,
            "pooled": None, "heterogeneity": None, "publication_bias": None,
            "totals": _totals(prep)}
@@ -1215,7 +1314,8 @@ def pool_outcome(studies: Iterable[dict], measure: str, *, model="random",
             "estimate": math.exp(e["yi"]) if is_log else e["yi"],
             "ci_lower": math.exp(e["yi"]-_Z*se) if is_log else e["yi"]-_Z*se,
             "ci_upper": math.exp(e["yi"]+_Z*se) if is_log else e["yi"]+_Z*se,
-            "weight_pct": 100.0*w/sw, "note": e.get("note")})
+            "weight_pct": 100.0*w/sw, "note": e.get("note"),
+            "rob": e.get("rob"), "rob_source": e.get("rob_source")})
     df = len(y)-1; q = _Q(y, v, fe["estimate"])
     het = {"k": len(y), "q": q, "df": df, "q_p": _chi2_sf(q, df) if df > 0 else None,
            "i2": max(0.0, (q-df)/q)*100.0 if (df > 0 and q > 0) else 0.0,
@@ -1248,14 +1348,22 @@ def _totals(prep):
 
 
 def grade_pooling_inputs(result: dict) -> dict:
+    """Flattened convenience view for forest plots / summary tables / exports.
+
+    NOT the GRADE hand-off object -- that is the whole pool_outcome() result (§8).
+    This view has no studies[], so it cannot carry risk of bias or per-study weights.
+    """
     p = result.get("pooled") or {}; h = result.get("heterogeneity") or {}
     pb = result.get("publication_bias") or {}; eg = pb.get("egger") or {}; tf = pb.get("trim_fill") or {}
     t = result.get("totals") or {}
     return {"k": result.get("k"), "measure": result.get("measure"),
+            "design_class": result.get("design_class"),
             "pooled_estimate": p.get("estimate"), "ci_lower": p.get("ci_lower"),
             "ci_upper": p.get("ci_upper"), "i2": h.get("i2"), "tau2": h.get("tau2"),
             "q_p": h.get("q_p"), "prediction_interval": h.get("prediction_interval"),
-            "total_n": t.get("n_int"), "events_int": t.get("events_int"),
+            # BOTH arms: the intervention arm alone halves the Optimal Information Size.
+            "total_n": ((t.get("n_int") or 0.0) + (t.get("n_ctrl") or 0.0)) or None,
+            "events_int": t.get("events_int"),
             "events_ctrl": t.get("events_ctrl"), "egger_p": eg.get("p"),
             "egger_adequate_power": eg.get("adequate_power"),
             "trim_fill_n_imputed": tf.get("n_imputed"),
@@ -1343,6 +1451,78 @@ rct = [b for b in bodies if b["design_class"] == "rct"][0]
 assert rct["measure"] == "RR" and rct["k"] == 2          # raw + reported RR; OR excluded
 assert any("Kim" in e for e in rct["excluded"])
 assert {b["design_class"] for b in bodies} == {"rct", "nrs"}  # designs never share a body
+assert rct["pooled"]["design_class"] == "rct"        # reaches the result, not just the wrapper
+assert rct["pooled"]["outcome_name"] == rct["outcome_name"]
+
+# --- risk of bias rides on the study record, so a drop cannot misalign it (§7) ---
+S_rob = [{"yi": math.log(0.5), "vi": 0.10, "study_id": "A", "rob": "Low", "rob_source": "tool"},
+         {"yi": math.log(0.8), "vi": 0.05, "study_id": "B", "rob": "Some concerns"},
+         {"yi": 0.0, "vi": 0.0, "study_id": "C", "rob": "High"},    # dropped: vi <= 0
+         {"yi": math.log(0.6), "vi": 0.08, "study_id": "D"}]        # no label
+r_rob = pool_outcome(S_rob, "RR")
+assert [s["study_id"] for s in r_rob["studies"]] == ["A", "B", "D"]   # C dropped, order shifts
+assert [s["rob"] for s in r_rob["studies"]] == ["Low", "Some concerns", None]
+assert r_rob["studies"][2]["rob_source"] == "missing"     # absent label -> "missing"
+assert r_rob["studies"][0]["rob_source"] == "tool"        # supplied source preserved
+# The whole point: after the drop, B's label is still paired with B's weight.
+# A positional list would now be reading "High" against B.
+assert r_rob["studies"][1]["rob"] == "Some concerns" and r_rob["studies"][1]["weight_pct"] > 0
+assert abs(sum(s["weight_pct"] for s in r_rob["studies"]) - 100.0) < 1e-6
+# every measure path carries it -- _counts is the single funnel
+assert study_effect({"events_int": 15, "n_int": 100, "events_ctrl": 25,
+                     "n_ctrl": 100, "rob": "Low"}, "OR")["rob"] == "Low"
+assert study_effect({"mean_int": 10, "sd_int": 2, "n_int": 30, "mean_ctrl": 8,
+                     "sd_ctrl": 2.5, "n_ctrl": 30, "rob": "High"}, "SMD")["rob"] == "High"
+assert study_effect({"events_int": 10, "time_int": 500, "events_ctrl": 20,
+                     "time_ctrl": 480, "rob": "Serious"}, "IRR")["rob"] == "Serious"
+
+# --- per-(study x outcome) resolution, precedence ladder (§9.3) ---
+_s = {"study_id": "Smith", "study_type": "RCT",
+      "rob": "High",                                        # tier 3, study-level
+      "rob_by_outcome": {"All-cause mortality": "Low"}}      # tier 2, outcome-specific
+assert resolve_rob(_s, {"name": "All-cause mortality"},
+                   "All-cause mortality") == ("Low", "user_outcome")     # tier 2 beats tier 3
+assert resolve_rob(_s, {"name": "Serious adverse events"},
+                   "Serious adverse events") == ("High", "user_study")   # falls back
+assert resolve_rob(_s, {"name": "All-cause mortality", "rob": "Some concerns"},
+                   "All-cause mortality") == ("Some concerns", "user_outcome")  # tier 1 wins
+assert resolve_rob({"study_id": "X"}, {"name": "y"}, "y") == (None, "missing")
+assert resolve_rob({"rob": "Low", "rob_source": "tool"}, {}, None) == ("Low", "tool")
+assert resolve_rob({"rob_by_outcome": {"all cause  MORTALITY": "Low"}},
+                   {"name": "All-cause Mortality"}, "All-cause Mortality")[0] == "Low"
+assert resolve_rob({"rob": "   "}, {}, None) == (None, "missing")   # blank is not a label
+
+# --- attach_rob is the injection seam ---
+_att = attach_rob([{"study_id": "S1", "outcomes": []}],
+                  [{"study_id": "S1", "outcome": "Death from any cause",
+                    "rob": "Low", "rob_source": "tool"}])
+assert _att[0]["rob_by_outcome"] == {"Death from any cause": "Low"}
+assert resolve_rob(_att[0], {"name": "Death from any cause"},
+                   "Death from any cause") == ("Low", "tool")
+
+# --- harmonization must canonicalize the RoB keys too, or an appraised body
+#     reads as unappraised (§9.7); grouping must actually read canonical_outcome ---
+_h_in = [
+  {"study_id": "S1", "study_type": "RCT", "rob_by_outcome": {"Death from any cause": "Low"},
+   "outcomes": [{"name": "Death from any cause", "comparison": "d vs p", "timing": "12m",
+                 "events_int": 12, "n_int": 100, "events_ctrl": 20, "n_ctrl": 100}]},
+  {"study_id": "S2", "study_type": "RCT", "rob_by_outcome": {"Overall mortality": "High"},
+   "outcomes": [{"name": "Overall mortality", "comparison": "d vs p", "timing": "12m",
+                 "events_int": 8, "n_int": 80, "events_ctrl": 25, "n_ctrl": 90}]}]
+_h, _rep = harmonize_by_targets(_h_in, [{"canonical": "All-cause mortality",
+    "aliases": ["Death from any cause", "Overall mortality"]}])
+_bodies = pool_extractions(_h)
+assert len(_bodies) == 1                                   # synonyms pooled into one body
+assert _bodies[0]["outcome_name"] == "All-cause mortality" # grouping reads canonical_outcome
+_ps = _bodies[0]["pooled"]["studies"]
+assert {s["study_id"]: s["rob"] for s in _ps} == {"S1": "Low", "S2": "High"}
+assert all(s["rob_source"] == "user_outcome" for s in _ps)  # matched via the canonical key
+
+# --- the flat convenience view totals BOTH arms (OIS would otherwise halve) ---
+_g = grade_pooling_inputs(pool_outcome(
+    [{"events_int": 12, "n_int": 100, "events_ctrl": 20, "n_ctrl": 100},
+     {"events_int": 8,  "n_int": 80,  "events_ctrl": 25, "n_ctrl": 90}], "RR"))
+assert _g["total_n"] == 370          # 180 intervention + 190 comparator, not 180
 
 print("all pooling self-checks passed")
 ```
@@ -1360,4 +1540,6 @@ print("all pooling self-checks passed")
 - **Comparison strings are matched lexically only.** Only outcome names are harmonized (§9.7); the `comparison` key component is normalized but not synonym-mapped. Canonicalize comparison wording upstream if studies phrase the same contrast differently.
 - **Trim-and-fill is best-effort.** The L0 estimator is sensitive to the pooling model used inside the loop and is unreliable under real heterogeneity; treat `n_imputed` as a sensitivity signal, not a correction. Egger's test is underpowered below k = 10 (the `adequate_power` flag encodes the GRADE gate).
 - **One call per body of evidence.** Do not pass mixed RCT + non-randomized studies. GRADE rates them separately; the design split happens upstream (in extraction/classification), and you call the pooler once per body.
-- **Separation of concerns.** This agent computes numbers only. Certainty rating, absolute effects, baseline risk, and MIDs belong to the downstream GRADE agent, which reads `grade_pooling_inputs(result)`. Keeping the boundary clean is what lets pooling be reused for non-GRADE displays (forest plots, effect tables).
+- **Risk of bias is carried, not analysed.** The pooler attaches each study's `rob` label to its record next to `weight_pct` and stops there — no severity mapping, no thresholds, no downgrade, and no risk-of-bias-stratified re-pool. The weighted share of pooled weight sitting in studies with concerns is the GRADE agent's calculation, and that is the only place the severity vocabulary is interpreted; a second copy here would guarantee the two drift, and this copy would be the one to rot, because risk-of-bias vocabulary changes arrive from the appraisal side. If you want a sensitivity analysis excluding high-risk studies, filter the input list and call `pool_outcome` twice — that is a caller-side comparison of two bodies, not a property of one.
+- **Resolve risk of bias before you pool, and harmonize before you resolve.** The required order is `attach_rob` → `harmonize_by_targets` → `group_into_bodies` (§9.6). Getting it wrong fails quietly rather than loudly: labels attached after harmonization keep their alias keys, every per-outcome lookup misses, and a fully-appraised body arrives at GRADE looking unappraised.
+- **Separation of concerns.** This agent computes numbers only. Certainty rating, absolute effects, baseline risk, and MIDs belong to the downstream GRADE agent, which reads the `pool_outcome(...)` result dict (§8). Keeping the boundary clean is what lets pooling be reused for non-GRADE displays (forest plots, effect tables) — that is what `grade_pooling_inputs(result)` is for.

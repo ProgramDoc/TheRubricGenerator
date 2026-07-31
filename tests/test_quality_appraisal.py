@@ -17,7 +17,7 @@ import json
 
 import pytest
 
-from backend import quality_appraisal as qa
+from backend import outcomes, quality_appraisal as qa
 from backend.rob_tools import (rob2, rob2_crossover, rob2_cluster, robins_i,
                                robins_i_v1, quadas2, quadas3)
 from backend.reporting_guidelines import (consort2025, consort_crossover,
@@ -2958,3 +2958,545 @@ class TestClusterFlattenForExport:
     def test_flatten_does_not_emit_aim_as_a_domain(self):
         row = qa.flatten_result_row(self._make_cluster_row("assignment"))
         assert "rob_daim_judgement" not in row
+
+
+# ─────────────────────────────────────────────
+# Outcome extraction — the per-outcome candidate list
+# ─────────────────────────────────────────────
+class TestOutcomeExtraction:
+    """``outcomes.extract_outcomes`` post-parse behaviour.
+
+    The LLM call is stubbed; these cover the deterministic cleanup: synthetic
+    ids, field coercion, name synthesis, and the empty-list escape hatches that
+    let the caller fall back to the auto-picked primary outcome.
+    """
+
+    @staticmethod
+    def _stub_call(monkeypatch, raw):
+        from backend import outcomes as oc_mod
+        monkeypatch.setattr(oc_mod, "_call_with_pdf",
+                            lambda pdf, prompt, max_tokens=8192: raw)
+
+    def test_assigns_synthetic_ids_in_order(self, monkeypatch):
+        self._stub_call(monkeypatch, {"outcomes": [
+            {"name": "All-cause mortality", "is_primary": True},
+            {"name": "Quality of life"},
+            {"name": "Serious adverse events"},
+        ]})
+        out = outcomes.extract_outcomes(b"")
+        assert [o["id"] for o in out] == [1, 2, 3]
+        assert [o["is_primary"] for o in out] == [True, False, False]
+
+    def test_non_list_payload_returns_empty(self, monkeypatch):
+        self._stub_call(monkeypatch, {"outcomes": "mortality"})
+        assert outcomes.extract_outcomes(b"") == []
+
+    def test_missing_key_returns_empty(self, monkeypatch):
+        self._stub_call(monkeypatch, {"something_else": []})
+        assert outcomes.extract_outcomes(b"") == []
+
+    def test_non_dict_entries_are_skipped(self, monkeypatch):
+        self._stub_call(monkeypatch, {"outcomes": [
+            "mortality", {"name": "Quality of life"}, None]})
+        out = outcomes.extract_outcomes(b"")
+        assert [o["name"] for o in out] == ["Quality of life"]
+        assert out[0]["id"] == 1          # numbered over survivors, so no gaps
+
+    def test_fields_coerced_to_stripped_strings(self, monkeypatch):
+        self._stub_call(monkeypatch, {"outcomes": [
+            {"name": "  Mortality  ", "measure": None, "timing": 12}]})
+        oc = outcomes.extract_outcomes(b"")[0]
+        assert oc["name"] == "Mortality"
+        assert oc["measure"] == ""
+        assert oc["timing"] == "12"
+
+    def test_name_synthesized_from_description(self, monkeypatch):
+        self._stub_call(monkeypatch, {"outcomes": [
+            {"description": "Death from any cause during follow-up"}]})
+        assert outcomes.extract_outcomes(b"")[0]["name"] == \
+            "Death from any cause during follow-up"
+
+    def test_name_synthesized_from_measure_and_timing(self, monkeypatch):
+        self._stub_call(monkeypatch, {"outcomes": [
+            {"measure": "6-minute walk distance", "timing": "12 weeks"}]})
+        assert outcomes.extract_outcomes(b"")[0]["name"] == \
+            "6-minute walk distance — 12 weeks"
+
+    def test_name_falls_back_to_ordinal(self, monkeypatch):
+        self._stub_call(monkeypatch, {"outcomes": [{}, {}]})
+        assert [o["name"] for o in outcomes.extract_outcomes(b"")] == \
+            ["Outcome 1", "Outcome 2"]
+
+    def test_unrecognized_outcome_type_is_blanked(self, monkeypatch):
+        # An unrecognized type must not be trusted downstream — imprecision
+        # falls back to its lexical heuristic when this is "".
+        self._stub_call(monkeypatch, {"outcomes": [
+            {"name": "A", "outcome_type": "ordinal"},
+            {"name": "B", "outcome_type": "  BINARY "},
+            {"name": "C", "outcome_type": "time-to-event"},
+        ]})
+        assert [o["outcome_type"] for o in outcomes.extract_outcomes(b"")] == \
+            ["", "binary", "time-to-event"]
+
+    def test_length_caps_are_enforced(self, monkeypatch):
+        self._stub_call(monkeypatch, {"outcomes": [
+            {"name": "N" * 500, "description": "D" * 500,
+             "measure": "M" * 500, "timing": "T" * 500}]})
+        oc = outcomes.extract_outcomes(b"")[0]
+        assert len(oc["name"]) == 120 and len(oc["description"]) == 200
+        assert len(oc["measure"]) == 120 and len(oc["timing"]) == 80
+
+    def test_source_is_stamped_extracted(self, monkeypatch):
+        self._stub_call(monkeypatch, {"outcomes": [{"name": "Mortality"}]})
+        assert outcomes.extract_outcomes(b"")[0]["source"] == "extracted"
+
+
+# ─────────────────────────────────────────────
+# Outcome label — the prompt string, not the join key
+# ─────────────────────────────────────────────
+class TestOutcomeLabel:
+    def test_composes_name_measure_and_timing(self):
+        assert outcomes.outcome_label({
+            "name": "All-cause mortality",
+            "measure": "proportion who died",
+            "timing": "12 months",
+        }) == "All-cause mortality — measured as proportion who died — at 12 months"
+
+    def test_name_only(self):
+        assert outcomes.outcome_label({"name": "Mortality"}) == "Mortality"
+
+    def test_falls_back_to_description(self):
+        assert outcomes.outcome_label({"description": "Death"}) == "Death"
+
+    def test_empty_dict_is_empty_string(self):
+        assert outcomes.outcome_label({}) == ""
+
+    def test_capped_at_200_chars(self):
+        label = outcomes.outcome_label({
+            "name": "N" * 150, "measure": "M" * 150, "timing": "T" * 150})
+        assert len(label) == 200
+
+
+# ─────────────────────────────────────────────
+# Outcome units — the fan-out precedence ladder
+# ─────────────────────────────────────────────
+class TestOutcomeUnits:
+    PRIMARY = "All-cause mortality"
+
+    def test_nothing_supplied_is_one_auto_picked_unit(self):
+        units = qa.build_outcome_units(None, None, self.PRIMARY)
+        assert len(units) == 1
+        assert units[0].assessed_outcome == self.PRIMARY
+        assert units[0].is_override is False
+        assert units[0].unit_id is None and units[0].payload is None
+
+    def test_legacy_string_override_is_one_unit(self):
+        units = qa.build_outcome_units(None, "  6-minute walk  ", self.PRIMARY)
+        assert len(units) == 1
+        assert units[0].assessed_outcome == "6-minute walk"
+        assert units[0].is_override is True
+
+    def test_override_equal_to_auto_pick_is_not_an_override(self):
+        # Guards the existing semantics: the Domain 1 "randomization is
+        # per-trial" prompt note must not fire when nothing actually changed.
+        units = qa.build_outcome_units(None, self.PRIMARY, self.PRIMARY)
+        assert units[0].is_override is False
+
+    def test_structured_outcomes_fan_out(self):
+        units = qa.build_outcome_units([
+            {"id": 1, "name": "All-cause mortality"},
+            {"id": 2, "name": "Quality of life", "timing": "12 months"},
+            {"id": 3, "name": "Serious adverse events"},
+        ], None, self.PRIMARY)
+        assert [u.unit_id for u in units] == [1, 2, 3]
+        assert units[1].assessed_outcome == "Quality of life — at 12 months"
+        assert all(u.kind == "outcome" for u in units)
+
+    def test_structured_outcomes_beat_the_legacy_override(self):
+        units = qa.build_outcome_units(
+            [{"id": 1, "name": "Mortality"}], "some other outcome", self.PRIMARY)
+        assert len(units) == 1 and units[0].assessed_outcome == "Mortality"
+
+    def test_outcome_matching_the_auto_pick_is_not_an_override(self):
+        units = qa.build_outcome_units(
+            [{"id": 1, "name": self.PRIMARY}], None, self.PRIMARY)
+        assert units[0].is_override is False
+
+    def test_payload_is_copied_not_aliased(self):
+        # run_batch_async is threaded and the outcomes map is shared across
+        # papers — a unit must never alias the caller's dict.
+        src = {"id": 1, "name": "Mortality"}
+        units = qa.build_outcome_units([src], None, self.PRIMARY)
+        assert units[0].payload == src and units[0].payload is not src
+
+    def test_non_dict_entries_are_ignored(self):
+        units = qa.build_outcome_units(
+            ["mortality", None], None, self.PRIMARY)
+        assert len(units) == 1 and units[0].assessed_outcome == self.PRIMARY
+
+    def test_unit_columns_dispatch_on_kind(self):
+        oc = qa.build_outcome_units([{"id": 7, "name": "X"}], None, "p")[0]
+        assert oc.columns() == {"outcome_id": 7, "outcome": {"id": 7, "name": "X"}}
+        est = qa._Unit(kind="estimate", unit_id=3, payload={"id": 3},
+                       assessed_outcome="p", is_override=False, label="e")
+        assert est.columns() == {"estimate_id": 3, "estimate": {"id": 3}}
+
+
+# ─────────────────────────────────────────────
+# Credit arithmetic — one source of truth
+# ─────────────────────────────────────────────
+class TestCreditArithmetic:
+    def test_plain_paper_is_the_base_cost(self):
+        assert qa.paper_charge() == 36
+        assert qa.paper_charge(n_outcomes=0) == 36
+        assert qa.paper_charge(n_outcomes=1) == 36
+
+    def test_additional_outcomes_bill_the_marginal_cost(self):
+        # classify + prefill + guideline are once-per-paper and already in 36.
+        assert qa.paper_charge(n_outcomes=2) == 57
+        assert qa.paper_charge(n_outcomes=3) == 78
+
+    def test_estimates_bill_a_full_unit_each(self):
+        assert qa.paper_charge(n_estimates=1) == 36
+        assert qa.paper_charge(n_estimates=2) == 72
+
+    def test_estimates_dominate_when_both_are_passed(self):
+        # The API rejects this, but the arithmetic must still be deterministic.
+        assert qa.paper_charge(n_estimates=2, n_outcomes=5) == 72
+
+
+# ─────────────────────────────────────────────
+# Refund arithmetic — never more than was charged
+# ─────────────────────────────────────────────
+class TestRefundArithmetic:
+    def test_all_units_failed_refunds_the_whole_charge(self):
+        charge = qa.paper_charge(n_outcomes=3)
+        amt, reason = qa.refund_for(
+            {"status": "error", "units_planned": 3, "units_done": 0,
+             "units_errored": 3}, charge)
+        assert amt == charge == 78
+        assert "no usable result" in reason
+
+    def test_partial_failure_refunds_the_marginal_units(self):
+        amt, _ = qa.refund_for(
+            {"status": "ok", "units_planned": 3, "units_done": 2,
+             "units_errored": 1}, qa.paper_charge(n_outcomes=3))
+        assert amt == 21
+
+    def test_no_failures_refunds_nothing(self):
+        amt, _ = qa.refund_for(
+            {"status": "ok", "units_planned": 3, "units_done": 3,
+             "units_errored": 0}, qa.paper_charge(n_outcomes=3))
+        assert amt == 0
+
+    def test_skipped_units_are_refunded(self):
+        # AMSTAR-2 collapse: 3 outcomes charged, 1 assessed, 2 not applicable.
+        amt, reason = qa.refund_for(
+            {"status": "ok", "units_planned": 1, "units_done": 1,
+             "units_errored": 0, "units_skipped": 2}, qa.paper_charge(n_outcomes=3))
+        assert amt == 42 and "not applicable" in reason
+
+    def test_quadas_estimate_path_is_unchanged(self):
+        amt, reason = qa.refund_for(
+            {"status": "ok", "estimates_done": 1, "estimates_errored": 2},
+            qa.paper_charge(n_estimates=3), n_estimates=3)
+        assert amt == 72 and "failed estimate" in reason
+
+    def test_pre_loop_failure_refunds_the_full_multi_outcome_charge(self):
+        # A load/classify/prefill failure means nothing ran. Refunding a flat
+        # per-paper 36 would under-refund a paper charged 78.
+        amt, _ = qa.refund_for({"status": "error", "error": "PDF file not found"},
+                                qa.paper_charge(n_outcomes=3))
+        assert amt == 78
+
+    def test_refund_never_exceeds_the_charge(self):
+        charge = qa.paper_charge(n_outcomes=2)
+        amt, _ = qa.refund_for(
+            {"status": "ok", "units_planned": 2, "units_done": 1,
+             "units_errored": 0, "units_skipped": 9}, charge)
+        assert amt <= charge
+
+
+# ─────────────────────────────────────────────
+# The units loop — one row per unit, once-per-paper work stays once
+# ─────────────────────────────────────────────
+class _FakeConn:
+    """Captures _write_result inserts without touching a database."""
+    def __init__(self):
+        self.rows = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, sql, params=()):
+        self.rows.append(params)
+        return self
+
+    def commit(self):
+        pass
+
+
+class TestAppraiseUnitsFanOut:
+    CFG = {"rob_tool": "rob2", "reporting_guideline": "consort2025",
+           "initial_grade": "High"}
+
+    @staticmethod
+    def _stub(monkeypatch, calls):
+        """Stub every LLM-backed step, recording the outcome string each saw."""
+        monkeypatch.setitem(
+            qa._TOOL_RUNNERS, "rob2",
+            lambda pdf, fields, cls, outcome, **kw: (
+                calls.setdefault("rob", []).append(outcome),
+                ({"1": {"judgement": "Low"}}, "Low", "NA"))[1])
+        monkeypatch.setitem(
+            qa._GUIDELINE_RUNNERS, "consort2025",
+            lambda pdf, fields, cls: (
+                calls.setdefault("guideline", []).append(1),
+                {"items": {}, "adhered": 20, "applicable": 25,
+                 "total": 30, "proportion": 0.8})[1])
+        monkeypatch.setattr(
+            qa.indir_mod, "run",
+            lambda pdf, fields, cls, outcome, **kw: (
+                calls.setdefault("indirectness", []).append(outcome),
+                ({}, "none", 0, ""))[1])
+        monkeypatch.setattr(
+            qa.imprec_mod, "run",
+            lambda pdf, fields, cls, outcome, **kw: (
+                calls.setdefault("imprecision", []).append(outcome),
+                ({}, "none", 0, ""))[1])
+
+    def _run(self, monkeypatch, units, cfg=None):
+        calls: dict = {}
+        self._stub(monkeypatch, calls)
+        conn = _FakeConn()
+        summary = qa._appraise_units(
+            conn, 1, 1, "p.pdf", b"%PDF", {"citation_title": "T"},
+            {"study_type": "Randomized Controlled Trial"},
+            "All-cause mortality", cfg or self.CFG, units,
+            target_pico=None, imprecision_thresholds=None,
+            review_context=None, rob2_cluster_aim=None,
+            notify=lambda level, msg: None)
+        return summary, calls, conn
+
+    def _units(self, *names):
+        return qa.build_outcome_units(
+            [{"id": i, "name": n} for i, n in enumerate(names, start=1)],
+            None, "All-cause mortality")
+
+    def test_three_outcomes_write_three_rows(self, monkeypatch):
+        summary, _calls, conn = self._run(
+            monkeypatch, self._units("All-cause mortality", "Quality of life",
+                                      "Serious adverse events"))
+        assert summary["units_planned"] == 3
+        assert summary["units_done"] == 3 and summary["units_errored"] == 0
+        assert len(conn.rows) == 3
+
+    def test_each_unit_gets_its_own_outcome(self, monkeypatch):
+        _s, calls, _c = self._run(
+            monkeypatch, self._units("Mortality", "Quality of life"))
+        assert calls["rob"] == ["Mortality", "Quality of life"]
+
+    def test_indirectness_and_imprecision_run_per_outcome(self, monkeypatch):
+        _s, calls, _c = self._run(
+            monkeypatch, self._units("Mortality", "Quality of life"))
+        assert calls["indirectness"] == ["Mortality", "Quality of life"]
+        assert calls["imprecision"] == ["Mortality", "Quality of life"]
+
+    def test_guideline_runs_exactly_once_per_paper(self, monkeypatch):
+        _s, calls, _c = self._run(
+            monkeypatch, self._units("A", "B", "C"))
+        assert len(calls["guideline"]) == 1
+
+    def test_guideline_is_not_run_when_every_unit_fails(self, monkeypatch):
+        calls: dict = {}
+        self._stub(monkeypatch, calls)
+
+        def boom(pdf, fields, cls, outcome, **kw):
+            raise RuntimeError("rob exploded")
+        monkeypatch.setitem(qa._TOOL_RUNNERS, "rob2", boom)
+
+        conn = _FakeConn()
+        summary = qa._appraise_units(
+            conn, 1, 1, "p.pdf", b"%PDF", {}, {"study_type": "RCT"},
+            "primary", self.CFG, self._units("A", "B"),
+            target_pico=None, imprecision_thresholds=None, review_context=None,
+            rob2_cluster_aim=None, notify=lambda level, msg: None)
+        assert summary["units_errored"] == 2 and summary["status"] == "error"
+        assert "guideline" not in calls          # never paid for
+        assert len(conn.rows) == 2               # one error row per unit
+
+    def test_one_failing_unit_does_not_discard_the_others(self, monkeypatch):
+        calls: dict = {}
+        self._stub(monkeypatch, calls)
+        seen: list[str] = []
+
+        def flaky(pdf, fields, cls, outcome, **kw):
+            seen.append(outcome)
+            if outcome == "B":
+                raise RuntimeError("just this one")
+            return ({"1": {"judgement": "Low"}}, "Low", "NA")
+        monkeypatch.setitem(qa._TOOL_RUNNERS, "rob2", flaky)
+
+        conn = _FakeConn()
+        summary = qa._appraise_units(
+            conn, 1, 1, "p.pdf", b"%PDF", {}, {"study_type": "RCT"},
+            "primary", self.CFG, self._units("A", "B", "C"),
+            target_pico=None, imprecision_thresholds=None, review_context=None,
+            rob2_cluster_aim=None, notify=lambda level, msg: None)
+        assert seen == ["A", "B", "C"]           # loop continued past the failure
+        assert summary["units_done"] == 2 and summary["units_errored"] == 1
+        assert summary["status"] == "ok"
+        assert len(conn.rows) == 3               # 2 ok + 1 error
+
+    def test_single_unit_run_reports_no_estimate_aliases(self, monkeypatch):
+        summary, _c, _conn = self._run(
+            monkeypatch, qa.build_outcome_units(None, None, "All-cause mortality"))
+        assert summary["units_planned"] == 1
+        assert "estimates_errored" not in summary   # outcome axis, not estimate
+
+    def test_estimate_units_keep_the_legacy_aliases(self, monkeypatch):
+        units = [qa._Unit(kind="estimate", unit_id=1, payload={"id": 1},
+                          assessed_outcome="sens/spec", is_override=False,
+                          label="e1")]
+        summary, _c, _conn = self._run(monkeypatch, units)
+        assert summary["estimates_done"] == 1
+        assert summary["estimates_errored"] == 0
+
+
+# ─────────────────────────────────────────────
+# Diagnostic-accuracy estimate axis
+# ─────────────────────────────────────────────
+class TestEstimateUnits:
+    PRIMARY = "Sensitivity and specificity vs histopathology"
+
+    def test_no_estimates_falls_back_to_one_unit(self):
+        units = qa.build_estimate_units(None, None, self.PRIMARY)
+        assert len(units) == 1
+        assert units[0].unit_id is None and units[0].payload is None
+        assert units[0].label == "primary estimate"
+
+    def test_each_estimate_is_a_unit(self):
+        units = qa.build_estimate_units([
+            {"id": 1, "description": "Overall"},
+            {"id": 2, "description": "Subgroup: elderly"},
+        ], None, self.PRIMARY)
+        assert [u.unit_id for u in units] == [1, 2]
+        assert [u.label for u in units] == ["Overall", "Subgroup: elderly"]
+        assert all(u.kind == "estimate" for u in units)
+
+    def test_outcome_override_is_honoured(self):
+        # Regression: the diagnostic path used to pass the auto-picked primary
+        # outcome, so a reviewer's override silently did nothing.
+        units = qa.build_estimate_units(
+            [{"id": 1, "description": "Overall"}],
+            "Detection of high-grade dysplasia", self.PRIMARY)
+        assert units[0].assessed_outcome == "Detection of high-grade dysplasia"
+        assert units[0].is_override is True
+
+    def test_override_reaches_every_estimate(self):
+        units = qa.build_estimate_units(
+            [{"id": 1}, {"id": 2}], "Custom outcome", self.PRIMARY)
+        assert {u.assessed_outcome for u in units} == {"Custom outcome"}
+
+    def test_without_an_override_the_auto_pick_is_used(self):
+        units = qa.build_estimate_units([{"id": 1}], None, self.PRIMARY)
+        assert units[0].assessed_outcome == self.PRIMARY
+        assert units[0].is_override is False
+
+    def test_payload_is_copied_not_aliased(self):
+        src = {"id": 1, "description": "Overall"}
+        units = qa.build_estimate_units([src], None, self.PRIMARY)
+        assert units[0].payload == src and units[0].payload is not src
+
+
+# ─────────────────────────────────────────────
+# Export — per-outcome columns and a stable key set
+# ─────────────────────────────────────────────
+class TestFlattenOutcomeColumns:
+    @staticmethod
+    def _row(**over):
+        base = {
+            "id": 7, "paper_id": 1, "status": "ok", "rob_tool": "rob2",
+            "primary_outcome": "All-cause mortality",
+            "assessed_outcome": "All-cause mortality",
+            "classification": {}, "extracted_fields": {}, "rob_domains": {},
+            "guideline": {}, "indirectness": {}, "imprecision": {},
+        }
+        base.update(over)
+        return base
+
+    def test_result_id_is_emitted(self):
+        # With N rows per paper, paper_id is no longer a key for joins.
+        assert qa.flatten_result_row(self._row())["result_id"] == 7
+
+    def test_outcome_columns_are_populated(self):
+        row = qa.flatten_result_row(self._row(
+            outcome_id=2,
+            outcome={"id": 2, "name": "Quality of life", "measure": "EQ-5D",
+                     "timing": "12 months", "outcome_type": "continuous",
+                     "is_primary": False, "source": "extracted"},
+            assessed_outcome="Quality of life — measured as EQ-5D — at 12 months"))
+        assert row["outcome_id"] == 2
+        assert row["outcome_label"] == "Quality of life"   # the clean join key
+        assert row["outcome_measure"] == "EQ-5D"
+        assert row["outcome_timing"] == "12 months"
+        assert row["outcome_type"] == "continuous"
+        assert row["outcome_source"] == "extracted"
+
+    def test_outcome_label_falls_back_to_assessed_outcome(self):
+        # Legacy rows and diagnostic rows carry no structured outcome but must
+        # still export an outcome string.
+        row = qa.flatten_result_row(self._row(assessed_outcome="Mortality"))
+        assert row["outcome_label"] == "Mortality"
+        assert row["outcome_id"] is None
+
+    def test_key_set_is_identical_across_sibling_rows(self):
+        # The invariant that keeps csv.DictWriter alive: two rows of the same
+        # tool differing only in outcome must produce the same columns.
+        plain = qa.flatten_result_row(self._row())
+        with_outcome = qa.flatten_result_row(self._row(
+            outcome_id=2, outcome={"id": 2, "name": "Quality of life"}))
+        assert set(plain) == set(with_outcome)
+
+    def test_diagnostic_row_still_emits_the_outcome_columns(self):
+        row = qa.flatten_result_row(self._row(
+            rob_tool="quadas3", estimate_id=1,
+            estimate={"id": 1, "description": "Overall"}))
+        for col in ("outcome_id", "outcome_label", "outcome_type"):
+            assert col in row
+
+
+# ─────────────────────────────────────────────
+# Export routes must not be shadowed by the detail route
+# ─────────────────────────────────────────────
+class TestExportRouteResolution:
+    """``/runs/{run_id}`` is declared before ``/runs/{run_id}.csv``.
+
+    A bare path param matches any segment, so "12.csv" hit the detail route and
+    422'd on int parsing — the export links were dead. The ``:int`` convertor
+    constrains the detail route to digits so the sibling routes are reachable.
+    """
+
+    def test_csv_route_is_reachable(self, client, test_user):
+        r = client.get("/api/quality-appraisal/runs/999999.csv",
+                       headers={"Cookie": f"rubricgen_session={test_user['cookie']}"})
+        # 404 (no such run) is correct; 422 means the detail route ate the path.
+        assert r.status_code == 404, r.text
+
+    def test_xlsx_route_is_reachable(self, client, test_user):
+        r = client.get("/api/quality-appraisal/runs/999999.xlsx",
+                       headers={"Cookie": f"rubricgen_session={test_user['cookie']}"})
+        assert r.status_code == 404, r.text
+
+    def test_annotator_csv_route_is_reachable(self, client, test_user):
+        r = client.get("/api/annotator/runs/999999.csv",
+                       headers={"Cookie": f"rubricgen_session={test_user['cookie']}"})
+        assert r.status_code == 404, r.text
+
+    def test_detail_route_still_resolves(self, client, test_user):
+        r = client.get("/api/quality-appraisal/runs/999999",
+                       headers={"Cookie": f"rubricgen_session={test_user['cookie']}"})
+        assert r.status_code == 404, r.text

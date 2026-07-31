@@ -117,8 +117,10 @@ def export_xlsx(data: list[dict], title: str) -> bytes:
         wb.save(buf)
         return buf.getvalue()
 
-    # Headers
-    headers = list(data[0].keys())
+    # Headers — union of every row's keys, in first-seen order. Taking them from
+    # row 0 alone silently drops any column that first appears in a later row
+    # (identical for uniform data, which is the common case).
+    headers = list(dict.fromkeys(k for row in data for k in row))
     ws.append(headers)
     header_fill = PatternFill(start_color="274472", end_color="274472", fill_type="solid")
     header_font = Font(color="FFFFFF", bold=True, size=11)

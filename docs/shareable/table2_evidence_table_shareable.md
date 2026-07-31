@@ -33,23 +33,6 @@ Out of scope (different agents / tables):
 
 ---
 
-## Revision notes
-
-Substantive changes to the methodology in this document, newest-first, so downstream implementations (e.g. forks maintained by other teams) can see what changed and why. Cosmetic / wording-only edits are not logged.
-
-### 2026-07-05 — Added guideline-examples + rendering-model sections
-
-**What changed.** Added §8 "Table 2 in practice: column variability across guidelines" (screenshots of real ASCO guideline Table 2s, a column-variability matrix, and a product-type × Table-2-presence taxonomy) and §9 "Rendering model: extract-once projection vs per-table render agent" (a recommendation with a tradeoff table). The reference-implementation / test / platform-notes sections renumbered to §10–§12.
-**Why.** To ground the rendering-architecture decision — a dynamic-table UI serving columns off the extracted data vs a bespoke per-table render agent — in the actual layout variability observed across guideline Table 2s.
-**Impact.** Documentation only — no change to any decision logic, prompt, schema, or output shape; no stored/historical results are affected. Adds PNG image assets under `assets/table2/`.
-**Sections touched:** new §8, §9; renumbered §10–§12.
-
-### 2026-06-30 — Initial publication
-
-Self-contained Table 2 (per-study evidence table) methodology: the three-level extraction-tag mapping, the `outcomes[]` multi-outcome schema, the enumerated non-extraction calculations, the two extraction prompts + output shapes, the dual-mode (injected vs isolation) contract, and a turnkey Python reference implementation with plain-`assert` tests. The reference module's self-checks pass on CPython 3.13.
-
----
-
 ## 1. Core principle
 
 Table 2 is the **per-study evidence table**. One row is a single reported result:

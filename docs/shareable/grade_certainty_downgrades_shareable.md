@@ -1,19 +1,24 @@
 # GRADE Certainty (Body of Evidence) — Sharable Methodology Reference
 
-A self-contained reference for the **GRADE agent** — the body-of-evidence engine that rates the **certainty of evidence** for **one outcome** and computes its **anticipated absolute effects**. This is "Component D" of the evidence-synthesis pipeline: it consumes the pooled numbers from the pooling agent (Component B, `pooling_meta_analysis_shareable.md`), the per-study risk-of-bias ratings from a quality-appraisal step, and a few human judgments, and produces the GRADE certainty (⊕⊕⊕⊕ High → ⊕⊝⊝⊝ Very low) plus the Summary-of-Findings absolute-effect row (ASCO "Table 5"). Contains:
+> **Status: DRAFT — downgrade domains only. Rating up is not yet written (§5).**
+> This document is being written in two passes. The five downgrade domains, the combiner,
+> the hand-off contract, and the absolute-effects formulas are complete and verified on AiTheia's platform.
+
+A self-contained reference for the **GRADE agent** — the body-of-evidence engine that rates the **certainty of evidence** for **one outcome** and computes its **anticipated absolute effects**. This is "Component D" of the evidence-synthesis pipeline: it consumes the pooled numbers from the pooling agent (Component B, `pooling_meta_analysis_shareable.md`), the per-study risk-of-bias ratings from a quality-appraisal step, and a few human judgments, and produces the GRADE certainty (⊕⊕⊕⊕ High → ⊕⊝⊝⊝ Very low) plus the Summary-of-Findings absolute-effect row ("Tom Table 5"). Contains:
 
 - The **starting-certainty rule** by study design (RCT = High, non-randomized = Low, single-arm = Very low).
 - The **five downgrade domains** — risk of bias, inconsistency, indirectness, imprecision, publication bias — each as a plain-Python decision function with its exact numeric thresholds.
-- The **three upgrade domains** — large effect, dose-response gradient, opposing plausible confounding — and the **gate** that restricts them to non-randomized evidence with no rate-down factors.
-- The **certainty combiner** (start + Σdowngrades − Σupgrades, clamped to [Very low, High]) and the per-domain `overrides` mechanism.
+- *(Pending — §5.)* The three upgrade domains and the gate that restricts them to non-randomized evidence.
+- The **certainty combiner** (start + Σdowngrades, clamped to [Very low, High]) and the per-domain `overrides` mechanism.
 - The **anticipated absolute-effects** formulas (assumed risk → risk with intervention for RR/OR/RD/IRR → risk difference + 95% CI → NNT).
 - The **pooling → GRADE hand-off contract** (which pooled numbers feed which domain).
 - The **hybrid indirectness** path — reviewer value wins; otherwise one LLM call auto-assesses PICO directness — with the exact prompt.
 - A **turnkey, dependency-free reference implementation** (`llm_call` injected only for the optional indirectness pass) and plain-`assert` test sketches.
 
-**Source.** The GRADE approach as codified in the **GRADE Handbook** (Schünemann H, Brożek J, Guyatt G, Oxman A, eds., 2013; `gdt.gradepro.org/app/handbook/handbook.html`) and the *Journal of Clinical Epidemiology* GRADE Guidelines series: **GRADE 1** (Guyatt GH et al. *Introduction.* JCE 2011;64:383–394), **GRADE 3** (Balshem H et al. *Rating the quality of evidence.* JCE 2011;64:401–406, starting certainty + levels), **GRADE 4** (Guyatt GH et al. *Rating up/down — risk of bias.* JCE 2011;64:407–415), **GRADE 5** (*Publication bias.* JCE 2011;64:1277–1282), **GRADE 6** (*Imprecision.* JCE 2011;64:1283–1293), **GRADE 7** (*Inconsistency.* JCE 2011;64:1294–1302), **GRADE 8** (*Indirectness.* JCE 2011;64:1303–1310), **GRADE 9** (*Rating up the quality — large effect / dose-response / opposing confounding.* Guyatt GH et al. JCE 2011;64:1311–1316), **GRADE 11** (deciding overall certainty), and **GRADE 12** (Guyatt GH et al. *Summary of findings tables and rating the quality — absolute effects.* JCE 2013;66:158–172).
 
-**Scope.** This document covers **only the GRADE certainty rating + absolute effects for one pooled body of evidence**. It consumes numbers; it never pools and never extracts. Out of scope:
+**Scope.** This document covers the GRADE **downgrade** half of the certainty rating, plus absolute effects, for one pooled body of evidence. It consumes numbers; it never pools and never extracts. Out of scope:
+
+- **Rating up** (large effect, dose-response gradient, opposing plausible confounding) — **pending, not absent from the engine.** See §5.
 
 - **The meta-analysis math** (effect sizes, inverse-variance pooling, heterogeneity, Egger/trim-and-fill) — that is the separate **pooling agent** (`pooling_meta_analysis_shareable.md`). This agent reads the pooled result; it does not recompute it.
 - **Per-study risk-of-bias assessment** (RoB 2 / ROBINS-I / QUADAS) — the per-study *overall* RoB labels arrive from a quality-appraisal step (see the RoB shareable docs). This agent only **aggregates** those labels across studies, weighted by pooled weight.
@@ -27,7 +32,7 @@ A self-contained reference for the **GRADE agent** — the body-of-evidence engi
 - **Natural scale in, natural scale out.** The pooling engine hands over the relative effect + 95% CI already **back-transformed to the natural (display) scale** (RR/OR/HR ratios; MD/SMD/RD differences). Every GRADE decision here — imprecision CI-vs-null, imprecision CI-vs-MID, large-effect magnitude, absolute effects — reads that natural-scale CI directly. The analysis-scale (log) values live in the pooled result too (`pooled.yi`) but this agent does not need them. **The null is 1.0 for ratio measures and 0.0 for difference measures.**
 - **Deterministic trees; one optional prompt.** Every downgrade/upgrade decision is deterministic arithmetic over the pooled numbers + human judgments — no model. The agent's *only* LLM touch is the **optional indirectness auto-assessment** (§7), used when the reviewer did not supply an indirectness level and a target PICO is available. With a reviewer-supplied indirectness level, the whole agent runs with **zero model calls**.
 - **Conservative-tree note.** Where GRADE's narrative allows reviewer judgement (e.g. "consider −2 for I² > 75%"), the deterministic tree takes the **more transparent, single-level** reading and surfaces the per-domain reason so a human can override via the `overrides` mechanism (§6). The tree is stricter/plainer than the prose so the logic is inspectable and testable; it is not a claim that judgement is unnecessary.
-- **The upgrade gate is real.** GRADE rates *up* only for non-randomized evidence, and only when nothing was rated down (GRADE 9). Both conditions are enforced (§5). RCT evidence is never upgraded.
+- **A body rated Low here may not be final.** Because the upgrade half is not yet written (§5), non-randomized evidence that GRADE would rate *up* — a large effect, a dose-response gradient, or confounding that could only have attenuated the result — reads as Low or Very low from this document. Randomized evidence is unaffected: GRADE never rates it up, so an RCT body's certainty is complete here.
 
 ---
 
@@ -46,7 +51,7 @@ A self-contained reference for the **GRADE agent** — the body-of-evidence engi
    (baseline risk, MIDs, ────►┌────────────────────────────────────┐
     indirectness, NRS         │        GRADE (Component D — HERE)   │
     up-rating judgments)      │  start-by-design                   │
-                              │  − 5 downgrade  + 3 upgrade domains │
+                              │  − 5 downgrade domains              │
                               │  → certainty  +  absolute effects   │
                               └──────────────────┬─────────────────┘
                                                  ▼
@@ -66,8 +71,8 @@ The GRADE agent reads a single **pooled result dict** (the pooling agent's `pool
 | `measure` | `"RR"/"OR"/"RD"/"IRR"/"HR"/"MD"/"SMD"` | scale + which domains apply |
 | `k` | int | inconsistency (single study → n/a), publication-bias gate |
 | `design_class` | `"rct"/"nrs"/"unknown"` (optional) | starting certainty |
-| `pooled.estimate` | float, **natural scale** | large-effect, absolute effects |
-| `pooled.ci_lower`, `pooled.ci_upper` | float, **natural scale** | imprecision, large-effect, absolute effects |
+| `pooled.estimate` | float, **natural scale** | absolute effects *(also large-effect — §5)* |
+| `pooled.ci_lower`, `pooled.ci_upper` | float, **natural scale** | imprecision, absolute effects *(also large-effect — §5)* |
 | `heterogeneity.i2` | float % | inconsistency |
 | `heterogeneity.q_p` | float (Cochran-Q p) | inconsistency |
 | `publication_bias.egger.p` | float | publication bias |
@@ -86,7 +91,7 @@ The GRADE agent reads a single **pooled result dict** (the pooling agent's `pool
 
 > **This is a breaking change for implementations built on an earlier version of this document.** A positional `per_study_rob` list is still accepted as an explicit override, but it must now match `studies[]` exactly — a length mismatch raises instead of silently falling back to equal weights, which previously produced an unweighted judgement indistinguishable from a weighted one. Bodies with no risk-of-bias input at all now raise rather than rating as though the domain were clean.
 
-**Human judgments** supplied alongside: `baseline_risk_per_1000`, `mid_benefit`, `mid_harm`, `indirectness_levels` (optional → auto), `dose_response`, `opposing_confounding`, and `overrides`.
+**Human judgments** supplied alongside: `baseline_risk_per_1000`, `mid_benefit`, `mid_harm`, `indirectness_levels` (optional → auto), and `overrides`. (`dose_response` and `opposing_confounding` are upgrade inputs — §5.)
 
 ---
 
@@ -262,68 +267,20 @@ Indirectness is a judgement, not a computation from the pooled numbers. The engi
 
 ---
 
-## 5. The three upgrade domains (GRADE 9) — non-randomized evidence only
+## 5. Rating up (GRADE 9) — NOT YET DOCUMENTED
 
-### 5.1 Large effect
+**This section is a placeholder.** The three GRADE rating-up domains — **large effect**, **dose-response gradient**, and **opposing plausible confounding** — are not written up yet.
 
-```python
-def large_effect_upgrade(measure, estimate, ci_lower, ci_upper, cfg):
-    if measure not in _RATIO_MEASURES:
-        return 0, "large-effect criterion applies to ratio measures (OR/RR/HR/IRR)"
-    if estimate is None or estimate <= 0:
-        return 0, "no positive pooled ratio"
-    if estimate >= 1.0:
-        r, near = estimate, ci_lower
-    else:                                        # normalise protective ratios to >= 1
-        r = 1.0 / estimate
-        near = (1.0 / ci_upper) if (ci_upper and ci_upper > 0) else None
-    def clears(threshold):
-        if not cfg.require_ci_for_large_effect:
-            return r >= threshold
-        return r >= threshold and near is not None and near >= 1.0
-    if clears(cfg.large_effect_2):
-        return 2, f"very large effect ({measure}≈{r:.1f}); CI excludes no-effect"
-    if clears(cfg.large_effect_1):
-        return 1, f"large effect ({measure}≈{r:.1f})"
-    return 0, f"effect magnitude below the large-effect threshold ({measure}≈{r:.1f})"
-```
+Read the following before implementing from this document, because the omission is not neutral:
 
-### 5.2 Dose-response gradient
+- **The engine already implements them.** This is a gap in the documentation, not in the code. An implementation built from this document alone will **diverge from the reference engine** for one specific class of body: non-randomized evidence with no rate-down factors.
+- **Who is affected.** Rating up applies *only* to non-randomized evidence starting at Low, and *only* when nothing was rated down. Randomized bodies are never rated up under GRADE 9, so an RCT body graded from this document is complete and correct.
+- **Direction of the error.** Omitting the upgrades is **conservative** — it can only under-rate certainty, never over-rate it. A non-randomized body that should have reached Moderate reads as Low.
+- **Do not reconstruct the gate from the GRADE 9 paper and assume you match.** It is an AND of three conditions — *non-randomized*, *starts at Low*, and *zero downgrades* — and the third is the one implementations usually miss. Wait for this section, or read it off the engine.
 
-```python
-def dose_response_upgrade(dose_response, metaregression, moderator_name="dose"):
-    if dose_response is not None:
-        return (1, "dose-response gradient (assessor judgement)") if dose_response \
-            else (0, "no dose-response gradient")
-    if not metaregression:
-        return 0, "no dose moderator modelled"
-    coefs = metaregression.get("coefficients", []) or []
-    target = next((c for c in coefs if (c.get("name") or "").lower() in (moderator_name.lower(), "dose", "dose_level")), None)
-    if target is None:
-        target = next((c for c in coefs if (c.get("name") or "") != "intercept"
-                       and c.get("p") is not None and c["p"] < 0.05), None)
-    if target and target.get("p") is not None and target["p"] < 0.05:
-        return 1, f"significant dose-response gradient ({target.get('name')}, p={target['p']:.3f})"
-    return 0, "no significant dose-response gradient"
-```
+What this section will contain when written: the large-effect thresholds (≥2-fold → +1, ≥5-fold → +2) and whether the CI must exclude no-effect; the dose-response path via assessor judgement or a meta-regression moderator; the opposing-confounding flag; the gate; and the corresponding `GradeConfig` knobs (`large_effect_1`, `large_effect_2`, `require_ci_for_large_effect`, `upgrade_requires_no_downgrade`).
 
-### 5.3 Opposing plausible confounding
-
-```python
-def opposing_confounding_upgrade(opposing_confounding):
-    if opposing_confounding:
-        return 1, "plausible residual confounding would only attenuate the observed effect"
-    return 0, "not applicable"
-```
-
-### 5.4 The gate
-
-```python
-can_upgrade = (not is_randomized and initial == "Low"
-               and (total_downgrade == 0 or not cfg.upgrade_requires_no_downgrade))
-```
-
-Upgrades apply only to **non-randomized** evidence starting at Low, and (by default) only when **nothing was downgraded**. RCT evidence (starts High) is never upgraded. Single-arm evidence (starts Very low) is not eligible either — only `initial == "Low"` bodies upgrade.
+Until then the combiner in §6 sums downgrades only, and every code block in this document — including the reference implementation in §9 — omits the upgrade path entirely rather than half-implementing it.
 
 ---
 
@@ -334,13 +291,16 @@ def grade_index(level):
     try: return GRADE_LEVELS.index(level)
     except ValueError: return 0
 
-# start + Σdowngrades − Σupgrades, clamped to [Very low (idx 3), High (idx 0)]
+# start + Σdowngrades, clamped to [Very low (idx 3), High (idx 0)]
+# (The − Σupgrades term arrives with §5; see the note below.)
 start = grade_index(initial)
-final_idx = max(0, min(len(GRADE_LEVELS) - 1, start + total_downgrade - total_upgrade))
+final_idx = max(0, min(len(GRADE_LEVELS) - 1, start + total_downgrade))
 final = GRADE_LEVELS[final_idx]
 ```
 
-**Overrides** let an assessor pin any domain by key — `{"imprecision": 2, "indirectness": 0, "large_effect": 1}`. Keys: `risk_of_bias`, `inconsistency`, `indirectness`, `imprecision`, `publication_bias`, `large_effect`, `dose_response`, `opposing_confounding`. A pinned value replaces the computed level and the reason gets a `[overridden]` suffix.
+The lower clamp (`max(0, …)`) has nothing to do yet — with downgrades only, the index can never go below the starting level. It is kept because it is load-bearing the moment §5 lands, and removing it would be a silent trap for whoever adds the upgrade term.
+
+**Overrides** let an assessor pin any domain by key — `{"imprecision": 2, "indirectness": 0}`. Keys available in this draft: `risk_of_bias`, `inconsistency`, `indirectness`, `imprecision`, `publication_bias`. A pinned value replaces the computed level and the reason gets a `[overridden]` suffix. The three upgrade keys (`large_effect`, `dose_response`, `opposing_confounding`) arrive with §5.
 
 ### 6.1 The explanation string
 
@@ -349,14 +309,10 @@ The record carries a human-readable narrative assembled from the per-domain reas
 ```python
 fired = [f"{d['domain'].lower()} (−{d['downgrade']}: {d['reason']})"
          for d in domains if d["downgrade"] > 0]
-raised = [f"{d['domain'].lower()} (+{d['upgrade']}: {d['reason']})"
-          for d in domains if d["upgrade"] > 0]
 parts = [f"Initial certainty {initial}"]
 if fired:
     parts.append(f"downgraded {total_down} level(s) for " + "; ".join(fired))
-if raised:
-    parts.append(f"upgraded {total_up} level(s) for " + "; ".join(raised))
-if not fired and not raised:
+if not fired:
     parts.append("no serious concerns across GRADE domains")
 explanation = ". ".join(parts) + f". Final certainty: {final}."
 ```
@@ -371,9 +327,12 @@ is in studies at high/serious risk of bias); inconsistency (−1: considerable h
 (I²=82%, p=0.002)); indirectness (−1: indirectness concerns); imprecision (−2: wide CI
 crossing no effect with sample size below OIS). Final certainty: Very low.
 
-Initial certainty Low. upgraded 1 level(s) for large effect (+1: large effect (RR≈3.4)).
-Final certainty: Moderate.
 ```
+
+> **Note for §5.** When rating up is documented, this builder gains a matching `raised` list and an
+> "upgraded N level(s) for …" clause between the downgrade clause and the final-certainty sentence.
+> A non-randomized body that qualifies today produces only the "Initial certainty Low." opening,
+> which is accurate but incomplete.
 
 > **The explanation reports the computed downgrade, not the applied one.** The second example totals 6 levels while the ladder only has 3 below High. The clamp in the combiner absorbs the excess, and the sentence deliberately keeps the full reasoning rather than hiding it. Expect "downgraded 6 level(s)" next to a 3-level drop; that is correct output, not a bug.
 
@@ -512,8 +471,8 @@ class GradeConfig:
     i2_serious: float = 50.0; i2_very_serious: float = 75.0; q_p_threshold: float = 0.10
     rob_high_weight_2: float = 0.50; rob_high_weight_1: float = 0.25; rob_some_weight_1: float = 0.50
     pubbias_min_studies: int = 10; egger_p: float = 0.10; trimfill_min_imputed: int = 2
-    large_effect_1: float = 2.0; large_effect_2: float = 5.0
-    require_ci_for_large_effect: bool = True; upgrade_requires_no_downgrade: bool = True
+    # Upgrade knobs (large_effect_1/2, require_ci_for_large_effect,
+    # upgrade_requires_no_downgrade) arrive with section 5.
 
 _CFG = GradeConfig()
 
@@ -596,24 +555,8 @@ def _pubbias(k, egger, trim_fill, cfg):
     if n >= cfg.trimfill_min_imputed: return 1, f"trim-and-fill imputed {n} missing studies"
     return 0, "no strong evidence of publication bias"
 
-def _large_effect(measure, est, lo, hi, cfg):
-    if measure not in _RATIO_MEASURES: return 0, "large-effect criterion applies to ratio measures"
-    if est is None or est <= 0: return 0, "no positive pooled ratio"
-    if est >= 1.0: r, near = est, lo
-    else: r, near = 1.0 / est, (1.0 / hi if (hi and hi > 0) else None)
-    def clears(t):
-        return r >= t if not cfg.require_ci_for_large_effect else (r >= t and near is not None and near >= 1.0)
-    if clears(cfg.large_effect_2): return 2, f"very large effect ({measure}≈{r:.1f}); CI excludes no-effect"
-    if clears(cfg.large_effect_1): return 1, f"large effect ({measure}≈{r:.1f})"
-    return 0, f"effect magnitude below the large-effect threshold ({measure}≈{r:.1f})"
-
-def _dose_response(dose_response, metareg):
-    if dose_response is not None:
-        return (1, "dose-response gradient (assessor judgement)") if dose_response else (0, "no dose-response gradient")
-    return 0, "no dose moderator modelled"
-
-def _opposing(opposing):
-    return (1, "plausible residual confounding would only attenuate the observed effect") if opposing else (0, "not applicable")
+# NOTE: the three upgrade helpers (_large_effect, _dose_response, _opposing)
+# arrive with section 5. They are omitted here rather than half-implemented.
 
 def absolute_effects(measure, est, lo, hi, baseline_per_1000):
     b = _num(baseline_per_1000)
@@ -638,8 +581,9 @@ def absolute_effects(measure, est, lo, hi, baseline_per_1000):
 
 def grade_body(pool_result, *, initial=None, per_study_rob=None, weights=None, require_rob=True,
                indirectness_levels=None, indirectness_reason="", mid_benefit=None, mid_harm=None,
-               baseline_risk_per_1000=None, dose_response=None, opposing_confounding=False,
-               subgroup=None, metaregression=None, overrides=None, cfg=None):
+               baseline_risk_per_1000=None, subgroup=None, overrides=None, cfg=None):
+    # `dose_response`, `opposing_confounding`, and `metaregression` are upgrade
+    # inputs and arrive with section 5.
     cfg = cfg or _CFG; overrides = overrides or {}
     measure = (pool_result.get("measure") or "").upper()
     k = int(pool_result.get("k") or 0)
@@ -698,25 +642,19 @@ def grade_body(pool_result, *, initial=None, per_study_rob=None, weights=None, r
         {"domain": "Publication bias", "kind": "downgrade", "downgrade": pub_lv, "upgrade": 0, "reason": pub_r},
     ]
     total_down = sum(d["downgrade"] for d in domains)
+    # SECTION 5 PENDING: the upgrade block goes here — gated on
+    # (not is_randomized and initial == "Low" and total_down == 0), appending
+    # Large effect / Dose-response gradient / Opposing plausible confounding
+    # domain records and accumulating total_up. `total_up` is reported as 0 so
+    # the record shape stays stable for consumers.
     total_up = 0
-    if (not is_randomized and initial == "Low" and (total_down == 0 or not cfg.upgrade_requires_no_downgrade)):
-        le = pin("large_effect", *_large_effect(measure, est, lo, hi, cfg))
-        dr = pin("dose_response", *_dose_response(dose_response, metaregression))
-        oc = pin("opposing_confounding", *_opposing(opposing_confounding))
-        for name, (lv, r) in (("Large effect", le), ("Dose-response gradient", dr), ("Opposing plausible confounding", oc)):
-            domains.append({"domain": name, "kind": "upgrade", "downgrade": 0, "upgrade": lv, "reason": r})
-            total_up += lv
-    final = GRADE_LEVELS[max(0, min(len(GRADE_LEVELS) - 1, _grade_index(initial) + total_down - total_up))]
+    final = GRADE_LEVELS[max(0, min(len(GRADE_LEVELS) - 1, _grade_index(initial) + total_down))]
     fired = [f"{d['domain'].lower()} (−{d['downgrade']}: {d['reason']})"
              for d in domains if d["downgrade"] > 0]
-    raised = [f"{d['domain'].lower()} (+{d['upgrade']}: {d['reason']})"
-              for d in domains if d["upgrade"] > 0]
     parts = [f"Initial certainty {initial}"]
     if fired:
         parts.append(f"downgraded {total_down} level(s) for " + "; ".join(fired))
-    if raised:
-        parts.append(f"upgraded {total_up} level(s) for " + "; ".join(raised))
-    if not fired and not raised:
+    if not fired:
         parts.append("no serious concerns across GRADE domains")
     explanation = ". ".join(parts) + f". Final certainty: {final}."
     return {"initial": initial, "final": final, "total_downgrade": total_down, "total_upgrade": total_up,
@@ -751,15 +689,14 @@ g = grade_body(_rr_body(0.9, 0.6, 1.4, i2=85.0, q_p=0.001, n=60, ev=40), initial
                per_study_rob=["High", "High", "Some concerns"])
 assert g["final"] == "Very low"
 
-# NRS large effect RR 3 -> Low upgrades to Moderate.
+# SECTION 5 PENDING — the upgrade tests belong here. Until then this draft
+# asserts only that nothing rates up, which is the honest statement of what
+# the code above does. An NRS body with a large effect stays at Low here and
+# reaches Moderate in the full engine; that gap is the subject of section 5.
 g = grade_body(_rr_body(3.0, 2.0, 4.5), initial="Low", per_study_rob=["Low"]*3)
-assert g["total_upgrade"] == 1 and g["final"] == "Moderate"
+assert g["total_upgrade"] == 0 and g["final"] == "Low"
 
-# Upgrade blocked when a domain was downgraded (imprecision crosses null + below OIS).
-g = grade_body(_rr_body(3.0, 0.9, 10.0, n=40, ev=40, k=2), initial="Low", per_study_rob=["Low", "Low"])
-assert g["total_upgrade"] == 0
-
-# RCT never upgraded even with a huge effect.
+# RCT bodies are unaffected by the missing section — GRADE never rates them up.
 g = grade_body(_rr_body(6.0, 3.0, 12.0), initial="High", per_study_rob=["Low", "Low"])
 assert g["total_upgrade"] == 0 and g["final"] == "High"
 
@@ -784,11 +721,13 @@ assert grade_body(sa, per_study_rob=["Low"])["initial"] == "Very low"
 - **RoB labels are joined by study id, not by position, upstream.** Align `per_study_rob` to the pooled `studies[]` order (which carries `weight_pct`). A missing label defaults to "Some concerns" severity — decide if that default suits your review, or pass an explicit label for every study.
 - **Weighting matters.** Risk of bias is weighted by pooled weight, not averaged; if your pooler doesn't expose per-study weights, the engine falls back to equal weights (a coarser approximation).
 - **OIS is a rule of thumb.** 300 events / 400 participants are defaults, not a computed Optimal Information Size. If you can compute a formal OIS/RIS for your outcome, override the imprecision domain (§6) or adjust `GradeConfig`.
-- **The upgrade gate is opinionated.** By default upgrades require zero downgrades and non-randomized design starting at Low. If your methodology rates up differently, flip `upgrade_requires_no_downgrade` or adjust the `can_upgrade` condition — but note this departs from GRADE 9.
+- **Rating up is missing from this draft (§5), and that is a behavioural difference, not just a documentation one.** If you ship an implementation built from this document, non-randomized bodies with no rate-down factors will be rated one or two levels lower than the reference engine rates them. Decide deliberately whether to ship conservative-and-consistent-with-this-document, or to wait for §5. Randomized bodies are identical either way.
 - **Indirectness is deliberately a scalar.** The hybrid auto-assessor (§7) is optional and project-specific; the canonical GRADE input is a reviewer judgement. If you skip the LLM path entirely, always pass `indirectness_levels` explicitly.
 - **Absolute effects need a baseline.** Without `baseline_risk_per_1000` (or for continuous measures) the SoF absolute column is `None` — the relative effect carries the row instead.
 
 ## Companion documents
+
+- **The complete version of this document:** `grade_certainty_shareable.md` — same component, with §5 (rating up) written and the upgrade path present in the combiner, the reference implementation, and the tests. Prefer it unless you specifically want the downgrade-only draft.
 
 - **Pooling (Component B):** `pooling_meta_analysis_shareable.md` — produces the pooled result this agent consumes.
 - **Evidence table (Component A/T2):** `table2_evidence_table_shareable.md` — the per-study extraction feeding the pooler.
