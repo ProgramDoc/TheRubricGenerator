@@ -1081,6 +1081,8 @@ QUADAS-2 produces a Low/High/Unclear overall RoB. A common GRADE mapping for dia
 
 Indirectness and imprecision modules for treatment trials (PICO) do **not** apply directly to diagnostic accuracy (which is PIRT) — defer those or build PIRT-specific variants.
 
+The full certainty ladder, the initial-certainty-by-design table, the mapping above in its complete form (covering all five RoB instruments), and the indirectness and imprecision modules themselves are documented in [quality_appraisal_grade_shareable.md](quality_appraisal_grade_shareable.md), with a turnkey reference implementation. Diagnostic accuracy enters that per-paper pipeline at **High** initial certainty with the indirectness and imprecision modules skipped (`skip_grade_extras`) for exactly the PIRT reason above. For a certainty rating over a *pooled body* of accuracy studies rather than one paper, see [grade_certainty_shareable.md](grade_certainty_shareable.md) instead — its risk-of-bias domain aggregates per-study labels by pooled weight.
+
 ### Out of scope (v1)
 
 - **Phase-2 review-specific tailoring** of signaling questions (Whiting 2011 allows reviewers to add review-specific signals; this implementation uses only the canonical core questions).

@@ -2690,12 +2690,10 @@ The per-variant trees are conservative — they map borderline answer patterns t
 - **Randomized trials** — use RoB 2 (separate tool).
 - **Diagnostic test accuracy** — use QUADAS-2 or QUADAS-3 (separate tools).
 - **Systematic reviews of reviews** — use AMSTAR-2 (separate tool).
-- **GRADE indirectness + imprecision** — these are separate single-trial modules built around PICO; they are not bundled here.
+- **GRADE indirectness + imprecision** — these are separate single-trial modules built around PICO; they are not bundled here. They are documented in full, along with the certainty ladder and the ROBINS-I → downgrade-level mapping that consumes this tool's overall judgement, in [quality_appraisal_grade_shareable.md](quality_appraisal_grade_shareable.md) — the **per-paper** rating. When this tool's per-study judgements instead feed a pooled body of evidence, the consuming component is the GRADE agent in [grade_certainty_shareable.md](grade_certainty_shareable.md), which aggregates the per-study labels by pooled weight rather than reading one paper's judgement. Note in particular that Domain 1's `Low (except for concerns about uncontrolled confounding)` / `… benchmarking)` labels must be normalised to plain `Low` by the overall aggregator before they reach that mapping.
 - **Per-outcome iteration** — assume the caller auto-picks a primary outcome (or loops `run()` per outcome with a different `primary_outcome` arg).
 - **Reviewer override UI** — the trees are deterministic; provide your own UI for human override based on the returned rationales.
 - **Quasi-experimental designs** (Uncontrolled Before-After, Interrupted Time Series, Difference-in-Differences, Regression Discontinuity) — each warrants its own confounding prompt. ROBINS-I V2 is the best-available approximation for those designs but a methodologically pure assessment would require a design-specific tool.
-
----
 
 ---
 
