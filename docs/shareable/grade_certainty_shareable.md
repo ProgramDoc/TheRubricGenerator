@@ -31,19 +31,6 @@ A self-contained reference for the **GRADE agent** — the body-of-evidence engi
 
 ---
 
-## Revision notes
-
-Substantive changes to the methodology in this document, newest-first, so downstream implementations (e.g. forks maintained by other teams) can see what changed and why. Cosmetic / wording-only edits are not logged.
-
-### 2026-07-22 — Initial publication
-
-**What changed.** First publication of the body-of-evidence GRADE certainty methodology: starting certainty by design (§3), the five downgrade domains with their `GradeConfig` thresholds (§4), the three upgrade domains and the upgrade gate (§5), the certainty combiner + overrides (§6), the hybrid indirectness auto-assessor prompt (§7), the anticipated absolute-effects formulas (§8), the pooling→GRADE hand-off contract (§2), a turnkey dependency-free reference implementation (§9), and plain-`assert` tests (§10).
-**Why.** Establish the shareable contract so forks (e.g. OVID) implement GRADE certainty identically and pick up future threshold/logic changes here rather than from production Python.
-**Impact.** New document — no prior results affected. Logic + prompt.
-**Sections touched:** all (genesis).
-
----
-
 ## 1. The pipeline position
 
 ```
@@ -86,11 +73,20 @@ The GRADE agent reads a single **pooled result dict** (the pooling agent's `pool
 | `publication_bias.egger.p` | float | publication bias |
 | `publication_bias.egger.adequate_power` | bool (k ≥ 10) | publication-bias gate |
 | `publication_bias.trim_fill.n_imputed` | int | publication bias |
-| `studies[].study_id`, `studies[].design`, `studies[].weight_pct` | — | RoB join + weighting; single-arm detection |
+| `studies[].study_id`, `studies[].design`, `studies[].weight_pct` | — | weighting; single-arm detection |
+| `studies[].rob`, `studies[].rob_source` | str / str | **risk of bias** — the per-study label, attached to the study record |
 | `totals.n_int`, `totals.n_ctrl` | float | imprecision OIS, absolute-effects context |
 | `totals.events_int`, `totals.events_ctrl` | float | imprecision OIS (binary) |
 
-**Human judgments** supplied alongside: `per_study_rob` (a list of overall RoB labels aligned to `studies[]`), `baseline_risk_per_1000`, `mid_benefit`, `mid_harm`, `indirectness_levels` (optional → auto), `dose_response`, `opposing_confounding`, and `overrides`.
+**Risk of bias arrives on the study records, not as a parallel list.** Each entry of `studies[]` carries its own `rob` label next to its `weight_pct`. This matters because the risk-of-bias domain is *weight-driven*: a list supplied alongside has to stay aligned with `studies[]`, and it silently will not be — the pooler drops studies without usable data, so the pooled order is not the input order, and every label after a dropped study shifts by one. Attaching the label to the record it describes makes reordering and dropping harmless.
+
+`rob_source` records where the label came from — `user_outcome` (reviewer, for this specific outcome), `user_study` (reviewer, study-level), `tool` (injected by the risk-of-bias instrument), or `missing`.
+
+**Risk of bias is per (study × outcome).** RoB 2 and ROBINS-I are outcome-specific — domain 4 (measurement of the outcome) and domain 5 (selection of the reported result) genuinely differ between outcomes — and GRADE rates risk of bias per outcome. One trial can be Low for mortality and High for an unblinded subjective outcome, so the label is resolved per body, not once per study.
+
+> **This is a breaking change for implementations built on an earlier version of this document.** A positional `per_study_rob` list is still accepted as an explicit override, but it must now match `studies[]` exactly — a length mismatch raises instead of silently falling back to equal weights, which previously produced an unweighted judgement indistinguishable from a weighted one. Bodies with no risk-of-bias input at all now raise rather than rating as though the domain were clean.
+
+**Human judgments** supplied alongside: `baseline_risk_per_1000`, `mid_benefit`, `mid_harm`, `indirectness_levels` (optional → auto), `dose_response`, `opposing_confounding`, and `overrides`.
 
 ---
 
@@ -164,21 +160,34 @@ _ROB_SEVERITY = {
 }
 
 def rob_across_studies(per_study_rob, weights, cfg):
-    sev = [_ROB_SEVERITY.get((r or "").strip().lower(), 1) for r in per_study_rob]
+    labels = list(per_study_rob)
+    sev = [_ROB_SEVERITY.get((r or "").strip().lower(), 1) for r in labels]
     if not sev:
         return 0, "no risk-of-bias judgements available"
-    w = [float(x) for x in weights] if (weights and len(weights) == len(sev)) else [1.0] * len(sev)
+    if weights is None:
+        w = [1.0] * len(sev)
+    elif len(weights) == len(sev):
+        w = [float(x) for x in weights]
+    else:
+        # Falling back to equal weights here produced an unweighted judgement
+        # indistinguishable from a weighted one. Refuse instead.
+        raise ValueError("risk-of-bias labels and pooled weights differ in length")
     total = sum(w) or 1.0
     frac_serious = sum(wi for wi, s in zip(w, sev) if s >= 2) / total
     frac_some    = sum(wi for wi, s in zip(w, sev) if s >= 1) / total
+    frac_missing = sum(wi for wi, r in zip(w, labels) if not (r or "").strip()) / total
+    tail = (f"; {frac_missing:.0%} of weight is unappraised and counted conservatively"
+            if frac_missing else "")
     if frac_serious >= cfg.rob_high_weight_2:
-        return 2, f"most of the weight ({frac_serious:.0%}) is in studies at high/serious risk of bias"
+        return 2, f"most of the weight ({frac_serious:.0%}) is in studies at high/serious risk of bias{tail}"
     if frac_serious >= cfg.rob_high_weight_1 or frac_some >= cfg.rob_some_weight_1:
-        return 1, f"a substantial share of weight ({frac_some:.0%}) is in studies with risk-of-bias concerns"
-    return 0, "most weight is in low risk-of-bias studies"
+        return 1, f"a substantial share of weight ({frac_some:.0%}) is in studies with risk-of-bias concerns{tail}"
+    return 0, f"most weight is in low risk-of-bias studies{tail}"
 ```
 
-A study with no RoB entry defaults to severity 1 ("Some concerns") — conservative.
+A study with no RoB entry defaults to severity 1 ("Some concerns") — conservative — and the share of weight that is unappraised is named in the reason string, so an unappraised body is not mistaken for an appraised clean one.
+
+**A body with no risk-of-bias input at all is an error, not a clean body.** Scoring the domain 0 in that case reports "no serious concerns" for something nobody assessed. The engine raises; a caller that deliberately grades before appraisal has finished must opt out explicitly (`require_rob=False`) and present the domain as not assessed.
 
 ### 4.2 Inconsistency (GRADE 7) — I² + Cochran-Q, subgroup-aware
 
@@ -332,6 +341,41 @@ final = GRADE_LEVELS[final_idx]
 ```
 
 **Overrides** let an assessor pin any domain by key — `{"imprecision": 2, "indirectness": 0, "large_effect": 1}`. Keys: `risk_of_bias`, `inconsistency`, `indirectness`, `imprecision`, `publication_bias`, `large_effect`, `dose_response`, `opposing_confounding`. A pinned value replaces the computed level and the reason gets a `[overridden]` suffix.
+
+### 6.1 The explanation string
+
+The record carries a human-readable narrative assembled from the per-domain reasons. Only domains that actually fired appear, so the sentence stays short for a clean body and enumerates every contributor for a downgraded one:
+
+```python
+fired = [f"{d['domain'].lower()} (−{d['downgrade']}: {d['reason']})"
+         for d in domains if d["downgrade"] > 0]
+raised = [f"{d['domain'].lower()} (+{d['upgrade']}: {d['reason']})"
+          for d in domains if d["upgrade"] > 0]
+parts = [f"Initial certainty {initial}"]
+if fired:
+    parts.append(f"downgraded {total_down} level(s) for " + "; ".join(fired))
+if raised:
+    parts.append(f"upgraded {total_up} level(s) for " + "; ".join(raised))
+if not fired and not raised:
+    parts.append("no serious concerns across GRADE domains")
+explanation = ". ".join(parts) + f". Final certainty: {final}."
+```
+
+Worked output, from the scenarios in §10:
+
+```text
+Initial certainty High. no serious concerns across GRADE domains. Final certainty: High.
+
+Initial certainty High. downgraded 6 level(s) for risk of bias (−2: most of the weight (70%)
+is in studies at high/serious risk of bias); inconsistency (−1: considerable heterogeneity
+(I²=82%, p=0.002)); indirectness (−1: indirectness concerns); imprecision (−2: wide CI
+crossing no effect with sample size below OIS). Final certainty: Very low.
+
+Initial certainty Low. upgraded 1 level(s) for large effect (+1: large effect (RR≈3.4)).
+Final certainty: Moderate.
+```
+
+> **The explanation reports the computed downgrade, not the applied one.** The second example totals 6 levels while the ladder only has 3 below High. The clamp in the combiner absorbs the excess, and the sentence deliberately keeps the full reasoning rather than hiding it. Expect "downgraded 6 level(s)" next to a 3-level drop; that is correct output, not a bug.
 
 ---
 
@@ -495,17 +539,25 @@ def _initial_from_design(design_class, measure, studies):
     return "High" if (randomized and not non_random) else "Low"
 
 def _rob_across_studies(per_study_rob, weights, cfg):
-    sev = [_ROB_SEVERITY.get((r or "").strip().lower(), 1) for r in per_study_rob]
+    labels = list(per_study_rob)
+    sev = [_ROB_SEVERITY.get((r or "").strip().lower(), 1) for r in labels]
     if not sev: return 0, "no risk-of-bias judgements available"
-    w = [float(x) for x in weights] if (weights and len(weights) == len(sev)) else [1.0] * len(sev)
+    if weights is None:
+        w = [1.0] * len(sev)
+    elif len(weights) == len(sev):
+        w = [float(x) for x in weights]
+    else:
+        raise ValueError("risk-of-bias labels and pooled weights differ in length")
     total = sum(w) or 1.0
     fs = sum(wi for wi, s in zip(w, sev) if s >= 2) / total
     fm = sum(wi for wi, s in zip(w, sev) if s >= 1) / total
+    miss = sum(wi for wi, r in zip(w, labels) if not (r or "").strip()) / total
+    tail = f"; {miss:.0%} of weight is unappraised and counted conservatively" if miss else ""
     if fs >= cfg.rob_high_weight_2:
-        return 2, f"most of the weight ({fs:.0%}) is in studies at high/serious risk of bias"
+        return 2, f"most of the weight ({fs:.0%}) is in studies at high/serious risk of bias{tail}"
     if fs >= cfg.rob_high_weight_1 or fm >= cfg.rob_some_weight_1:
-        return 1, f"a substantial share of weight ({fm:.0%}) is in studies with risk-of-bias concerns"
-    return 0, "most weight is in low risk-of-bias studies"
+        return 1, f"a substantial share of weight ({fm:.0%}) is in studies with risk-of-bias concerns{tail}"
+    return 0, f"most weight is in low risk-of-bias studies{tail}"
 
 def _inconsistency(k, i2, q_p, subgroup, cfg):
     if k < 2: return 0, "single study — inconsistency not assessable"
@@ -584,7 +636,7 @@ def absolute_effects(measure, est, lo, hi, baseline_per_1000):
             "nnt": None if rd == 0 else round(1.0 / abs(rd)),
             "favours": "intervention" if rd < 0 else ("comparator" if rd > 0 else "neither")}
 
-def grade_body(pool_result, *, initial=None, per_study_rob=None, weights=None,
+def grade_body(pool_result, *, initial=None, per_study_rob=None, weights=None, require_rob=True,
                indirectness_levels=None, indirectness_reason="", mid_benefit=None, mid_harm=None,
                baseline_risk_per_1000=None, dose_response=None, opposing_confounding=False,
                subgroup=None, metaregression=None, overrides=None, cfg=None):
@@ -609,7 +661,20 @@ def grade_body(pool_result, *, initial=None, per_study_rob=None, weights=None,
     if initial is None:
         initial = _initial_from_design(pool_result.get("design_class"), measure, studies)
     is_randomized = (initial == "High")
-    per_study_rob = per_study_rob or []
+    # RoB rides on the study records (studies[].rob), attached by the pooling
+    # layer; per_study_rob is an explicit positional override.
+    if per_study_rob is None:
+        per_study_rob = [(s.get("rob") or "") for s in studies]
+    else:
+        per_study_rob = list(per_study_rob)
+        if per_study_rob and studies and len(per_study_rob) != len(studies):
+            raise ValueError("per_study_rob must match the pooled studies exactly")
+        if not per_study_rob:
+            per_study_rob = [(s.get("rob") or "") for s in studies]
+    if not any((r or "").strip() for r in per_study_rob):
+        if require_rob:
+            raise ValueError("no risk-of-bias judgements for this body of evidence")
+        per_study_rob = []
     if weights is None:
         weights = [s.get("weight_pct") for s in studies if s.get("weight_pct") is not None]
         if len(weights) != len(per_study_rob): weights = None
@@ -642,8 +707,21 @@ def grade_body(pool_result, *, initial=None, per_study_rob=None, weights=None,
             domains.append({"domain": name, "kind": "upgrade", "downgrade": 0, "upgrade": lv, "reason": r})
             total_up += lv
     final = GRADE_LEVELS[max(0, min(len(GRADE_LEVELS) - 1, _grade_index(initial) + total_down - total_up))]
+    fired = [f"{d['domain'].lower()} (−{d['downgrade']}: {d['reason']})"
+             for d in domains if d["downgrade"] > 0]
+    raised = [f"{d['domain'].lower()} (+{d['upgrade']}: {d['reason']})"
+              for d in domains if d["upgrade"] > 0]
+    parts = [f"Initial certainty {initial}"]
+    if fired:
+        parts.append(f"downgraded {total_down} level(s) for " + "; ".join(fired))
+    if raised:
+        parts.append(f"upgraded {total_up} level(s) for " + "; ".join(raised))
+    if not fired and not raised:
+        parts.append("no serious concerns across GRADE domains")
+    explanation = ". ".join(parts) + f". Final certainty: {final}."
     return {"initial": initial, "final": final, "total_downgrade": total_down, "total_upgrade": total_up,
             "domains": domains,
+            "explanation": explanation,
             "absolute_effects": absolute_effects(measure, est, lo, hi, baseline_risk_per_1000)}
 ```
 

@@ -370,6 +370,7 @@ def grade_body(pool_result: dict[str, Any], *,
                initial: Optional[str] = None,
                per_study_rob: Optional[Sequence[str]] = None,
                weights: Optional[Sequence[float]] = None,
+               require_rob: bool = True,
                indirectness_levels: Optional[int] = None,
                indirectness_reason: str = "",
                mid_benefit: Optional[float] = None,
@@ -390,9 +391,16 @@ def grade_body(pool_result: dict[str, Any], *,
     domains for any design, and — for non-randomized evidence with no rate-down
     factors — rates UP for large effect, dose-response, and opposing confounding.
 
-    ``per_study_rob`` is a sequence of RoB labels aligned with
-    ``pool_result["studies"]`` (same order); ``weights`` defaults to the per-study
-    ``weight_pct``. ``indirectness_levels`` (0/1/2) is the reviewer's rating — when
+    **Risk of bias is read off the study records** — each ``studies[]`` entry carries
+    its own ``rob`` label next to its ``weight_pct``, because the risk-of-bias domain
+    is weight-driven and the pooled order is not the input order (studies without
+    usable data are dropped). ``per_study_rob`` remains as an explicit positional
+    override, but it must now match ``studies[]`` exactly: a length mismatch raises
+    rather than silently falling back to equal weights, which previously produced an
+    unweighted judgement indistinguishable from a weighted one. With
+    ``require_rob=True`` (the default) a body carrying no labels at all raises, rather
+    than being rated as though risk of bias were clean. ``weights`` defaults to the
+    per-study ``weight_pct``. ``indirectness_levels`` (0/1/2) is the reviewer's rating — when
     ``None`` it defaults to 0 (the orchestrator supplies an auto-assessed value
     upstream when a target PICO is available). ``overrides`` pins any domain by key
     (e.g. ``{"imprecision": 2}``). Returns the full GRADE record.
@@ -434,8 +442,28 @@ def grade_body(pool_result: dict[str, Any], *,
         initial = _initial_from_design(pool_result.get("design_class"), measure, studies)
     is_randomized = (initial == "High")
 
+    # Risk of bias arrives ON the study records, not as a parallel list: the pooler
+    # drops studies without usable data, so the pooled order is not the input order and
+    # a positional list silently shifts by one after the first drop.
     if per_study_rob is None:
+        per_study_rob = [(s.get("rob") or "") for s in studies]
+    else:
+        per_study_rob = list(per_study_rob)
+        if per_study_rob and studies and len(per_study_rob) != len(studies):
+            # Falling back to equal weights here produced an unweighted judgement
+            # indistinguishable from a weighted one. Refuse instead.
+            raise ValueError("per_study_rob must match the pooled studies exactly")
+        if not per_study_rob:
+            per_study_rob = [(s.get("rob") or "") for s in studies]
+
+    if not any((r or "").strip() for r in per_study_rob):
+        # Scoped to bodies that actually have studies: the guard exists to stop a body
+        # of real studies being rated as though bias were clean. With no studies there
+        # is nothing to be biased, and this error would misdescribe the real problem.
+        if require_rob and studies:
+            raise ValueError("no risk-of-bias judgements for this body of evidence")
         per_study_rob = []
+
     if weights is None:
         weights = [s.get("weight_pct") for s in studies if s.get("weight_pct") is not None]
         if len(weights) != len(per_study_rob):

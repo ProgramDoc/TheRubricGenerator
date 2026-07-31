@@ -51,6 +51,11 @@ def distinct_outcome_names(studies: Iterable[dict[str, Any]]) -> dict[str, int]:
             name = oc.get("name") or oc.get("outcome_name")
             if name:
                 counts[name] = counts.get(name, 0) + 1
+        # Risk-of-bias map keys are outcome names, so they must be clustered alongside
+        # the extraction names — otherwise the two vocabularies canonicalize apart.
+        for key in s.get("rob_by_outcome") or {}:
+            if key:
+                counts[key] = counts.get(key, 0) + 1
     return counts
 
 
@@ -153,6 +158,15 @@ def apply_canonical_map(
                         oc = {**oc, CANONICAL_KEY: canon}
                 new_outs.append(oc)
             s2["outcomes"] = new_outs
+        # Risk-of-bias keys are outcome names too. Canonicalizing the outcomes but not
+        # these breaks every per-outcome lookup: the body takes the canonical name while
+        # the key keeps its alias, so a fully-appraised body reads as unappraised.
+        rob_by_outcome = s.get("rob_by_outcome")
+        if isinstance(rob_by_outcome, dict):
+            s2["rob_by_outcome"] = {
+                (name_to_canonical.get(_norm(k)) or k): v
+                for k, v in rob_by_outcome.items()
+            }
         out.append(s2)
     return out
 

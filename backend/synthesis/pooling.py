@@ -261,6 +261,9 @@ def _with_counts(study: dict[str, Any], yi: float, vi: float, note: Optional[str
 
 
 def _base_arm_counts(study: dict[str, Any]) -> dict[str, Any]:
+    # Every effect-size path funnels through here, so this is the single place that
+    # decides which input fields survive into the pooled record.
+    rob = str(study.get("rob")).strip() if study.get("rob") is not None else ""
     return {
         "study_id": study.get("study_id") or study.get("id") or study.get("name"),
         "design": study.get("design") or study.get("study_type"),
@@ -268,6 +271,11 @@ def _base_arm_counts(study: dict[str, Any]) -> dict[str, Any]:
         "n_ctrl": _num(study.get("n_ctrl")),
         "events_int": _num(study.get("events_int")),
         "events_ctrl": _num(study.get("events_ctrl")),
+        # Risk of bias is carried, never interpreted — the GRADE agent maps labels to
+        # severities. The only normalization is that a blank label means "missing";
+        # a supplied rob_source passes through untouched.
+        "rob": rob or None,
+        "rob_source": study.get("rob_source") or ("missing" if not rob else None),
     }
 
 
@@ -575,6 +583,7 @@ def pool_outcome(
     tau2_method: str = "REML",
     outcome_name: Optional[str] = None,
     favorable_direction: str = "lower",
+    design_class: Optional[str] = None,
 ) -> dict[str, Any]:
     """Pool one outcome across studies. Pure Python — NEVER calls a model.
 
@@ -612,6 +621,9 @@ def pool_outcome(
         "model": model,
         "outcome_name": outcome_name,
         "favorable_direction": favorable_direction,
+        # Echoed from the grouping rule that built this body, so the GRADE agent reads
+        # the design class that was enforced rather than re-deriving it from labels.
+        "design_class": design_class,
         "k": len(prepared),
         "warnings": warnings,
         "studies": [],
@@ -656,6 +668,10 @@ def pool_outcome(
                          else e["yi"] + _Z_95 * math.sqrt(e["vi"])),
             "weight_pct": float(100.0 * w / sw),
             "note": e.get("note"),
+            # Paired with the weight it belongs to. Studies without usable data were
+            # dropped above, so a parallel label list would already have misaligned.
+            "rob": e.get("rob"),
+            "rob_source": e.get("rob_source"),
         })
 
     result["heterogeneity"] = _heterogeneity(
@@ -714,11 +730,13 @@ def _totals(prepared: list[dict[str, Any]]) -> dict[str, Optional[float]]:
 # ---------------------------------------------------------------------------
 
 def grade_pooling_inputs(result: dict[str, Any]) -> dict[str, Any]:
-    """Extract the pooled statistics the GRADE agent consumes — numbers, not verdicts.
+    """Flattened convenience view of a :func:`pool_outcome` result — numbers, not verdicts.
 
-    GRADE makes the up/down-grade calls itself; this only surfaces the inputs from a
-    :func:`pool_outcome` result so the two agents share one contract. Absolute
-    effects + certainty are computed downstream (they also need baseline risk + MIDs).
+    Useful for forest plots, summary tables, and exports. This is **not** the GRADE
+    hand-off object: that is the whole ``pool_outcome`` result dict, which the GRADE
+    agent indexes for ``studies[]`` (risk-of-bias labels + per-study weights),
+    ``heterogeneity``, ``publication_bias``, and ``totals``. This flat view carries no
+    ``studies[]``, so it cannot convey risk of bias at all.
     """
     pooled = result.get("pooled") or {}
     het = result.get("heterogeneity") or {}
@@ -728,6 +746,7 @@ def grade_pooling_inputs(result: dict[str, Any]) -> dict[str, Any]:
     return {
         "k": result.get("k"),
         "measure": result.get("measure"),
+        "design_class": result.get("design_class"),
         "pooled_estimate": pooled.get("estimate"),
         "ci_lower": pooled.get("ci_lower"),
         "ci_upper": pooled.get("ci_upper"),
@@ -736,8 +755,11 @@ def grade_pooling_inputs(result: dict[str, Any]) -> dict[str, Any]:
         "tau2": het.get("tau2"),
         "q_p": het.get("q_p"),
         "prediction_interval": het.get("prediction_interval"),
-        # Imprecision / large-effect / absolute effects
-        "total_n": (result.get("totals") or {}).get("n_int"),
+        # Imprecision / large-effect / absolute effects.
+        # BOTH arms: the intervention arm alone halves the Optimal Information Size,
+        # turning a met OIS threshold into an unmet one.
+        "total_n": (((result.get("totals") or {}).get("n_int") or 0.0)
+                    + ((result.get("totals") or {}).get("n_ctrl") or 0.0)) or None,
         "events_int": (result.get("totals") or {}).get("events_int"),
         "events_ctrl": (result.get("totals") or {}).get("events_ctrl"),
         # Publication bias
