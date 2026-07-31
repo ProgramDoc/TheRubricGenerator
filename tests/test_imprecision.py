@@ -502,3 +502,63 @@ def test_imprecision_in_qa_prompt_catalog():
 def test_credit_cost_bumped_for_imprecision():
     # Credit cost includes the imprecision LLM call (was 33 with indirectness, now 36).
     assert qa.CREDIT_COST_QA_PER_PAPER >= 36
+
+
+# ─────────────────────────────────────────────
+# Outcome typing is per-outcome, not per-paper
+# ─────────────────────────────────────────────
+class TestOutcomeTypingScope:
+    """The paper-level ``primary_outcome_*`` fields describe the PRIMARY outcome.
+
+    When a secondary outcome is being rated they describe a different outcome
+    entirely, so consulting them mis-types it — and a wrongly-binary continuous
+    outcome fires the event-count subdomain that should be N/A.
+    """
+
+    _FIELDS = {
+        "primary_outcome_type": "binary",
+        "primary_outcome_measurement": "proportion of participants who died",
+        "primary_outcome_definition": "all-cause mortality at 12 months",
+    }
+
+    def test_primary_outcome_still_uses_the_paper_level_type(self):
+        assert imprec.infer_outcome_is_binary(
+            self._FIELDS, "All-cause mortality") is True
+
+    def test_secondary_outcome_ignores_the_paper_level_type(self):
+        # Without the gate this returns True off primary_outcome_type="binary",
+        # which would fire the event-count subdomain on a continuous outcome.
+        assert imprec.infer_outcome_is_binary(
+            self._FIELDS, "Mean change from baseline in 6-minute walk distance",
+            outcome_is_primary=False) is False
+
+    def test_secondary_outcome_never_inherits_binary_from_the_primary(self):
+        # The core property, independent of whether the assessed-outcome string
+        # happens to carry a lexical hint: a secondary is never typed binary
+        # purely because the paper's primary was.
+        for outcome in ("6-minute walk distance (metres)",
+                        "Investigator-assessed response",
+                        "EQ-5D utility"):
+            assert imprec.infer_outcome_is_binary(
+                self._FIELDS, outcome, outcome_is_primary=False) is not True
+
+    def test_secondary_outcome_ignores_the_primary_haystack(self):
+        # An outcome string with no lexical hint must not inherit the primary's
+        # "proportion of participants who died" — indeterminate is the honest
+        # answer, and the LLM is asked to decide.
+        assert imprec.infer_outcome_is_binary(
+            self._FIELDS, "Investigator-assessed response",
+            outcome_is_primary=False) is None
+
+    def test_explicit_outcome_type_wins_outright(self):
+        assert imprec.infer_outcome_is_binary(
+            self._FIELDS, "All-cause mortality",
+            outcome_type="continuous") is False
+        assert imprec.infer_outcome_is_binary(
+            {}, "Some outcome", outcome_is_primary=False,
+            outcome_type="binary") is True
+
+    def test_unknown_outcome_type_falls_through_to_the_heuristic(self):
+        assert imprec.infer_outcome_is_binary(
+            self._FIELDS, "Mean 6-minute walk distance",
+            outcome_is_primary=False, outcome_type="ordinal") is False

@@ -193,21 +193,40 @@ _CONTINUOUS_HINTS = (
 
 
 def infer_outcome_is_binary(extracted_fields: dict[str, str],
-                              primary_outcome: str) -> bool | None:
-    """Best-effort guess at whether the primary outcome is binary.
+                              primary_outcome: str,
+                              outcome_is_primary: bool = True,
+                              outcome_type: str = "") -> bool | None:
+    """Best-effort guess at whether the assessed outcome is binary.
 
     Returns ``True`` for binary, ``False`` for continuous, ``None`` if
     indeterminate. The LLM is told the inferred answer and asked to confirm
     or override (and is instructed to mark event_count N/A for continuous).
+
+    ``outcome_type`` is a per-outcome answer supplied by the caller (the outcome
+    extractor produces one) and wins outright when present.
+
+    ``outcome_is_primary`` gates every paper-level field, because they all
+    describe the paper's *primary* outcome. When rating a secondary outcome,
+    ``primary_outcome_type`` / ``_measurement`` / ``_definition`` describe a
+    different outcome entirely — a trial with binary mortality and a continuous
+    6-minute-walk secondary would otherwise type the secondary as binary and
+    fire the event-count subdomain that should be N/A. For a secondary we judge
+    from the assessed-outcome string alone, and return ``None`` (indeterminate,
+    so the LLM decides) rather than guess from the wrong outcome's description.
     """
-    explicit = (extracted_fields.get("primary_outcome_type") or "").lower()
+    explicit = (outcome_type or "").strip().lower()
+    if not explicit and outcome_is_primary:
+        explicit = (extracted_fields.get("primary_outcome_type") or "").lower()
     if any(h in explicit for h in ("binary", "dichotom")):
         return True
     if "continuous" in explicit:
         return False
 
-    measurement = (extracted_fields.get("primary_outcome_measurement") or "")
-    definition = (extracted_fields.get("primary_outcome_definition") or "")
+    if outcome_is_primary:
+        measurement = (extracted_fields.get("primary_outcome_measurement") or "")
+        definition = (extracted_fields.get("primary_outcome_definition") or "")
+    else:
+        measurement = definition = ""
     haystack = " ".join([primary_outcome or "", measurement, definition]).lower()
     if any(h in haystack for h in _BINARY_HINTS):
         return True
@@ -371,8 +390,10 @@ def run(pdf_bytes: bytes,
         classification: dict[str, str],
         primary_outcome: str,
         thresholds: dict[str, str] | None = None,
+        outcome_is_primary: bool = True,
+        outcome_type: str = "",
         ) -> tuple[dict[str, Any], str, int, str]:
-    """Run the imprecision assessment on a single paper.
+    """Run the imprecision assessment on a single paper, for one outcome.
 
     Returns ``(per_subdomain_results, severity_label, downgrade_levels, explanation)``.
 
@@ -384,7 +405,9 @@ def run(pdf_bytes: bytes,
     - ``explanation``: 1-sentence rationale for the severity tier.
     """
     study_type = classification.get("study_type", "")
-    inferred_binary = infer_outcome_is_binary(extracted_fields, primary_outcome)
+    inferred_binary = infer_outcome_is_binary(
+        extracted_fields, primary_outcome,
+        outcome_is_primary=outcome_is_primary, outcome_type=outcome_type)
     prompt = build_prompt(thresholds, study_type, primary_outcome,
                           extracted_fields, outcome_is_binary=inferred_binary)
     raw = _call_with_pdf(pdf_bytes, prompt, max_tokens=4096)

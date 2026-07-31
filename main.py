@@ -7876,7 +7876,8 @@ def _compute_run_aggregates(snapshot: dict, results: dict,
     }
 
 
-@app.get("/api/annotator/runs/{rid}")
+# ``:int`` so this cannot shadow the sibling ``{rid}.csv`` route declared below.
+@app.get("/api/annotator/runs/{rid:int}")
 def api_annotator_runs_get(rid: int,
                            rubricgen_session: str | None = Cookie(default=None),
                            x_api_key: str | None = Header(default=None, alias="X-API-Key")):
@@ -8407,6 +8408,12 @@ class QualityAppraisalRunPayload(BaseModel):
     # paper-id strings (JSON object keys must be strings) and values are the
     # outcome description. Empty strings / unspecified keys → no override.
     paper_outcome_overrides: dict[str, str] | None = None
+    # Map of {paper_id: [outcome_dict, ...]} for per-outcome runs. Risk-of-bias
+    # instruments are outcome-specific, so each selected outcome produces its own
+    # result row. Mutually exclusive with paper_estimates for the same paper —
+    # for diagnostic accuracy the estimate IS the outcome axis. Unset / a single
+    # outcome → the legacy single-row behaviour.
+    paper_outcomes: dict[str, list[dict]] | None = None
     # Per-run RoB tool selection for diagnostic-accuracy papers
     # ('quadas2' | 'quadas3' | None). None → registry default (QUADAS-3).
     diagnostic_tool_choice: str | None = None
@@ -8422,6 +8429,15 @@ class QualityAppraisalRunPayload(BaseModel):
 
 class QualityAppraisalExtractEstimatesPayload(BaseModel):
     paper_id: int
+
+
+class QualityAppraisalExtractOutcomesPayload(BaseModel):
+    paper_id: int
+
+
+# A reviewer appraising more than this many outcomes for one paper is almost
+# certainly mis-using the feature, and the bill grows linearly.
+MAX_OUTCOMES_PER_PAPER = 10
 
 
 @app.get("/api/quality-appraisal/supported-types")
@@ -8503,11 +8519,48 @@ def api_qa_run_create(body: QualityAppraisalRunPayload,
                 if clean_list:
                     paper_estimates_clean[str(pid_int)] = clean_list
 
+        # Per-outcome fan-out. Same shape as paper_estimates; the two axes are
+        # mutually exclusive per paper, because for diagnostic accuracy the
+        # estimate is already the outcome axis.
+        paper_outcomes_clean: dict[str, list[dict]] = {}
+        if body.paper_outcomes:
+            for k, v in body.paper_outcomes.items():
+                try:
+                    pid_int = int(k)
+                except Exception:
+                    continue
+                if pid_int not in paper_ids:
+                    continue
+                if not isinstance(v, list):
+                    continue
+                clean_list = [o for o in v if isinstance(o, dict)]
+                if not clean_list:
+                    continue
+                if str(pid_int) in paper_estimates_clean:
+                    # Charging happens here but the study type is only known at
+                    # run time, so a paper carrying both axes would be charged on
+                    # one and executed on the other.
+                    raise HTTPException(
+                        400, f"paper {pid_int}: supply either paper_estimates or "
+                             "paper_outcomes, not both — for diagnostic-accuracy "
+                             "papers the estimate is the outcome axis")
+                if len(clean_list) > MAX_OUTCOMES_PER_PAPER:
+                    raise HTTPException(
+                        400, f"paper {pid_int}: at most {MAX_OUTCOMES_PER_PAPER} "
+                             "outcomes per paper")
+                # Re-key server-side so a client cannot collide or spoof ids.
+                for i, oc in enumerate(clean_list, start=1):
+                    oc["id"] = i
+                    oc.setdefault("source", "reviewer")
+                paper_outcomes_clean[str(pid_int)] = clean_list
+
         unit_count = 0
+        total_cost = 0
         for pid in paper_ids:
-            ests = paper_estimates_clean.get(str(pid)) or []
-            unit_count += max(1, len(ests))
-        total_cost = unit_count * qa_mod.CREDIT_COST_QA_PER_PAPER
+            n_est = len(paper_estimates_clean.get(str(pid)) or [])
+            n_oc = len(paper_outcomes_clean.get(str(pid)) or [])
+            unit_count += max(1, n_est, n_oc)
+            total_cost += qa_mod.paper_charge(n_estimates=n_est, n_outcomes=n_oc)
 
         cost_label = (
             f"Quality Appraisal run ({len(paper_ids)} papers, {unit_count} units)"
@@ -8538,6 +8591,7 @@ def api_qa_run_create(body: QualityAppraisalRunPayload,
 
         review_ctx = (body.quadas3_review_context or "").strip() or None
         paper_estimates_json = json.dumps(paper_estimates_clean) if paper_estimates_clean else "{}"
+        paper_outcomes_json = json.dumps(paper_outcomes_clean) if paper_outcomes_clean else "{}"
 
         dtc = (body.diagnostic_tool_choice or "").strip().lower() or None
         if dtc is not None and dtc not in ("quadas2", "quadas3"):
@@ -8571,13 +8625,15 @@ def api_qa_run_create(body: QualityAppraisalRunPayload,
                          credit_cost, status, target_pico_json,
                          imprecision_thresholds_json,
                          quadas3_review_context, paper_estimates_json,
+                         paper_outcomes_json,
                          outcome_overrides_json, diagnostic_tool_choice,
                          robins_i_tool_choice, rob2_cluster_aim)
-                   VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
+                   VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
                 (user["id"], body.project_id,
                  json.dumps(paper_ids), len(paper_ids), total_cost,
                  target_pico_json, imprecision_thresholds_json,
                  review_ctx, paper_estimates_json,
+                 paper_outcomes_json,
                  outcome_overrides_json, dtc, rtc, rca),
             )
             run_id = cur.lastrowid
@@ -8664,6 +8720,67 @@ def api_qa_extract_estimates(body: QualityAppraisalExtractEstimatesPayload,
     return {"paper_id": paper_id, "estimates": estimates}
 
 
+@app.post("/api/quality-appraisal/extract-outcomes")
+def api_qa_extract_outcomes(body: QualityAppraisalExtractOutcomesPayload,
+                            rubricgen_session: str | None = Cookie(default=None),
+                            x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    """Extract the outcomes a paper can be separately appraised for.
+
+    Populates the run-create modal's per-paper outcome selector. Risk-of-bias
+    instruments are outcome-specific, so each selected outcome gets its own
+    assessment. Charges 3 credits (matching the classify cost). Auto-refunds on
+    error.
+    """
+    from backend import annotator as annotator_mod
+    from backend import billing as bill_mod
+    from backend import outcomes as outcomes_mod
+
+    user = require_user(rubricgen_session, x_api_key)
+    require_active_seat(user, "engineer")
+    is_admin = user.get("role") == "admin"
+    paper_id = int(body.paper_id)
+
+    conn = get_db()
+    try:
+        owned = conn.execute("SELECT id FROM papers WHERE id=? AND user_id=?",
+                             (paper_id, user["id"])).fetchone()
+        if not owned and not is_admin:
+            raise HTTPException(404, "paper not found or access denied")
+
+        cost = 3
+        _annotator_ai_gate(conn, user, cost,
+                           f"Extract appraisable outcomes (paper {paper_id})")
+
+        def _refund(reason: str):
+            if is_admin:
+                return
+            try:
+                bill_mod.refund_credits(conn, user["id"], cost, reason)
+            except Exception:
+                pass
+
+        try:
+            pdf_bytes, _filename = annotator_mod.load_paper_pdf(
+                conn, PAPERS_DIR, paper_id, user["id"], is_admin=is_admin)
+        except HTTPException:
+            _refund("Refund: extract-outcomes load failed")
+            raise
+
+        try:
+            outcomes = outcomes_mod.extract_outcomes(pdf_bytes, {})
+        except HTTPException:
+            _refund("Refund: extract-outcomes extraction failed")
+            raise
+        except Exception:
+            logger.exception("extract_outcomes failed for paper %s", paper_id)
+            _refund("Refund: extract-outcomes extraction failed")
+            raise HTTPException(502, "Outcome extraction failed — see server logs.")
+    finally:
+        conn.close()
+
+    return {"paper_id": paper_id, "outcomes": outcomes}
+
+
 @app.get("/api/quality-appraisal/runs")
 def api_qa_runs_list(rubricgen_session: str | None = Cookie(default=None),
                      x_api_key: str | None = Header(default=None, alias="X-API-Key")):
@@ -8695,7 +8812,7 @@ def _load_qa_run(conn, run_id: int, user_id: int, is_admin: bool) -> dict:
                   r.status, r.credit_cost, r.credits_refunded, r.error_message,
                   r.target_pico_json, r.imprecision_thresholds_json,
                   r.quadas3_review_context, r.paper_estimates_json,
-                  r.outcome_overrides_json,
+                  r.paper_outcomes_json, r.outcome_overrides_json,
                   r.diagnostic_tool_choice, r.robins_i_tool_choice,
                   r.created_at, r.completed_at, r.deleted_at,
                   p.name AS project_name
@@ -8725,6 +8842,10 @@ def _load_qa_run(conn, run_id: int, user_id: int, is_admin: bool) -> dict:
     except Exception:
         d["paper_estimates"] = {}
     try:
+        d["paper_outcomes"] = json.loads(d.pop("paper_outcomes_json") or "{}") or {}
+    except Exception:
+        d["paper_outcomes"] = {}
+    try:
         d["paper_outcome_overrides"] = json.loads(
             d.pop("outcome_overrides_json") or "{}") or {}
     except Exception:
@@ -8732,7 +8853,10 @@ def _load_qa_run(conn, run_id: int, user_id: int, is_admin: bool) -> dict:
     return d
 
 
-@app.get("/api/quality-appraisal/runs/{run_id}")
+# ``:int`` so this cannot shadow the sibling ``{run_id}.csv`` / ``.xlsx`` routes
+# declared below it — a bare ``{run_id}`` matches any segment, so "12.csv" hit
+# this route first and 422'd on int parsing.
+@app.get("/api/quality-appraisal/runs/{run_id:int}")
 def api_qa_run_get(run_id: int,
                    rubricgen_session: str | None = Cookie(default=None),
                    x_api_key: str | None = Header(default=None, alias="X-API-Key")):
@@ -8750,6 +8874,7 @@ def api_qa_run_get(run_id: int,
                       classification_json, extracted_fields_json,
                       rob_domains_json, rob_overall, rob_direction,
                       applicability_overall, estimate_id, estimate_json,
+                      outcome_id, outcome_json,
                       guideline_json, guideline_proportion,
                       guideline_adhered, guideline_applicable,
                       indirectness_json, indirectness_overall,
@@ -8771,7 +8896,7 @@ def api_qa_run_get(run_id: int,
         d = dict(r)
         for jkey in ("classification_json", "extracted_fields_json",
                      "rob_domains_json", "guideline_json", "indirectness_json",
-                     "imprecision_json", "estimate_json"):
+                     "imprecision_json", "estimate_json", "outcome_json"):
             try:
                 d[jkey.replace("_json", "")] = json.loads(d.pop(jkey) or "{}")
             except Exception:
@@ -8845,6 +8970,7 @@ def _qa_flatten_for_export(run_detail: dict) -> list[dict]:
     rows = []
     for r in run_detail.get("results", []):
         rows.append(qa_mod.flatten_result_row({
+            "id": r.get("id"),
             "paper_id": r.get("paper_id"),
             "filename": r.get("filename"),
             "status": r.get("status"),
@@ -8862,6 +8988,8 @@ def _qa_flatten_for_export(run_detail: dict) -> list[dict]:
             "applicability_overall": r.get("applicability_overall"),
             "estimate_id": r.get("estimate_id"),
             "estimate": r.get("estimate") or {},
+            "outcome_id": r.get("outcome_id"),
+            "outcome": r.get("outcome") or {},
             "guideline": r.get("guideline") or {},
             "guideline_proportion": r.get("guideline_proportion"),
             "guideline_adhered": r.get("guideline_adhered"),
@@ -8893,7 +9021,12 @@ def api_qa_run_csv(run_id: int,
     if not rows:
         raise HTTPException(404, "no results to export")
     buf = io.StringIO()
-    writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+    # Union of every row's keys, in first-seen order. Taking the header from row
+    # 0 alone raises on any later row with extra keys — the per-domain columns
+    # are dispatched by rob_tool, so a mixed-tool run (or one whose first row is
+    # an error row) would 500.
+    fieldnames = list(dict.fromkeys(k for r in rows for k in r))
+    writer = csv.DictWriter(buf, fieldnames=fieldnames, restval="")
     writer.writeheader()
     for r in rows:
         writer.writerow({k: (v if v is not None else "") for k, v in r.items()})

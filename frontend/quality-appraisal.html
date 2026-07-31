@@ -582,7 +582,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
     <div id="main-header">
       <div>
         <h1>Quality Appraisal AI</h1>
-        <div class="sub">Risk of bias &middot; reporting-guideline adherence &middot; GRADE certainty &mdash; one row per paper.</div>
+        <div class="sub">Risk of bias &middot; reporting-guideline adherence &middot; GRADE certainty &mdash; one row per appraised outcome.</div>
       </div>
     </div>
     <div id="main-tabs">
@@ -670,6 +670,19 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
         </div>
       </details>
       <details style="margin:8px 0 4px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;background:var(--paper-2);">
+        <summary style="cursor:pointer;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);">Appraise several outcomes per paper (optional)</summary>
+        <div style="margin-top:8px;font-size:11px;color:var(--muted);line-height:1.45;">
+          Risk-of-bias instruments are outcome-specific — RoB 2 domain 4 (measurement of the outcome) and domain 5 (selection of the reported result) genuinely differ between outcomes, so one trial can be <em>Low</em> for mortality and <em>High</em> for an unblinded subjective outcome. Extract a paper's outcomes and tick the ones to appraise: <strong>each produces its own RoB + indirectness + imprecision + GRADE row</strong>.
+          <br><br>
+          Costs <strong>+21 cr per additional outcome</strong> (classification, field extraction, and the reporting-guideline check are done once per paper and already covered by the base 36 cr). Selecting one outcome, or none, behaves exactly as before. Not applicable to diagnostic-accuracy papers — there the Phase-4 estimate is already the outcome axis — or to systematic reviews, where the tool rates the whole review.
+        </div>
+        <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <button type="button" class="tb-btn" onclick="extractOutcomesForSelectedPapers()" id="extract-outcomes-btn" style="background:var(--paper);border-color:var(--rule-2);color:var(--text);font-size:11px;">Extract outcomes</button>
+          <span style="font-size:11px;color:var(--muted);">3 cr / paper, each time you press it. Optional — without this, each paper is appraised for its primary outcome only.</span>
+        </div>
+        <div id="run-outcomes-list" style="margin-top:10px;display:none;"></div>
+      </details>
+      <details style="margin:8px 0 4px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;background:var(--paper-2);">
         <summary style="cursor:pointer;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);">Diagnostic accuracy (QUADAS-2 / QUADAS-3) (optional)</summary>
         <div style="margin-top:8px;font-size:11px;color:var(--muted);line-height:1.45;">
           For diagnostic test accuracy papers, pick which risk-of-bias tool to run, then optionally supply your review question + pre-extract numerical accuracy estimates (Phase 4) and pick which ones to appraise — each estimate produces its own RoB + applicability + GRADE row.
@@ -738,7 +751,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); font
           </div>
         </div>
       </details>
-      <div style="margin-top:12px;font-size:12px;color:var(--muted);"><span id="run-count">0</span> paper(s) selected.</div>
+      <div style="margin-top:12px;font-size:12px;color:var(--muted);"><span id="run-count">0</span> paper(s) selected &middot; estimated cost <strong id="run-cost" style="color:var(--text);">0</strong> credits.</div>
     </div>
     <div class="modal-foot">
       <button class="tb-btn primary" onclick="submitRun()" id="submit-run-btn">Start appraisal</button>
@@ -1292,6 +1305,9 @@ async function deleteRun(runId) {
 /* ── Run modal ───────────────────────────────────────────────────────── */
 // {paperId: [{id, description, sensitivity, specificity, ..., _selected: true|false}]}
 let _quadas3Estimates = {};
+// {paperId: [{id, name, description, measure, timing, outcome_type, is_primary,
+//             source, _selected: true|false}]}
+let _paperOutcomes = {};
 
 function openRunModal() {
   const n = selectedPaperIds.size;
@@ -1305,7 +1321,14 @@ function openRunModal() {
   _quadas3Estimates = {};
   const list = document.getElementById('run-estimates-list');
   if (list) { list.innerHTML = ''; list.style.display = 'none'; }
+  // Reset the per-outcome panel the same way
+  _paperOutcomes = {};
+  const oList = document.getElementById('run-outcomes-list');
+  if (oList) { oList.innerHTML = ''; oList.style.display = 'none'; }
+  const oBtn = document.getElementById('extract-outcomes-btn');
+  if (oBtn) { oBtn.disabled = false; oBtn.textContent = 'Extract outcomes'; }
   renderOutcomeOverrideList();
+  updateRunCost();
   // Reset to default QUADAS-3 selection on each open
   const q3radio = document.querySelector('input[name="dx-rob-tool"][value="quadas3"]');
   if (q3radio) q3radio.checked = true;
@@ -1437,6 +1460,140 @@ function toggleEstimate(pid, idx, checked) {
   const ests = _quadas3Estimates[pid];
   if (!ests || !ests[idx]) return;
   ests[idx]._selected = !!checked;
+  updateRunCost();
+}
+
+/* ── Per-outcome selection ───────────────────────────────────────────────
+   Mirrors the Phase-4 estimate flow above. The two axes are mutually
+   exclusive per paper — the server rejects a payload carrying both. */
+async function extractOutcomesForSelectedPapers() {
+  const ids = Array.from(selectedPaperIds);
+  if (!ids.length) { toast('Select papers first.', true); return; }
+  const btn = document.getElementById('extract-outcomes-btn');
+  const list = document.getElementById('run-outcomes-list');
+  btn.disabled = true; btn.textContent = 'Extracting…';
+  list.style.display = '';
+  list.innerHTML = ids.map(id => {
+    const p = papers.find(pp => pp.id === id);
+    const name = p ? (p.filename || ('paper ' + id)) : ('paper ' + id);
+    return `<div class="oc-card" data-pid="${id}" style="margin-bottom:8px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;background:var(--paper);">
+      <div style="font-weight:600;font-size:12px;">${escHtml(name)}</div>
+      <div class="oc-status" style="font-size:11px;color:var(--muted);margin-top:4px;">⏳ extracting outcomes…</div>
+    </div>`;
+  }).join('');
+
+  await Promise.all(ids.map(async (pid) => {
+    const card = list.querySelector(`.oc-card[data-pid="${pid}"]`);
+    try {
+      const r = await fetch('/api/quality-appraisal/extract-outcomes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paper_id: pid }),
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        let detail = txt;
+        try { detail = (JSON.parse(txt).detail || txt).toString(); } catch {}
+        card.querySelector('.oc-status').innerHTML = `<span style="color:var(--err);">⚠ ${escHtml(detail.slice(0, 200))}</span>`;
+        return;
+      }
+      const j = await r.json();
+      const outcomes = j.outcomes || [];
+      // Tick the primary outcome(s); if none is flagged, tick the first.
+      const anyPrimary = outcomes.some(o => o.is_primary);
+      _paperOutcomes[pid] = outcomes.map((o, idx) => ({
+        ...o, _selected: anyPrimary ? !!o.is_primary : idx === 0,
+      }));
+      renderOutcomeCard(pid);
+    } catch (e) {
+      card.querySelector('.oc-status').innerHTML = `<span style="color:var(--err);">⚠ ${escHtml(e.message)}</span>`;
+    }
+  }));
+
+  btn.disabled = false; btn.textContent = 'Re-extract outcomes';
+  updateRunCost();
+}
+
+function renderOutcomeCard(pid) {
+  const list = document.getElementById('run-outcomes-list');
+  const card = list.querySelector(`.oc-card[data-pid="${pid}"]`);
+  if (!card) return;
+  const p = papers.find(pp => pp.id === pid);
+  const name = p ? (p.filename || ('paper ' + pid)) : ('paper ' + pid);
+  const ocs = _paperOutcomes[pid] || [];
+  const adder = `<div style="display:flex;gap:6px;margin-top:8px;">
+      <input type="text" id="oc-add-${pid}" placeholder="Add an outcome the extractor missed…"
+             onkeydown="if(event.key==='Enter'){event.preventDefault();addFreeTextOutcome(${pid});}"
+             style="flex:1;min-width:0;padding:4px 7px;border-radius:5px;border:1px solid var(--rule-2);background:var(--paper);color:var(--text);font-family:inherit;font-size:11px;" />
+      <button type="button" class="tb-btn" onclick="addFreeTextOutcome(${pid})" style="background:var(--paper);border-color:var(--rule-2);color:var(--text);font-size:11px;">＋ Add</button>
+    </div>`;
+  if (ocs.length === 0) {
+    card.innerHTML = `<div style="font-weight:600;font-size:12px;">${escHtml(name)}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px;">No outcomes extracted — this paper will be appraised for its auto-picked primary outcome. You can add one below.</div>
+      ${adder}`;
+    return;
+  }
+  const nSel = ocs.filter(o => o._selected).length;
+  const checks = ocs.map((o, idx) => {
+    const label = o.name || o.description || ('Outcome ' + (idx + 1));
+    const detail = [
+      o.measure,
+      o.timing && ('at ' + o.timing),
+      o.outcome_type,
+      o.is_primary && 'primary',
+      o.source === 'reviewer' && 'added by you',
+    ].filter(Boolean).join(' · ');
+    return `<label style="display:flex;gap:6px;align-items:flex-start;font-size:12px;padding:4px 0;cursor:pointer;">
+      <input type="checkbox" ${o._selected ? 'checked' : ''} onchange="toggleOutcome(${pid},${idx},this.checked)" style="margin-top:2px;flex-shrink:0;" />
+      <span style="min-width:0;flex:1;">
+        <span style="font-weight:600;">${escHtml(label)}</span>
+        ${detail ? `<span style="display:block;font-size:11px;color:var(--muted);">${escHtml(detail)}</span>` : ''}
+      </span>
+    </label>`;
+  }).join('');
+  const costNote = nSel > 1
+    ? `<span style="color:var(--muted);"> — ${nSel} selected, +${(nSel - 1) * 21} cr for this paper</span>`
+    : '<span style="color:var(--muted);"> — 1 selected, no extra cost</span>';
+  card.innerHTML = `<div style="font-weight:600;font-size:12px;">${escHtml(name)}</div>
+    <div style="font-size:11px;color:var(--muted);margin:2px 0 6px;">${ocs.length} outcome(s) found${costNote}</div>
+    ${checks}
+    ${adder}`;
+}
+
+function toggleOutcome(pid, idx, checked) {
+  const ocs = _paperOutcomes[pid];
+  if (!ocs || !ocs[idx]) return;
+  ocs[idx]._selected = !!checked;
+  renderOutcomeCard(pid);
+  updateRunCost();
+}
+
+function addFreeTextOutcome(pid) {
+  const input = document.getElementById('oc-add-' + pid);
+  if (!input) return;
+  const name = (input.value || '').trim();
+  if (!name) return;
+  if (!_paperOutcomes[pid]) _paperOutcomes[pid] = [];
+  _paperOutcomes[pid].push({ name, source: 'reviewer', _selected: true });
+  input.value = '';
+  renderOutcomeCard(pid);
+  updateRunCost();
+  const again = document.getElementById('oc-add-' + pid);
+  if (again) again.focus();
+}
+
+/* Mirrors backend paper_charge() — a preview that disagrees with the actual
+   charge is worse than no preview. */
+function updateRunCost() {
+  const el = document.getElementById('run-cost');
+  if (!el) return;
+  let cr = 0;
+  for (const id of selectedPaperIds) {
+    const nEst = (_quadas3Estimates[id] || []).filter(e => e._selected).length;
+    const nOc = (_paperOutcomes[id] || []).filter(o => o._selected).length;
+    cr += nEst > 0 ? 36 * nEst : 36 + 21 * Math.max(0, nOc - 1);
+  }
+  el.textContent = cr;
 }
 
 async function submitRun() {
@@ -1487,6 +1644,21 @@ async function submitRun() {
   }
   if (Object.keys(outcomeOverrides).length > 0) {
     payload.paper_outcome_overrides = outcomeOverrides;
+  }
+  // Per-paper outcome fan-out. Only sent when more than one outcome is picked —
+  // a single selection is what the appraiser does by default, so keeping it off
+  // the payload keeps those runs on the exact legacy path.
+  const paperOutcomes = {};
+  for (const [pidStr, ocs] of Object.entries(_paperOutcomes)) {
+    if (paperEstimates[pidStr]) continue;   // estimates win; server 400s on both
+    const selected = (ocs || []).filter(o => o._selected).map(o => {
+      const { _selected, ...clean } = o;
+      return clean;
+    });
+    if (selected.length > 1) paperOutcomes[pidStr] = selected;
+  }
+  if (Object.keys(paperOutcomes).length > 0) {
+    payload.paper_outcomes = paperOutcomes;
   }
   const dxTool = (document.querySelector('input[name="dx-rob-tool"]:checked') || {}).value || 'quadas3';
   if (dxTool && dxTool !== 'quadas3') {
@@ -1582,13 +1754,17 @@ function renderResults() {
   const projChip = currentRun && currentRun.project_name
     ? ` &middot; project <span class="chip mod">${escHtml(currentRun.project_name)}</span>`
     : '';
+  const results = (currentRun && currentRun.results) || [];
+  // Rows ≠ papers once a paper fans out per outcome or per estimate, so name
+  // the row count too rather than letting "N paper(s)" read as the row count.
+  const rowNote = (currentRun && results.length && results.length !== currentRun.paper_count)
+    ? ` &middot; ${results.length} result row(s)` : '';
   meta.innerHTML = currentRun
-    ? `<strong>Run #${currentRun.id}</strong> — ${currentRun.paper_count} paper(s) &middot;
+    ? `<strong>Run #${currentRun.id}</strong> — ${currentRun.paper_count} paper(s)${rowNote} &middot;
        status <span class="status-pill status-${currentRun.status}">${escHtml(currentRun.status)}</span>${projChip}`
     : '';
 
   const host = document.getElementById('results-host');
-  const results = (currentRun && currentRun.results) || [];
   if (!results.length) {
     host.innerHTML = '<div class="empty-state">Waiting for results…</div>';
     return;
@@ -1644,7 +1820,7 @@ function renderResults() {
     const full = meta ? meta.full : '';
     headerCols.push(`<th class="col-hint" title="${escHtml(full)}">${escHtml(short)}<span class="col-sub">${escHtml(full)}</span></th>`);
   });
-  headerCols.push('<th>Primary outcome</th>');
+  headerCols.push('<th>Assessed outcome</th>');
 
   const rows = results.map(r => {
     const fields = r.extracted_fields || {};
@@ -1673,6 +1849,16 @@ function renderResults() {
           (estimate.description || '') +
           (estimate.sensitivity ? ' · sens ' + estimate.sensitivity : '') +
           (estimate.specificity ? ' · spec ' + estimate.specificity : '')
+        ).slice(0, 120)}</div>`
+      : '';
+    // Per-outcome descriptor — the sibling of estChip for the outcome axis, so
+    // several rows of one paper are distinguishable at a glance.
+    const outcome = r.outcome || {};
+    const ocChip = (!isDxRow && (r.outcome_id != null || outcome.name))
+      ? `<div class="chip" style="margin-top:4px;background:#ecfdf5;border-color:#bbf7d0;color:#065f46;">🎯 ${escHtml(
+          (outcome.name || r.assessed_outcome || '') +
+          (outcome.timing ? ' · ' + outcome.timing : '') +
+          (outcome.is_primary ? ' · primary' : '')
         ).slice(0, 120)}</div>`
       : '';
     // Tool chip — visible at-a-glance audit of which RoB variant scored this
@@ -1770,7 +1956,7 @@ function renderResults() {
       <td class="col-study">
         <div class="study-title">${escHtml(title)}</div>
         <div class="study-meta">${escHtml(authors)}${authors ? ' &middot; ' : ''}${escHtml(journal)}${journal ? ' &middot; ' : ''}${escHtml(year)}</div>
-        ${estChip}
+        ${estChip}${ocChip}
         <button class="detail-btn" onclick="openDetailModalById(${r.id}, 'summary')" title="Open detailed review">📋 Detail</button>
       </td>
       <td class="cell-clickable" onclick="openDetailModalById(${r.id}, 'summary')">
@@ -1791,7 +1977,7 @@ function renderResults() {
       <td class="cell-clickable" onclick="openDetailModalById(${r.id}, 'grade')"><span class="${gradeCls(r.updated_grade)}">${escHtml(r.updated_grade || '—')}</span></td>
       <td class="cell-clickable" onclick="openDetailModalById(${r.id}, 'grade')" style="max-width:240px;font-size:10.5px;color:var(--muted);">${escHtml(r.grade_explanation || '')}</td>`}
       ${domainCells}
-      <td style="max-width:220px;font-size:10.5px;">${escHtml(r.primary_outcome || '')}</td>
+      <td style="max-width:220px;font-size:10.5px;">${escHtml(r.assessed_outcome || r.primary_outcome || '')}</td>
     </tr>`;
   }).join('');
 
@@ -1856,9 +2042,18 @@ async function _openDetailModalForResult(r, anchor) {
   const year = fields.citation_year || '';
   document.getElementById('qa-detail-title').textContent = title;
   document.getElementById('qa-detail-title').title = title;
+  // Names the outcome when the row is one of several for this paper, so two
+  // sibling rows don't open modals with identical headers.
+  // Prefer the outcome's short name over the composed assessed_outcome, which
+  // carries "— measured as … — at …" suffixes and truncates mid-phrase here.
+  const ocName = (r.outcome || {}).name || r.assessed_outcome || '';
+  const ocBit = (r.outcome_id != null
+                 || (r.assessed_outcome && r.assessed_outcome !== r.primary_outcome))
+    ? 'Outcome: ' + String(ocName).slice(0, 60)
+    : '';
   const subBits = isSrTool(r.rob_tool)
     ? [authors, journal, year, r.study_type, 'AMSTAR-2 confidence: ' + (r.rob_overall || '—')]
-    : [authors, journal, year, r.study_type, 'RoB ' + (r.rob_overall || '—'),
+    : [authors, journal, year, r.study_type, ocBit, 'RoB ' + (r.rob_overall || '—'),
        'GRADE ' + (r.initial_grade || '—') + ' → ' + (r.updated_grade || '—')];
   document.getElementById('qa-detail-sub').textContent = subBits.filter(Boolean).join(' · ');
   // Render panel
@@ -1929,7 +2124,7 @@ function renderDetailPanel(r, anchor) {
   const primaryOutcome = r.primary_outcome || '';
   const overrideActive = !!r.assessed_outcome && r.assessed_outcome !== r.primary_outcome;
   const outcomeBlock = overrideActive
-    ? `<div>${escHtml(assessedOutcome)} <span class="chip" style="background:var(--accent-2,#fff3cd);color:#7a5b00;border:1px solid #e0c46c;font-size:10px;margin-left:6px;" title="Reviewer override — the paper's auto-picked primary outcome was: ${escHtml(primaryOutcome)}">Reviewer override</span>
+    ? `<div>${escHtml(assessedOutcome)} <span class="chip" style="background:var(--accent-2,#fff3cd);color:#7a5b00;border:1px solid #e0c46c;font-size:10px;margin-left:6px;" title="Reviewer-selected outcome — the paper's auto-picked primary outcome was: ${escHtml(primaryOutcome)}">Reviewer-selected outcome</span>
         <div style="margin-top:4px;color:var(--muted);font-size:11px;">Auto-picked primary: ${escHtml(primaryOutcome || '—')}</div></div>`
     : `<div>${escHtml(assessedOutcome || '—')}</div>`;
 

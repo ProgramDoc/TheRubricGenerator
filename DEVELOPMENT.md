@@ -620,7 +620,7 @@ The Quality Appraisal pipeline supported RCTs and 5 non-randomized study types b
 - New `STUDY_TYPE_REGISTRY["Diagnostic Accuracy"]` with `rob_tool="quadas3"`, `reporting_guideline="stard"`, `initial_grade="High"` (GRADE handbook default for cross-sectional accuracy), `skip_grade_extras=True`, `supports_estimates=True`.
 - New `_ESTIMATE_EXTRACTORS = {"quadas3": quadas3.extract_estimates}` — a parallel registry to `_TOOL_RUNNERS` for tools that need per-estimate iteration.
 - `_rob_downgrade` extended to handle `"Insufficient information"` → 1 level conservatively (with reason text mentioning QUADAS-3).
-- `appraise_paper` branches when `cfg.get("supports_estimates")` is true and dispatches to a new helper `_appraise_paper_with_estimates(...)`. That helper runs classify + prefill + STARD **once per paper**, then loops over estimates running QUADAS-3 + GRADE once per estimate, writing a separate `quality_appraisal_results` row per (paper, estimate). Falls back to a single-estimate iteration against the paper's primary / headline estimate when no estimates were supplied. Returns `estimates_done` / `estimates_errored` counts so `run_batch` can refund credits per failed unit.
+- `appraise_paper` branches when `cfg.get("supports_estimates")` is true and dispatches to a new helper `_appraise_paper_with_estimates(...)`. That helper runs classify + prefill + STARD **once per paper**, then loops over estimates running QUADAS-3 + GRADE once per estimate, writing a separate `quality_appraisal_results` row per (paper, estimate). Falls back to a single-estimate iteration against the paper's primary / headline estimate when no estimates were supplied. Returns `estimates_done` / `estimates_errored` counts so `run_batch` can refund credits per failed unit. *(Superseded July 31, 2026 — this helper was generalized into `_appraise_units`, which loops the same way over an estimate axis or an outcome axis. See the per-(paper × outcome) entry below.)*
 
 **Schema migration** (idempotent ALTER TABLE in `migrate_qa_columns(conn)`):
 - `quality_appraisal_runs.quadas3_review_context TEXT NULL` — user's free-text Phase 1+2 context.
@@ -665,6 +665,31 @@ The Quality Appraisal pipeline supported RCTs and 5 non-randomized study types b
 - Structured Phase 1 + Phase 2 inputs (collected as one free-text field in v1, not the tables in the docx).
 - QUADAS-C — separate tool from QUADAS-3, for comparative-accuracy reviews of two index tests.
 - Editing / overriding AI judgements in the UI (consistent with the rest of Quality Appraisal v1).
+
+### Per-(Paper × Outcome) Appraisal (July 31, 2026)
+
+Risk-of-bias instruments are outcome-specific — RoB 2 domain 4 covers measurement of the outcome and domain 5 the selection of the reported result, and GRADE rates certainty per outcome. One trial can be *Low* for all-cause mortality and *High* for an unblinded symptom score. The orchestrator collapsed every paper to a single assessment against its auto-picked primary outcome, so secondary outcomes inherited a judgement never made about them. That was also the ceiling on the body-of-evidence GRADE work, which needs a per-(study × outcome) label for each pooled body and could only ever resolve one.
+
+**The units refactor.** `_appraise_paper_with_estimates` and the main path were ~90% identical, and every difference between them was *data*, not control flow. Both are now one `_appraise_units(...)` loop over a `_Unit` descriptor (`kind` / `unit_id` / `payload` / `assessed_outcome` / `is_override` / `label`), built by `build_outcome_units` or `build_estimate_units`. Classify + prefill + the reporting-guideline check stay once per paper — the guideline **lazily**, so a paper whose every RoB call fails no longer pays for it. A unit that errors writes its own row and the loop continues.
+
+**The two fan-out axes are mutually exclusive.** For diagnostic accuracy the estimate *is* the outcome axis (one estimate = one 2×2 table). `POST /runs` returns 400 for a paper carrying both, because charging happens at run-create time while study classification happens at run time — a paper with both would be charged on one axis and executed on the other. AMSTAR-2 papers collapse to one unit (the tool rates the review, not an outcome) and report `units_skipped` so the extra charged units refund.
+
+**Opt-in.** Supplying no outcomes yields exactly one unit and byte-identical behaviour — verified by diffing a stored row before and after.
+
+**New module** — `backend/outcomes.py` (`extract_outcomes` / `outcome_label`), a sibling of `indirectness.py` / `imprecision.py` rather than a `rob_tools/` member, because the outcome feeds the RoB tool *and* indirectness *and* imprecision. One LLM call; ids assigned in code over the entries kept.
+
+**Two strings, two jobs.** `assessed_outcome` is composed for prompt quality ("Quality of life — measured as KCCQ total symptom score — at 8 months"); `outcome_json.name` stays a clean short label. Downstream consumers grouping studies into bodies of evidence must key on the latter — the composed form never matches a body outcome name after normalization, and every lookup would silently miss.
+
+**Cost** — `36 + 21 × (k−1)`. Classify/prefill/guideline are once-per-paper and already in the 36; only RoB (~15) + indirectness (~3) + imprecision (~3) repeat, so a flat 36 per extra outcome would over-bill by ~42%. `paper_charge()` is the single source of truth, called by both the charge path and `refund_for()`, and mirrored by the modal's live cost preview.
+
+**Schema** — `quality_appraisal_runs.paper_outcomes_json`, `quality_appraisal_results.outcome_id` + `outcome_json`, all via the idempotent `migrate_qa_columns` idiom. No uniqueness constraint existed on `(run_id, paper_id)`, so multi-row-per-paper needed no relaxation.
+
+**Bugs fixed in passing**:
+- **The QUADAS path silently dropped the reviewer's outcome override** — it passed the auto-picked primary into the per-estimate helper, so an override on a diagnostic-accuracy paper did nothing. Diagnostic runs *with* an override now judge differently than before; runs without one are unchanged.
+- **`infer_outcome_is_binary` mis-typed every non-primary outcome.** It read `primary_outcome_type` / `_measurement` / `_definition`, all of which describe the *primary* outcome. A trial with binary mortality and a continuous 6-minute-walk secondary typed the secondary as binary, firing the event-count subdomain that should be N/A. Now gated on `outcome_is_primary`, with a per-outcome `outcome_type` winning outright.
+- **Quality Appraisal and Annotator CSV/XLSX export were returning 422** and had been for some time. `@app.get("/runs/{run_id}")` is declared before `/runs/{run_id}.csv`, and a bare path param matches any segment — so `12.csv` hit the detail route and failed int-parsing. Fixed with a `{run_id:int}` Starlette convertor, which also gives a correct 404 for non-numeric ids. Separately, `csv.DictWriter` took its header from row 0 only and raises on any later row with extra keys; the per-domain columns are dispatched by `rob_tool`, so a mixed-tool run already 500'd. Both header builders now take a first-seen union.
+
+**Out of scope**: reviewer-editable outcome lists after a run has started; cross-study outcome harmonization (that is the synthesis layer's job); per-outcome fan-out for diagnostic accuracy or systematic reviews (both have a different natural unit).
 
 ### Annotator Custom Extraction & Analytics (April 16, 2026)
 
