@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The AI Researcher — Synthesis</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<link rel="stylesheet" href="/static/_shared/design.css">
+<style>
+:root {
+  --navy: oklch(0.22 0.025 260); --blue: var(--accent); --green: var(--ok);
+  --red: var(--err); --amber: var(--warn); --purple: oklch(0.46 0.12 300);
+  --bg: var(--paper-2); --card: var(--paper); --border: var(--rule);
+  --text: var(--ink); --muted: var(--ink-3);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { font-family: var(--sans); background: var(--bg); color: var(--text); font-size: 13px; line-height: 1.5; }
+#topbar { display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: var(--navy); color: #fff; border-bottom: 1px solid rgba(0,0,0,.25); min-height: 44px; }
+.brand { font-family: var(--serif); font-size: 15px; font-weight: 600; }
+.brand span { color: oklch(0.76 0.08 250); font-style: italic; }
+.tb-sep { width: 1px; height: 20px; background: rgba(255,255,255,.15); }
+.tb-btn { font-size: 11px; font-weight: 600; padding: 5px 10px; border-radius: 6px; background: rgba(255,255,255,.08); color: #e2e8f0; border: 1px solid rgba(255,255,255,.15); cursor: pointer; font-family: inherit; }
+.tb-btn:hover { background: rgba(255,255,255,.16); }
+.tb-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tb-btn:disabled { opacity: .4; cursor: not-allowed; }
+.in-iframe #topbar .tb-chrome { display: none !important; }
+#layout { display: grid; grid-template-columns: 270px 1fr; height: calc(100vh - 44px); }
+#sidebar { background: var(--card); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+#sidebar-header { padding: 10px 12px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 12px; }
+#project-filter { width: 100%; margin-top: 6px; padding: 4px 6px; font-size: 11px; border: 1px solid var(--border); border-radius: 5px; background: var(--paper); color: var(--text); }
+#paper-list { flex: 1; overflow-y: auto; padding: 6px; }
+.paper-item { display: flex; gap: 7px; align-items: flex-start; padding: 6px 7px; border-radius: 6px; cursor: pointer; font-size: 11.5px; }
+.paper-item:hover { background: var(--paper-2); }
+.paper-item.selected { background: color-mix(in oklch, var(--accent) 12%, transparent); }
+.paper-item .fn { font-weight: 500; word-break: break-word; }
+.paper-item .meta { color: var(--muted); font-size: 10px; font-family: var(--mono); }
+#select-bar { display: flex; gap: 5px; align-items: center; padding: 7px 10px; border-top: 1px solid var(--border); font-size: 11px; }
+#select-bar button { font-size: 10.5px; padding: 3px 7px; border: 1px solid var(--border); border-radius: 5px; background: var(--paper); cursor: pointer; }
+#select-count { margin-left: auto; font-family: var(--mono); color: var(--muted); }
+#upload-zone { margin: 8px; padding: 14px; border: 1.5px dashed var(--border); border-radius: 8px; text-align: center; font-size: 10.5px; color: var(--muted); cursor: pointer; }
+#main { overflow-y: auto; padding: 0; }
+#main-header { padding: 14px 20px 0; }
+#main-header h1 { font-family: var(--serif); font-size: 19px; margin: 0; }
+#main-header .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+#main-tabs { display: flex; gap: 2px; padding: 10px 20px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.main-tab { padding: 7px 13px; font-size: 12px; font-weight: 600; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; }
+.main-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.main-tab[disabled] { opacity: .4; pointer-events: none; }
+.tab-pane { display: none; padding: 18px 20px; }
+.tab-pane.active { display: block; }
+.empty-state { color: var(--muted); text-align: center; padding: 40px; font-size: 12px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 9px; padding: 14px 16px; margin-bottom: 14px; }
+.card h3 { margin: 0 0 8px; font-size: 13px; font-family: var(--serif); }
+table.grid { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+table.grid th, table.grid td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+table.grid th { font-weight: 600; color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .03em; }
+table.grid input, table.grid select { width: 100%; font-size: 11px; padding: 2px 4px; border: 1px solid var(--border); border-radius: 4px; background: var(--paper); color: var(--text); font-family: var(--mono); }
+.cell-edited { background: color-mix(in oklch, var(--warn) 18%, transparent); }
+.badge { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 10px; font-weight: 700; }
+.b-low, .b-include, .b-high-grade { background: color-mix(in oklch, var(--ok) 20%, transparent); color: var(--ok); }
+.b-some, .b-moderate { background: color-mix(in oklch, var(--warn) 22%, transparent); color: var(--warn); }
+.b-high, .b-exclude, .b-verylow { background: color-mix(in oklch, var(--err) 18%, transparent); color: var(--err); }
+.b-na { background: var(--paper-2); color: var(--muted); }
+.status-pill { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 10px; text-transform: uppercase; }
+.runs-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.runs-table th, .runs-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.runs-table tr.clickable:hover { background: var(--paper-2); cursor: pointer; }
+#progress-panel { background: var(--card); border: 1px solid var(--border); border-radius: 9px; margin: 0 20px 14px; padding: 10px 14px; }
+.stepper { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.step-pill { font-size: 10px; font-weight: 700; padding: 3px 9px; border-radius: 12px; background: var(--paper-2); color: var(--muted); }
+.step-pill.done { background: color-mix(in oklch, var(--accent) 18%, transparent); color: var(--accent); }
+.ev-log { max-height: 130px; overflow-y: auto; font-family: var(--mono); font-size: 10.5px; }
+.ev { padding: 2px 0; color: var(--muted); }
+.ev-type-error { color: var(--err); } .ev-type-warn { color: var(--warn); } .ev-type-info { color: var(--text); }
+/* modal */
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: 50; }
+.modal-backdrop.open { display: flex; }
+.modal { background: var(--card); border-radius: 12px; width: 720px; max-width: 94vw; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }
+.modal-head { padding: 14px 18px; border-bottom: 1px solid var(--border); font-family: var(--serif); font-size: 15px; font-weight: 600; display: flex; justify-content: space-between; }
+.modal-body { padding: 16px 18px; overflow-y: auto; }
+.modal-foot { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: flex-end; }
+.modal label { display: block; font-size: 11px; font-weight: 600; color: var(--muted); margin: 10px 0 3px; }
+.modal input[type=text], .modal input[type=number], .modal textarea, .modal select { width: 100%; padding: 6px 8px; font-size: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--paper); color: var(--text); font-family: inherit; }
+.modal textarea { min-height: 50px; resize: vertical; }
+.wizard-step { display: none; } .wizard-step.active { display: block; }
+.step-rail { display: flex; gap: 8px; margin-bottom: 14px; }
+.step-rail .sr { flex: 1; text-align: center; font-size: 11px; font-weight: 700; padding: 6px; border-radius: 6px; background: var(--paper-2); color: var(--muted); }
+.step-rail .sr.active { background: var(--accent); color: #fff; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.outcome-row { border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 8px; }
+.chip { display: inline-block; font-size: 10px; padding: 2px 7px; border-radius: 10px; background: var(--paper-2); margin: 2px; }
+.code-block { margin-bottom: 10px; }
+.code-block summary { cursor: pointer; font-weight: 600; font-size: 12px; padding: 6px 0; }
+.code-block pre { background: var(--paper-2); border: 1px solid var(--border); border-radius: 7px; padding: 10px; font-family: var(--mono); font-size: 11px; overflow-x: auto; white-space: pre-wrap; }
+.copy-btn { font-size: 10px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--paper); cursor: pointer; margin-right: 6px; }
+/* detail modal */
+#detail-modal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; z-index: 60; }
+#detail-modal.open { display: flex; }
+#detail-inner { margin: auto; width: 96vw; height: 92vh; background: var(--card); border-radius: 12px; display: grid; grid-template-columns: 1fr 420px; overflow: hidden; }
+#pdf-pane { background: #525659; overflow-y: auto; padding: 12px; }
+#pdf-pane canvas { display: block; margin: 0 auto 10px; box-shadow: 0 2px 8px rgba(0,0,0,.4); max-width: 100%; }
+#detail-side { overflow-y: auto; padding: 16px; }
+#detail-side h2 { font-family: var(--serif); font-size: 15px; margin: 0 0 4px; }
+.kv { display: grid; grid-template-columns: 120px 1fr; gap: 4px 10px; font-size: 11.5px; margin: 8px 0; }
+.kv .k { color: var(--muted); font-weight: 600; }
+.quote-chip { display: inline-block; background: var(--paper-2); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 11px; margin: 3px 0; cursor: pointer; }
+.toast { position: fixed; bottom: 18px; right: 18px; background: var(--navy); color: #fff; padding: 9px 14px; border-radius: 8px; font-size: 12px; z-index: 90; opacity: 0; transition: opacity .2s; }
+.toast.show { opacity: 1; } .toast.err { background: var(--err); }
+svg text { font-family: var(--mono); }
+</style>
+</head>
+<body>
+<div id="topbar">
+  <a href="/" class="tb-chrome" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.6);text-decoration:none;margin-right:6px;padding:4px 8px;border:1px solid rgba(255,255,255,.2);border-radius:5px">&larr; Lab</a>
+  <div class="brand tb-chrome">The AI <span>Researcher</span></div>
+  <nav class="tb-chrome" style="display:flex;gap:2px;align-items:center;">
+    <a href="/dashboard" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:4px 8px;border-radius:4px">Dashboard</a>
+    <a href="/annotator" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:4px 8px;border-radius:4px">Annotator</a>
+    <a href="/quality-appraisal" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:4px 8px;border-radius:4px">Quality Appraisal</a>
+    <a href="/synthesis" style="font-size:11px;font-weight:600;color:#fff;background:rgba(255,255,255,.08);text-decoration:none;padding:4px 8px;border-radius:4px">Synthesis</a>
+    <a href="/analytics" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:4px 8px;border-radius:4px">Analytics</a>
+    <a href="/library" style="font-size:11px;font-weight:600;color:rgba(255,255,255,.7);text-decoration:none;padding:4px 8px;border-radius:4px">Library</a>
+  </nav>
+  <div class="tb-sep tb-chrome"></div>
+  <span id="user-display" class="tb-chrome" style="font-size:11px;color:rgba(255,255,255,.55);font-family:var(--mono);"></span>
+  <div style="flex:1"></div>
+  <button class="tb-btn primary" id="new-review-btn" onclick="openCreateModal()" disabled title="Select papers first">+ New review</button>
+  <button class="tb-btn" onclick="openDevModal()" title="Developer view">&#128295; Developer</button>
+  <div class="tb-sep tb-chrome"></div>
+  <button class="tb-btn tb-chrome" onclick="logout()" style="color:#f87171;border-color:rgba(248,113,113,.3);">Sign out</button>
+</div>
+
+<div id="layout">
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <div style="display:flex;justify-content:space-between;align-items:center;"><span>Papers</span><span id="paper-count" style="font-family:var(--mono);color:var(--muted);"></span></div>
+      <select id="project-filter" onchange="renderPapers()"><option value="">All papers</option></select>
+    </div>
+    <div id="paper-list"><div class="empty-state">Loading…</div></div>
+    <div id="select-bar">
+      <button onclick="selectAllPapers()">All</button>
+      <button onclick="selectNonePapers()">None</button>
+      <span id="select-count">0 selected</span>
+    </div>
+    <div id="upload-zone" onclick="document.getElementById('file-input').click()" ondragover="event.preventDefault()" ondrop="handleDrop(event)"><strong>Upload PDF</strong><br>click or drag &amp; drop</div>
+    <input type="file" id="file-input" accept=".pdf" multiple style="display:none">
+  </div>
+
+  <div id="main">
+    <div id="main-header">
+      <h1 id="page-title">Synthesis</h1>
+      <div class="sub" id="page-sub">Systematic review &amp; meta-analysis &mdash; screen, extract, pool, and grade a body of evidence.</div>
+    </div>
+
+    <!-- REVIEWS LIST -->
+    <div id="reviews-view">
+      <div style="padding:16px 20px;">
+        <div id="reviews-list"><div class="empty-state">Loading reviews…</div></div>
+      </div>
+    </div>
+
+    <!-- WORKSPACE -->
+    <div id="workspace-view" style="display:none;">
+      <div id="progress-panel" style="display:none;">
+        <div class="stepper" id="stepper"></div>
+        <div class="ev-log" id="ev-log"></div>
+      </div>
+      <div id="main-tabs">
+        <div class="main-tab" data-tab="setup" onclick="switchTab('setup')">Setup</div>
+        <div class="main-tab" data-tab="screening" onclick="switchTab('screening')">Screening</div>
+        <div class="main-tab" data-tab="extraction" onclick="switchTab('extraction')">Extraction</div>
+        <div class="main-tab" data-tab="meta" onclick="switchTab('meta')">Meta-analysis</div>
+        <div class="main-tab" data-tab="sensitivity" onclick="switchTab('sensitivity')">Sensitivity</div>
+        <div class="main-tab" data-tab="grade" onclick="switchTab('grade')">GRADE</div>
+        <div class="main-tab" data-tab="analysis" onclick="switchTab('analysis')">Analysis</div>
+        <div style="flex:1"></div>
+        <div class="main-tab" onclick="backToReviews()" style="color:var(--muted)">&larr; All reviews</div>
+      </div>
+      <div class="tab-pane" id="pane-setup"></div>
+      <div class="tab-pane" id="pane-screening"></div>
+      <div class="tab-pane" id="pane-extraction"></div>
+      <div class="tab-pane" id="pane-meta"></div>
+      <div class="tab-pane" id="pane-sensitivity"></div>
+      <div class="tab-pane" id="pane-grade"></div>
+      <div class="tab-pane" id="pane-analysis"></div>
+    </div>
+  </div>
+</div>
+
+<!-- CREATE WIZARD -->
+<div class="modal-backdrop" id="create-modal">
+  <div class="modal">
+    <div class="modal-head"><span>New systematic review</span><span style="cursor:pointer" onclick="closeCreateModal()">&times;</span></div>
+    <div class="modal-body">
+      <div class="step-rail"><div class="sr active" data-s="1">1 · Studies</div><div class="sr" data-s="2">2 · Question</div><div class="sr" data-s="3">3 · Method</div></div>
+      <div class="wizard-step active" data-step="1">
+        <label>Review title</label>
+        <input type="text" id="w-title" placeholder="e.g. Drug X for chronic pain">
+        <label>Selected studies</label>
+        <div id="w-selected" class="chip"></div>
+        <label>Project (optional)</label>
+        <select id="w-project"><option value="">— none —</option></select>
+        <label>Upstream PRISMA counts (optional — for the flow diagram)</label>
+        <div class="grid2">
+          <div><span style="font-size:10px;color:var(--muted)">Records identified (databases)</span><input type="number" id="w-id-db" min="0"></div>
+          <div><span style="font-size:10px;color:var(--muted)">Duplicates removed</span><input type="number" id="w-dups" min="0"></div>
+        </div>
+      </div>
+      <div class="wizard-step" data-step="2">
+        <div class="grid2">
+          <div><label>Population</label><input type="text" id="w-pop"></div>
+          <div><label>Intervention</label><input type="text" id="w-int"></div>
+          <div><label>Comparator</label><input type="text" id="w-comp"></div>
+          <div><label>Eligible designs (comma sep, optional)</label><input type="text" id="w-designs" placeholder="Randomized Controlled Trial"></div>
+        </div>
+        <label>Inclusion criteria (free text, optional)</label>
+        <textarea id="w-incl"></textarea>
+        <label>Exclusion criteria (free text, optional)</label>
+        <textarea id="w-excl"></textarea>
+      </div>
+      <div class="wizard-step" data-step="3">
+        <label>Outcomes (each becomes its own meta-analysis)</label>
+        <div id="w-outcomes"></div>
+        <button class="copy-btn" onclick="addOutcomeRow()">+ Add outcome</button>
+        <label style="margin-top:14px"><input type="checkbox" id="w-rob" checked style="width:auto"> Auto-run risk of bias on included studies (feeds GRADE)</label>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="copy-btn" id="w-back" onclick="wizardStep(-1)" style="display:none">Back</button>
+      <button class="tb-btn" id="w-next" onclick="wizardStep(1)" style="background:var(--accent);color:#fff">Next</button>
+      <button class="tb-btn" id="w-submit" onclick="submitReview()" style="display:none;background:var(--accent);color:#fff">Create review</button>
+    </div>
+  </div>
+</div>
+
+<!-- DEV MODAL -->
+<div class="modal-backdrop" id="dev-modal">
+  <div class="modal" style="width:860px">
+    <div class="modal-head"><span>Developer view — prompts &amp; statistics source</span><span style="cursor:pointer" onclick="document.getElementById('dev-modal').classList.remove('open')">&times;</span></div>
+    <div class="modal-body" id="dev-body"></div>
+  </div>
+</div>
+
+<!-- DETAIL MODAL -->
+<div id="detail-modal">
+  <div id="detail-inner">
+    <div id="pdf-pane"><div class="empty-state" style="color:#ccc">Loading PDF…</div></div>
+    <div id="detail-side">
+      <div style="display:flex;justify-content:space-between;align-items:center"><h2 id="detail-title"></h2><span style="cursor:pointer;font-size:20px" onclick="closeDetail()">&times;</span></div>
+      <div id="detail-content"></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+if (window.self !== window.top) document.body.classList.add('in-iframe');
+let papers = [], projects = [], reviews = [], selectedPaperIds = new Set();
+let currentReview = null, pollTimer = null, lastEventId = 0, wizStep = 1, outcomeCount = 0;
+const STAGES = ['screening','extracting','appraising','pooling','complete'];
+
+// ─── boot ───
+async function boot() {
+  try { const me = await (await fetch('/api/auth/me')).json();
+    document.getElementById('user-display').textContent = me.email || ''; } catch(e){}
+  await Promise.all([loadProjects(), loadPapers(), loadReviews()]);
+}
+async function loadProjects() {
+  try { projects = await (await fetch('/api/projects')).json(); } catch(e){ projects = []; }
+  const pf = document.getElementById('project-filter'), wp = document.getElementById('w-project');
+  for (const p of projects) {
+    pf.insertAdjacentHTML('beforeend', `<option value="${p.id}">${esc(p.name)}</option>`);
+    wp.insertAdjacentHTML('beforeend', `<option value="${p.id}">${esc(p.name)}</option>`);
+  }
+}
+async function loadPapers() {
+  try { papers = await (await fetch('/api/annotator/papers')).json(); } catch(e){ papers = []; }
+  renderPapers();
+}
+function filteredPapers() {
+  const pf = document.getElementById('project-filter').value;
+  if (!pf) return papers;
+  return papers.filter(p => (p.projects||[]).some(x => String(x.id||x)===pf) || String(p.project_id)===pf);
+}
+function renderPapers() {
+  const list = document.getElementById('paper-list'), fp = filteredPapers();
+  document.getElementById('paper-count').textContent = fp.length;
+  if (!fp.length) { list.innerHTML = '<div class="empty-state">No papers. Upload some.</div>'; return; }
+  list.innerHTML = fp.map(p => `<label class="paper-item ${selectedPaperIds.has(p.id)?'selected':''}">
+    <input type="checkbox" ${selectedPaperIds.has(p.id)?'checked':''} onchange="togglePaper(${p.id}, this.checked)">
+    <div><div class="fn">${esc(p.filename)}</div><div class="meta">#${p.id}</div></div></label>`).join('');
+  updateSelectBar();
+}
+function togglePaper(id, on) { if (on) selectedPaperIds.add(id); else selectedPaperIds.delete(id); updateSelectBar(); }
+function selectAllPapers() { filteredPapers().forEach(p=>selectedPaperIds.add(p.id)); renderPapers(); }
+function selectNonePapers() { selectedPaperIds.clear(); renderPapers(); }
+function updateSelectBar() {
+  const n = selectedPaperIds.size;
+  document.getElementById('select-count').textContent = n + ' selected';
+  document.getElementById('new-review-btn').disabled = n === 0;
+}
+function logout(){ fetch('/api/auth/logout',{method:'POST'}).finally(()=>location.href='/login'); }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function toast(m, err){ const t=document.getElementById('toast'); t.textContent=m; t.className='toast show'+(err?' err':''); setTimeout(()=>t.className='toast',2400); }
+function fmt(x, d=2){ return (x==null||isNaN(x))?'—':(+x).toFixed(d); }
+async function handleDrop(e){ e.preventDefault(); await uploadFiles(e.dataTransfer.files); }
+document.getElementById('file-input').addEventListener('change', e=>uploadFiles(e.target.files));
+async function uploadFiles(files){
+  for (const f of files){ if(!f.name.toLowerCase().endsWith('.pdf')) continue;
+    const fd=new FormData(); fd.append('file',f);
+    try{ await fetch('/api/papers/upload',{method:'POST',body:fd}); }catch(e){}
+  }
+  toast('Uploaded'); await loadPapers();
+}
+
+// ─── reviews list ───
+async function loadReviews() {
+  try { reviews = await (await fetch('/api/synthesis/reviews')).json(); } catch(e){ reviews = []; }
+  renderReviews();
+}
+function renderReviews() {
+  const el = document.getElementById('reviews-list');
+  if (!reviews.length) { el.innerHTML = '<div class="empty-state">No reviews yet. Select papers and click <b>+ New review</b>.</div>'; return; }
+  el.innerHTML = `<table class="runs-table"><thead><tr><th>Title</th><th>Studies</th><th>Outcomes</th><th>Status</th><th>Created</th><th></th></tr></thead><tbody>${
+    reviews.map(r=>`<tr class="clickable" onclick="openReview(${r.id})">
+      <td><b>${esc(r.title||'Untitled')}</b>${r.project_name?` <span class="chip">${esc(r.project_name)}</span>`:''}</td>
+      <td>${r.paper_count}</td><td>${r.outcome_count}</td>
+      <td><span class="status-pill ${statusCls(r.status)}">${esc(r.status)}</span>${r.phase?` <span style="font-size:10px;color:var(--muted)">${esc(r.phase)}</span>`:''}</td>
+      <td style="font-size:11px;color:var(--muted)">${esc((r.created_at||'').slice(0,16))}</td>
+      <td><span style="cursor:pointer;color:var(--err)" onclick="event.stopPropagation();deleteReview(${r.id})">&times;</span></td></tr>`).join('')}</tbody></table>`;
+}
+function statusCls(s){ return s==='complete'?'b-low':(s==='error'?'b-high':'b-some'); }
+async function deleteReview(id){ if(!confirm('Delete this review?'))return; await fetch('/api/synthesis/reviews/'+id,{method:'DELETE'}); await loadReviews(); }
+function backToReviews(){ stopPoll(); currentReview=null; document.getElementById('workspace-view').style.display='none';
+  document.getElementById('reviews-view').style.display=''; document.getElementById('page-title').textContent='Synthesis';
+  document.getElementById('page-sub').textContent='Systematic review & meta-analysis.'; loadReviews(); }
+
+// ─── open a review (workspace) ───
+async function openReview(id) {
+  document.getElementById('reviews-view').style.display='none';
+  document.getElementById('workspace-view').style.display='';
+  await refreshReview(id);
+  switchTab(currentReview.status==='complete'?'meta':'setup');
+  if (['pending','screening','extracting','appraising','pooling'].includes(currentReview.status)) startPoll(id);
+}
+async function refreshReview(id) {
+  currentReview = await (await fetch('/api/synthesis/reviews/'+id)).json();
+  document.getElementById('page-title').textContent = currentReview.title || 'Review';
+  document.getElementById('page-sub').textContent = (currentReview.pico && currentReview.pico.intervention) ? ('Intervention: '+currentReview.pico.intervention) : 'Systematic review & meta-analysis';
+  renderStepper(); renderAllTabs();
+}
+function renderStepper() {
+  const cur = currentReview.status, idx = STAGES.indexOf(cur==='complete'?'complete':cur);
+  document.getElementById('progress-panel').style.display = (cur==='complete'||cur==='error')?'none':'';
+  document.getElementById('stepper').innerHTML = STAGES.map((s,i)=>`<span class="step-pill ${i<=idx?'done':''}">${s}</span>`).join('');
+}
+function startPoll(id){ stopPoll(); lastEventId=0; document.getElementById('ev-log').innerHTML='';
+  pollTimer=setInterval(()=>pollReview(id), 5000); pollReview(id); }
+function stopPoll(){ if(pollTimer){ clearInterval(pollTimer); pollTimer=null; } }
+async function pollReview(id) {
+  try {
+    const [detail, events] = await Promise.all([
+      fetch('/api/synthesis/reviews/'+id).then(r=>r.json()),
+      fetch('/api/synthesis/reviews/'+id+'/events?after='+lastEventId).then(r=>r.json())
+    ]);
+    for (const ev of events) { lastEventId=Math.max(lastEventId,ev.id);
+      document.getElementById('ev-log').insertAdjacentHTML('afterbegin',`<div class="ev ev-type-${ev.event_type}">${esc(ev.message)}</div>`); }
+    currentReview = detail; renderStepper(); renderAllTabs();
+    if (detail.status==='complete' || detail.status==='error') { stopPoll();
+      if (detail.status==='complete') toast('Synthesis complete'); }
+  } catch(e){}
+}
+
+// ─── tabs ───
+function switchTab(name) {
+  document.querySelectorAll('.main-tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
+  document.querySelectorAll('.tab-pane').forEach(p=>p.classList.toggle('active', p.id==='pane-'+name));
+}
+function renderAllTabs(){ renderSetup(); renderScreening(); renderExtraction(); renderMeta(); renderSensitivity(); renderGrade(); renderAnalysis(); }
+
+function renderSetup() {
+  const r = currentReview, cr = r.eligibility_criteria || {};
+  document.getElementById('pane-setup').innerHTML = `
+    <div class="card"><h3>PICO</h3><div class="kv">
+      <div class="k">Population</div><div>${esc(r.pico.population)||'—'}</div>
+      <div class="k">Intervention</div><div>${esc(r.pico.intervention)||'—'}</div>
+      <div class="k">Comparator</div><div>${esc(r.pico.comparator)||'—'}</div>
+      <div class="k">Outcomes</div><div>${(r.outcomes||[]).map(o=>`<span class="chip">${esc(o.name)} · ${o.effect_measure}</span>`).join('')}</div>
+    </div></div>
+    <div class="card"><h3>Eligibility criteria ${cr?'':'<span style="color:var(--muted);font-weight:400">(deriving…)</span>'}</h3>
+      ${cr&&cr.inclusion?`<b style="font-size:11px">Inclusion</b><ul style="margin:4px 0">${(cr.inclusion||[]).map(c=>`<li><b>${esc(c.axis)}:</b> ${esc(c.criterion)}</li>`).join('')}</ul>
+      <b style="font-size:11px">Exclusion</b><ul style="margin:4px 0">${(cr.exclusion||[]).map(c=>`<li><b>${esc(c.axis)}:</b> ${esc(c.criterion)}</li>`).join('')||'<li>—</li>'}</ul>
+      ${(cr.design_filter||[]).length?`<div>Eligible designs: ${(cr.design_filter).map(d=>`<span class="chip">${esc(d)}</span>`).join('')}</div>`:''}`:'<div class="empty-state">Not yet derived.</div>'}
+    </div>`;
+}
+
+function renderScreening() {
+  const r = currentReview;
+  document.getElementById('pane-screening').innerHTML = `
+    <div class="card"><h3>PRISMA flow</h3><div id="prisma-svg"></div></div>
+    <div class="card"><h3>Screening decisions <span style="font-weight:400;color:var(--muted)">(${(r.studies||[]).filter(s=>s.screening_decision==='include').length} included)</span></h3>
+    <table class="grid"><thead><tr><th>Study</th><th>Type</th><th>Decision</th><th>Reason</th></tr></thead><tbody>${
+      (r.studies||[]).map(s=>`<tr>
+        <td><span style="cursor:pointer;color:var(--accent)" onclick="openDetail(${s.id})">📄 ${esc(s.filename||('Paper '+s.paper_id))}</span></td>
+        <td style="font-size:10.5px">${esc(s.study_type||'—')}</td>
+        <td><select onchange="patchStudy(${s.id}, this.value)">
+          <option value="include" ${s.screening_decision==='include'?'selected':''}>Include</option>
+          <option value="exclude" ${s.screening_decision==='exclude'?'selected':''}>Exclude</option></select></td>
+        <td style="font-size:11px">${esc(s.screening_reason||'')}${s.prisma_exclusion_reason?` <span class="chip">${esc(s.prisma_exclusion_reason)}</span>`:''}</td></tr>`).join('')||'<tr><td colspan="4" class="empty-state">No studies screened yet.</td></tr>'}
+    </tbody></table></div>`;
+  if (r.prisma) document.getElementById('prisma-svg').innerHTML = renderPrisma(r.prisma);
+}
+async function patchStudy(sid, decision) {
+  await fetch('/api/synthesis/studies/'+sid,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision})});
+  toast('Decision updated — re-pool to apply'); await refreshReview(currentReview.id);
+}
+
+function renderExtraction() {
+  const r = currentReview, byOutcome = {};
+  (r.data_points||[]).forEach(p=>{ (byOutcome[p.outcome_id]=byOutcome[p.outcome_id]||[]).push(p); });
+  const studyName = id => { const s=(r.studies||[]).find(x=>x.id===id); return s?s.filename:('study '+id); };
+  let html = '';
+  for (const oc of (r.outcomes||[])) {
+    const pts = byOutcome[oc.id]||[]; const keys = measureKeys(oc.effect_measure);
+    html += `<div class="card"><h3>${esc(oc.name)} <span class="chip">${oc.effect_measure}</span></h3>
+      <table class="grid"><thead><tr><th>Study</th><th>Pool?</th>${keys.map(k=>`<th>${k}</th>`).join('')}<th>yi</th><th>vi</th><th>Subgroup</th></tr></thead><tbody>${
+      pts.map(p=>`<tr class="${p.needs_review?'cell-edited':''}">
+        <td><span style="cursor:pointer;color:var(--accent)" onclick="openDetail(${p.study_id})">📄 ${esc(studyName(p.study_id))}</span></td>
+        <td><input type="checkbox" ${p.included_in_pool?'checked':''} style="width:auto" onchange="patchDP(${p.id},{included_in_pool:this.checked})"></td>
+        ${keys.map(k=>`<td><input type="number" step="any" value="${p.raw[k]??''}" onchange="patchDPRaw(${p.id},'${k}',this.value)"></td>`).join('')}
+        <td style="font-family:var(--mono)">${fmt(p.yi,3)}</td><td style="font-family:var(--mono)">${fmt(p.vi,4)}</td>
+        <td><input type="text" value="${esc(p.subgroup_value||'')}" onchange="patchDP(${p.id},{subgroup_value:this.value})"></td></tr>`).join('')||`<tr><td colspan="${keys.length+5}" class="empty-state">No data extracted.</td></tr>`}
+    </tbody></table></div>`;
+  }
+  html += `<button class="tb-btn" style="background:var(--accent);color:#fff" onclick="repool()">↻ Recompute pooling</button>`;
+  document.getElementById('pane-extraction').innerHTML = html;
+}
+function measureKeys(m){ return ({MD:['m1','sd1','n1','m2','sd2','n2'],SMD:['m1','sd1','n1','m2','sd2','n2'],
+  OR:['events1','total1','events2','total2'],RR:['events1','total1','events2','total2'],RD:['events1','total1','events2','total2'],
+  HR:['hr','ci_lower','ci_upper'],
+  ZCOR:['r','n'],PLOGIT:['events','n'],PFT:['events','n'],IRR:['events','person_time']})[m]||[]; }
+async function patchDP(id, body){ await fetch('/api/synthesis/data-points/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
+async function patchDPRaw(id, key, val){ const raw={}; raw[key]=val===''?null:parseFloat(val);
+  await fetch('/api/synthesis/data-points/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({raw})});
+  await refreshReview(currentReview.id); switchTab('extraction'); }
+async function repool(){ toast('Pooling…'); currentReview = await (await fetch('/api/synthesis/reviews/'+currentReview.id+'/pool',{method:'POST'})).json();
+  renderAllTabs(); switchTab('meta'); toast('Re-pooled'); }
+
+function renderMeta() {
+  const r = currentReview, el = document.getElementById('pane-meta');
+  if (!(r.results||[]).length) { el.innerHTML = '<div class="empty-state">No pooled results yet.</div>'; return; }
+  el.innerHTML = (r.results||[]).map(res => {
+    const oc = (r.outcomes||[]).find(o=>o.id===res.outcome_id)||{};
+    if (res.status!=='ok') return `<div class="card"><h3>${esc(oc.name)}</h3><div class="empty-state">${esc(res.status)} (k=${res.k_studies||0})</div></div>`;
+    const het = res.heterogeneity||{}, pb = res.publication_bias||{};
+    return `<div class="card"><h3>${esc(oc.name)} <span class="chip">${oc.effect_measure}</span></h3>
+      <div id="forest-${res.outcome_id}">${renderForest(res.forest)}</div>
+      <div class="kv" style="margin-top:10px">
+        <div class="k">Pooled (random)</div><div>${pooledStr(res.random, oc.effect_measure)}</div>
+        <div class="k">Pooled (fixed)</div><div>${pooledStr(res.fixed, oc.effect_measure)}</div>
+        <div class="k">Heterogeneity</div><div>I²=${fmt(het.I2,1)}% · τ²=${fmt(het.tau2_REML,3)} · Q=${fmt(het.Q,2)} (df=${het.df}, p=${fmt(het.p,3)})</div>
+      </div>
+      ${res.subgroup&&res.subgroup.status==='ok'?`<div style="margin-top:8px;font-size:11.5px"><b>Subgroups:</b> ${Object.entries(res.subgroup.subgroups).map(([k,v])=>`${esc(k)}: ${fmt(v.display,2)} (k=${v.k})`).join(' · ')} — Q_between p=${fmt(res.subgroup.p_between,3)}</div>`:''}
+      <details style="margin-top:10px"><summary style="cursor:pointer;font-weight:600">Publication bias</summary>
+        <div id="funnel-${res.outcome_id}">${renderFunnel(res.publication_bias, oc.effect_measure)}</div>
+        <div style="font-size:11.5px">${pb.egger&&pb.egger.status==='ok'?`Egger's test: intercept ${fmt(pb.egger.intercept,3)}, p=${fmt(pb.egger.p,3)}${pb.egger.underpowered?' (underpowered, k<10)':''}`:'Egger: n/a (k<3)'}
+        ${pb.trimfill&&pb.trimfill.status==='ok'?` · Trim-and-fill imputed ${pb.trimfill.n_imputed} study(ies), adjusted ${fmt(pb.trimfill.adjusted_estimate_display,2)}`:''}</div>
+      </details></div>`;
+  }).join('');
+}
+function pooledStr(p, m){ if(!p||p.status!=='ok')return '—';
+  const bt = v=>backTransform(v,m);
+  return `<b>${fmt(bt(p.estimate),2)}</b> [${fmt(bt(p.ci_low),2)}, ${fmt(bt(p.ci_high),2)}], p=${fmt(p.p,3)}`; }
+function backTransform(v,m){ if(['OR','RR','IRR','HR'].includes(m))return Math.exp(v); if(m==='ZCOR')return Math.tanh(v); if(m==='PLOGIT')return 1/(1+Math.exp(-v)); return v; }
+
+function renderSensitivity() {
+  const r = currentReview, el = document.getElementById('pane-sensitivity');
+  const blocks = (r.results||[]).filter(res=>res.sensitivity&&res.sensitivity.leave_one_out).map(res=>{
+    const oc=(r.outcomes||[]).find(o=>o.id===res.outcome_id)||{}; const loo=res.sensitivity.leave_one_out, infl=res.sensitivity.influence||[];
+    return `<div class="card"><h3>${esc(oc.name)} — leave-one-out</h3>
+      ${renderForest({measure:oc.effect_measure, log_axis:['OR','RR','IRR','HR'].includes(oc.effect_measure), null_value:res.forest.null_value,
+        studies: loo.map(x=>({label:'– '+x.omitted, es:x.es, lo:x.lo, hi:x.hi, weight:1/loo.length})), pooled:{}, het_line:''})}
+      <table class="grid" style="margin-top:8px"><thead><tr><th>Study</th><th>Std resid</th><th>DFFITS</th><th>Cook's D</th><th>Influential</th></tr></thead><tbody>${
+        infl.map(i=>`<tr><td>${esc(i.label)}</td><td>${fmt(i.std_residual,2)}</td><td>${fmt(i.dffits,2)}</td><td>${fmt(i.cooks_distance,3)}</td><td>${i.influential?'<span class="badge b-high">yes</span>':''}</td></tr>`).join('')}
+      </tbody></table></div>`;
+  }).join('');
+  el.innerHTML = blocks || '<div class="empty-state">Sensitivity analysis needs ≥3 studies per outcome.</div>';
+}
+
+function renderGrade() {
+  const r = currentReview, el = document.getElementById('pane-grade');
+  el.innerHTML = (r.results||[]).filter(res=>res.grade&&res.grade.domains).map(res=>{
+    const oc=(r.outcomes||[]).find(o=>o.id===res.outcome_id)||{}; const g=res.grade;
+    return `<div class="card"><h3>${esc(oc.name)} — certainty: <span class="badge ${gradeCls(g.final)}">${g.final}</span></h3>
+      <div style="font-size:11.5px;margin-bottom:8px">${esc(g.explanation)}</div>
+      <table class="grid"><thead><tr><th>Domain</th><th>Downgrade</th><th>Reason</th></tr></thead><tbody>${
+        g.domains.map(d=>`<tr><td>${esc(d.domain)}</td><td>${d.downgrade?('−'+d.downgrade):'0'}</td><td style="font-size:11px">${esc(d.reason)}</td></tr>`).join('')}
+      </tbody></table>
+      <div style="margin-top:8px;font-size:11px"><b>Per-study RoB:</b> ${(r.studies||[]).filter(s=>s.screening_decision==='include'&&s.rob_overall).map(s=>`<span class="badge ${robCls(s.rob_overall)}">${esc(s.rob_overall)}</span>`).join(' ')||'—'}</div></div>`;
+  }).join('') || '<div class="empty-state">No GRADE assessment yet.</div>';
+}
+function gradeCls(g){ return g==='High'?'b-high-grade':g==='Moderate'?'b-moderate':g==='Low'?'b-some':'b-verylow'; }
+function robCls(j){ const s=(j||'').toLowerCase(); return s.startsWith('low')?'b-low':(s.includes('high')||s.includes('serious')||s.includes('critical'))?'b-high':'b-some'; }
+
+function renderAnalysis() {
+  const r = currentReview, el = document.getElementById('pane-analysis');
+  el.innerHTML = (r.results||[]).filter(res=>(res.code_blocks||[]).length).map(res=>{
+    const oc=(r.outcomes||[]).find(o=>o.id===res.outcome_id)||{};
+    return `<div class="card"><h3>${esc(oc.name)} — reproduction code
+      <a class="copy-btn" href="/api/synthesis/reviews/${r.id}/code/${res.outcome_id}.R">↓ .R</a>
+      <a class="copy-btn" href="/api/synthesis/reviews/${r.id}/code/${res.outcome_id}.py">↓ .py</a></h3>
+      ${res.code_blocks.map(b=>`<details class="code-block"><summary>${esc(b.title)}</summary>
+        <div style="margin:6px 0"><b style="font-size:11px">R (meta / metafor)</b> <button class="copy-btn" onclick="copyCode(this)">copy</button><pre>${esc(b.r_code)}</pre></div>
+        <div><b style="font-size:11px">Python (numpy / scipy)</b> <button class="copy-btn" onclick="copyCode(this)">copy</button><pre>${esc(b.py_code)}</pre></div>
+      </details>`).join('')}</div>`;
+  }).join('') || '<div class="empty-state">No analysis code yet.</div>';
+}
+function copyCode(btn){ const pre=btn.parentElement.querySelector('pre'); navigator.clipboard.writeText(pre.textContent); toast('Copied'); }
+
+// ─── SVG: forest plot ───
+function renderForest(f) {
+  if (!f || !(f.studies||[]).length) return '<div class="empty-state">No studies to plot.</div>';
+  const studies=f.studies, log=f.log_axis, nullv=f.null_value;
+  const tx = v => log ? Math.log(Math.max(v,1e-6)) : v;
+  let vals=[]; studies.forEach(s=>{ vals.push(s.lo,s.hi); }); if(nullv!=null)vals.push(nullv);
+  const pool = f.pooled||{}; ['fixed','random'].forEach(k=>{ if(pool[k]){vals.push(pool[k].lo,pool[k].hi);} });
+  vals=vals.filter(v=>v!=null&&isFinite(v));
+  let xmin=Math.min(...vals), xmax=Math.max(...vals); const pad=(tx(xmax)-tx(xmin))*0.08||1;
+  const W=720, X0=250, RP=140, PW=W-X0-RP, ROW=22, hasPool=pool.random||pool.fixed;
+  const H=30+studies.length*ROW+(hasPool?28:0)+50;
+  const x = v => X0 + (tx(Math.max(Math.min(v,xmax),xmin))-tx(xmin)+pad/2)/((tx(xmax)-tx(xmin))+pad)*PW;
+  const maxW=Math.max(...studies.map(s=>s.weight||0),0.0001);
+  let svg=`<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:740px">`;
+  if(nullv!=null) svg+=`<line x1="${x(nullv).toFixed(1)}" y1="22" x2="${x(nullv).toFixed(1)}" y2="${30+studies.length*ROW}" stroke="var(--ink-3)" stroke-dasharray="3 3"/>`;
+  studies.forEach((s,i)=>{ const cy=30+i*ROW+ROW/2;
+    const sz=5+11*Math.sqrt((s.weight||0)/maxW);
+    svg+=`<text x="6" y="${cy+3}" font-size="10" fill="var(--ink)">${esc((s.label||'').slice(0,30))}</text>`;
+    if(s.rob) svg+=`<circle cx="${X0-12}" cy="${cy}" r="3.5" fill="${robColor(s.rob)}"/>`;
+    if(s.lo!=null&&s.hi!=null) svg+=`<line x1="${x(s.lo).toFixed(1)}" y1="${cy}" x2="${x(s.hi).toFixed(1)}" y2="${cy}" stroke="var(--ink-2)" stroke-width="1.3"/>`;
+    svg+=`<rect x="${(x(s.es)-sz/2).toFixed(1)}" y="${(cy-sz/2).toFixed(1)}" width="${sz.toFixed(1)}" height="${sz.toFixed(1)}" fill="var(--accent)"/>`;
+    svg+=`<text x="${W-RP+6}" y="${cy+3}" font-size="9.5" fill="var(--ink-2)">${fmt(s.es,2)} [${fmt(s.lo,2)}, ${fmt(s.hi,2)}]${s.weight_pct?'  '+fmt(s.weight_pct,1)+'%':''}</text>`;
+  });
+  if(hasPool){ const py=30+studies.length*ROW+14; const p=pool.random||pool.fixed;
+    svg+=`<polygon points="${x(p.lo).toFixed(1)},${py} ${x(p.es).toFixed(1)},${py-7} ${x(p.hi).toFixed(1)},${py} ${x(p.es).toFixed(1)},${py+7}" fill="var(--accent)"/>`;
+    svg+=`<text x="6" y="${py+3}" font-size="10" font-weight="700" fill="var(--ink)">${pool.random?'Random effects':'Fixed effect'}</text>`;
+    svg+=`<text x="${W-RP+6}" y="${py+3}" font-size="9.5" fill="var(--ink)">${fmt(p.es,2)} [${fmt(p.lo,2)}, ${fmt(p.hi,2)}]</text>`;
+  }
+  // heterogeneity line under the diamond
+  if(f.het_line) svg+=`<text x="6" y="${30+studies.length*ROW+(hasPool?32:18)}" font-size="9" fill="var(--ink-3)">${esc(f.het_line)}</text>`;
+  // axis at the very bottom, clear of the het line
+  const ay=H-8; svg+=`<line x1="${X0}" y1="${ay-7}" x2="${X0+PW}" y2="${ay-7}" stroke="var(--ink-3)"/>`;
+  [xmin,nullv,xmax].filter(v=>v!=null).forEach(v=>{ svg+=`<text x="${x(v).toFixed(1)}" y="${ay}" font-size="9" fill="var(--ink-3)" text-anchor="middle">${fmt(v,2)}</text>`; });
+  return svg+'</svg>';
+}
+function robColor(j){ const s=(j||'').toLowerCase(); return s.startsWith('low')?'var(--ok)':(s.includes('high')||s.includes('serious')||s.includes('critical'))?'var(--err)':'var(--warn)'; }
+
+// ─── SVG: funnel ───
+function renderFunnel(pb, measure) {
+  if (!pb || !pb.funnel || !(pb.funnel.points||[]).length) return '<div class="empty-state">Funnel needs ≥3 studies.</div>';
+  const pts=(pb.funnel.points||[]).concat((pb.trimfill&&pb.trimfill.imputed_points)||[]);
+  const pooled=pb.funnel.pooled, seMax=Math.max(pb.funnel.se_max||0.1,0.01);
+  const W=420,Hh=260,X0=40,Y0=20,PW=W-X0-20,PH=Hh-Y0-30;
+  let es=pts.map(p=>p.es); const lo=Math.min(...es,pooled-1.96*seMax), hi=Math.max(...es,pooled+1.96*seMax);
+  const x=v=>X0+(v-lo)/((hi-lo)||1)*PW, y=se=>Y0+(se/seMax)*PH;
+  let svg=`<svg viewBox="0 0 ${W} ${Hh}" width="100%" style="max-width:440px">`;
+  svg+=`<line x1="${x(pooled).toFixed(1)}" y1="${Y0}" x2="${x(pooled).toFixed(1)}" y2="${Y0+PH}" stroke="var(--ink-3)" stroke-dasharray="3 3"/>`;
+  svg+=`<polyline points="${x(pooled).toFixed(1)},${Y0} ${x(pooled-1.96*seMax).toFixed(1)},${(Y0+PH).toFixed(1)}" fill="none" stroke="var(--rule-2,#ccc)" stroke-dasharray="4 3"/>`;
+  svg+=`<polyline points="${x(pooled).toFixed(1)},${Y0} ${x(pooled+1.96*seMax).toFixed(1)},${(Y0+PH).toFixed(1)}" fill="none" stroke="var(--rule-2,#ccc)" stroke-dasharray="4 3"/>`;
+  pts.forEach(p=>{ svg+=`<circle cx="${x(p.es).toFixed(1)}" cy="${y(p.se).toFixed(1)}" r="3.5" ${p.imputed?'fill="none" stroke="var(--accent)" stroke-dasharray="2 2"':'fill="var(--accent)"'}/>`; });
+  svg+=`<text x="${X0}" y="${Hh-6}" font-size="9" fill="var(--ink-3)">effect (${measure})</text>`;
+  svg+=`<text x="2" y="${Y0+8}" font-size="9" fill="var(--ink-3)">SE</text>`;
+  return svg+'</svg>';
+}
+
+// ─── SVG: PRISMA ───
+function renderPrisma(c) {
+  const W=640,BW=230,BH=46,GAP=26,X=60,EBW=250;
+  const trunc=(s,n)=>s.length>n?s.slice(0,n-1)+'…':s;
+  const box=(y,txt,sub)=>`<rect x="${X}" y="${y}" width="${BW}" height="${BH}" rx="5" fill="var(--paper-2)" stroke="var(--rule-2,#ccc)"/><text x="${X+10}" y="${y+19}" font-size="11" fill="var(--ink)">${esc(txt)}</text><text x="${X+10}" y="${y+35}" font-size="11" font-weight="700" fill="var(--ink)">${esc(sub)}</text>`;
+  const ebox=(y,txt)=>`<rect x="${X+BW+60}" y="${y}" width="${EBW}" height="${BH}" rx="5" fill="var(--paper)" stroke="var(--rule-2,#ccc)"/><text x="${X+BW+70}" y="${y+27}" font-size="10" fill="var(--ink-2)">${esc(trunc(txt,42))}</text>`;
+  const arrow=(y1,y2)=>`<line x1="${X+BW/2}" y1="${y1}" x2="${X+BW/2}" y2="${y2}" stroke="var(--ink-3)" marker-end="url(#ar)"/>`;
+  const barrow=(y)=>`<line x1="${X+BW}" y1="${y+BH/2}" x2="${X+BW+70}" y2="${y+BH/2}" stroke="var(--ink-3)" marker-end="url(#ar)"/>`;
+  let y=20; const ids=(c.identified_db||0)+(c.identified_other||0);
+  const yIdentified=y, ySought=y+(BH+GAP), yAssessed=y+2*(BH+GAP), yIncluded=y+3*(BH+GAP), Hh=yIncluded+BH+20;
+  const exclLines=(c.reports_excluded||[]).map(e=>`${e.reason} (n=${e.n})`).join('; ')||('n='+(c.reports_excluded_total||0));
+  let svg=`<svg viewBox="0 0 ${W} ${Hh}" width="100%" style="max-width:580px"><defs><marker id="ar" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--ink-3)"/></marker></defs>`;
+  svg+=box(yIdentified,'Records identified','n = '+ids);
+  if(c.duplicates_removed) svg+=ebox(yIdentified,'Duplicates removed (n='+c.duplicates_removed+')')+barrow(yIdentified);
+  svg+=arrow(yIdentified+BH,ySought);
+  svg+=box(ySought,'Reports sought / screened','n = '+(c.records_screened||c.reports_assessed));
+  svg+=arrow(ySought+BH,yAssessed);
+  svg+=box(yAssessed,'Reports assessed for eligibility','n = '+c.reports_assessed)+ebox(yAssessed,'Excluded: '+exclLines)+barrow(yAssessed);
+  svg+=arrow(yAssessed+BH,yIncluded);
+  svg+=box(yIncluded,'Studies included in review','n = '+c.included);
+  // stage rail
+  ['Identification','Screening','Included'].forEach((s,i)=>{ const yy=[yIdentified,ySought,yIncluded][i]; svg+=`<text x="14" y="${yy+BH/2}" font-size="9" fill="var(--ink-3)" transform="rotate(-90 14 ${yy+BH/2})" text-anchor="middle">${s}</text>`; });
+  return svg+'</svg>';
+}
+
+// ─── detail modal (PDF.js) ───
+let pdfDoc=null;
+async function openDetail(studyId) {
+  const r=currentReview, s=(r.studies||[]).find(x=>x.id===studyId); if(!s)return;
+  document.getElementById('detail-modal').classList.add('open');
+  document.getElementById('detail-title').textContent = s.filename||('Paper '+s.paper_id);
+  const dps=(r.data_points||[]).filter(p=>p.study_id===studyId);
+  document.getElementById('detail-content').innerHTML = `
+    <div class="kv"><div class="k">Study type</div><div>${esc(s.study_type||'—')}</div>
+      <div class="k">Screening</div><div><span class="badge ${s.screening_decision==='include'?'b-include':'b-exclude'}">${esc(s.screening_decision||'—')}</span></div>
+      <div class="k">Risk of bias</div><div>${s.rob_overall?`<span class="badge ${robCls(s.rob_overall)}">${esc(s.rob_overall)}</span> (${esc(s.rob_tool||'')})`:'—'}</div></div>
+    <div style="font-size:11.5px;margin:8px 0"><b>Screening reason:</b> ${esc(s.screening_reason||'—')}</div>
+    <h3 style="font-size:13px;font-family:var(--serif)">Extracted data</h3>
+    ${dps.map(p=>`<div style="border:1px solid var(--border);border-radius:7px;padding:8px;margin:6px 0;font-size:11.5px">
+      <b>${esc(p.context_label||'')}</b><div style="font-family:var(--mono);margin:4px 0">${Object.entries(p.raw||{}).map(([k,v])=>`${k}=${v}`).join(' · ')}</div>
+      ${p.source_quote?`<div class="quote-chip" onclick="jumpToQuote(${JSON.stringify(p.source_quote).replace(/"/g,'&quot;')})">“${esc((p.source_quote||'').slice(0,90))}”</div>`:''}</div>`).join('')||'<div class="empty-state">No data points.</div>'}`;
+  loadPdf(s.paper_id);
+}
+function closeDetail(){ document.getElementById('detail-modal').classList.remove('open'); document.getElementById('pdf-pane').innerHTML=''; pdfDoc=null; }
+async function loadPdf(pid) {
+  const pane=document.getElementById('pdf-pane'); pane.innerHTML='<div class="empty-state" style="color:#ccc">Loading PDF…</div>';
+  try {
+    pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    pdfDoc=await pdfjsLib.getDocument('/api/papers/'+pid+'/pdf').promise; pane.innerHTML='';
+    for(let n=1;n<=Math.min(pdfDoc.numPages,12);n++){ const page=await pdfDoc.getPage(n);
+      const vp=page.getViewport({scale:1.25}); const cv=document.createElement('canvas');
+      cv.width=vp.width; cv.height=vp.height; cv.dataset.page=n; pane.appendChild(cv);
+      await page.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise; }
+  } catch(e){ pane.innerHTML='<div class="empty-state" style="color:#ccc">PDF unavailable.</div>'; }
+}
+async function jumpToQuote(q){ // best-effort: find the page whose text contains the quote and scroll to it
+  if(!pdfDoc)return; const needle=(q||'').slice(0,40).toLowerCase();
+  for(let n=1;n<=Math.min(pdfDoc.numPages,12);n++){ const tc=await (await pdfDoc.getPage(n)).getTextContent();
+    const txt=tc.items.map(i=>i.str).join(' ').toLowerCase();
+    if(txt.includes(needle)){ const cv=document.querySelector(`#pdf-pane canvas[data-page="${n}"]`); if(cv){cv.scrollIntoView({behavior:'smooth',block:'center'}); cv.style.outline='3px solid var(--accent)'; setTimeout(()=>cv.style.outline='',1600);} return; } }
+  toast('Quote not located in PDF text');
+}
+
+// ─── create wizard ───
+function openCreateModal(){
+  wizStep=1; outcomeCount=0; document.getElementById('w-outcomes').innerHTML=''; addOutcomeRow();
+  document.getElementById('w-selected').textContent=[...selectedPaperIds].length+' studies: '+[...selectedPaperIds].slice(0,8).map(id=>'#'+id).join(', ');
+  document.getElementById('w-title').value=''; renderWizStep();
+  document.getElementById('create-modal').classList.add('open');
+}
+function closeCreateModal(){ document.getElementById('create-modal').classList.remove('open'); }
+function wizardStep(d){ wizStep=Math.max(1,Math.min(3,wizStep+d)); renderWizStep(); }
+function renderWizStep(){
+  document.querySelectorAll('.wizard-step').forEach(s=>s.classList.toggle('active',+s.dataset.step===wizStep));
+  document.querySelectorAll('.step-rail .sr').forEach(s=>s.classList.toggle('active',+s.dataset.s===wizStep));
+  document.getElementById('w-back').style.display=wizStep>1?'':'none';
+  document.getElementById('w-next').style.display=wizStep<3?'':'none';
+  document.getElementById('w-submit').style.display=wizStep===3?'':'none';
+}
+const MEASURES={continuous:[['SMD','Standardized mean diff (Hedges g)'],['MD','Mean difference']],
+  binary:[['OR','Odds ratio'],['RR','Risk ratio'],['RD','Risk difference']],
+  time_to_event:[['HR','Hazard ratio']],
+  correlation:[['ZCOR','Correlation (Fisher z)']],single_arm:[['PLOGIT','Proportion (logit)'],['PFT','Proportion (Freeman-Tukey)'],['IRR','Incidence rate']]};
+function addOutcomeRow(){ const i=outcomeCount++;
+  const html=`<div class="outcome-row" id="orow-${i}">
+    <div class="grid2"><div><label>Outcome name</label><input type="text" id="o-name-${i}" placeholder="e.g. 12-week pain score"></div>
+    <div><label>Data type</label><select id="o-type-${i}" onchange="onTypeChange(${i})">${Object.keys(MEASURES).map(t=>`<option value="${t}">${t}</option>`).join('')}</select></div>
+    <div><label>Effect measure</label><select id="o-measure-${i}"></select></div>
+    <div><label>Model</label><select id="o-model-${i}"><option value="random">Random effects</option><option value="fixed">Fixed effect</option><option value="both">Both</option></select></div></div>
+    ${outcomeCount>1?`<button class="copy-btn" onclick="document.getElementById('orow-${i}').remove()">remove</button>`:''}</div>`;
+  document.getElementById('w-outcomes').insertAdjacentHTML('beforeend',html); onTypeChange(i);
+}
+function onTypeChange(i){ const t=document.getElementById('o-type-'+i).value;
+  document.getElementById('o-measure-'+i).innerHTML=MEASURES[t].map(([v,l])=>`<option value="${v}">${l}</option>`).join(''); }
+async function submitReview(){
+  const outcomes=[];
+  document.querySelectorAll('.outcome-row').forEach(row=>{ const i=row.id.split('-')[1];
+    const name=document.getElementById('o-name-'+i).value.trim();
+    if(name) outcomes.push({name, outcome_type:document.getElementById('o-type-'+i).value,
+      effect_measure:document.getElementById('o-measure-'+i).value, model_choice:document.getElementById('o-model-'+i).value}); });
+  if(!outcomes.length){ toast('Add at least one outcome',true); return; }
+  const designs=document.getElementById('w-designs').value.split(',').map(s=>s.trim()).filter(Boolean);
+  const body={ paper_ids:[...selectedPaperIds], title:document.getElementById('w-title').value||'Untitled review',
+    project_id:document.getElementById('w-project').value?+document.getElementById('w-project').value:null,
+    pico:{population:document.getElementById('w-pop').value,intervention:document.getElementById('w-int').value,
+      comparator:document.getElementById('w-comp').value,study_designs:designs},
+    inclusion:document.getElementById('w-incl').value, exclusion:document.getElementById('w-excl').value,
+    outcomes, run_rob:document.getElementById('w-rob').checked,
+    prisma_manual_counts:{identified_db:+document.getElementById('w-id-db').value||0, duplicates_removed:+document.getElementById('w-dups').value||0} };
+  document.getElementById('w-submit').disabled=true;
+  try{ const r=await fetch('/api/synthesis/reviews',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!r.ok){ const e=await r.json(); throw new Error(typeof e.detail==='string'?e.detail:JSON.stringify(e.detail)); }
+    const res=await r.json(); closeCreateModal(); selectedPaperIds.clear(); renderPapers();
+    toast('Review started'); openReview(res.review_id);
+  }catch(e){ toast('Failed: '+e.message,true); } finally{ document.getElementById('w-submit').disabled=false; }
+}
+
+// ─── dev modal ───
+async function openDevModal(){
+  document.getElementById('dev-modal').classList.add('open');
+  const cat=await (await fetch('/api/synthesis/prompts')).json();
+  document.getElementById('dev-body').innerHTML=`<p style="font-size:12px">${esc(cat.overview)}</p>
+    <details class="code-block" open><summary>Screening prompt</summary><pre>${esc(cat.screening_prompt_template)}</pre></details>
+    <details class="code-block"><summary>Extraction prompt</summary><pre>${esc(cat.extraction_prompt_template)}</pre></details>
+    <details class="code-block"><summary>Eligibility system prompt</summary><pre>${esc(cat.eligibility_system_prompt)}</pre></details>
+    ${Object.entries(cat.statistics_source||{}).map(([k,v])=>`<details class="code-block"><summary>statistics: ${esc(k)}</summary><pre>${esc(v)}</pre></details>`).join('')}`;
+}
+
+boot();
+</script>
+</body>
+</html>

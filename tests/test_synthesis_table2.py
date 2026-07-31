@@ -1,0 +1,369 @@
+"""Tests for the Table 2 (per-study evidence table) synthesis agent.
+
+Covers the pure-Python calculation + assembly core (no model), and the dual-mode
+extraction wiring with a mocked PDF-aware model caller — so injected mode is proven to
+make ZERO model calls and isolation mode to run both passes.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from backend import synthesis_table2 as t2
+from backend import synthesis_table2_extract as tx
+from backend.synthesis_table2 import (
+    FAVOURS_COMPARATOR,
+    FAVOURS_INTERVENTION,
+    NO_DIFFERENCE,
+    NOT_ESTIMABLE,
+)
+
+
+# ─────────────────────────────────────────────
+# Study id
+# ─────────────────────────────────────────────
+class TestStudyId:
+    def test_three_plus_authors_list(self):
+        assert t2.build_study_id(["Smith JQ", "Jones A", "Lee K"], 2021) == "Smith et al., 2021"
+
+    def test_two_authors(self):
+        assert t2.build_study_id(["Smith JQ", "Jones A"], "2020") == "Smith & Jones, 2020"
+
+    def test_single_author_given_family(self):
+        assert t2.build_study_id("Jane Q. Smith", None) == "Smith"
+
+    def test_vancouver_comma_list_not_double_counted(self):
+        # "Smith JQ, Jones A, Lee K" is 3 authors, not 6.
+        assert t2.build_study_id("Smith JQ, Jones A, Lee K", 2019) == "Smith et al., 2019"
+
+    def test_single_author_family_comma_initials(self):
+        assert t2.build_study_id("Smith, JQ", 2018) == "Smith, 2018"
+
+    def test_family_given_and_list(self):
+        assert t2.build_study_id("Smith, John and Jones, Amy", 2017) == "Smith & Jones, 2017"
+
+    def test_no_authors(self):
+        assert t2.build_study_id(None, 2020) == "Unknown study, 2020"
+
+
+# ─────────────────────────────────────────────
+# Metric canonicalization
+# ─────────────────────────────────────────────
+class TestMetric:
+    def test_synonyms(self):
+        assert t2.canonicalize_metric("hazard ratio") == ("HR", "time_to_event")
+        assert t2.canonicalize_metric("relative risk") == ("RR", "ratio")
+        assert t2.canonicalize_metric("standardised mean difference") == ("SMD", "difference")
+
+    def test_curly_apostrophe(self):
+        assert t2.canonicalize_metric("Hedges’ g") == ("SMD", "difference")
+
+    def test_ard_normalizes_to_rd(self):
+        assert t2.canonicalize_metric("absolute risk difference") == ("RD", "difference")
+        assert t2.canonicalize_metric("ARD") == ("RD", "difference")
+
+    def test_null_values(self):
+        assert t2.null_value_for("ratio") == 1.0
+        assert t2.null_value_for("difference") == 0.0
+        assert t2.null_value_for("narrative") is None
+
+
+# ─────────────────────────────────────────────
+# Effect-cell parsing
+# ─────────────────────────────────────────────
+class TestParseEffectCell:
+    def test_bracketed_full(self):
+        assert t2.parse_effect_cell("HR 0.72 (95% CI 0.55-0.94), p=0.01") == {
+            "estimate": 0.72, "ci_lower": 0.55, "ci_upper": 0.94,
+            "p_value": 0.01, "p_operator": "eq"}
+
+    def test_unbracketed_ci(self):
+        assert t2.parse_effect_cell("HR 0.68, 95% CI 0.55 to 0.94")["ci_lower"] == 0.55
+
+    def test_p_bound_preserved(self):
+        pp = t2.parse_effect_cell("p<0.001")
+        assert pp["p_value"] == 0.001 and pp["p_operator"] == "lt"
+
+    def test_grp2_not_read_as_p(self):
+        assert t2.parse_effect_cell("grp2 HR 0.7 (0.5-0.9)")["p_value"] is None
+
+    def test_group1_not_read_as_p(self):
+        assert t2.parse_effect_cell("group1 mean 5.0")["p_value"] is None
+
+    def test_no_numbers_returns_none(self):
+        assert t2.parse_effect_cell("not reported") is None
+
+
+# ─────────────────────────────────────────────
+# Direction inference
+# ─────────────────────────────────────────────
+class TestDirection:
+    def test_adverse_default_below_null(self):
+        assert t2.infer_direction("time_to_event", 0.72, 0.55, 0.94) == FAVOURS_INTERVENTION
+
+    def test_ci_straddles_null(self):
+        assert t2.infer_direction("ratio", 1.1, 0.8, 1.5) == NO_DIFFERENCE
+
+    def test_ci_touches_null(self):
+        assert t2.infer_direction("ratio", 1.0, 1.0, 1.5) == NO_DIFFERENCE
+
+    def test_desirable_outcome_above_null(self):
+        assert t2.infer_direction("ratio", 1.4, 1.1, 1.8,
+                                  outcome_favorable_direction="higher") == FAVOURS_INTERVENTION
+
+    def test_neutral_cannot_assign_arm(self):
+        assert t2.infer_direction("ratio", 0.5, 0.3, 0.8,
+                                  outcome_favorable_direction="neutral") == NOT_ESTIMABLE
+
+    def test_reported_wins(self):
+        # A confidently-parsed reported direction overrides the numeric computation.
+        assert t2.infer_direction("ratio", 0.5, 0.3, 0.8,
+                                  reported_direction="favours comparator") == FAVOURS_COMPARATOR
+
+    def test_short_token_whole_word_safety(self):
+        assert t2._parse_reported_direction("results were consistent") is None
+        assert t2._parse_reported_direction("effect was generated by the model") is None
+        assert t2._parse_reported_direction("NS") == NO_DIFFERENCE
+
+
+# ─────────────────────────────────────────────
+# Statistical reconciliation
+# ─────────────────────────────────────────────
+class TestReconcile:
+    def test_derive_p_from_ci_roundtrip(self):
+        rec = t2.reconcile_stats(0.72, 0.55, 0.94, None, "time_to_event")
+        assert "p_value" in rec["derived"] and 0.0 < rec["p_value"] < 0.05
+
+    def test_bounded_p_does_not_derive_ci(self):
+        rec = t2.reconcile_stats(0.72, None, None, 0.001, "time_to_event", p_operator="lt")
+        assert rec["ci_lower"] is None and "ci_lower" not in rec["derived"]
+
+    def test_exact_p_derives_ci(self):
+        rec = t2.reconcile_stats(0.72, None, None, 0.01, "time_to_event", p_operator="eq")
+        assert "ci_lower" in rec["derived"] and rec["ci_lower"] is not None
+
+    def test_reported_values_never_overwritten(self):
+        rec = t2.reconcile_stats(0.72, 0.55, 0.94, 0.02, "ratio")
+        assert rec["ci_lower"] == 0.55 and rec["ci_upper"] == 0.94 and rec["p_value"] == 0.02
+        assert rec["derived"] == set()
+
+    def test_difference_family_identity_scale(self):
+        rec = t2.reconcile_stats(-3.4, -5.1, -1.7, None, "difference")
+        assert "p_value" in rec["derived"] and rec["p_value"] < 0.001
+
+
+# ─────────────────────────────────────────────
+# Quality rating
+# ─────────────────────────────────────────────
+class TestQuality:
+    def test_rob_inversion(self):
+        assert t2.map_quality_rating("Low", "rob2") == "High"
+        assert t2.map_quality_rating("Some concerns", "rob2") == "Intermediate"
+        assert t2.map_quality_rating("High", "robins_i") == "Low"
+
+    def test_amstar_not_inverted(self):
+        assert t2.map_quality_rating("High", "amstar2") == "High"
+        assert t2.map_quality_rating("Critically low", "amstar2") == "Low"
+
+    def test_critically_low_unambiguous_without_tool(self):
+        assert t2.map_quality_rating("Critically low") == "Low"
+
+    def test_bare_high_needs_a_tool(self):
+        assert t2.map_quality_rating("High") is None
+
+    def test_moderate_is_safe_either_way(self):
+        assert t2.map_quality_rating("Moderate") == "Intermediate"
+
+
+# ─────────────────────────────────────────────
+# Seed / N cell / dedupe
+# ─────────────────────────────────────────────
+class TestSeedAndRows:
+    def test_seed_from_single_outcome(self):
+        seeded = t2.seed_outcomes_from_universal({
+            "primary_outcome_definition": "Fatigue",
+            "key_findings_metric": "MD",
+            "key_findings_effect_estimate": -3.4,
+            "key_findings_pvalue": "<0.001",
+        })
+        assert len(seeded) == 1
+        assert seeded[0]["name"] == "Fatigue"
+        assert seeded[0]["p_value"] == 0.001 and seeded[0]["p_operator"] == "lt"
+        assert seeded[0]["source_quote"] is None  # no provenance from single-outcome tags
+
+    def test_seed_empty_when_no_signal(self):
+        assert t2.seed_outcomes_from_universal({"citation_year": 2020}) == []
+
+    def test_n_cell_review_vs_primary(self):
+        assert t2.format_n_cell("SR with Meta-Analysis", 3450, 12) == "k=12 (N=3450)"
+        assert t2.format_n_cell("Randomized Controlled Trial", 240, None) == "240"
+
+    def test_dedupe_keeps_subgroup_row(self):
+        base = {"study_id": "X", "outcome_name": "OS", "comparison": "A vs B",
+                "outcome_timing": "12m", "effect_metric": "HR"}
+        kept = t2.dedupe_rows([
+            {**base, "is_subgroup": False, "subgroup_label": None},
+            {**base, "is_subgroup": True, "subgroup_label": "PD-L1>=50%"},
+            {**base, "is_subgroup": False, "subgroup_label": None},  # true dup dropped
+        ])
+        assert len(kept) == 2
+
+
+# ─────────────────────────────────────────────
+# End-to-end assembly (pure Python, no model)
+# ─────────────────────────────────────────────
+class TestAssemble:
+    def _tags(self):
+        return {
+            "citation_authors": ["Doe J", "Roe R"], "citation_year": 2019,
+            "study_type": "Randomized Controlled Trial",
+            "population_participants": "Adults with cancer-related fatigue",
+            "sample_size_total": 240,
+            "population_intervention_exposure": "Exercise programme",
+            "population_comparator": "Usual care",
+            "statistical_method": "Mixed-effects model",
+            "primary_outcome_definition": "Fatigue", "primary_outcome_measurement": "BFI",
+            "primary_outcome_timing": "12 weeks",
+            "key_findings_metric": "MD", "key_findings_effect_estimate": -3.4,
+            "key_findings_ci_lower": -5.1, "key_findings_ci_upper": -1.7,
+            "key_findings_pvalue": "<0.001",
+        }
+
+    def test_injected_single_outcome_seed(self):
+        table = t2.assemble_table2(self._tags(), rob={"rob_overall": "Low", "rob_tool": "rob2"},
+                                   provenance="seeded")
+        assert len(table) == 1
+        row = table[0]
+        assert row["study_id"] == "Doe & Roe, 2019"
+        assert row["direction"] == FAVOURS_INTERVENTION
+        assert row["quality_rating"] == "High"
+        assert row["p_operator"] == "lt" and "p<0.001" in row["result_ci_p"]
+        assert row["provenance"] == "seeded"
+
+    def test_multi_outcome_explode(self):
+        tags = {"citation_authors": "Smith J", "citation_year": 2022,
+                "study_type": "Randomized Controlled Trial",
+                "population_comparator": "Placebo",
+                "outcomes": [
+                    {"name": "OS", "effect_metric": "HR", "effect_estimate": 0.7,
+                     "ci_lower": 0.5, "ci_upper": 0.95, "timing": "24m"},
+                    {"name": "PFS", "effect_metric": "HR", "effect_estimate": 0.6,
+                     "ci_lower": 0.45, "ci_upper": 0.8, "timing": "12m"},
+                ]}
+        table = t2.assemble_table2(tags)
+        assert len(table) == 2
+        assert {r["outcome_name"] for r in table} == {"OS", "PFS"}
+        # comparison defaults to the study-level comparator when the outcome omits it
+        assert all(r["comparator"] == "Placebo" for r in table)
+
+    def test_merge_precedence_injected_wins(self):
+        merged = t2.merge_injected_and_extracted(
+            {"population_participants": "Injected pop", "outcomes": [{"name": "A"}]},
+            {"population_participants": "Extracted pop", "sample_size_total": 100,
+             "outcomes": [{"name": "B"}]},
+        )
+        assert merged["population_participants"] == "Injected pop"  # injected wins
+        assert merged["sample_size_total"] == 100                   # gap filled from extracted
+        assert merged["outcomes"] == [{"name": "A"}]                # injected array taken whole
+
+
+# ─────────────────────────────────────────────
+# Extraction wiring — dual-mode, with a mocked model caller
+# ─────────────────────────────────────────────
+class TestExtractionWiring:
+    def test_injected_mode_makes_zero_model_calls(self, monkeypatch):
+        def boom(*a, **k):
+            raise AssertionError("model must not be called in injected mode")
+        monkeypatch.setattr(tx.annotator_mod, "_call_with_pdf", boom)
+
+        rows = tx.build_table2_from_pdf(
+            b"%PDF-fake",
+            injected={
+                "citation_authors": "Smith J", "citation_year": 2020,
+                "study_type": "Randomized Controlled Trial",
+                "population_comparator": "Placebo",
+                "outcomes": [{"name": "OS", "effect_metric": "HR", "effect_estimate": 0.7,
+                              "ci_lower": 0.5, "ci_upper": 0.95}],
+            },
+            rob={"rob_overall": "Some concerns", "rob_tool": "rob2"},
+        )
+        assert len(rows) == 1
+        assert rows[0]["provenance"] == "injected"
+        assert rows[0]["quality_rating"] == "Intermediate"
+
+    def test_injected_without_outcomes_seeds_zero_calls(self, monkeypatch):
+        def boom(*a, **k):
+            raise AssertionError("model must not be called when seeding")
+        monkeypatch.setattr(tx.annotator_mod, "_call_with_pdf", boom)
+
+        rows = tx.build_table2_from_pdf(
+            b"%PDF-fake",
+            injected={
+                "citation_authors": "Smith J", "citation_year": 2020,
+                "study_type": "Cohort Study",
+                "primary_outcome_definition": "Mortality",
+                "key_findings_metric": "HR", "key_findings_effect_estimate": 0.8,
+            },
+        )
+        assert len(rows) == 1 and rows[0]["provenance"] == "seeded"
+
+    def test_isolation_mode_runs_both_passes(self, monkeypatch):
+        calls = []
+
+        def fake(pdf_bytes, prompt, max_tokens=4096, **k):
+            # Route by a distinctive phrase in each prompt.
+            if "per-study evidence table\n(one row per outcome" in prompt:
+                calls.append("outcomes")
+                return {"outcomes": [
+                    {"name": "OS", "effect_metric": "HR", "effect_estimate": 0.72,
+                     "ci_lower": 0.55, "ci_upper": 0.94, "comparison": "Drug vs placebo",
+                     "source_quote": "HR 0.72", "confidence": "high"}]}
+            calls.append("study_level")
+            return {"citation_authors": "Doe J", "citation_year": 2021,
+                    "study_type": "Randomized Controlled Trial",
+                    "population_participants": "Adults",
+                    "population_intervention_exposure": "Drug",
+                    "population_comparator": "Placebo",
+                    "sample_size_total": 300}
+        monkeypatch.setattr(tx.annotator_mod, "_call_with_pdf", fake)
+
+        rows = tx.build_table2_from_pdf(b"%PDF-fake")
+        assert set(calls) == {"outcomes", "study_level"}
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["study_id"] == "Doe, 2021"
+        assert row["outcome_name"] == "OS"
+        assert row["direction"] == FAVOURS_INTERVENTION
+        assert row["provenance"] == "extracted"
+
+    def test_enrich_toggle_runs_outcomes_only(self, monkeypatch):
+        calls = []
+
+        def fake(pdf_bytes, prompt, max_tokens=4096, **k):
+            assert "per-study evidence table\n(one row per outcome" in prompt, \
+                "enrich must call the outcomes pass, not the study-level pull"
+            calls.append("outcomes")
+            return {"outcomes": [{"name": "Secondary QoL", "effect_metric": "MD",
+                                  "effect_estimate": 2.0, "comparison": "A vs B"}]}
+        monkeypatch.setattr(tx.annotator_mod, "_call_with_pdf", fake)
+
+        rows = tx.build_table2_from_pdf(
+            b"%PDF-fake",
+            injected={"citation_authors": "Smith J", "citation_year": 2020,
+                      "study_type": "Randomized Controlled Trial",
+                      "population_comparator": "B"},
+            enrich=True,
+        )
+        assert calls == ["outcomes"]
+        assert len(rows) == 1 and rows[0]["provenance"] == "enriched"
+        assert rows[0]["outcome_name"] == "Secondary QoL"
+
+    def test_coerce_outcomes_tolerant(self):
+        assert tx._coerce_outcomes({"outcomes": [{"name": "A"}]}) == [{"name": "A"}]
+        assert tx._coerce_outcomes([{"name": "A"}, "junk"]) == [{"name": "A"}]
+        assert tx._coerce_outcomes(None) == []
+        assert tx._coerce_outcomes("nonsense") == []
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-v"]))
