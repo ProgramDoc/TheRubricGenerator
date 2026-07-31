@@ -175,3 +175,55 @@ class TestLLMClusterer:
         # is sent to the LLM.
         assert "response rate" in seen["names"]
         assert "death from any cause" not in seen["names"]
+
+
+# ─────────────────────────────────────────────
+# Risk-of-bias keys are outcome names too
+# ─────────────────────────────────────────────
+
+class TestRobKeysAreCanonicalized:
+    """Canonicalizing outcomes but not the RoB keys is worse than not harmonizing:
+    the body takes the canonical name, the key keeps its alias, every lookup misses,
+    and a fully-appraised body arrives at GRADE looking unappraised."""
+
+    def _studies(self):
+        return [
+            {"study_id": "S1", "study_type": "RCT",
+             "rob_by_outcome": {"Death from any cause": "Low"},
+             "outcomes": [{"name": "Death from any cause", "comparison": "d vs p",
+                           "timing": "12m", "events_int": 12, "n_int": 100,
+                           "events_ctrl": 20, "n_ctrl": 100}]},
+            {"study_id": "S2", "study_type": "RCT",
+             "rob_by_outcome": {"Overall mortality": "High"},
+             "outcomes": [{"name": "Overall mortality", "comparison": "d vs p",
+                           "timing": "12m", "events_int": 8, "n_int": 80,
+                           "events_ctrl": 25, "n_ctrl": 90}]},
+        ]
+
+    _TARGETS = [{"canonical": "All-cause mortality",
+                 "aliases": ["Death from any cause", "Overall mortality"]}]
+
+    def test_map_keys_are_rewritten_to_canonical(self):
+        out, _report = ph.harmonize_by_targets(self._studies(), self._TARGETS)
+        assert list(out[0]["rob_by_outcome"]) == ["All-cause mortality"]
+        assert list(out[1]["rob_by_outcome"]) == ["All-cause mortality"]
+
+    def test_labels_survive_into_the_pooled_body(self):
+        out, _report = ph.harmonize_by_targets(self._studies(), self._TARGETS)
+        bodies = pool_extractions(out)
+        assert len(bodies) == 1
+        assert bodies[0]["outcome_name"] == "All-cause mortality"
+        pooled = bodies[0]["pooled"]["studies"]
+        assert {s["study_id"]: s["rob"] for s in pooled} == {"S1": "Low", "S2": "High"}
+        assert all(s["rob_source"] == "user_outcome" for s in pooled)
+
+    def test_rob_only_names_reach_the_clustering_input(self):
+        # A name that appears ONLY as a RoB key must still be offered to the clusterer.
+        counts = ph.distinct_outcome_names(
+            [{"outcomes": [], "rob_by_outcome": {"Overall mortality": "High"}}])
+        assert counts.get("Overall mortality") == 1
+
+    def test_studies_without_a_rob_map_are_untouched(self):
+        out, _ = ph.harmonize_by_targets(
+            [{"study_id": "S3", "outcomes": []}], self._TARGETS)
+        assert "rob_by_outcome" not in out[0]

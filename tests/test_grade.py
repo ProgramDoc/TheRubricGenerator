@@ -280,9 +280,54 @@ class TestEdgeCases:
         assert g["final"] in GRADE_LEVELS
         assert g["absolute_effects"] is None
 
-    def test_missing_rob_defaults_conservative(self):
+    def test_missing_rob_raises_by_default(self):
+        # A body of real studies with no RoB labels must not be rated as though the
+        # domain were clean -- that is indistinguishable from an assessed-clean body.
         r = _result(measure="RR", k=2, estimate=0.7, ci_lower=0.5, ci_upper=0.95,
-                    n_int=2000, n_ctrl=2000, events_int=400, events_ctrl=560)
-        # No RoB labels -> engine reports "no judgements", does not crash.
-        g = grade_body(r, initial="High", per_study_rob=[])
+                    n_int=2000, n_ctrl=2000, events_int=400, events_ctrl=560,
+                    studies=[{"study_id": "a", "weight_pct": 50.0},
+                             {"study_id": "b", "weight_pct": 50.0}])
+        with pytest.raises(ValueError, match="no risk-of-bias judgements"):
+            grade_body(r, initial="High", per_study_rob=[])
+
+    def test_missing_rob_conservative_when_opted_out(self):
+        # Explicit opt-out keeps the old behaviour: reports "no judgements", no crash.
+        r = _result(measure="RR", k=2, estimate=0.7, ci_lower=0.5, ci_upper=0.95,
+                    n_int=2000, n_ctrl=2000, events_int=400, events_ctrl=560,
+                    studies=[{"study_id": "a", "weight_pct": 50.0},
+                             {"study_id": "b", "weight_pct": 50.0}])
+        g = grade_body(r, initial="High", per_study_rob=[], require_rob=False)
         assert g["final"] in GRADE_LEVELS
+        rob = next(d for d in g["domains"] if d["domain"] == "Risk of bias")
+        assert "no risk-of-bias judgements" in rob["reason"]
+
+    def test_rob_read_off_study_records(self):
+        # The primary channel: labels ride on studies[], paired with their weights,
+        # so no per_study_rob argument is needed at all.
+        r = _result(measure="RR", k=2, estimate=0.7, ci_lower=0.5, ci_upper=0.95,
+                    n_int=2000, n_ctrl=2000, events_int=400, events_ctrl=560,
+                    studies=[{"study_id": "a", "weight_pct": 50.0, "rob": "Critical"},
+                             {"study_id": "b", "weight_pct": 50.0, "rob": "Critical"}])
+        g = grade_body(r, initial="High")
+        rob = next(d for d in g["domains"] if d["domain"] == "Risk of bias")
+        assert rob["downgrade"] == 2
+
+    def test_rob_on_records_weighted_like_a_positional_list(self):
+        # Same weighting rule as test_rob_weighted_not_averaged, via the record channel.
+        r = _result(measure="RR", k=2, estimate=0.7, ci_lower=0.55, ci_upper=0.9,
+                    n_int=1500, n_ctrl=1500, events_int=400, events_ctrl=560,
+                    studies=[{"study_id": "big", "weight_pct": 90.0, "rob": "Low"},
+                             {"study_id": "small", "weight_pct": 10.0, "rob": "High"}])
+        g = grade_body(r, initial="High")
+        rob = next(d for d in g["domains"] if d["domain"] == "Risk of bias")
+        assert rob["downgrade"] == 0
+
+    def test_rob_length_mismatch_raises(self):
+        # Silently falling back to equal weights produced an unweighted judgement
+        # indistinguishable from a weighted one. Refuse instead.
+        r = _result(measure="RR", k=2, estimate=0.7, ci_lower=0.5, ci_upper=0.95,
+                    n_int=2000, n_ctrl=2000, events_int=400, events_ctrl=560,
+                    studies=[{"study_id": "a", "weight_pct": 50.0},
+                             {"study_id": "b", "weight_pct": 50.0}])
+        with pytest.raises(ValueError, match="match the pooled studies"):
+            grade_body(r, initial="High", per_study_rob=["Low"])

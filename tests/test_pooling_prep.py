@@ -356,3 +356,113 @@ class TestDualMode:
         bodies = pe.pool_from_pdfs(papers)
         assert len(bodies) == 1
         assert bodies[0]["measure"] == "IRR" and bodies[0]["k"] == 2
+
+
+# ─────────────────────────────────────────────
+# Risk of bias — resolved per (study x outcome), carried, never judged
+# ─────────────────────────────────────────────
+
+class TestResolveRob:
+    def _study(self):
+        return {"study_id": "Smith", "study_type": "RCT",
+                "rob": "High",                                     # tier 3, study-level
+                "rob_by_outcome": {"All-cause mortality": "Low"}}   # tier 2, per-outcome
+
+    def test_outcome_specific_beats_study_level(self):
+        assert pp.resolve_rob(self._study(), {"name": "All-cause mortality"},
+                              "All-cause mortality") == ("Low", "user_outcome")
+
+    def test_falls_back_to_study_level_for_unappraised_outcome(self):
+        assert pp.resolve_rob(self._study(), {"name": "Serious adverse events"},
+                              "Serious adverse events") == ("High", "user_study")
+
+    def test_outcome_object_label_wins_outright(self):
+        assert pp.resolve_rob(self._study(),
+                              {"name": "All-cause mortality", "rob": "Some concerns"},
+                              "All-cause mortality") == ("Some concerns", "user_outcome")
+
+    def test_nothing_found_is_missing(self):
+        assert pp.resolve_rob({"study_id": "X"}, {"name": "y"}, "y") == (None, "missing")
+
+    def test_blank_label_is_not_a_label(self):
+        assert pp.resolve_rob({"rob": "   "}, {}, None) == (None, "missing")
+
+    def test_explicit_source_wins_over_inferred(self):
+        # This is how an instrument stamps "tool" on a study-level label.
+        assert pp.resolve_rob({"rob": "Low", "rob_source": "tool"}, {}, None) == ("Low", "tool")
+
+    def test_key_matching_is_normalized_not_raw(self):
+        study = {"rob_by_outcome": {"all cause  MORTALITY": "Low"}}
+        assert pp.resolve_rob(study, {"name": "All-cause Mortality"},
+                              "All-cause Mortality")[0] == "Low"
+
+    def test_canonical_outcome_preferred_over_raw_name(self):
+        study = {"rob_by_outcome": {"All-cause mortality": "Serious"}}
+        oc = {"name": "Death from any cause", "canonical_outcome": "All-cause mortality"}
+        assert pp.resolve_rob(study, oc, "All-cause mortality")[0] == "Serious"
+
+
+class TestAttachRob:
+    def test_outcome_record_builds_the_per_outcome_map(self):
+        out = pp.attach_rob([{"study_id": "S1", "outcomes": []}],
+                            [{"study_id": "S1", "outcome": "Death from any cause",
+                              "rob": "Low", "rob_source": "tool"}])
+        assert out[0]["rob_by_outcome"] == {"Death from any cause": "Low"}
+        assert pp.resolve_rob(out[0], {"name": "Death from any cause"},
+                              "Death from any cause") == ("Low", "tool")
+
+    def test_record_without_outcome_becomes_study_level(self):
+        out = pp.attach_rob([{"study_id": "S1"}],
+                            [{"study_id": "S1", "outcome": None, "rob": "Serious"}])
+        assert out[0]["rob"] == "Serious"
+        assert out[0].get("rob_by_outcome") == {}
+
+    def test_never_mutates_the_caller_dicts(self):
+        studies = [{"study_id": "S1"}]
+        pp.attach_rob(studies, [{"study_id": "S1", "outcome": "x", "rob": "Low"}])
+        assert "rob_by_outcome" not in studies[0]
+
+    def test_unmatched_and_labelless_records_are_dropped(self):
+        out = pp.attach_rob([{"study_id": "S1"}],
+                            [{"study_id": "OTHER", "rob": "High"},
+                             {"study_id": "S1", "rob": ""}])
+        assert out[0] == {"study_id": "S1"}
+
+
+class TestRobThroughTheBridge:
+    def test_label_reaches_the_pooled_study_record(self):
+        studies = [
+            pp_study := {"study_id": "S1", "study_type": "RCT",
+                         "rob_by_outcome": {"Mortality": "Low"},
+                         "outcomes": [{"name": "Mortality", "comparison": "d vs p",
+                                       "timing": "12m", "events_int": 12, "n_int": 100,
+                                       "events_ctrl": 20, "n_ctrl": 100}]},
+            {"study_id": "S2", "study_type": "RCT",
+             "rob_by_outcome": {"Mortality": "High"},
+             "outcomes": [{"name": "Mortality", "comparison": "d vs p", "timing": "12m",
+                           "events_int": 8, "n_int": 80,
+                           "events_ctrl": 25, "n_ctrl": 90}]},
+        ]
+        assert pp_study is studies[0]
+        bodies = pp.pool_extractions(studies)
+        assert len(bodies) == 1
+        pooled = bodies[0]["pooled"]["studies"]
+        assert {s["study_id"]: s["rob"] for s in pooled} == {"S1": "Low", "S2": "High"}
+        assert all(s["rob_source"] == "user_outcome" for s in pooled)
+
+    def test_design_class_reaches_the_pooled_result(self):
+        bodies = pp.pool_extractions([
+            {"study_id": "S1", "study_type": "RCT", "rob": "Low",
+             "outcomes": [{"name": "Mortality", "comparison": "d vs p", "timing": "12m",
+                           "events_int": 12, "n_int": 100,
+                           "events_ctrl": 20, "n_ctrl": 100}]}])
+        assert bodies[0]["pooled"]["design_class"] == "rct"
+
+    def test_unlabelled_study_is_missing_not_absent(self):
+        bodies = pp.pool_extractions([
+            {"study_id": "S1", "study_type": "RCT",
+             "outcomes": [{"name": "Mortality", "comparison": "d vs p", "timing": "12m",
+                           "events_int": 12, "n_int": 100,
+                           "events_ctrl": 20, "n_ctrl": 100}]}])
+        s = bodies[0]["pooled"]["studies"][0]
+        assert s["rob"] is None and s["rob_source"] == "missing"

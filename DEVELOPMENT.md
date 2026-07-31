@@ -727,7 +727,6 @@ Risk-of-bias instruments are outcome-specific — RoB 2 domain 4 covers measurem
 - **Quality Appraisal and Annotator CSV/XLSX export were returning 422** and had been for some time. `@app.get("/runs/{run_id}")` is declared before `/runs/{run_id}.csv`, and a bare path param matches any segment — so `12.csv` hit the detail route and failed int-parsing. Fixed with a `{run_id:int}` Starlette convertor, which also gives a correct 404 for non-numeric ids. Separately, `csv.DictWriter` took its header from row 0 only and raises on any later row with extra keys; the per-domain columns are dispatched by `rob_tool`, so a mixed-tool run already 500'd. Both header builders now take a first-seen union.
 
 **Out of scope**: reviewer-editable outcome lists after a run has started; cross-study outcome harmonization (that is the synthesis layer's job); per-outcome fan-out for diagnostic accuracy or systematic reviews (both have a different natural unit).
-
 ### Annotator Custom Extraction & Analytics (April 16, 2026)
 
 Two long-requested features behind a right-pane tab bar in the annotator.

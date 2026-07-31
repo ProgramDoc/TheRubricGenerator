@@ -15,6 +15,11 @@ RCT_STUDIES = [
     {"study_id": "C", "design": "RCT", "events_int": 45, "n_int": 450, "events_ctrl": 90, "n_ctrl": 450},
 ]
 
+# Same studies carrying their own risk-of-bias label. This is the primary channel:
+# the label rides on the study dict, survives pooling, and arrives on studies[].rob
+# paired with that study's weight — no per_study_rob list, no endpoint change.
+RCT_STUDIES_WITH_ROB = [{**s, "rob": "Low", "rob_source": "tool"} for s in RCT_STUDIES]
+
 
 def _hdr(u):
     return {"Cookie": f"rubricgen_session={u['cookie']}"}
@@ -150,7 +155,7 @@ class TestGradeRuns:
         payload = {
             "auto_indirectness": True,
             "bodies": [{
-                "studies": RCT_STUDIES, "measure": "RR",
+                "studies": RCT_STUDIES_WITH_ROB, "measure": "RR",
                 "outcome_name": "Mortality",
                 "indirectness_levels": 0,  # reviewer value wins
             }],
@@ -158,6 +163,17 @@ class TestGradeRuns:
         r = client.post("/api/grade/runs", json=payload, headers=_hdr(test_user))
         assert r.status_code == 200, r.text
         assert r.json()["results"][0]["certainty"] == "High"
+
+    def test_body_without_rob_is_not_graded(self, client, test_user):
+        # A body whose risk of bias was never assessed must not come back rated as
+        # though the domain were clean -- it comes back un-graded, and says why.
+        payload = {"auto_indirectness": False, "bodies": [{
+            "studies": RCT_STUDIES, "measure": "RR", "outcome_name": "Mortality"}]}
+        r = client.post("/api/grade/runs", json=payload, headers=_hdr(test_user))
+        assert r.status_code == 200, r.text
+        res = r.json()["results"][0]
+        assert res["certainty"] is None
+        assert "risk-of-bias" in (res.get("error_message") or "")
 
     def test_empty_bodies_400(self, client, test_user):
         r = client.post("/api/grade/runs", json={"bodies": []}, headers=_hdr(test_user))

@@ -89,6 +89,106 @@ def _has_all(d: dict[str, Any], keys: tuple[str, ...]) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# 1b. Risk of bias — resolved per (study x outcome), carried, never judged
+# ---------------------------------------------------------------------------
+
+CANONICAL_KEY = "canonical_outcome"
+
+
+def resolve_rob(
+    study_level: dict[str, Any],
+    oc: Optional[dict[str, Any]],
+    outcome_key: Optional[str] = None,
+) -> tuple[Optional[str], str]:
+    """Resolve the risk-of-bias label for one (study x outcome) pair.
+
+    Returns ``(label, source)``. ``outcome_key`` is the body's outcome name — the
+    canonical one when harmonization has run. Precedence: the outcome object's own
+    label, then the study's ``rob_by_outcome`` map, then a study-level label, then
+    nothing. An explicit ``rob_source`` on either dict always wins over the inferred
+    value — that is how a risk-of-bias instrument stamps ``"tool"``.
+
+    Risk of bias is per outcome because RoB 2 and ROBINS-I are outcome-specific:
+    domain 4 (measurement of the outcome) and domain 5 (selection of the reported
+    result) genuinely differ between outcomes, so one trial can be Low for mortality
+    and High for an unblinded subjective outcome. Nothing here judges the label —
+    mapping labels to severities is the GRADE agent's job.
+    """
+    oc = oc or {}
+    explicit = oc.get("rob_source") or study_level.get("rob_source")
+
+    def _out(label: Any, inferred: str) -> tuple[Optional[str], str]:
+        text = str(label).strip() if label is not None else ""
+        if not text:
+            return None, "missing"
+        return text, (explicit or inferred)
+
+    if oc.get("rob"):                                       # 1. outcome object
+        return _out(oc["rob"], "user_outcome")
+
+    table = study_level.get("rob_by_outcome") or {}         # 2. per-outcome map
+    if table:
+        key = (oc.get(CANONICAL_KEY) or outcome_key
+               or oc.get("name") or oc.get("outcome_name"))
+        # Matched exact-after-normalization, never fuzzily: harmonization is the
+        # sanctioned semantic layer and runs once, where a reviewer can inspect it.
+        # A wrong label on the wrong body is worse than a conservative "missing".
+        hit = {_norm(k): k for k in table}.get(_norm(key))
+        if hit is not None and table.get(hit):
+            return _out(table[hit], "user_outcome")
+
+    if study_level.get("rob"):                              # 3. study-level
+        return _out(study_level["rob"], "user_study")
+    return None, "missing"                                  # 4. nothing
+
+
+def attach_rob(
+    studies: list[dict[str, Any]],
+    records: Optional[list[dict[str, Any]]],
+    id_key: str = "study_id",
+) -> list[dict[str, Any]]:
+    """Merge risk-of-bias records onto study dicts. Pure — no I/O, no judgement.
+
+    ``records``: ``[{"study_id": ..., "outcome": <str or None>, "rob": <label>,
+    "rob_source": ...}, ...]``. A record with an ``outcome`` populates that study's
+    ``rob_by_outcome`` map; one without becomes the study-level ``rob``. This is the
+    seam an appraisal-database adapter targets.
+
+    **Order matters**: ``attach_rob`` -> ``harmonize_outcomes`` -> ``group_into_bodies``.
+    Attaching after harmonization leaves the ``rob_by_outcome`` keys un-canonicalized,
+    so every per-outcome lookup misses and a fully-appraised body reads as unappraised.
+    """
+    by_id: dict[str, dict[str, Any]] = {}
+    for r in records or []:
+        sid = r.get(id_key) or r.get("study_id")
+        if not sid or not r.get("rob"):
+            continue
+        slot = by_id.setdefault(str(sid), {"rob_by_outcome": {}})
+        if r.get("outcome"):
+            slot["rob_by_outcome"][r["outcome"]] = r["rob"]
+        else:
+            slot["rob"] = r["rob"]
+        if r.get("rob_source"):
+            slot["rob_source"] = r["rob_source"]
+
+    out: list[dict[str, Any]] = []
+    for s in studies:
+        sid = str(s.get("study_id") or build_study_id(
+            s.get("citation_authors"), s.get("citation_year")) or "")
+        add = by_id.get(sid)
+        if not add:
+            out.append(s)
+            continue
+        s2 = dict(s)
+        s2["rob_by_outcome"] = {**(s.get("rob_by_outcome") or {}), **add["rob_by_outcome"]}
+        for k in ("rob", "rob_source"):
+            if add.get(k) and not s2.get(k):
+                s2[k] = add[k]
+        out.append(s2)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # 2. One outcome object -> a pooling study input
 # ---------------------------------------------------------------------------
 
@@ -96,6 +196,7 @@ def outcome_to_study_input(
     study_level: dict[str, Any],
     oc: dict[str, Any],
     target_measure: Optional[str],
+    outcome_key: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
     """Map one extraction outcome object to a ``pooling.study_effect`` input dict.
 
@@ -112,6 +213,8 @@ def outcome_to_study_input(
         study_level.get("citation_authors"), study_level.get("citation_year"))
     design = study_level.get("study_type") or study_level.get("design")
     base = {"study_id": study_id, "design": design}
+    # Carried through to the pooled record so it stays paired with this study's weight.
+    base["rob"], base["rob_source"] = resolve_rob(study_level, oc, outcome_key)
     tgt = (target_measure or "").upper()
 
     def _grab(src: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
@@ -283,7 +386,7 @@ def pool_body(
     inputs: list[dict[str, Any]] = []
     excluded: list[str] = []
     for study_level, oc in members:
-        si = outcome_to_study_input(study_level, oc, target)
+        si = outcome_to_study_input(study_level, oc, target, body.get("outcome_name"))
         label = (study_level.get("study_id")
                  or build_study_id(study_level.get("citation_authors"),
                                    study_level.get("citation_year")))
@@ -327,7 +430,8 @@ def pool_body(
         result["pooled"] = pool_outcome(
             inputs, target, model=model, tau2_method=tau2_method,
             outcome_name=body.get("outcome_name"),
-            favorable_direction=favorable_direction)
+            favorable_direction=favorable_direction,
+            design_class=body.get("design_class"))
     return result
 
 

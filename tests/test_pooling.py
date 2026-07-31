@@ -329,3 +329,69 @@ class TestEndToEnd:
     def test_measure_synonym_canonicalized(self):
         r = pool_outcome([{"yi": 0.1, "vi": 0.05}, {"yi": 0.2, "vi": 0.05}], "hazard ratio")
         assert r["measure"] == "HR" and r["scale"] == "log"
+
+
+# ─────────────────────────────────────────────
+# Risk of bias is carried through, never judged
+# ─────────────────────────────────────────────
+
+class TestRobPassthrough:
+    def test_label_stays_paired_with_its_weight_across_a_drop(self):
+        # The reason the label rides ON the record: a dropped study shifts the pooled
+        # order, so a positional list would read the wrong label against the wrong
+        # weight -- silently, and indistinguishably from a correct result.
+        studies = [
+            {"yi": math.log(0.5), "vi": 0.10, "study_id": "A", "rob": "Low",
+             "rob_source": "tool"},
+            {"yi": math.log(0.8), "vi": 0.05, "study_id": "B", "rob": "Some concerns"},
+            {"yi": 0.0, "vi": 0.0, "study_id": "C", "rob": "High"},   # dropped: vi <= 0
+            {"yi": math.log(0.6), "vi": 0.08, "study_id": "D"},       # no label
+        ]
+        r = pool_outcome(studies, "RR")
+        assert [s["study_id"] for s in r["studies"]] == ["A", "B", "D"]
+        assert [s["rob"] for s in r["studies"]] == ["Low", "Some concerns", None]
+        assert r["studies"][1]["rob"] == "Some concerns"      # not "High"
+        assert r["studies"][1]["weight_pct"] > 0
+
+    def test_absent_label_is_sourced_missing(self):
+        r = pool_outcome([{"yi": 0.1, "vi": 0.05, "study_id": "A"}], "RR")
+        assert r["studies"][0]["rob"] is None
+        assert r["studies"][0]["rob_source"] == "missing"
+
+    def test_supplied_source_is_preserved_verbatim(self):
+        r = pool_outcome([{"yi": 0.1, "vi": 0.05, "study_id": "A",
+                           "rob": "Low", "rob_source": "tool"}], "RR")
+        assert r["studies"][0]["rob_source"] == "tool"
+
+    def test_blank_label_normalizes_to_missing(self):
+        r = pool_outcome([{"yi": 0.1, "vi": 0.05, "study_id": "A", "rob": "   "}], "RR")
+        assert r["studies"][0]["rob"] is None
+        assert r["studies"][0]["rob_source"] == "missing"
+
+    @pytest.mark.parametrize("study,measure", [
+        ({"events_int": 15, "n_int": 100, "events_ctrl": 25, "n_ctrl": 100}, "OR"),
+        ({"events_int": 15, "n_int": 100, "events_ctrl": 25, "n_ctrl": 100}, "RD"),
+        ({"mean_int": 10, "sd_int": 2, "n_int": 30,
+          "mean_ctrl": 8, "sd_ctrl": 2.5, "n_ctrl": 30}, "SMD"),
+        ({"events_int": 10, "time_int": 500, "events_ctrl": 20, "time_ctrl": 480}, "IRR"),
+        ({"estimate": 0.7, "ci_lower": 0.5, "ci_upper": 0.98}, "HR"),
+    ])
+    def test_every_effect_size_path_carries_the_label(self, study, measure):
+        # _base_arm_counts is the single funnel; if one path rebuilt its own dict the
+        # label would vanish for that measure only.
+        eff = study_effect({**study, "rob": "Serious"}, measure)
+        assert eff["rob"] == "Serious"
+
+
+class TestDesignClassAndTotals:
+    def test_design_class_is_echoed_onto_the_result(self):
+        r = pool_outcome([{"yi": 0.1, "vi": 0.05}], "RR", design_class="nrs")
+        assert r["design_class"] == "nrs"
+
+    def test_grade_pooling_inputs_totals_both_arms(self):
+        # Intervention-arm-only halves the Optimal Information Size, turning a met
+        # OIS threshold into an unmet one and manufacturing an imprecision downgrade.
+        r = pool_outcome(
+            [{"events_int": 12, "n_int": 100, "events_ctrl": 20, "n_ctrl": 100},
+             {"events_int": 8, "n_int": 80, "events_ctrl": 25, "n_ctrl": 90}], "RR")
+        assert grade_pooling_inputs(r)["total_n"] == 370      # 180 + 190
