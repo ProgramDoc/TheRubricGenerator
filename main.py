@@ -9196,9 +9196,19 @@ def _synth_detail(conn, review_id: int) -> dict:
         res["code_blocks"] = _synth_jload(res.pop("code_blocks_json", None), [])
         results.append(res)
 
+    # One risk-of-bias judgement per (study x outcome). The legacy per-study
+    # rob_* columns on `studies` stay for reviews that predate this.
+    study_rob = []
+    for r in conn.execute("SELECT * FROM synthesis_study_rob WHERE review_id=? "
+                          "ORDER BY outcome_id, study_id", (review_id,)).fetchall():
+        d = {k: r[k] for k in r.keys()}
+        d["rob_domains"] = _synth_jload(d.pop("rob_domains_json", None), {})
+        study_rob.append(d)
+
     review["studies"] = studies
     review["outcomes"] = outcomes
     review["data_points"] = data_points
+    review["study_rob"] = study_rob
     review["results"] = results
     review["prisma"] = synthesis_mod.compute_prisma_counts(conn, review_id)
     return review
@@ -9279,8 +9289,9 @@ def api_synth_create(body: SynthesisRunPayload,
             cur = conn.execute(
                 """INSERT INTO synthesis_reviews
                      (user_id, project_id, title, paper_ids_json, paper_count,
-                      status, pico_json, run_rob, prisma_manual_counts_json, credit_cost)
-                   VALUES (?,?,?,?,?,'pending',?,?,?,?) RETURNING id""",
+                      status, pico_json, run_rob, rob_scope,
+                      prisma_manual_counts_json, credit_cost)
+                   VALUES (?,?,?,?,?,'pending',?,?,'outcome',?,?) RETURNING id""",
                 (user["id"], body.project_id, (body.title or "Untitled review"),
                  json.dumps(paper_ids), len(paper_ids), json.dumps(pico),
                  1 if body.run_rob else 0, prisma_manual, total_cost))

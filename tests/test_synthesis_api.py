@@ -73,8 +73,22 @@ def mock_llm(monkeypatch):
                  "source_quote": "table 2", "extraction_confidence": "high", "needs_review": False}]
 
     monkeypatch.setattr(syn, "extract_outcome_data", fake_extract)
-    monkeypatch.setattr(syn.qa_mod, "appraise_rob_only",
-                        lambda *a, **k: ({"1": {"judgement": "Low"}}, "Low", "NA"))
+
+    # Outcome-aware so tests can make one outcome Low and another High, and can
+    # assert how many times the instrument actually ran.
+    rob_calls: list[str] = []
+    rob_by_outcome: dict[str, str] = {}
+
+    def fake_rob(pdf_bytes, fields, classification, assessed_outcome, cfg, **kw):
+        rob_calls.append(assessed_outcome)
+        verdict = rob_by_outcome.get(assessed_outcome, "Low")
+        if isinstance(verdict, Exception):
+            raise verdict
+        return ({"1": {"judgement": verdict}}, verdict, "NA")
+
+    monkeypatch.setattr(syn.qa_mod, "appraise_rob_only", fake_rob)
+    syn._test_rob_calls = rob_calls          # noqa: SLF001 — test handles
+    syn._test_rob_by_outcome = rob_by_outcome
     return syn
 
 
@@ -118,11 +132,138 @@ class TestSynthesisPipeline:
         assert detail["status"] == "complete"
         assert len(detail["studies"]) == 1
         assert detail["studies"][0]["screening_decision"] == "include"
-        assert detail["studies"][0]["rob_overall"] == "Low"
+        # Risk of bias is per (study x outcome) now, not a column on the study.
+        assert len(detail["study_rob"]) == 1
+        assert detail["study_rob"][0]["rob_overall"] == "Low"
+        assert detail["study_rob"][0]["outcome_id"] == detail["outcomes"][0]["id"]
         assert len(detail["data_points"]) == 1
         assert detail["data_points"][0]["yi"] is not None
         assert detail["results"][0]["k_studies"] == 1
         assert detail["prisma"]["included"] == 1
+
+    def _run_two_outcome_review(self, run_rob=True, n_papers=1, user_id=None,
+                                is_admin=True):
+        """Create + run a 2-outcome review synchronously. Returns its review id."""
+        from main import get_db, PAPERS_DIR
+        from backend import synthesis as syn
+        uid = user_id if user_id is not None else _admin_id()
+        pids = _mk_papers(n_papers, uid)
+        conn = get_db()
+        try:
+            conn.execute(
+                "INSERT INTO synthesis_reviews (user_id, title, paper_ids_json, pico_json, "
+                "run_rob, rob_scope, status) VALUES (?,?,?,?,?, 'outcome', 'pending')",
+                (uid, "t", json.dumps(pids), json.dumps({"population": "adults"}),
+                 1 if run_rob else 0))
+            rid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            for name in ("overall survival", "grade 3-4 adverse events"):
+                conn.execute(
+                    "INSERT INTO synthesis_outcomes (review_id, name, outcome_type, "
+                    "effect_measure, model_choice, tau2_method) VALUES (?,?,?,?,?,?)",
+                    (rid, name, "continuous", "SMD", "random", "REML"))
+            conn.commit()
+        finally:
+            conn.close()
+        syn.run_synthesis(get_db, PAPERS_DIR, uid, is_admin, rid)
+        return rid
+
+    def test_rob_runs_once_per_outcome(self, client, admin_user, mock_llm):
+        """The instrument runs per (study x outcome); prefill stays once per paper."""
+        prefills = []
+        orig = mock_llm.annotator_mod.prefill_fields
+        mock_llm.annotator_mod.prefill_fields = lambda *a, **k: (
+            prefills.append(1) or orig(*a, **k))
+        rid = self._run_two_outcome_review()
+        detail = client.get(f"/api/synthesis/reviews/{rid}",
+                            cookies={"rubricgen_session": admin_user["cookie"]}).json()
+        assert sorted(mock_llm._test_rob_calls) == ["grade 3-4 adverse events",
+                                                    "overall survival"]
+        assert len(prefills) == 1, "prefill_fields is outcome-independent"
+        assert len(detail["study_rob"]) == 2
+        assert all(r["status"] == "ok" for r in detail["study_rob"])
+
+    def test_per_outcome_rob_drives_grade(self, client, admin_user, mock_llm):
+        """The regression guard: one trial Low for one outcome and High for another
+        must produce different risk-of-bias downgrades, not one label copied."""
+        mock_llm._test_rob_by_outcome.update({
+            "overall survival": "Low",
+            "grade 3-4 adverse events": "High",
+        })
+        rid = self._run_two_outcome_review()
+        detail = client.get(f"/api/synthesis/reviews/{rid}",
+                            cookies={"rubricgen_session": admin_user["cookie"]}).json()
+        by_name = {o["id"]: o["name"] for o in detail["outcomes"]}
+        downgrades = {}
+        for res in detail["results"]:
+            rob = [d for d in res["grade"]["domains"] if d["domain"] == "Risk of bias"][0]
+            downgrades[by_name[res["outcome_id"]]] = rob["downgrade"]
+        assert downgrades["overall survival"] == 0
+        assert downgrades["grade 3-4 adverse events"] == 2
+
+    def test_one_outcome_rob_failure_is_isolated(self, client, admin_user, mock_llm):
+        mock_llm._test_rob_by_outcome["grade 3-4 adverse events"] = RuntimeError("boom")
+        rid = self._run_two_outcome_review()
+        detail = client.get(f"/api/synthesis/reviews/{rid}",
+                            cookies={"rubricgen_session": admin_user["cookie"]}).json()
+        assert detail["status"] == "complete"
+        by_status = {r["status"] for r in detail["study_rob"]}
+        assert by_status == {"ok", "error"}, "one failure must not lose the other outcome"
+
+    def test_rob_disabled_is_not_rated_not_downgraded(self, client, admin_user, mock_llm):
+        """run_rob=False used to score every study 'some concerns' and silently
+        downgrade one level. It must come back unrated instead."""
+        rid = self._run_two_outcome_review(run_rob=False)
+        detail = client.get(f"/api/synthesis/reviews/{rid}",
+                            cookies={"rubricgen_session": admin_user["cookie"]}).json()
+        assert detail["study_rob"] == []
+        for res in detail["results"]:
+            assert res["grade_certainty"] is None
+            assert res["grade"]["status"] == "not_rated"
+            assert res["grade"]["warnings"]
+
+    def test_repool_legacy_review_uses_study_level_rob(self, client, admin_user, mock_llm):
+        """A review appraised before per-outcome RoB must still grade on re-pool."""
+        from main import get_db
+        from backend import synthesis as syn
+        rid = self._run_two_outcome_review()
+        conn = get_db()
+        try:
+            # Emulate a pre-migration review: study-level label, no per-outcome rows.
+            conn.execute("DELETE FROM synthesis_study_rob WHERE review_id=?", (rid,))
+            conn.execute("UPDATE synthesis_reviews SET rob_scope='study' WHERE id=?", (rid,))
+            conn.execute("UPDATE synthesis_studies SET rob_overall='Low', rob_tool='rob2' "
+                         "WHERE review_id=?", (rid,))
+            conn.commit()
+            syn.repool_review(conn, rid)
+            conn.commit()
+        finally:
+            conn.close()
+        detail = client.get(f"/api/synthesis/reviews/{rid}",
+                            cookies={"rubricgen_session": admin_user["cookie"]}).json()
+        for res in detail["results"]:
+            assert res["grade_certainty"] is not None
+            assert res["grade"]["rob_sources"].get("study_legacy")
+
+    def test_amstar2_excluded_from_rob_domain(self, client, admin_user, mock_llm):
+        """AMSTAR-2 rates confidence, where High is good — it must not be scored
+        as a risk label (which would downgrade a good review two levels)."""
+        from main import get_db
+        from backend import synthesis as syn
+        rid = self._run_two_outcome_review()
+        conn = get_db()
+        try:
+            conn.execute("UPDATE synthesis_study_rob SET rob_tool='amstar2', "
+                         "rob_overall='High' WHERE review_id=?", (rid,))
+            conn.commit()
+            syn.repool_review(conn, rid)
+            conn.commit()
+        finally:
+            conn.close()
+        detail = client.get(f"/api/synthesis/reviews/{rid}",
+                            cookies={"rubricgen_session": admin_user["cookie"]}).json()
+        for res in detail["results"]:
+            assert res["grade"]["status"] == "not_rated"
+            assert res["grade"]["rob_sources"].get("excluded_non_rob_tool")
 
     def test_multi_study_pool_via_direct_run(self, client, admin_user, mock_llm):
         # 3 papers -> run the pipeline synchronously to avoid thread flakiness
@@ -222,6 +363,32 @@ class TestSynthesisPipeline:
                        cookies={"rubricgen_session": admin_user["cookie"]})
         assert r.status_code == 200
         assert "metacont" in r.text or "library(meta)" in r.text
+
+
+class TestSynthesisCreditModel:
+    """Pre-charge and refunds must decompose into the same units, or a partly
+    failed review silently over- or under-charges."""
+
+    @pytest.mark.parametrize("n_outcomes", [0, 1, 3])
+    @pytest.mark.parametrize("run_rob", [True, False])
+    def test_estimate_cost_matches_worker_units(self, n_outcomes, run_rob):
+        from backend import synthesis as syn
+        k = syn.billable_units(n_outcomes)
+        expected_per_paper = syn.CREDIT_COST_SYNTH_SCREEN + k * syn.CREDIT_COST_SYNTH_EXTRACT
+        if run_rob:
+            expected_per_paper += (syn.CREDIT_COST_SYNTH_ROB_PREFILL
+                                   + k * syn.CREDIT_COST_SYNTH_ROB_TOOL)
+        assert syn.estimate_cost(4, n_outcomes, run_rob) == 4 * expected_per_paper
+
+    def test_rob_charge_scales_only_the_tool_half(self):
+        from backend import synthesis as syn
+        # prefill is outcome-independent: 3 outcomes must not bill 3 prefills.
+        assert (syn.rob_charge(3) - syn.rob_charge(1)
+                == 2 * syn.CREDIT_COST_SYNTH_ROB_TOOL)
+
+    def test_single_outcome_rob_charge_unchanged(self):
+        from backend import synthesis as syn
+        assert syn.rob_charge(1) == 24  # the pre-split flat rate
 
 
 class TestSynthesisValidation:

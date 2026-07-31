@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS synthesis_reviews (
     pico_json                 TEXT,
     eligibility_criteria_json TEXT,
     run_rob                   INTEGER NOT NULL DEFAULT 1,
+    rob_scope                 TEXT,
     prisma_manual_counts_json TEXT NOT NULL DEFAULT '{}',
     credit_cost               INTEGER NOT NULL DEFAULT 0,
     credits_refunded          INTEGER NOT NULL DEFAULT 0,
@@ -127,6 +128,34 @@ CREATE TABLE IF NOT EXISTS synthesis_data_points (
 CREATE INDEX IF NOT EXISTS idx_synth_data_outcome ON synthesis_data_points(outcome_id);
 CREATE INDEX IF NOT EXISTS idx_synth_data_review ON synthesis_data_points(review_id);
 
+-- One risk-of-bias judgement per (study x outcome). RoB 2 and ROBINS-I are
+-- outcome-specific instruments -- missing outcome data, measurement of the outcome,
+-- and selection of the reported result genuinely differ between outcomes -- so one
+-- trial can be Low for mortality and High for an unblinded symptom score.
+--
+-- Deliberately not columns on synthesis_data_points: that table holds one row per
+-- clinical context (comparison x timepoint x subgroup), so a judgement stored there
+-- would be duplicated across rows that can be edited and dropped independently. It
+-- also has no row at all when extraction returns nothing, which is exactly when a
+-- failed-RoB record still needs somewhere to live.
+CREATE TABLE IF NOT EXISTS synthesis_study_rob (
+    id               SERIAL PRIMARY KEY,
+    review_id        INTEGER NOT NULL REFERENCES synthesis_reviews(id) ON DELETE CASCADE,
+    study_id         INTEGER NOT NULL REFERENCES synthesis_studies(id) ON DELETE CASCADE,
+    outcome_id       INTEGER NOT NULL REFERENCES synthesis_outcomes(id) ON DELETE CASCADE,
+    assessed_outcome TEXT,
+    rob_tool         TEXT,
+    rob_overall      TEXT,
+    rob_direction    TEXT,
+    rob_domains_json TEXT NOT NULL DEFAULT '{}',
+    status           TEXT NOT NULL DEFAULT 'ok',
+    error_message    TEXT,
+    created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (study_id, outcome_id)
+);
+CREATE INDEX IF NOT EXISTS idx_synth_study_rob_review  ON synthesis_study_rob(review_id);
+CREATE INDEX IF NOT EXISTS idx_synth_study_rob_outcome ON synthesis_study_rob(outcome_id);
+
 CREATE TABLE IF NOT EXISTS synthesis_results (
     id                   SERIAL PRIMARY KEY,
     review_id            INTEGER NOT NULL REFERENCES synthesis_reviews(id) ON DELETE CASCADE,
@@ -165,10 +194,20 @@ CREATE INDEX IF NOT EXISTS idx_synth_events_review ON synthesis_events(review_id
 
 
 def migrate_synthesis_columns(conn) -> None:
-    """Idempotent post-launch column additions (none yet; placeholder hook
-    that mirrors quality_appraisal.migrate_qa_columns so future migrations
-    have a home)."""
-    return None
+    """Idempotent post-launch column additions (mirrors
+    quality_appraisal.migrate_qa_columns)."""
+    from backend.db import column_exists
+    if not column_exists(conn, "synthesis_reviews", "rob_scope"):
+        with conn:
+            conn.execute("ALTER TABLE synthesis_reviews ADD COLUMN rob_scope TEXT")
+            # Reviews created before per-outcome risk of bias resolved one judgement
+            # per study, framed on the first outcome. Stamping them 'study' is what
+            # lets the pooler tell "assessed once, study-wide" apart from "not
+            # assessed" -- without it every historical review would re-pool as
+            # un-rated.
+            conn.execute("UPDATE synthesis_reviews SET rob_scope='study' "
+                         "WHERE rob_scope IS NULL")
+            conn.commit()
 
 
 # ─────────────────────────────────────────────
@@ -176,15 +215,35 @@ def migrate_synthesis_columns(conn) -> None:
 # ─────────────────────────────────────────────
 CREDIT_COST_SYNTH_SCREEN = 8        # classify (3) + screen (5) per paper
 CREDIT_COST_SYNTH_EXTRACT = 8       # per (included paper x outcome)
-CREDIT_COST_SYNTH_ROB = 24          # prefill (8) + RoB tool (~16) per included paper
+# Risk of bias is split because only half of it repeats per outcome: prefill_fields
+# is outcome-independent and runs once per paper, while the RoB tool itself runs once
+# per (paper x outcome). Charging the old flat 24 per outcome would bill 8 credits an
+# outcome for an LLM call that is never made.
+CREDIT_COST_SYNTH_ROB_PREFILL = 8   # per included paper
+CREDIT_COST_SYNTH_ROB_TOOL = 16     # per (included paper x outcome)
+CREDIT_COST_SYNTH_ROB = (           # legacy alias: one paper, one outcome
+    CREDIT_COST_SYNTH_ROB_PREFILL + CREDIT_COST_SYNTH_ROB_TOOL)
+
+
+def billable_units(n_outcomes: int) -> int:
+    """Per-paper billing units. Shared by estimate_cost and every refund path so
+    the pre-charge and the refunds cannot drift apart."""
+    return max(1, n_outcomes)
+
+
+def rob_charge(n_outcomes: int) -> int:
+    """Full risk-of-bias charge for one included paper."""
+    return (CREDIT_COST_SYNTH_ROB_PREFILL
+            + billable_units(n_outcomes) * CREDIT_COST_SYNTH_ROB_TOOL)
 
 
 def estimate_cost(paper_count: int, n_outcomes: int, run_rob: bool) -> int:
     """Upfront charge (the maximum, assuming every paper is included).
     Excluded papers refund their extraction + RoB share in the worker."""
-    per_paper = CREDIT_COST_SYNTH_SCREEN + max(1, n_outcomes) * CREDIT_COST_SYNTH_EXTRACT
+    per_paper = (CREDIT_COST_SYNTH_SCREEN
+                 + billable_units(n_outcomes) * CREDIT_COST_SYNTH_EXTRACT)
     if run_rob:
-        per_paper += CREDIT_COST_SYNTH_ROB
+        per_paper += rob_charge(n_outcomes)
     return paper_count * per_paper
 
 
@@ -462,10 +521,62 @@ def _initial_grade_for(study_types: list[str]) -> str:
     return "High" if "Randomized" in modal else "Low"
 
 
+# Instruments that do not produce a risk-of-bias judgement. AMSTAR-2 rates a
+# systematic review's *confidence*, where "High" is GOOD — the opposite polarity to
+# every RoB instrument — so feeding its labels to the severity map downgrades the
+# best-conducted reviews by two levels. Excluded at the source rather than given
+# severity entries: mapping them would legitimize routing systematic reviews into a
+# body of primary-study evidence, which is a separate methodological error.
+# Cf. synthesis_table2.map_quality_rating, which already treats AMSTAR-2 as
+# non-inverted for the same reason.
+_NON_ROB_TOOLS = {"amstar2"}
+
+
+def _resolve_study_rob(study_row: dict, rob_row: dict | None,
+                       rob_scope: str) -> tuple[str | None, str]:
+    """Resolve one (study x outcome) risk-of-bias label → ``(label|None, source)``.
+
+    Ladder: the per-outcome judgement, then — only for reviews that predate
+    per-outcome appraisal — the legacy study-level label, then nothing. ``None``
+    means "excluded from the risk-of-bias domain", never "clean": the caller drops
+    it and renormalizes the weights rather than scoring it.
+    """
+    if rob_row:
+        if (rob_row.get("rob_tool") or "").strip().lower() in _NON_ROB_TOOLS:
+            return None, "excluded_non_rob_tool"
+        if rob_row.get("status") == "ok" and (rob_row.get("rob_overall") or "").strip():
+            return rob_row["rob_overall"].strip(), "outcome"
+        return None, rob_row.get("status") or "missing"
+    if rob_scope == "study":
+        if (study_row.get("rob_tool") or "").strip().lower() in _NON_ROB_TOOLS:
+            return None, "excluded_non_rob_tool"
+        if (study_row.get("rob_overall") or "").strip():
+            return study_row["rob_overall"].strip(), "study_legacy"
+    return None, "missing"
+
+
+def load_rob_map(conn, review_id: int) -> dict[int, dict[int, dict]]:
+    """``{outcome_id: {study_id: rob_row}}`` for a whole review, in one query."""
+    out: dict[int, dict[int, dict]] = {}
+    for r in conn.execute("SELECT * FROM synthesis_study_rob WHERE review_id=?",
+                          (review_id,)).fetchall():
+        d = _row_dict(r)
+        out.setdefault(d["outcome_id"], {})[d["study_id"]] = d
+    return out
+
+
 def pool_outcome(conn, review_id: int, outcome: dict, points: list[dict],
-                 studies_by_id: dict[int, dict]) -> dict:
+                 studies_by_id: dict[int, dict],
+                 rob_by_study: dict[int, dict] | None = None,
+                 rob_scope: str = "outcome") -> dict:
     """Pool one outcome from its (already-computed) data points and persist a
-    synthesis_results row. Pure compute — safe to re-run after edits."""
+    synthesis_results row. Pure compute — safe to re-run after edits.
+
+    ``rob_by_study`` is this outcome's ``{study_id: rob_row}`` slice of
+    :func:`load_rob_map`; ``rob_scope`` comes from ``synthesis_reviews.rob_scope``
+    and decides whether a missing per-outcome row may fall back to the legacy
+    study-level label.
+    """
     measure = outcome["effect_measure"]
     model = outcome.get("model_choice") or "random"
     tau2_method = outcome.get("tau2_method") or "REML"
@@ -474,7 +585,11 @@ def pool_outcome(conn, review_id: int, outcome: dict, points: list[dict],
 
     usable = [p for p in points
               if p.get("included_in_pool", 1) and p.get("yi") is not None and p.get("vi")]
-    effects, labels, subgroups, robs, study_types = [], [], [], [], []
+    # effects / labels / subgroups / robs and the pooled weights_pct are all built
+    # in this one loop, in this one order. `usable` has already dropped points, so a
+    # label list assembled anywhere else shifts by one after the first drop — and a
+    # misaligned risk-of-bias weighting looks exactly like a correct one.
+    effects, labels, subgroups, robs, rob_sources, study_types = [], [], [], [], [], []
     for p in usable:
         st = studies_by_id.get(p["study_id"], {})
         raw = json.loads(p.get("raw_json") or "{}") if isinstance(p.get("raw_json"), str) else (p.get("raw") or {})
@@ -482,7 +597,10 @@ def pool_outcome(conn, review_id: int, outcome: dict, points: list[dict],
                                         measure=measure, n=raw.get("n"), raw=raw))
         labels.append(st.get("filename") or st.get("label") or p.get("context_label") or "Study")
         subgroups.append(p.get("subgroup_value"))
-        robs.append(st.get("rob_overall"))
+        rob_label, rob_src = _resolve_study_rob(
+            st, (rob_by_study or {}).get(p["study_id"]), rob_scope)
+        robs.append(rob_label)
+        rob_sources.append(rob_src)
         if st.get("study_type"):
             study_types.append(st["study_type"])
 
@@ -533,6 +651,9 @@ def pool_outcome(conn, review_id: int, outcome: dict, points: list[dict],
         mid_harm=_coerce_num(outcome.get("mid_harm")),
         is_binary=measure in ("OR", "RR", "RD"),
     )
+    # Where each pooled study's label came from, so the UI can say *why* a body was
+    # not rated (never appraised vs appraisal failed vs a non-RoB instrument).
+    grade["rob_sources"] = {s: rob_sources.count(s) for s in sorted(set(rob_sources))}
 
     # Code generation.
     code_studies = [{"label": labels[i], "raw": effects[i].raw,
@@ -584,6 +705,12 @@ def repool_review(conn, review_id: int) -> None:
         "SELECT * FROM synthesis_outcomes WHERE review_id=? ORDER BY sort_order, id", (review_id,)).fetchall()]
     studies = {r["id"]: _row_dict(r) for r in conn.execute(
         "SELECT * FROM synthesis_studies WHERE review_id=?", (review_id,)).fetchall()}
+    rob_map = load_rob_map(conn, review_id)
+    rev = conn.execute("SELECT rob_scope FROM synthesis_reviews WHERE id=?",
+                       (review_id,)).fetchone()
+    # NULL means the review predates per-outcome appraisal (migrate_synthesis_columns
+    # backfills 'study', but a row inserted before the backfill ran can still be NULL).
+    rob_scope = (rev["rob_scope"] if rev else None) or "study"
     for oc in outcomes:
         pts = [_row_dict(r) for r in conn.execute(
             "SELECT * FROM synthesis_data_points WHERE outcome_id=?", (oc["id"],)).fetchall()]
@@ -591,7 +718,8 @@ def repool_review(conn, review_id: int) -> None:
         for p in pts:
             p["raw"] = json.loads(p.get("raw_json") or "{}")
         try:
-            pool_outcome(conn, review_id, oc, pts, studies)
+            pool_outcome(conn, review_id, oc, pts, studies,
+                         rob_by_study=rob_map.get(oc["id"]), rob_scope=rob_scope)
         except Exception:
             logger.exception("Re-pool failed (review=%s outcome=%s)", review_id, oc["id"])
 
@@ -685,7 +813,8 @@ def run_synthesis(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
             if srow.get("screening_decision") != "include":
                 # refund extraction + RoB for excluded papers
                 if not is_admin:
-                    refund = n_outcomes * CREDIT_COST_SYNTH_EXTRACT + (CREDIT_COST_SYNTH_ROB if run_rob else 0)
+                    refund = (billable_units(n_outcomes) * CREDIT_COST_SYNTH_EXTRACT
+                              + (rob_charge(n_outcomes) if run_rob else 0))
                     if refund:
                         _refund(c, user_id, refund, f"Synthesis review {review_id}: paper {pid} excluded")
                         total_refunded += refund
@@ -707,35 +836,82 @@ def run_synthesis(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
                                                    float(oc.get("continuity_correction") or 0.5))
                     _insert_data_point(c, review_id, oc["id"], sid, r, eff)
 
-            # RoB (reuse QA tool, no re-classify)
-            if run_rob and study_type in qa_mod.STUDY_TYPE_REGISTRY:
+            # RoB (reuse QA tool, no re-classify) — once per (study x outcome).
+            # RoB 2 / ROBINS-I are outcome-specific instruments, so the same trial
+            # can be Low for mortality and High for an unblinded symptom score.
+            if run_rob and study_type not in qa_mod.STUDY_TYPE_REGISTRY:
+                for oc in outcomes:
+                    _upsert_study_rob(c, review_id, sid, oc["id"], status="unsupported",
+                                      error_message=f"no RoB tool for study type '{study_type}'")
+                log_event(c, review_id, "warn",
+                          f"No risk-of-bias tool for '{study_type}'; paper {pid} not appraised.")
+                if not is_admin:
+                    refund = rob_charge(n_outcomes)
+                    _refund(c, user_id, refund,
+                            f"Synthesis {review_id}: no RoB tool for {study_type}")
+                    total_refunded += refund
+            elif run_rob:
+                cfg = qa_mod.STUDY_TYPE_REGISTRY[study_type]
+                fields = None
                 try:
-                    _set_phase_msg(c, review_id, "appraising", f"Risk of bias: {srow.get('filename','')[:50]}")
-                    cfg = qa_mod.STUDY_TYPE_REGISTRY[study_type]
+                    # Once per paper — prefill is outcome-independent.
                     fields = annotator_mod.prefill_fields(pdf_bytes, study_type)
-                    assessed_outcome = (outcomes[0]["name"] if outcomes else
-                                        qa_mod.pick_primary_outcome(fields))
-                    rob_domains, rob_overall, rob_direction = qa_mod.appraise_rob_only(
-                        pdf_bytes, fields, classification, assessed_outcome, cfg,
-                        progress=lambda d, _c=c: log_event(_c, review_id, "progress",
-                                                           f"RoB {cfg['rob_tool']} domain {d}"))
-                    with c:
-                        c.execute(
-                            "UPDATE synthesis_studies SET rob_tool=?, rob_overall=?, rob_direction=?, rob_domains_json=? WHERE id=?",
-                            (cfg["rob_tool"], rob_overall, rob_direction, json.dumps(rob_domains), sid))
-                        c.commit()
-                    log_event(c, review_id, "progress",
-                              f"Risk of bias ({cfg['rob_tool']}): {rob_overall}")
                 except Exception:
-                    logger.exception("RoB failed (review=%s paper=%s)", review_id, pid)
-                    log_event(c, review_id, "warn", f"Risk-of-bias assessment failed for paper {pid}.")
+                    logger.exception("RoB prefill failed (review=%s paper=%s)", review_id, pid)
+                    log_event(c, review_id, "warn",
+                              f"Field extraction failed for paper {pid}; risk of bias skipped.")
+                    for oc in outcomes:
+                        _upsert_study_rob(c, review_id, sid, oc["id"], status="error",
+                                          error_message="field extraction failed")
                     if not is_admin:
-                        _refund(c, user_id, CREDIT_COST_SYNTH_ROB, f"Synthesis {review_id}: RoB failed paper {pid}")
-                        total_refunded += CREDIT_COST_SYNTH_ROB
-            elif not is_admin and run_rob:
-                # study type unsupported by any RoB tool -> refund RoB
-                _refund(c, user_id, CREDIT_COST_SYNTH_ROB, f"Synthesis {review_id}: no RoB tool for {study_type}")
-                total_refunded += CREDIT_COST_SYNTH_ROB
+                        refund = rob_charge(n_outcomes)
+                        _refund(c, user_id, refund,
+                                f"Synthesis {review_id}: RoB prefill failed paper {pid}")
+                        total_refunded += refund
+
+                if fields is not None:
+                    for oc in outcomes:
+                        assessed_outcome = ((oc["name"] or "").strip()
+                                            or qa_mod.pick_primary_outcome(fields))
+                        try:
+                            _set_phase_msg(c, review_id, "appraising",
+                                           f"Risk of bias — {oc['name'][:28]}: "
+                                           f"{srow.get('filename','')[:36]}")
+                            rob_domains, rob_overall, rob_direction = qa_mod.appraise_rob_only(
+                                pdf_bytes, fields, classification, assessed_outcome, cfg,
+                                # Domain 1 note: randomization is a per-trial property,
+                                # not a per-outcome one. Without it the same trial can
+                                # drift between outcomes on a domain that cannot differ.
+                                outcome_is_override=True,
+                                # Bind every loop variable — a bare closure would label
+                                # each event with the last outcome of the loop.
+                                progress=lambda d, _c=c, _o=oc, _t=cfg["rob_tool"]:
+                                    log_event(_c, review_id, "progress",
+                                              f"RoB {_t} · {_o['name'][:24]} · domain {d}"))
+                            _upsert_study_rob(
+                                c, review_id, sid, oc["id"],
+                                assessed_outcome=assessed_outcome, rob_tool=cfg["rob_tool"],
+                                rob_overall=rob_overall, rob_direction=rob_direction,
+                                rob_domains=rob_domains, status="ok")
+                            log_event(c, review_id, "progress",
+                                      f"Risk of bias ({cfg['rob_tool']}) for "
+                                      f"'{oc['name']}': {rob_overall}")
+                        except Exception:
+                            # One outcome failing must not cost the others.
+                            logger.exception("RoB failed (review=%s paper=%s outcome=%s)",
+                                             review_id, pid, oc["id"])
+                            _upsert_study_rob(
+                                c, review_id, sid, oc["id"],
+                                assessed_outcome=assessed_outcome, rob_tool=cfg["rob_tool"],
+                                status="error", error_message="risk-of-bias tool failed")
+                            log_event(c, review_id, "warn",
+                                      f"Risk-of-bias assessment failed for paper {pid}, "
+                                      f"outcome '{oc['name']}'.")
+                            if not is_admin:
+                                _refund(c, user_id, CREDIT_COST_SYNTH_ROB_TOOL,
+                                        f"Synthesis {review_id}: RoB failed paper {pid} "
+                                        f"outcome {oc['id']}")
+                                total_refunded += CREDIT_COST_SYNTH_ROB_TOOL
         except Exception:
             logger.exception("Extraction/RoB stage failed (review=%s paper=%s)", review_id, pid)
         finally:
@@ -830,6 +1006,31 @@ def _insert_data_point(conn, review_id, outcome_id, study_id, row, eff) -> None:
         conn.commit()
 
 
+def _upsert_study_rob(conn, review_id: int, study_id: int, outcome_id: int, *,
+                      assessed_outcome: str | None = None, rob_tool: str | None = None,
+                      rob_overall: str | None = None, rob_direction: str | None = None,
+                      rob_domains: dict | None = None, status: str = "ok",
+                      error_message: str | None = None) -> None:
+    """Write one (study x outcome) risk-of-bias judgement, replacing any prior row.
+
+    DELETE + INSERT rather than ON CONFLICT so the statement is identical on
+    PostgreSQL and SQLite, matching _write_result_row. A row is written even for
+    failures — that is what makes "appraised and failed" distinguishable from
+    "never appraised" when the pooler resolves the domain.
+    """
+    with conn:
+        conn.execute("DELETE FROM synthesis_study_rob WHERE study_id=? AND outcome_id=?",
+                     (study_id, outcome_id))
+        conn.execute(
+            """INSERT INTO synthesis_study_rob
+                 (review_id, study_id, outcome_id, assessed_outcome, rob_tool,
+                  rob_overall, rob_direction, rob_domains_json, status, error_message)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (review_id, study_id, outcome_id, assessed_outcome, rob_tool, rob_overall,
+             rob_direction, json.dumps(rob_domains or {}), status, error_message))
+        conn.commit()
+
+
 # ─────────────────────────────────────────────
 # PRISMA flow counts
 # ─────────────────────────────────────────────
@@ -877,7 +1078,8 @@ def prompt_catalog() -> dict[str, Any]:
                     "(numpy/scipy); R + Python reproduction code is emitted per outcome.",
         "credit_cost": {"screen_per_paper": CREDIT_COST_SYNTH_SCREEN,
                         "extract_per_unit": CREDIT_COST_SYNTH_EXTRACT,
-                        "rob_per_paper": CREDIT_COST_SYNTH_ROB},
+                        "rob_prefill_per_paper": CREDIT_COST_SYNTH_ROB_PREFILL,
+                        "rob_tool_per_unit": CREDIT_COST_SYNTH_ROB_TOOL},
         "eligibility_system_prompt": _ELIGIBILITY_SYSTEM,
         "screening_prompt_template": _screen_prompt({"inclusion": "...", "exclusion": "..."},
                                                     {"study_type": "..."}, {"population": "..."}),
@@ -910,15 +1112,24 @@ def flatten_for_export(conn, review_id: int) -> list[dict]:
     points = [_row_dict(r) for r in conn.execute(
         "SELECT * FROM synthesis_data_points WHERE review_id=? ORDER BY outcome_id, study_id",
         (review_id,)).fetchall()]
+    rob_map = load_rob_map(conn, review_id)
+    rev = conn.execute("SELECT rob_scope FROM synthesis_reviews WHERE id=?",
+                       (review_id,)).fetchone()
+    rob_scope = (rev["rob_scope"] if rev else None) or "study"
     rows = []
     for p in points:
         oc = outcomes.get(p["outcome_id"], {})
         st = studies.get(p["study_id"], {})
         raw = json.loads(p.get("raw_json") or "{}")
+        rob_row = rob_map.get(p["outcome_id"], {}).get(p["study_id"])
+        rob_label, rob_src = _resolve_study_rob(st, rob_row, rob_scope)
         rows.append({
             "outcome": oc.get("name"), "measure": oc.get("effect_measure"),
             "study": st.get("filename"), "study_type": st.get("study_type"),
-            "rob_overall": st.get("rob_overall"),
+            # Per (outcome x study) — these rows are already at that grain.
+            "rob_overall": rob_label,
+            "rob_tool": (rob_row or {}).get("rob_tool") or st.get("rob_tool"),
+            "rob_source": rob_src,
             "included_in_pool": p.get("included_in_pool"),
             **{f"raw_{k}": v for k, v in raw.items()},
             "yi": p.get("yi"), "vi": p.get("vi"),

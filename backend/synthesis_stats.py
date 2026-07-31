@@ -1017,6 +1017,13 @@ def influence_diagnostics(effects: Sequence[EffectSize], *,
 GRADE_LEVELS = ["High", "Moderate", "Low", "Very low"]
 
 # Per-study RoB label -> a 0..2 severity, mirroring quality_appraisal._rob_downgrade.
+#
+# Every key here is a *risk* label, so "high" means high RISK and scores 2. AMSTAR-2
+# labels must never reach this map: it rates a systematic review's *confidence*, where
+# "High" is GOOD, so a well-conducted review would score 2 and downgrade twice.
+# "Critically low" is deliberately absent for the same reason — adding it would make
+# the inverted reading look supported. AMSTAR-2 studies are excluded from the
+# risk-of-bias domain at the source instead; see `_NON_ROB_TOOLS` in backend/synthesis.py.
 _ROB_SEVERITY = {
     "low": 0,
     "low (except for concerns about uncontrolled confounding)": 0,
@@ -1039,20 +1046,40 @@ def _grade_index(level: str) -> int:
         return 0
 
 
-def _rob_across_studies(per_study_rob: Sequence[str], weights: Sequence[float] | None) -> tuple[int, str]:
-    """Weighted RoB-across-studies downgrade (0/1/2)."""
-    sev = np.array([_ROB_SEVERITY.get((r or "").strip().lower(), 1) for r in per_study_rob], float)
-    if sev.size == 0:
-        return 0, "no risk-of-bias judgements available"
-    w = np.asarray(weights, float) if weights is not None and len(weights) == sev.size else np.ones(sev.size)
+def _rob_across_studies(per_study_rob: Sequence[str],
+                        weights: Sequence[float] | None) -> tuple[int, str, bool]:
+    """Weighted RoB-across-studies downgrade. Returns ``(downgrade, reason, assessed)``.
+
+    Blank/None entries are studies with no assessable judgement — never appraised,
+    the appraisal failed, or the instrument does not produce a risk-of-bias label.
+    They are dropped and the weights renormalized over the remainder. Scoring them
+    as "some concerns" invents a finding about studies nobody looked at, and scoring
+    them "low" inflates certainty; both are fabrications, so neither is used.
+
+    ``assessed=False`` means the domain could not be rated at all. That is distinct
+    from a rating of 0: the caller must not add it into a certainty total.
+    """
+    labels = list(per_study_rob or [])
+    w_all = (np.asarray(weights, float)
+             if weights is not None and len(weights) == len(labels)
+             else np.ones(len(labels), float))
+    keep = [i for i, r in enumerate(labels) if (r or "").strip()]
+    if not keep:
+        return 0, "no risk-of-bias judgement is available for any pooled study", False
+
+    sev = np.array([_ROB_SEVERITY.get(labels[i].strip().lower(), 1) for i in keep], float)
+    w = w_all[keep]
     w = w / w.sum()
+    gap = ("" if len(keep) == len(labels) else
+           f"; {len(labels) - len(keep)} of {len(labels)} pooled studies had no assessable "
+           "judgement and are excluded from this domain")
     frac_serious = float(w[sev >= 2].sum())
     frac_some = float(w[sev >= 1].sum())
     if frac_serious >= 0.5:
-        return 2, f"most of the weight ({frac_serious:.0%}) is in studies at high/serious risk of bias"
+        return 2, f"most of the weight ({frac_serious:.0%}) is in studies at high/serious risk of bias{gap}", True
     if frac_serious >= 0.25 or frac_some >= 0.5:
-        return 1, f"a substantial share of weight ({frac_some:.0%}) is in studies with risk-of-bias concerns"
-    return 0, "most weight is in low risk-of-bias studies"
+        return 1, f"a substantial share of weight ({frac_some:.0%}) is in studies with risk-of-bias concerns{gap}", True
+    return 0, f"most weight is in low risk-of-bias studies{gap}", True
 
 
 def _inconsistency_downgrade(het: dict, subgroup: dict | None) -> tuple[int, str]:
@@ -1118,8 +1145,14 @@ def grade_body_of_evidence(*, initial: str, per_study_rob: Sequence[str],
                            is_binary: bool = False) -> dict[str, Any]:
     """Combine the five downgradeable GRADE domains into a body-of-evidence
     certainty rating. This completes the domains the per-paper Quality
-    Appraisal explicitly defers (inconsistency, publication bias)."""
-    rob_lv, rob_reason = _rob_across_studies(per_study_rob, weights)
+    Appraisal explicitly defers (inconsistency, publication bias).
+
+    Returns ``status="rated"`` with a ``final`` certainty, or ``status="not_rated"``
+    with ``final=None`` when risk of bias — a required GRADE domain — could not be
+    assessed for any pooled study. Rating such a body would be indistinguishable, in
+    the output, from rating one that was assessed and found clean.
+    """
+    rob_lv, rob_reason, rob_assessed = _rob_across_studies(per_study_rob, weights)
     inc_lv, inc_reason = _inconsistency_downgrade(heterogeneity, subgroup)
     imp_lv, imp_reason = _imprecision_downgrade(pooled, measure, total_n or 0.0,
                                                 mid_benefit, mid_harm, is_binary)
@@ -1127,13 +1160,31 @@ def grade_body_of_evidence(*, initial: str, per_study_rob: Sequence[str],
     ind_lv = max(0, int(indirectness_levels))
 
     domains = [
-        {"domain": "Risk of bias", "downgrade": rob_lv, "reason": rob_reason},
+        {"domain": "Risk of bias",
+         "downgrade": rob_lv if rob_assessed else None,
+         "assessable": rob_assessed, "reason": rob_reason},
         {"domain": "Inconsistency", "downgrade": inc_lv, "reason": inc_reason},
         {"domain": "Indirectness", "downgrade": ind_lv,
          "reason": indirectness_reason or ("no serious indirectness" if ind_lv == 0 else "indirectness concerns")},
         {"domain": "Imprecision", "downgrade": imp_lv, "reason": imp_reason},
         {"domain": "Publication bias", "downgrade": pub_lv, "reason": pub_reason},
     ]
+
+    if not rob_assessed:
+        # The pooled estimate, heterogeneity and publication-bias results are all
+        # risk-of-bias-independent and remain valid; only certainty is withheld.
+        return {
+            "initial": initial, "final": None, "status": "not_rated",
+            "total_downgrade": None, "domains": domains,
+            "warnings": ["Certainty not rated: no risk-of-bias judgement is available "
+                         "for any study in this body of evidence. Risk of bias is a "
+                         "required GRADE domain."],
+            "explanation": (
+                "Certainty could not be rated for this outcome — risk of bias, a required "
+                "GRADE domain, was not assessed for any pooled study. The pooled estimate, "
+                "heterogeneity and publication-bias results are unaffected."),
+        }
+
     total = sum(d["downgrade"] for d in domains)
     start = _grade_index(initial)
     final_idx = min(len(GRADE_LEVELS) - 1, start + total)
@@ -1144,5 +1195,5 @@ def grade_body_of_evidence(*, initial: str, per_study_rob: Sequence[str],
         explanation = f"Initial certainty {initial}; downgraded {total} level(s) for " + "; ".join(fired) + f". Final certainty: {final}."
     else:
         explanation = f"Initial certainty {initial}; no serious concerns across GRADE domains. Final certainty: {final}."
-    return {"initial": initial, "final": final, "total_downgrade": total,
-            "domains": domains, "explanation": explanation}
+    return {"initial": initial, "final": final, "status": "rated",
+            "total_downgrade": total, "domains": domains, "explanation": explanation}

@@ -295,6 +295,57 @@ class TestGrade:
         assert g["final"] == "Very low"  # cannot go below
 
 
+class TestRobAcrossStudies:
+    """The risk-of-bias domain must never invent a judgement about a study that
+    was not appraised — in either direction."""
+
+    def test_no_labels_is_not_rated(self):
+        # pool_outcome appends one entry per pooled study, so a review run with
+        # run_rob=False arrives here as [None, None, None] — not an empty list.
+        # That used to score every study "some concerns" and downgrade one level.
+        lv, reason, assessed = ss._rob_across_studies([None, None, None], [33, 33, 34])
+        assert assessed is False
+        assert lv == 0
+        assert "no risk-of-bias judgement" in reason
+
+    def test_grade_withholds_certainty_when_unassessed(self):
+        g = ss.grade_body_of_evidence(
+            initial="High", per_study_rob=[None, None], weights=[50, 50],
+            heterogeneity={"status": "ok", "I2": 0.0, "p": 0.9},
+            pooled={"ci_low": 0.2, "ci_high": 0.6}, measure="SMD", total_n=2000)
+        assert g["status"] == "not_rated"
+        assert g["final"] is None
+        assert g["total_downgrade"] is None
+        assert g["warnings"]
+
+    def test_partial_labels_renormalize_over_assessed_weight(self):
+        # The two High studies hold 20% of total weight but 100% of *assessed*
+        # weight. Scoring the unassessed 80% as "some concerns" would mask them.
+        lv, reason, assessed = ss._rob_across_studies(["High", "High", None], [10, 10, 80])
+        assert assessed is True
+        assert lv == 2
+        assert "1 of 3" in reason
+
+    def test_weighting_respects_pooled_weights(self):
+        lv, _, assessed = ss._rob_across_studies(["Low", "Low", "High"], [5, 5, 90])
+        assert (lv, assessed) == (2, True)
+
+    def test_unrecognized_label_is_present_not_absent(self):
+        # A label we cannot map is still a judgement someone made; it defaults to
+        # "some concerns". That is different from no judgement at all.
+        lv, _, assessed = ss._rob_across_studies(["Low", "banana"], [50, 50])
+        assert assessed is True
+        assert lv == 1
+
+    def test_amstar2_labels_stay_out_of_the_severity_map(self):
+        # AMSTAR-2 rates confidence (High = good). Adding entries here would make
+        # the inverted reading look supported; those studies are excluded upstream
+        # by synthesis._NON_ROB_TOOLS instead.
+        assert "critically low" not in ss._ROB_SEVERITY
+        from backend.synthesis import _NON_ROB_TOOLS
+        assert "amstar2" in _NON_ROB_TOOLS
+
+
 class TestEdgeCases:
     def test_empty(self):
         assert ss.pool([], "MD")["status"] == "no_studies"

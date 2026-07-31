@@ -493,16 +493,54 @@ function renderGrade() {
   const r = currentReview, el = document.getElementById('pane-grade');
   el.innerHTML = (r.results||[]).filter(res=>res.grade&&res.grade.domains).map(res=>{
     const oc=(r.outcomes||[]).find(o=>o.id===res.outcome_id)||{}; const g=res.grade;
-    return `<div class="card"><h3>${esc(oc.name)} — certainty: <span class="badge ${gradeCls(g.final)}">${g.final}</span></h3>
+    const notRated = g.status==='not_rated' || g.final==null;
+    const head = notRated
+      ? `<span class="badge b-some">Not rated</span>`
+      : `<span class="badge ${gradeCls(g.final)}">${esc(g.final)}</span>`;
+    const warn = (g.warnings||[]).length
+      ? `<div style="font-size:11.5px;margin-bottom:8px;color:#b45309">⚠ ${g.warnings.map(esc).join(' ')}</div>` : '';
+    return `<div class="card"><h3>${esc(oc.name)} — certainty: ${head}</h3>
+      ${warn}
       <div style="font-size:11.5px;margin-bottom:8px">${esc(g.explanation)}</div>
       <table class="grid"><thead><tr><th>Domain</th><th>Downgrade</th><th>Reason</th></tr></thead><tbody>${
-        g.domains.map(d=>`<tr><td>${esc(d.domain)}</td><td>${d.downgrade?('−'+d.downgrade):'0'}</td><td style="font-size:11px">${esc(d.reason)}</td></tr>`).join('')}
+        g.domains.map(d=>`<tr><td>${esc(d.domain)}</td><td>${d.downgrade==null?'n/a':(d.downgrade?('−'+d.downgrade):'0')}</td><td style="font-size:11px">${esc(d.reason)}</td></tr>`).join('')}
       </tbody></table>
-      <div style="margin-top:8px;font-size:11px"><b>Per-study RoB:</b> ${(r.studies||[]).filter(s=>s.screening_decision==='include'&&s.rob_overall).map(s=>`<span class="badge ${robCls(s.rob_overall)}">${esc(s.rob_overall)}</span>`).join(' ')||'—'}</div></div>`;
+      <div style="margin-top:8px;font-size:11px"><b>Risk of bias for this outcome:</b> ${robBadgesForOutcome(res.outcome_id)}</div></div>`;
   }).join('') || '<div class="empty-state">No GRADE assessment yet.</div>';
 }
+
+// Risk of bias is per (study x outcome): the same trial can be Low for mortality
+// and High for an unblinded symptom score, so these badges are filtered to the
+// outcome being graded rather than repeated from a single study-level label.
+function robBadgesForOutcome(outcomeId){
+  const r = currentReview;
+  const included = (r.studies||[]).filter(s=>s.screening_decision==='include');
+  const rows = (r.study_rob||[]).filter(x=>x.outcome_id===outcomeId);
+  const byStudy = {}; rows.forEach(x=>{ byStudy[x.study_id]=x; });
+  const out = included.map(s=>{
+    const x = byStudy[s.id];
+    const tool = (x&&x.rob_tool)||s.rob_tool||'';
+    const title = esc(`${s.filename||'study'}${tool?' — '+tool:''}`);
+    if (x && x.status==='ok' && x.rob_overall)
+      return `<span class="badge ${robCls(x.rob_overall, tool)}" title="${title}">${esc(x.rob_overall)}</span>`;
+    // Legacy reviews carry only a study-level label; anything else is genuinely
+    // unassessed and must not be shown as if it were a judgement.
+    if (!x && s.rob_overall)
+      return `<span class="badge ${robCls(s.rob_overall, s.rob_tool)}" title="${title} (study-level)">${esc(s.rob_overall)}</span>`;
+    return `<span class="badge b-some" title="${title}">not assessed</span>`;
+  });
+  return out.join(' ') || '—';
+}
 function gradeCls(g){ return g==='High'?'b-high-grade':g==='Moderate'?'b-moderate':g==='Low'?'b-some':'b-verylow'; }
-function robCls(j){ const s=(j||'').toLowerCase(); return s.startsWith('low')?'b-low':(s.includes('high')||s.includes('serious')||s.includes('critical'))?'b-high':'b-some'; }
+// Tool-aware: AMSTAR-2 rates a review's *confidence*, where "High" is good and
+// "Critically low" is bad — the reverse of every risk-of-bias scale. Colouring it
+// on the RoB scale would paint the best reviews red. It is also excluded from the
+// GRADE risk-of-bias domain server-side, so it is shown neutral here.
+function robCls(j, tool){
+  if ((tool||'').toLowerCase()==='amstar2') return 'b-some';
+  const s=(j||'').toLowerCase();
+  return s.startsWith('low')?'b-low':(s.includes('high')||s.includes('serious')||s.includes('critical'))?'b-high':'b-some';
+}
 
 function renderAnalysis() {
   const r = currentReview, el = document.getElementById('pane-analysis');
@@ -599,6 +637,24 @@ function renderPrisma(c) {
   return svg+'</svg>';
 }
 
+// One line per outcome — the instrument was run once per outcome, so collapsing
+// these to a single value would be picking one arbitrarily.
+function robDetailForStudy(s){
+  const r=currentReview;
+  const rows=(r.study_rob||[]).filter(x=>x.study_id===s.id);
+  if(!rows.length)
+    return s.rob_overall
+      ? `<span class="badge ${robCls(s.rob_overall, s.rob_tool)}">${esc(s.rob_overall)}</span> (${esc(s.rob_tool||'')}, study-level)`
+      : '—';
+  const name=id=>((r.outcomes||[]).find(o=>o.id===id)||{}).name||('outcome '+id);
+  return rows.map(x=>{
+    const badge = x.status==='ok' && x.rob_overall
+      ? `<span class="badge ${robCls(x.rob_overall, x.rob_tool)}">${esc(x.rob_overall)}</span>`
+      : `<span class="badge b-some">${esc(x.status==='unsupported'?'no tool':'failed')}</span>`;
+    return `<div style="margin-bottom:3px">${esc(name(x.outcome_id))}: ${badge} <span style="font-size:10.5px;color:var(--muted)">${esc(x.rob_tool||'')}</span></div>`;
+  }).join('');
+}
+
 // ─── detail modal (PDF.js) ───
 let pdfDoc=null;
 async function openDetail(studyId) {
@@ -609,7 +665,7 @@ async function openDetail(studyId) {
   document.getElementById('detail-content').innerHTML = `
     <div class="kv"><div class="k">Study type</div><div>${esc(s.study_type||'—')}</div>
       <div class="k">Screening</div><div><span class="badge ${s.screening_decision==='include'?'b-include':'b-exclude'}">${esc(s.screening_decision||'—')}</span></div>
-      <div class="k">Risk of bias</div><div>${s.rob_overall?`<span class="badge ${robCls(s.rob_overall)}">${esc(s.rob_overall)}</span> (${esc(s.rob_tool||'')})`:'—'}</div></div>
+      <div class="k">Risk of bias</div><div>${robDetailForStudy(s)}</div></div>
     <div style="font-size:11.5px;margin:8px 0"><b>Screening reason:</b> ${esc(s.screening_reason||'—')}</div>
     <h3 style="font-size:13px;font-family:var(--serif)">Extracted data</h3>
     ${dps.map(p=>`<div style="border:1px solid var(--border);border-radius:7px;padding:8px;margin:6px 0;font-size:11.5px">
