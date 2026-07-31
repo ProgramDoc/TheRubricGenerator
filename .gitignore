@@ -1,7 +1,13 @@
 # Runtime data (created by the app at startup — never commit these)
 papers/
+uploads/
+obsidian_vault/
 rubricgen.db
 *.db
+
+# OS / editor scratch
+.DS_Store
+.Rhistory
 
 # Python
 __pycache__/
