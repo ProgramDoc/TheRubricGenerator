@@ -130,22 +130,34 @@ def _rob_across_studies(per_study_rob: Sequence[str], weights: Optional[Sequence
     Weights the per-study RoB severities by pooled weight (falls back to equal
     weight). GRADE g4: do not average — most of the weight sitting in high/serious
     studies drives the downgrade.
+
+    Studies with no label are **dropped** and the weights renormalized over the
+    rest, matching ``synthesis_stats._rob_across_studies``. Scoring them "some
+    concerns" asserts a finding about a study nobody appraised and — because
+    unappraised studies are common — pushes ``frac_some`` past its threshold on its
+    own; scoring them "low" inflates certainty. A body where *nothing* is appraised
+    is caught earlier by ``require_rob``.
     """
-    sev = [_ROB_SEVERITY.get((r or "").strip().lower(), 1) for r in per_study_rob]
-    if not sev:
+    labelled = [(i, r) for i, r in enumerate(per_study_rob) if (r or "").strip()]
+    if not labelled:
         return 0, "no risk-of-bias judgements available"
-    if weights is not None and len(weights) == len(sev):
-        w = [float(x) for x in weights]
+    sev = [_ROB_SEVERITY.get(r.strip().lower(), 1) for _, r in labelled]
+    if weights is not None and len(weights) == len(per_study_rob):
+        w = [float(weights[i]) for i, _ in labelled]
     else:
         w = [1.0] * len(sev)
     total = sum(w) or 1.0
     frac_serious = sum(wi for wi, s in zip(w, sev) if s >= 2) / total
     frac_some = sum(wi for wi, s in zip(w, sev) if s >= 1) / total
+    n_missing = len(per_study_rob) - len(labelled)
+    gap = ("" if not n_missing else
+           f"; {n_missing} of {len(per_study_rob)} pooled studies had no assessable "
+           "judgement and are excluded from this domain")
     if frac_serious >= cfg.rob_high_weight_2:
-        return 2, f"most of the weight ({frac_serious:.0%}) is in studies at high/serious risk of bias"
+        return 2, f"most of the weight ({frac_serious:.0%}) is in studies at high/serious risk of bias{gap}"
     if frac_serious >= cfg.rob_high_weight_1 or frac_some >= cfg.rob_some_weight_1:
-        return 1, f"a substantial share of weight ({frac_some:.0%}) is in studies with risk-of-bias concerns"
-    return 0, "most weight is in low risk-of-bias studies"
+        return 1, f"a substantial share of weight ({frac_some:.0%}) is in studies with risk-of-bias concerns{gap}"
+    return 0, f"most weight is in low risk-of-bias studies{gap}"
 
 
 def _inconsistency_downgrade(k: int, i2: Optional[float], q_p: Optional[float],

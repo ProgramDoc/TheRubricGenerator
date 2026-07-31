@@ -20,6 +20,7 @@ Flow::
 
 from __future__ import annotations
 
+import json
 from typing import Any, Optional
 
 # AMSTAR-2 rates a systematic review's *confidence* as High / Moderate / Low /
@@ -36,6 +37,7 @@ EXCLUDED_ROB_TOOLS = ("amstar2",)
 
 _SQL = """
 SELECT r.paper_id       AS paper_id,
+       r.outcome_json     AS outcome_json,
        r.assessed_outcome AS assessed_outcome,
        r.primary_outcome  AS primary_outcome,
        r.rob_overall      AS rob,
@@ -47,6 +49,31 @@ SELECT r.paper_id       AS paper_id,
    AND r.rob_overall IS NOT NULL
    AND r.rob_overall <> ''
 """
+
+
+def _outcome_key(row: dict[str, Any]) -> Optional[str]:
+    """The outcome name to key ``rob_by_outcome`` on.
+
+    ``outcome_json.name`` first, because ``assessed_outcome`` is *composed* for
+    prompt quality — "Quality of life — measured as KCCQ total symptom score — at
+    8 months" — and a body of evidence is keyed on the short name ("Quality of
+    life"). Keying on the composed form makes every per-outcome lookup miss, so a
+    fully-appraised body reads as unappraised and is then refused by
+    ``require_rob``. Rows predating the per-outcome columns carry no
+    ``outcome_json`` and fall back to the older strings.
+    """
+    raw = row.get("outcome_json")
+    if raw:
+        try:
+            oc = json.loads(raw) if isinstance(raw, str) else raw
+            name = (oc or {}).get("name")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+        except (ValueError, TypeError):
+            pass
+    return ((row.get("assessed_outcome") or "").strip()
+            or (row.get("primary_outcome") or "").strip()
+            or None)
 
 
 def rob_records_for_run(
@@ -85,12 +112,7 @@ def rob_records_for_run(
         if not study_id:
             continue
 
-        # assessed_outcome is what the instrument scored (a reviewer override wins over
-        # the auto-pick); primary_outcome is the audit trail. Rows predating
-        # assessed_outcome carry only the latter.
-        outcome = (d.get("assessed_outcome") or "").strip() \
-            or (d.get("primary_outcome") or "").strip() \
-            or None
+        outcome = _outcome_key(d)
 
         records.append({
             "study_id": study_id,

@@ -44,14 +44,14 @@ def qa_run(test_user):
 
 
 def _insert(conn, run_id, paper_id, *, rob, tool="rob2",
-            assessed=None, primary=None, status="ok"):
+            assessed=None, primary=None, status="ok", outcome_json=None):
     conn.execute(
         """INSERT INTO quality_appraisal_results
              (run_id, paper_id, status, rob_tool, rob_overall,
-              assessed_outcome, primary_outcome, study_type)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+              assessed_outcome, primary_outcome, outcome_json, study_type)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (run_id, paper_id, status, tool, rob, assessed, primary,
-         "Randomized Controlled Trial"))
+         outcome_json or "{}", "Randomized Controlled Trial"))
     conn.commit()
 
 
@@ -68,6 +68,34 @@ class TestRobRecordsForRun:
         assert recs[0]["outcome"] == "All-cause mortality"
         assert recs[0]["rob"] == "Low"
         assert recs[0]["rob_source"] == "tool"
+
+    def test_keys_on_outcome_name_not_the_composed_prompt_label(self, qa_run):
+        """assessed_outcome is composed for prompt quality ("X — measured as Y — at
+        Z"); bodies of evidence are keyed on the short name. Keying on the composed
+        form makes every per-outcome lookup miss, so a fully-appraised body reads as
+        unappraised and require_rob then refuses to grade it."""
+        import json as _json
+        from backend.outcomes import outcome_label
+        from backend.evidence_synthesis.pooling_prep import attach_rob, resolve_rob
+
+        oc = {"name": "Quality of life", "measure": "KCCQ total symptom score",
+              "timing": "8 months"}
+        composed = outcome_label(oc)
+        assert composed != oc["name"], "fixture must exercise a composed label"
+
+        run_id, papers = qa_run
+        conn = get_db()
+        try:
+            _insert(conn, run_id, papers[0], rob="High", assessed=composed,
+                    outcome_json=_json.dumps(oc))
+            recs = rob_records_for_run(conn, run_id, {papers[0]: "S1"})
+        finally:
+            conn.close()
+
+        assert recs[0]["outcome"] == "Quality of life"
+        # ...and it survives the whole join, rather than degrading to "missing".
+        studies = attach_rob([{"study_id": "S1"}], recs)
+        assert resolve_rob(studies[0], {}, "Quality of life") == ("High", "tool")
 
     def test_falls_back_to_primary_outcome(self, qa_run):
         # Rows predating assessed_outcome carry only the auto-picked primary.

@@ -28,6 +28,8 @@ The overall worst-domain aggregator normalizes both labels back to plain Low for
 
 ---
 
+**Assessment scope: one assessment per (study × outcome).** This instrument rates a *result*, not a paper. Several of its signalling questions — missing outcome data, measurement of the outcome, and selection of the reported result — are answered differently for different outcomes in the same study, so one trial can be *Low* for all-cause mortality and *High* for an unblinded symptom score. Run the whole instrument once per outcome you intend to report, passing that outcome as the assessed outcome, and store one judgement per (study × outcome). Reusing a single paper-level judgement across every outcome attaches a rating to outcomes it was never made about, and nothing in the output reveals that it happened. Only the instrument call repeats: classification and field extraction that feed the prompts are outcome-independent and run once per study.
+
 ## 1. Signal answer options
 
 ROBINS-I V2 uses a richer signal vocabulary than QUADAS-2 or RoB 2. The universal 5 tokens are:
@@ -2691,7 +2693,6 @@ The per-variant trees are conservative — they map borderline answer patterns t
 - **Diagnostic test accuracy** — use QUADAS-2 or QUADAS-3 (separate tools).
 - **Systematic reviews of reviews** — use AMSTAR-2 (separate tool).
 - **GRADE indirectness + imprecision** — these are separate single-trial modules built around PICO; they are not bundled here. They are documented in full, along with the certainty ladder and the ROBINS-I → downgrade-level mapping that consumes this tool's overall judgement, in [quality_appraisal_grade_shareable.md](quality_appraisal_grade_shareable.md) — the **per-paper** rating. When this tool's per-study judgements instead feed a pooled body of evidence, the consuming component is the GRADE agent in [grade_certainty_shareable.md](grade_certainty_shareable.md), which aggregates the per-study labels by pooled weight rather than reading one paper's judgement. Note in particular that Domain 1's `Low (except for concerns about uncontrolled confounding)` / `… benchmarking)` labels must be normalised to plain `Low` by the overall aggregator before they reach that mapping.
-- **Per-outcome iteration** — assume the caller auto-picks a primary outcome (or loops `run()` per outcome with a different `primary_outcome` arg).
 - **Reviewer override UI** — the trees are deterministic; provide your own UI for human override based on the returned rationales.
 - **Quasi-experimental designs** (Uncontrolled Before-After, Interrupted Time Series, Difference-in-Differences, Regression Discontinuity) — each warrants its own confounding prompt. ROBINS-I V2 is the best-available approximation for those designs but a methodologically pure assessment would require a design-specific tool.
 

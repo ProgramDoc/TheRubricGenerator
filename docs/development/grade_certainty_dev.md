@@ -13,7 +13,12 @@ is in, and the revision history.
 - `backend/evidence_synthesis/grade_agent.py` — HTTP glue + persistence (`grade_results`)
 - `tests/test_grade.py`, `tests/test_grade_api.py`, `tests/test_rob_routing.py`
 
-**Implementation status.** Implemented on branch `claude/grade-agent`; the per-(study × outcome) risk-of-bias rework is on `claude/rob-per-outcome` (branched from it). Neither is merged to `main`, so `main` carries the methodology documents but not the code. A parallel, older implementation of the same engine exists on `claude/gracious-driscoll-a01a7d` (`backend/synthesis_stats.py`, `synthesis_agents.py`) — the two need reconciling before either merges.
+**Implementation status.** Merged to `main`. The engine lives in
+`backend/evidence_synthesis/grade.py` (renamed from `backend/synthesis/` so it can coexist with the
+Synthesis review app's `backend/synthesis.py` module). The parallel engine in
+`backend/synthesis_stats.py` is *not* a duplicate to be reconciled away — it serves the review app and
+now applies the same risk-of-bias rules; the two are kept in agreement deliberately (see the
+2026-07-31 entries).
 
 **Related documents**
 
@@ -26,6 +31,51 @@ is in, and the revision history.
 Substantive changes to the methodology, newest-first, so downstream implementations (e.g. forks maintained by other teams) can see what changed and why. Cosmetic / wording-only edits are not logged.
 
 This history lives here rather than in the shareable document: the shareable document is the methodology as a reader on another stack should implement it, with no history and no repo-internal references. Everything about *this* codebase — where the code lives, what state it is in, what changed when — belongs on this side.
+
+### 2026-07-31 — Unassessed studies dropped, not defaulted; AMSTAR-2 excluded
+
+**What changed.** Two corrections to the risk-of-bias domain, applied identically here and in the
+Synthesis review app's engine so the two cannot drift.
+
+1. A study with **no** risk-of-bias label is now **dropped** from the domain and the weights
+   renormalized over the studies that carry one, with the excluded count named in the reason string.
+   It was previously scored severity 1 ("Some concerns").
+2. **AMSTAR-2 labels must never reach the severity map**, and the map documents why: AMSTAR-2 rates a
+   review's *confidence*, where "High" is good, so its labels invert the domain. `"Critically low"` is
+   deliberately absent so it cannot quietly take the severity-1 default.
+
+**Why.** "Some concerns" for an unappraised study looks conservative but states a finding about a
+study nobody looked at, and because unappraised studies are common it pushes the `frac_some` share
+past its threshold on its own — manufacturing a downgrade out of missing data. Scoring them "Low"
+would inflate certainty instead. Dropping and renormalizing is the only option that adds no
+information. The all-missing case was already refused by `require_rob`; this fixes the partial case.
+
+**Impact.** Logic change; **stored results change on re-rating** for any body that mixes appraised and
+unappraised studies. A body of two *High* studies at 20% weight and eight unappraised at 80% moves
+from a 1-level downgrade (`frac_some` = 1.0 across defaulted labels) to a 2-level one
+(`frac_serious` = 1.0 across the assessed weight) — a different answer, and the correct one. Bodies
+where every study is appraised are unaffected.
+
+**Sections touched:** the severity-map and risk-of-bias-across-studies sections of both shareable
+cuts, plus their reference implementations.
+
+### 2026-07-31 — Per-outcome labels keyed on the outcome name, not the prompt label
+
+**What changed.** The sourcing adapter that reads appraisal rows now keys `rob_by_outcome` on the
+outcome's short `name`, not on the composed assessed-outcome string.
+
+**Why.** The assessed-outcome string is composed for prompt quality — *"Quality of life — measured as
+KCCQ total symptom score — at 8 months"* — while a body of evidence is keyed on the short name
+("Quality of life"). Keying on the composed form made every per-outcome lookup miss, so a
+**fully-appraised body resolved as unappraised** and was then refused outright by `require_rob`. The
+existing tests passed only because they supplied bare, uncomposed outcome strings.
+
+**Impact.** Bug fix. Before it, the per-(study × outcome) path could not deliver a single label to any
+body whose appraisal carried a measure or timepoint. No stored appraisal changes; what changes is
+whether the label is found.
+
+**Sections touched:** none of the methodology — this is an adapter/join-key fix. Implementers should
+note the rule: **compose for the prompt, join on the name.**
 
 ### 2026-07-31 — Risk of bias rides on the study records, per (study × outcome)
 

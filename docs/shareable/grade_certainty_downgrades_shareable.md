@@ -166,23 +166,26 @@ _ROB_SEVERITY = {
 
 def rob_across_studies(per_study_rob, weights, cfg):
     labels = list(per_study_rob)
-    sev = [_ROB_SEVERITY.get((r or "").strip().lower(), 1) for r in labels]
-    if not sev:
-        return 0, "no risk-of-bias judgements available"
-    if weights is None:
-        w = [1.0] * len(sev)
-    elif len(weights) == len(sev):
-        w = [float(x) for x in weights]
-    else:
+    if weights is not None and len(weights) != len(labels):
         # Falling back to equal weights here produced an unweighted judgement
         # indistinguishable from a weighted one. Refuse instead.
         raise ValueError("risk-of-bias labels and pooled weights differ in length")
+    # Unappraised studies are DROPPED and the weights renormalized over the rest.
+    # Scoring them "some concerns" asserts a finding about a study nobody looked
+    # at, and on its own pushes frac_some past its threshold; scoring them "low"
+    # inflates certainty. A body with no labels at all is refused by require_rob.
+    kept = [i for i, r in enumerate(labels) if (r or "").strip()]
+    if not kept:
+        return 0, "no risk-of-bias judgements available"
+    sev = [_ROB_SEVERITY.get(labels[i].strip().lower(), 1) for i in kept]
+    w = [float(weights[i]) for i in kept] if weights is not None else [1.0] * len(kept)
     total = sum(w) or 1.0
     frac_serious = sum(wi for wi, s in zip(w, sev) if s >= 2) / total
     frac_some    = sum(wi for wi, s in zip(w, sev) if s >= 1) / total
-    frac_missing = sum(wi for wi, r in zip(w, labels) if not (r or "").strip()) / total
-    tail = (f"; {frac_missing:.0%} of weight is unappraised and counted conservatively"
-            if frac_missing else "")
+    n_missing = len(labels) - len(kept)
+    tail = ("" if not n_missing else
+            f"; {n_missing} of {len(labels)} pooled studies had no assessable "
+            "judgement and are excluded from this domain")
     if frac_serious >= cfg.rob_high_weight_2:
         return 2, f"most of the weight ({frac_serious:.0%}) is in studies at high/serious risk of bias{tail}"
     if frac_serious >= cfg.rob_high_weight_1 or frac_some >= cfg.rob_some_weight_1:
@@ -190,7 +193,8 @@ def rob_across_studies(per_study_rob, weights, cfg):
     return 0, f"most weight is in low risk-of-bias studies{tail}"
 ```
 
-A study with no RoB entry defaults to severity 1 ("Some concerns") — conservative — and the share of weight that is unappraised is named in the reason string, so an unappraised body is not mistaken for an appraised clean one.
+A study with **no** RoB entry is **dropped** from this domain and the weights renormalized over the studies that do carry one; the number excluded is named in the reason string. Scoring an unappraised study "Some concerns" looks conservative but asserts a finding about a study nobody looked at, and — because unappraised studies are common — pushes the `frac_some` share past its threshold on its own; scoring it "Low" inflates certainty. Dropping is the only option that adds no information. A body where *nothing* is appraised is refused outright by `require_rob` rather than rated (§ risk-of-bias inputs).
+**Only risk-of-bias instruments may be mapped here.** AMSTAR-2 rates a systematic review's *confidence*, where "High" is **good** — the opposite polarity to every risk-of-bias scale. Its labels hit `"high": 2` and downgrade a well-conducted review two levels, and `"Critically low"` is deliberately **absent** from the map so it cannot quietly land on the severity-1 default. Exclude AMSTAR-2-appraised studies from this domain at the source instead; adding severity entries for its vocabulary would legitimize pooling systematic reviews into a body of primary-study evidence, which is a separate methodological error.
 
 **A body with no risk-of-bias input at all is an error, not a clean body.** Scoring the domain 0 in that case reports "no serious concerns" for something nobody assessed. The engine raises; a caller that deliberately grades before appraisal has finished must opt out explicitly (`require_rob=False`) and present the domain as not assessed.
 
@@ -499,19 +503,19 @@ def _initial_from_design(design_class, measure, studies):
 
 def _rob_across_studies(per_study_rob, weights, cfg):
     labels = list(per_study_rob)
-    sev = [_ROB_SEVERITY.get((r or "").strip().lower(), 1) for r in labels]
-    if not sev: return 0, "no risk-of-bias judgements available"
-    if weights is None:
-        w = [1.0] * len(sev)
-    elif len(weights) == len(sev):
-        w = [float(x) for x in weights]
-    else:
+    if weights is not None and len(weights) != len(labels):
         raise ValueError("risk-of-bias labels and pooled weights differ in length")
+    # Unappraised studies are dropped and the weights renormalized over the rest.
+    kept = [i for i, r in enumerate(labels) if (r or "").strip()]
+    if not kept: return 0, "no risk-of-bias judgements available"
+    sev = [_ROB_SEVERITY.get(labels[i].strip().lower(), 1) for i in kept]
+    w = [float(weights[i]) for i in kept] if weights is not None else [1.0] * len(kept)
     total = sum(w) or 1.0
     fs = sum(wi for wi, s in zip(w, sev) if s >= 2) / total
     fm = sum(wi for wi, s in zip(w, sev) if s >= 1) / total
-    miss = sum(wi for wi, r in zip(w, labels) if not (r or "").strip()) / total
-    tail = f"; {miss:.0%} of weight is unappraised and counted conservatively" if miss else ""
+    n_miss = len(labels) - len(kept)
+    tail = (f"; {n_miss} of {len(labels)} pooled studies had no assessable judgement "
+            "and are excluded from this domain") if n_miss else ""
     if fs >= cfg.rob_high_weight_2:
         return 2, f"most of the weight ({fs:.0%}) is in studies at high/serious risk of bias{tail}"
     if fs >= cfg.rob_high_weight_1 or fm >= cfg.rob_some_weight_1:

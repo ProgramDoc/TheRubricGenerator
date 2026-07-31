@@ -1459,11 +1459,11 @@ class TestDomain1OutcomeOverridePrompt:
             "Secondary outcome X", {}, outcome_is_override=True,
         )
         # Domain 1 picks up the override note
-        assert "non-primary outcome chosen by the reviewer" in prompt_d1
+        assert "scoped to one specific outcome" in prompt_d1
         assert "per-trial" not in prompt_d3.lower() or \
                 "randomization process for the trial as a whole" not in prompt_d3
         # Domain 3 does not get the override note (it's outcome-specific)
-        assert "non-primary outcome chosen by the reviewer" not in prompt_d3
+        assert "scoped to one specific outcome" not in prompt_d3
 
     def test_no_override_note_when_not_overridden(self):
         d1 = next(d for d in rob2.DOMAINS if d["id"] == 1)
@@ -1471,7 +1471,7 @@ class TestDomain1OutcomeOverridePrompt:
             d1, "Randomized Controlled Trial",
             "Overall survival", {}, outcome_is_override=False,
         )
-        assert "non-primary outcome chosen" not in prompt
+        assert "scoped to one specific outcome" not in prompt
 
     def test_crossover_domain1_also_gets_override_note(self):
         d1 = next(d for d in rob2_crossover.DOMAINS if d["id"] == 1)
@@ -1479,7 +1479,7 @@ class TestDomain1OutcomeOverridePrompt:
             d1, "Crossover Trial", "Secondary outcome",
             {}, outcome_is_override=True,
         )
-        assert "non-primary outcome chosen by the reviewer" in prompt
+        assert "scoped to one specific outcome" in prompt
 
 
 # ─────────────────────────────────────────────
@@ -2802,14 +2802,14 @@ class TestClusterRunShape:
         prompt = rob2_cluster.build_domain_prompt(
             d1a, "Cluster Randomized Trial", "Secondary outcome",
             {}, outcome_is_override=True)
-        assert "non-primary outcome chosen by the reviewer" in prompt
+        assert "scoped to one specific outcome" in prompt
 
     def test_other_domains_do_not_get_override_note(self):
         d1b = rob2_cluster.domains_for_aim("assignment")[1]
         prompt = rob2_cluster.build_domain_prompt(
             d1b, "Cluster Randomized Trial", "Secondary outcome",
             {}, outcome_is_override=True)
-        assert "non-primary outcome chosen by the reviewer" not in prompt
+        assert "scoped to one specific outcome" not in prompt
 
     def test_prompt_catalog_surfaces_six_domains_and_adhering_variant(self):
         cat = rob2_cluster.prompt_catalog()

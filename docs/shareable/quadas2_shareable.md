@@ -19,6 +19,8 @@ A self-contained reference for implementing an automated QUADAS-2 risk-of-bias +
 
 ---
 
+**Assessment scope: one assessment per (study × estimate).** For diagnostic accuracy the *estimate* is the unit — one estimate = one 2×2 table (subgroup × index test × threshold × reference standard × unit of analysis) — so run the instrument once per estimate and store one judgement per (study, estimate) pair. This is the diagnostic-accuracy analogue of the per-outcome rule the intervention tools follow; a paper fans out on **one** axis or the other, never both. Reusing a single paper-level judgement across estimates attaches a rating to estimates it was never made about.
+
 ## 1. Signal answer options
 
 Every signaling question accepts one of three answers:

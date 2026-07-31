@@ -14,7 +14,7 @@ is in, and the revision history.
 - `backend/evidence_synthesis/grade_prep.py` — `rob_labels_for_body()`, the pooled-order alignment, and the `quality_appraisal_results` sourcing adapter
 - `tests/test_pooling.py`, `tests/test_pooling_prep.py`, `tests/test_pooling_harmonize.py`
 
-**Implementation status.** Implemented on branch `claude/grade-agent`; not on `main`. (`claude/rob-per-outcome` is a byte-identical pointer at the same tree — it carries no risk-of-bias work of its own despite the name.)
+**Implementation status.** Merged to `main`, in `backend/evidence_synthesis/` (renamed from `backend/synthesis/` so the package coexists with the Synthesis review app's `backend/synthesis.py` module).
 
 The shareable document is byte-identical to the copy distributed in the `synthesis-` repo — keep the two in step. `main` holds the canonical copies of `pooling_meta_analysis_shareable.md` and `grade_certainty_shareable.md`; the branch's checked-in copies were re-synced from them when the risk-of-bias pass-through code landed (they had drifted, still carrying the pre-convention inline `## Revision notes` section, and the GRADE copy predated the `require_rob` / `studies[].rob` contract). If the two diverge again, `main` wins.
 
@@ -71,7 +71,7 @@ This history lives here rather than in the shareable document: the shareable doc
 
 Stored rows are untouched (three additive nullable/defaulted columns, no backfill), and single-outcome runs behave exactly as before. New multi-outcome runs raise the tier-2 hit rate for secondary bodies from zero to whatever reviewers select. Exports gain a `result_id` column, because one paper now yields several rows and `paper_id` is no longer a row key.
 
-**Sections touched:** §9.3 (of the shareable doc — the one-outcome-per-study caveat softened).
+**Sections touched:** none of the shareable doc — §9.3's caveat already covered this case ("Either appraise per outcome, or supply a study-level `rob`"); no wording change was needed.
 
 ### 2026-07-31 — Risk of bias rides on the pooled study records, per (study × outcome)
 

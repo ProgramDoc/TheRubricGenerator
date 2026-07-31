@@ -413,8 +413,8 @@ def build_domain_prompt(domain: dict[str, Any],
         # the fact that the assessed outcome is a reviewer pick, and remind the
         # LLM that randomization is per-trial (not per-outcome).
         override_note = (
-            "\n\nNote: this assessment is for a non-primary outcome chosen by the "
-            "reviewer because the paper's primary outcome was unclear. Domain 1 "
+            "\n\nNote: this assessment is scoped to one specific outcome, "
+            "selected by the reviewer. Domain 1 "
             "signaling questions concern the randomization process for the trial "
             "as a whole, not the specific outcome — answer accordingly."
         )

@@ -21,6 +21,8 @@ cluster-randomized-trial assessment on any platform. Contains:
 
 ---
 
+**Assessment scope: one assessment per (study × outcome).** This instrument rates a *result*, not a paper. Several of its signalling questions — missing outcome data, measurement of the outcome, and selection of the reported result — are answered differently for different outcomes in the same study, so one trial can be *Low* for all-cause mortality and *High* for an unblinded symptom score. Run the whole instrument once per outcome you intend to report, passing that outcome as the assessed outcome, and store one judgement per (study × outcome). Reusing a single paper-level judgement across every outcome attaches a rating to outcomes it was never made about, and nothing in the output reveals that it happened. Only the instrument call repeats: classification and field extraction that feed the prompts are outcome-independent and run once per study.
+
 ## 1. Signal answer options
 
 The LLM answers every signaling question on a 5-token scale:
@@ -569,8 +571,8 @@ The optional Domain-1a override note (appended only when the reviewer has overri
 ```text
 
 
-Note: this assessment is for a non-primary outcome chosen by the reviewer
-because the paper's primary outcome was unclear. Domain 1a signaling
+Note: this assessment is scoped to one specific outcome, selected by the
+reviewer. Domain 1a signaling
 questions concern the randomization process for the trial as a whole, not
 the specific outcome — answer accordingly.
 ```
@@ -963,8 +965,8 @@ SYSTEM_PROMPT = (
 )
 
 OVERRIDE_NOTE = (
-    "\n\nNote: this assessment is for a non-primary outcome chosen by the "
-    "reviewer because the paper's primary outcome was unclear. Domain 1a "
+    "\\n\\nNote: this assessment is scoped to one specific outcome, "
+    "selected by the reviewer. Domain 1a "
     "signaling questions concern the randomization process for the trial as a "
     "whole, not the specific outcome — answer accordingly."
 )

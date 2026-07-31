@@ -705,8 +705,8 @@ def build_domain_prompt(domain: dict[str, Any],
     override_note = ""
     if outcome_is_override and str(domain["id"]) == "1a":
         override_note = (
-            "\n\nNote: this assessment is for a non-primary outcome chosen by the "
-            "reviewer because the paper's primary outcome was unclear. Domain 1a "
+            "\n\nNote: this assessment is scoped to one specific outcome, "
+            "selected by the reviewer. Domain 1a "
             "signaling questions concern the randomization process for the trial "
             "as a whole, not the specific outcome — answer accordingly."
         )
