@@ -12,39 +12,15 @@ Contains: the full pair-wise meta-analysis methodology used by the Synthesis fea
 - Robins J, Breslow N, Greenland S. "Estimators of the Mantel-Haenszel variance…" *Biometrics* 1986;42:311-323. (M-H variance.)
 - Schünemann H, Brożek J, Guyatt G, Oxman A (eds). *GRADE Handbook.* (Body-of-evidence certainty.)
 
-**Scope.** This document covers **aggregate-data, pair-wise meta-analysis** of a single outcome at a time, where one row of data = one study × one outcome × one comparison × one timepoint. It covers screening uploaded full-text PDFs against PICO-derived eligibility, extracting the numeric data, computing per-study effect sizes, pooling, heterogeneity, publication bias, subgroup/meta-regression, sensitivity, and a body-of-evidence GRADE rating that consumes per-study risk-of-bias judgements produced by a *separate* RoB tool.
+**Scope.** This document covers **aggregate-data, pair-wise meta-analysis** of a single outcome at a time, where one row of data = one study × one outcome × one comparison × one timepoint. It covers screening uploaded full-text PDFs against PICO-derived eligibility, extracting the numeric data, computing per-study effect sizes, pooling, heterogeneity, publication bias, subgroup/meta-regression, sensitivity, and a body-of-evidence GRADE rating that consumes **per-(study × outcome)** risk-of-bias judgements produced by a *separate* RoB tool.
 
-**Out of scope.** Network (multiple-treatments) meta-analysis; individual-participant-data (IPD) meta-analysis; diagnostic-test-accuracy meta-analysis (bivariate / HSROC); dose-response meta-analysis; automated literature *searching* / de-duplication (the PRISMA identification counts are entered by the reviewer, not derived); multi-reviewer double-screening with kappa; prospective power analysis. The risk-of-bias *instruments* themselves (RoB 2, ROBINS-I, etc.) are documented in their own shareable docs — this doc only specifies how a per-study RoB rating is folded into GRADE.
+**Out of scope.** Network (multiple-treatments) meta-analysis; individual-participant-data (IPD) meta-analysis; diagnostic-test-accuracy meta-analysis (bivariate / HSROC); dose-response meta-analysis; automated literature *searching* / de-duplication (the PRISMA identification counts are entered by the reviewer, not derived); multi-reviewer double-screening with kappa; prospective power analysis. The risk-of-bias *instruments* themselves (RoB 2, ROBINS-I, etc.) are documented in their own shareable docs — this doc only specifies how a per-(study × outcome) RoB rating is folded into GRADE.
+
+**Certainty can be withheld.** The GRADE combiner in §9 does **not** always return a certainty level. When no pooled study carries a risk-of-bias judgement, it returns `final = None` with `status = "not_rated"`; and an unrateable domain carries `downgrade = None` rather than `0`. An implementation that assumes a level is always present will read "never assessed" as "assessed and clean" — see §9.4 for why that distinction is worth the extra branch. Everything else in the analysis is still returned and still valid.
 
 **Conservative-tree note.** Where a methodological choice is a matter of judgement (which τ² estimator, whether to apply Knapp-Hartung, the exact GRADE downgrade thresholds), this reference picks a defensible default and **states it inline**. Forkers may tune the thresholds; the formulas are canonical.
 
 **Computation note (production integration).** In the production platform the numbers are computed **deterministically in pure Python (numpy/scipy)** — never in R — and the platform additionally *emits* runnable R (`meta`/`metafor`) and Python scripts as a reproducibility artifact. This document is the source of truth for the Python computation; the emitted R is a convenience and is not reproduced here.
-
----
-
-## Revision notes
-
-Substantive changes to the methodology in this document, newest-first, so downstream implementations (e.g. forks maintained by other teams) can see what changed and why. Cosmetic / wording-only edits are not logged.
-
-### 2026-07-22 — Hazard ratio (time-to-event) + Paule-Mandel τ²
-
-**What changed.** Added two engine capabilities. (1) **Hazard ratio (HR)** — a time-to-event effect measure pooled on the log scale (new §3.5). It is **never derived from a 2×2 table**; it takes a reported HR + 95% CI, a reported log-HR + SE, or a log-rank O-E + variance V (Peto). Wired end-to-end: measure metadata + effect-size dispatch, the extraction field spec (`hr`/`ci_lower`/`ci_upper`, plus `o_e`/`v`), the measure registry, and R code export via `metagen(TE, seTE, sm="HR")`. (2) **Paule-Mandel τ²** — a third between-study-variance estimator (new §5 subsection) selectable via `tau2_method="PM"` alongside DL and REML; solved by bisection of the generalized-Q estimating equation `Σ wᵢ(yᵢ−μ)² = k−1`.
-
-**Why.** HR is the standard measure for survival/time-to-event outcomes (oncology, cardiology) and was previously unsupported. PM is less biased than DL under real heterogeneity and needs no likelihood optimizer, giving reviewers a robust third option.
-
-**Impact.** Purely additive — no change to any existing measure, pooling result, or the DL/REML defaults. New optional fields (`tau2_PM` in the heterogeneity dict; the HR measure and its `o_e`/`v`/`loghr`/`se` inputs). No stored results are affected.
-
-**Sections touched:** front matter (Contains), §3.5 (new), §5 (PM subsection), §10 reference implementation (`hazard_ratio`, `tau2_pm`), §11 tests.
-
-### 2026-06-12 — Initial publication
-
-**What changed.** First publication of the Synthesis meta-analysis methodology: screening + extraction prompts (§1–§2), effect-size formulas for all measures (§3), inverse-variance + Mantel-Haenszel + random-effects pooling (§4), heterogeneity (§5), publication bias (§6), subgroup + meta-regression (§7), sensitivity (§8), GRADE body-of-evidence combiner (§9), turnkey reference implementation (§10), and tests (§11).
-
-**Why.** Synthesis complements per-paper Quality Appraisal: QA assesses one study at a time and explicitly defers the GRADE domains that need a *body* of evidence (inconsistency, publication bias). Synthesis pools the body of evidence and therefore completes the GRADE picture.
-
-**Impact.** New methodology; nothing pre-existing changes. The per-study RoB rating consumed by §9 is produced by the platform's existing RoB tools (documented separately) — this doc does not alter them.
-
-**Sections touched:** all (genesis).
 
 ---
 
@@ -424,7 +400,26 @@ GRADE rates certainty for a **body of evidence** on a four-level scale `["High",
 
 This is the meta-analysis-level GRADE — distinct from a per-study GRADE — because it consumes the *pooled* heterogeneity, imprecision, and funnel asymmetry that only exist for a body of evidence.
 
-**Per-study RoB label → severity (0/1/2)** — mirrors the downgrade vocabulary of the RoB instruments:
+### 9.1 Risk of bias is assessed per (study × outcome)
+
+**The risk-of-bias label feeding this domain must be the one assessed for _this_ outcome.** RoB 2 and ROBINS-I are outcome-specific instruments: "missing outcome data", "measurement of the outcome", and "selection of the reported result" genuinely differ between outcomes reported in the same paper. One trial can be *Low* for all-cause mortality and *High* for an unblinded symptom score.
+
+So the appraisal instrument runs once per **(study × outcome)**, not once per study, and each pooled body of evidence reads the label belonging to its own outcome. Reusing one study-level label across every outcome silently rates each outcome with an appraisal made about a different one — and nothing in the output distinguishes that from a correct rating.
+
+Only the instrument call repeats per outcome. Field extraction / prefill that feeds the prompts is outcome-independent and runs once per study.
+
+**Resolution ladder** for one (study × outcome) pair:
+
+```
+1. the judgement assessed for this outcome        → use it
+2. a study-level label, ONLY for bodies appraised
+   before per-outcome appraisal existed           → use it (legacy)
+3. otherwise                                      → no label ("unassessed")
+```
+
+### 9.2 Per-study RoB label → severity (0/1/2)
+
+Mirrors the downgrade vocabulary of the RoB instruments:
 
 ```
 low / low (except …)                       → 0
@@ -433,13 +428,33 @@ some concerns / moderate / no information /
 high / serious / critical                   → 2
 ```
 
-**Risk of bias across studies** (weighted by pooled weight `w`, normalized): with `frac_serious` = weight share in severity-≥2 studies and `frac_some` = weight share in severity-≥1 studies:
+**Only risk-of-bias instruments may be mapped here.** AMSTAR-2 rates a systematic review's *confidence*, where "High" is **good** — the opposite polarity to every risk-of-bias scale. Feeding its labels into this map scores a well-conducted review as severity 2 and downgrades it two levels, and "Critically low" (absent from the map) falls to the severity-1 default — inverted twice in the same row. Exclude AMSTAR-2-appraised studies from this domain at the source rather than adding severity entries for its labels; adding them would legitimize pooling systematic reviews into a body of primary-study evidence, which is a separate methodological error.
+
+### 9.3 Risk of bias across studies
+
+Weighted by pooled weight `w`, **restricted to studies that carry a label** and renormalized over them. Studies with no assessable judgement — never appraised, appraisal failed, or appraised with a non-RoB instrument — are dropped, not scored:
 
 ```
+assessed = [i for i where label[i] is non-empty]
+if assessed is empty                        → domain NOT RATED (see §9.4)
+w = normalize(w[assessed])
+frac_serious = weight share in severity-≥2 studies
+frac_some    = weight share in severity-≥1 studies
+
 frac_serious ≥ 0.50                         → downgrade 2
 frac_serious ≥ 0.25  OR  frac_some ≥ 0.50   → downgrade 1
 otherwise                                    → 0
 ```
+
+Do **not** default an unassessed study to "some concerns": that invents a finding about a study nobody looked at, and because unassessed studies are common it drags `frac_some` over 0.50 on its own. Do not default it to "low" either — that inflates certainty. Dropping and renormalizing is the only option that adds no information. Report how many studies were excluded from the domain alongside the reason, so a reader can see the denominator.
+
+### 9.4 A body with no risk-of-bias judgement is not rated
+
+If **no** pooled study carries a label, the domain cannot be rated and neither can the outcome's certainty. Return an explicit *not rated* state (`final = None`) with a warning, rather than a certainty computed from a 0 downgrade.
+
+The rationale is that a rating of "no downgrade for risk of bias" is indistinguishable, in the output, from "assessed and found clean" — the reader cannot tell that a required GRADE domain was never evaluated. Withholding the rating is recoverable (appraise, then re-pool); a fabricated rating is not detectable.
+
+Everything else in the analysis stays valid and should still be reported: the pooled estimate, heterogeneity, publication-bias statistics and sensitivity analyses are all risk-of-bias-independent. Withhold only the certainty rating.
 
 **Inconsistency** (from I² and the Q p-value, unless explained by a significant subgroup test):
 
@@ -681,15 +696,56 @@ ROB_SEV = {"low": 0, "some concerns": 1, "moderate": 1, "no information": 1,
            "insufficient information": 1, "unclear": 1, "high": 2, "serious": 2, "critical": 2}
 def _sev(label): return ROB_SEV.get((label or "").strip().lower().split(" (")[0], 1)
 
+# Instruments that do not produce a risk-of-bias label. AMSTAR-2 rates a review's
+# *confidence* ("High" is good), so mapping it through ROB_SEV inverts the domain.
+NON_ROB_TOOLS = {"amstar2"}
+
+def resolve_study_rob(rob_for_this_outcome, study_level_rob=None, tool=None,
+                      legacy_study_scope=False):
+    """One (study x outcome) label, or None when there is nothing assessable.
+
+    None means "excluded from the risk-of-bias domain" -- never "clean".
+    """
+    if (tool or "").strip().lower() in NON_ROB_TOOLS:
+        return None
+    if (rob_for_this_outcome or "").strip():
+        return rob_for_this_outcome.strip()
+    # Only bodies appraised before per-outcome appraisal existed may fall back.
+    if legacy_study_scope and (study_level_rob or "").strip():
+        return study_level_rob.strip()
+    return None
+
+def rob_across_studies(per_study_rob, weights):
+    """Returns (downgrade, assessed). assessed=False -> the domain is not rateable.
+
+    Studies with no label are dropped and the weights renormalized over the rest:
+    scoring them "some concerns" invents a finding about a study nobody appraised
+    (and on its own pushes frac_some past 0.50), while scoring them "low" inflates
+    certainty.
+    """
+    labels = list(per_study_rob or [])
+    w_all = (np.asarray(weights, float)
+             if weights is not None and len(weights) == len(labels)
+             else np.ones(len(labels), float))
+    keep = [i for i, r in enumerate(labels) if (r or "").strip()]
+    if not keep:
+        return 0, False
+    sev = np.array([_sev(labels[i]) for i in keep], float)
+    w = w_all[keep]; w = w / w.sum()
+    fs = float(w[sev >= 2].sum())
+    fm = float(w[sev >= 1].sum())
+    return (2 if fs >= 0.5 else (1 if (fs >= 0.25 or fm >= 0.5) else 0)), True
+
 def grade_body(initial, per_study_rob, weights, het, pooled, measure, total_n,
                subgroup_p=None, egger=None, n_imputed=0, indirectness=0,
                mid_benefit=None, mid_harm=None, is_binary=False):
-    sev = np.array([_sev(r) for r in per_study_rob], float)
-    w = np.asarray(weights, float) if weights and len(weights) == sev.size else np.ones(max(sev.size, 1))
-    w = w/w.sum() if w.sum() else w
-    fs = float(w[sev >= 2].sum()) if sev.size else 0.0
-    fm = float(w[sev >= 1].sum()) if sev.size else 0.0
-    d_rob = 2 if fs >= 0.5 else (1 if (fs >= 0.25 or fm >= 0.5) else 0)
+    d_rob, rob_assessed = rob_across_studies(per_study_rob, weights)
+    if not rob_assessed:
+        # Risk of bias is a required GRADE domain. A 0 downgrade here would read
+        # as "assessed and clean". Withhold the rating instead; the pooled
+        # estimate, heterogeneity and publication-bias results stay valid.
+        return {"final": None, "status": "not_rated", "total_downgrade": None,
+                "warning": "no risk-of-bias judgement for any pooled study"}
     i2, pq = (het.get("I2") or 0.0), het.get("p", 1.0)
     if subgroup_p is not None and subgroup_p < 0.05: d_inc = 0
     elif i2 > 75 and pq < 0.10: d_inc = 1
@@ -706,7 +762,7 @@ def grade_body(initial, per_study_rob, weights, het, pooled, measure, total_n,
     d_pub = 1 if (egger and egger.get("p", 1) < 0.10) or n_imputed >= 2 else 0
     total = d_rob + d_inc + max(0, indirectness) + d_imp + d_pub
     final = GRADE[min(3, GRADE.index(initial) + total)]
-    return {"final": final, "total_downgrade": total,
+    return {"final": final, "status": "rated", "total_downgrade": total,
             "domains": {"risk_of_bias": d_rob, "inconsistency": d_inc,
                         "indirectness": indirectness, "imprecision": d_imp, "publication_bias": d_pub}}
 
@@ -771,6 +827,36 @@ g = ma.grade_body("High", ["High","High","Some concerns"], [1,1,1],
                   {"I2":80.0,"p":0.001}, {"ci_low":-0.1,"ci_high":0.6}, "SMD", 120,
                   egger={"p":0.02})
 assert g["final"] == "Very low"
+
+# Risk of bias is weighted by the pooled weights, not counted
+assert ma.rob_across_studies(["Low","Low","High"], [5,5,90]) == (2, True)
+
+# Unassessed studies are dropped and the weights renormalized: the two High
+# studies hold 20% of total weight but 100% of the *assessed* weight.
+assert ma.rob_across_studies(["High","High",None], [10,10,80]) == (2, True)
+
+# A body where nothing was appraised is not rateable. This must NOT come back
+# as a 0 downgrade: [None, None, None] is what a review run without risk of
+# bias looks like, and scoring each None "some concerns" would instead
+# manufacture a 1-level downgrade citing studies nobody appraised.
+assert ma.rob_across_studies([None, None, None], [33,33,34]) == (0, False)
+g2 = ma.grade_body("High", [None,None], [1,1], {"I2":0.0,"p":0.9},
+                   {"ci_low":0.2,"ci_high":0.6}, "SMD", 2000)
+assert g2["final"] is None and g2["status"] == "not_rated"
+
+# An unmappable label is still a judgement someone made -> "some concerns";
+# that is different from no judgement at all.
+assert ma.rob_across_studies(["Low","banana"], [50,50]) == (1, True)
+
+# Per (study x outcome) resolution: the outcome's own label wins; a study-level
+# label is only a fallback for bodies appraised before per-outcome appraisal.
+assert ma.resolve_study_rob("High", "Low") == "High"
+assert ma.resolve_study_rob(None, "Low") is None
+assert ma.resolve_study_rob(None, "Low", legacy_study_scope=True) == "Low"
+
+# AMSTAR-2 rates confidence (High = good) and must never be scored as a risk label
+assert ma.resolve_study_rob("High", tool="amstar2") is None
+assert "critically low" not in ma.ROB_SEV
 
 # Hazard ratio: reported HR + 95% CI -> log scale; not from a 2x2
 hr = ma.hazard_ratio(hr=0.75, ci_lower=0.60, ci_upper=0.94)

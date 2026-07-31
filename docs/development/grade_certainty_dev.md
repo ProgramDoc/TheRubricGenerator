@@ -7,10 +7,10 @@ is in, and the revision history.
 
 **Backing modules**
 
-- `backend/synthesis/grade.py` — `grade_body()`, the domain decision functions, `absolute_effects()`, `GradeConfig`
-- `backend/synthesis/grade_prep.py` — body ↔ judgment matching, `apply_rob_to_pooled()`
-- `backend/synthesis/grade_assess.py` — hybrid indirectness resolution, the servable entry points
-- `backend/synthesis/grade_agent.py` — HTTP glue + persistence (`grade_results`)
+- `backend/evidence_synthesis/grade.py` — `grade_body()`, the domain decision functions, `absolute_effects()`, `GradeConfig`
+- `backend/evidence_synthesis/grade_prep.py` — body ↔ judgment matching, `apply_rob_to_pooled()`
+- `backend/evidence_synthesis/grade_assess.py` — hybrid indirectness resolution, the servable entry points
+- `backend/evidence_synthesis/grade_agent.py` — HTTP glue + persistence (`grade_results`)
 - `tests/test_grade.py`, `tests/test_grade_api.py`, `tests/test_rob_routing.py`
 
 **Implementation status.** Implemented on branch `claude/grade-agent`; the per-(study × outcome) risk-of-bias rework is on `claude/rob-per-outcome` (branched from it). Neither is merged to `main`, so `main` carries the methodology documents but not the code. A parallel, older implementation of the same engine exists on `claude/gracious-driscoll-a01a7d` (`backend/synthesis_stats.py`, `synthesis_agents.py`) — the two need reconciling before either merges.

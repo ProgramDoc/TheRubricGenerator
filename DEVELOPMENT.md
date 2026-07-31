@@ -1016,6 +1016,64 @@ User syncs to local machine via Obsidian Sync/iCloud/rsync/git.
 | `FIRECRAWL_API_KEY` | For `mode='firecrawl'` and `mode='browser'` search-import | — | api.firecrawl.dev key. Without it, those modes 503 with a friendly error. `mode='fetch'` and `mode='metadata'` work without it. |
 | `FIRECRAWL_BASE_URL` | No | `https://api.firecrawl.dev` | Override if you self-host Firecrawl. |
 
+### Per-(Study × Outcome) Risk of Bias in Synthesis (July 31, 2026)
+
+The Synthesis review app ran the risk-of-bias tool **once per paper**, against whichever outcome
+happened to be first in the review (`outcomes[0]["name"]`), and then replayed that one label into
+every outcome's GRADE. RoB 2 and ROBINS-I are outcome-specific instruments — missing outcome data,
+measurement of the outcome, and selection of the reported result genuinely differ between outcomes —
+so a review of `[overall survival, PFS, grade 3-4 AEs]` rated the adverse-event body of evidence using
+the overall-survival appraisal. One trial can be Low for mortality and High for an unblinded symptom
+score, and the old design could not express that.
+
+**The change.** New `synthesis_study_rob` table, one row per (study × outcome), `UNIQUE(study_id,
+outcome_id)`. Deliberately *not* columns on `synthesis_data_points`: that table holds one row per
+clinical context (comparison × timepoint × subgroup), so a judgement stored there would be duplicated
+across rows that `PATCH /api/synthesis/data-points/{id}` can edit and the pooler can drop
+independently — and it has no row at all when extraction returns nothing, which is exactly when a
+failed-RoB record still needs somewhere to live. The worker keeps `prefill_fields` once per paper
+(outcome-independent) and loops the tool per outcome with per-outcome failure isolation, passing
+`outcome_is_override=True` so Domain 1 keeps its per-trial randomization framing across the repeated
+calls. `pool_outcome` resolves per (study × outcome) with an explicit ladder, and builds the label
+list *in the same loop* as `effects`/`weights` — the pooler drops unusable studies, so a list
+assembled anywhere else shifts by one after the first drop, silently and indistinguishably from a
+correct weighting.
+
+**Two bugs fixed in passing**, both of which fabricated GRADE domain judgements:
+
+- **`run_rob=False` silently downgraded one level.** `pool_outcome` appends one entry per pooled study,
+  so `per_study_rob` arrived as `[None, None, …]` rather than an empty list — the `sev.size == 0`
+  branch was dead code, and `_ROB_SEVERITY.get("", 1)` scored every unappraised study "some concerns",
+  giving `frac_some = 1.0` and the reason *"a substantial share of weight (100%) is in studies with
+  risk-of-bias concerns"* about studies nobody had looked at. Unassessed studies are now dropped and
+  the weights renormalized over the remainder; a body with no labels at all returns
+  `status='not_rated'` / `final=None` rather than a rating fabricated in either direction (0 inflates
+  certainty, 1 invents a finding).
+- **AMSTAR-2 polarity was inverted twice.** It rates a systematic review's *confidence*, where "High"
+  is **good**, but hit `_ROB_SEVERITY["high"] = 2` — so a high-confidence review downgraded two
+  levels — while "Critically low" was absent and fell to the severity-1 default. Excluded at the
+  source via `_NON_ROB_TOOLS` rather than given severity entries, since mapping the labels would
+  legitimize pooling systematic reviews into a body of primary-study evidence.
+
+**Credits.** Split `CREDIT_COST_SYNTH_ROB` (24/paper) into `_ROB_PREFILL` (8/paper) +
+`_ROB_TOOL` (16 per paper × outcome), because only the tool half repeats — billing 24 per outcome
+would charge 8 credits an outcome for an LLM call that is never made. `billable_units()` /
+`rob_charge()` are shared by `estimate_cost` and every refund path so pre-charge and refunds cannot
+drift. A single-outcome review still costs 24/paper; a 3-outcome review is 56.
+
+**Migration.** `synthesis_reviews.rob_scope`, backfilled to `'study'` for existing rows. This is what
+lets the pooler tell "appraised once, study-wide" apart from "not appraised" — without the backfill
+every historical review would re-pool as un-rated.
+
+**Tests** — +20 (`tests/test_synthesis_api.py`, `tests/test_synthesis_stats.py`): RoB runs once per
+outcome while prefill runs once per paper; a study Low for one outcome and High for another produces
+*different* per-outcome downgrades (the regression guard); one outcome's failure does not lose the
+others; `run_rob=False` comes back not-rated; a legacy review still grades off the study-level label;
+AMSTAR-2 rows are excluded; credit symmetry across `n_outcomes ∈ {0,1,3}`. **Full suite: 1081 passed.**
+Methodology mirrored to `docs/shareable/synthesis_meta_analysis_shareable.md` §9 for the OVID fork,
+with the revision history in the new `docs/development/synthesis_meta_analysis_dev.md` companion.
+
 ---
 
-**Last updated:** April 27, 2026
+**Last updated:** July 31, 2026
+

@@ -7,11 +7,11 @@ is in, and the revision history.
 
 **Backing modules**
 
-- `backend/synthesis/pooling.py` — `pool_outcome()`, effect sizes, τ² estimators, heterogeneity, Egger, trim-and-fill, `grade_pooling_inputs()`
-- `backend/synthesis/pooling_prep.py` — `group_into_bodies()`, `outcome_to_study_input()`, `resolve_rob()`, `attach_rob()`, `pool_body()`, `pool_extractions()`
-- `backend/synthesis/pooling_extract.py` — `pool_studies()`, the dual-mode extraction bridge
-- `backend/synthesis/pooling_harmonize.py` — outcome-label harmonization
-- `backend/synthesis/grade_prep.py` — `rob_labels_for_body()`, the pooled-order alignment, and the `quality_appraisal_results` sourcing adapter
+- `backend/evidence_synthesis/pooling.py` — `pool_outcome()`, effect sizes, τ² estimators, heterogeneity, Egger, trim-and-fill, `grade_pooling_inputs()`
+- `backend/evidence_synthesis/pooling_prep.py` — `group_into_bodies()`, `outcome_to_study_input()`, `resolve_rob()`, `attach_rob()`, `pool_body()`, `pool_extractions()`
+- `backend/evidence_synthesis/pooling_extract.py` — `pool_studies()`, the dual-mode extraction bridge
+- `backend/evidence_synthesis/pooling_harmonize.py` — outcome-label harmonization
+- `backend/evidence_synthesis/grade_prep.py` — `rob_labels_for_body()`, the pooled-order alignment, and the `quality_appraisal_results` sourcing adapter
 - `tests/test_pooling.py`, `tests/test_pooling_prep.py`, `tests/test_pooling_harmonize.py`
 
 **Implementation status.** Implemented on branch `claude/grade-agent`; not on `main`. (`claude/rob-per-outcome` is a byte-identical pointer at the same tree — it carries no risk-of-bias work of its own despite the name.)

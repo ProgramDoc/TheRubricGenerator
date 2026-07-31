@@ -7,8 +7,8 @@ is in, and the revision history.
 
 **Backing modules**
 
-- `backend/synthesis/table2.py` — assembly, `build_study_id()`, `canonicalize_metric()`
-- `backend/synthesis/table2_extract.py` — the per-study extraction pass
+- `backend/evidence_synthesis/table2.py` — assembly, `build_study_id()`, `canonicalize_metric()`
+- `backend/evidence_synthesis/table2_extract.py` — the per-study extraction pass
 
 **Implementation status.** Implemented on branch `claude/grade-agent`; not on `main`.
 
