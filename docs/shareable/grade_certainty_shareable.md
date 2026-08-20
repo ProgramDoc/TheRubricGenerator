@@ -1,6 +1,6 @@
 # GRADE Certainty (Body of Evidence) — Sharable Methodology Reference
 
-A self-contained reference for the **GRADE agent** — the body-of-evidence engine that rates the **certainty of evidence** for **one outcome** and computes its **anticipated absolute effects**. This is "Component D" of the evidence-synthesis pipeline: it consumes the pooled numbers from the pooling agent (Component B, `pooling_meta_analysis_shareable.md`), the per-study risk-of-bias ratings from a quality-appraisal step, and a few human judgments, and produces the GRADE certainty (⊕⊕⊕⊕ High → ⊕⊝⊝⊝ Very low) plus the Summary-of-Findings absolute-effect row (ASCO "Table 5"). Contains:
+A self-contained reference for the **GRADE agent** — the body-of-evidence engine that rates the **certainty of evidence** for **one outcome** and computes its **anticipated absolute effects**. This is "Component D" of the evidence-synthesis pipeline: it consumes the pooled numbers from the pooling agent (Component B, `pooling_meta_analysis_shareable.md`), the per-study risk-of-bias ratings from a quality-appraisal step, and a few human judgments, and produces the GRADE certainty (⊕⊕⊕⊕ High → ⊕⊝⊝⊝ Very low) plus the Summary-of-Findings absolute-effect row (Tom Table 5). Contains:
 
 - The **starting-certainty rule** by study design (RCT = High, non-randomized = Low, single-arm = Very low).
 - The **five downgrade domains** — risk of bias, inconsistency, indirectness, imprecision, publication bias — each as a plain-Python decision function with its exact numeric thresholds.
@@ -10,8 +10,6 @@ A self-contained reference for the **GRADE agent** — the body-of-evidence engi
 - The **pooling → GRADE hand-off contract** (which pooled numbers feed which domain).
 - The **hybrid indirectness** path — reviewer value wins; otherwise one LLM call auto-assesses PICO directness — with the exact prompt.
 - A **turnkey, dependency-free reference implementation** (`llm_call` injected only for the optional indirectness pass) and plain-`assert` test sketches.
-
-**Source.** The GRADE approach as codified in the **GRADE Handbook** (Schünemann H, Brożek J, Guyatt G, Oxman A, eds., 2013; `gdt.gradepro.org/app/handbook/handbook.html`) and the *Journal of Clinical Epidemiology* GRADE Guidelines series: **GRADE 1** (Guyatt GH et al. *Introduction.* JCE 2011;64:383–394), **GRADE 3** (Balshem H et al. *Rating the quality of evidence.* JCE 2011;64:401–406, starting certainty + levels), **GRADE 4** (Guyatt GH et al. *Rating up/down — risk of bias.* JCE 2011;64:407–415), **GRADE 5** (*Publication bias.* JCE 2011;64:1277–1282), **GRADE 6** (*Imprecision.* JCE 2011;64:1283–1293), **GRADE 7** (*Inconsistency.* JCE 2011;64:1294–1302), **GRADE 8** (*Indirectness.* JCE 2011;64:1303–1310), **GRADE 9** (*Rating up the quality — large effect / dose-response / opposing confounding.* Guyatt GH et al. JCE 2011;64:1311–1316), **GRADE 11** (deciding overall certainty), and **GRADE 12** (Guyatt GH et al. *Summary of findings tables and rating the quality — absolute effects.* JCE 2013;66:158–172).
 
 **Scope.** This document covers **only the GRADE certainty rating + absolute effects for one pooled body of evidence**. It consumes numbers; it never pools and never extracts. Out of scope:
 
