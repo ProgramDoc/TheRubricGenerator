@@ -32,6 +32,42 @@ Substantive changes to the methodology, newest-first, so downstream implementati
 
 This history lives here rather than in the shareable document: the shareable document is the methodology as a reader on another stack should implement it, with no history and no repo-internal references. Everything about *this* codebase — where the code lives, what state it is in, what changed when — belongs on this side.
 
+### 2026-08-19 — Upgrade gate keys on the design; stale "Some concerns" note removed from §11
+
+**What changed.** Two corrections prompted by an external implementer's review questions.
+
+1. **Upgrade eligibility is now derived from the body's design, not the starting certainty.**
+   `grade_body` previously computed `is_randomized = (initial == "High")`, which collapsed the
+   gate's two conditions into `initial == "Low"` alone: a randomized body whose caller pinned
+   `initial="Low"` via the `initial` parameter silently became upgrade-eligible. A new
+   `_randomized_design(design_class, studies)` helper (shared with `_initial_from_design`) reads
+   `design_class` when the pooler supplies one (`"rct"` → randomized, `"nrs"` → not), else infers
+   conservatively from the study design labels, else defaults to non-randomized — so bodies with no
+   design information keep the previous behaviour. GRADE 9 restricts rating up to observational
+   evidence *by design*, whatever the starting certainty.
+2. **The stale §11 note claiming a missing RoB label "defaults to 'Some concerns' severity" is
+   removed from both shareable cuts.** It contradicted §4.1, the reference implementation, and the
+   2026-07-31 revision below (which retired exactly that default in favour of drop-and-renormalize);
+   it was leftover text missed in that revision. §4.1 is and was authoritative. The corrected bullet
+   also states the adjacent rule that *was* true: only an unrecognized **non-blank** label falls back
+   to severity 1.
+
+**Why.** (1) closes a gate bypass reported as a technical weakness; (2) resolves a genuine internal
+contradiction that sent a downstream implementer down the wrong path.
+
+**Impact.** (1) Logic change, deliberately narrow: results change **only** for bodies whose design is
+randomized while their starting certainty was pinned to Low — previously such a body could be rated
+up, now it cannot. No stored production results are known to hit this combination; default-derived
+`initial` values are unaffected because `_initial_from_design` and the gate now share the same design
+test. The Synthesis review app's engine (`synthesis_stats.grade_body_of_evidence`) is downgrade-only
+and is untouched. (2) Documentation-only — no code implemented the stale note.
+
+**Sections touched:** interpretation callouts, §3 (starting certainty — `randomized_design` helper),
+§5.4 (the gate), §9 (reference implementation), §10 (test sketches), §11 (both bullets) of the full
+cut; §11's risk-of-bias bullet of the downgrade-only cut. Also §4.5, which now states explicitly that
+an omitted indirectness level scores 0 ("not assessed") and therefore does not close the upgrade gate
+— the caller contract is to resolve indirectness upstream for any body intended to rate up.
+
 ### 2026-07-31 — Unassessed studies dropped, not defaulted; AMSTAR-2 excluded
 
 **What changed.** Two corrections to the risk-of-bias domain, applied identically here and in the

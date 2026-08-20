@@ -143,6 +143,30 @@ class TestGradeUpgrade:
         assert g["total_upgrade"] == 0
         assert g["final"] == "High"
 
+    def test_rct_pinned_to_low_still_never_upgraded(self):
+        # Upgrade eligibility keys on the design, not the starting certainty: an RCT
+        # body whose caller pins initial="Low" must not become upgrade-eligible.
+        r = self._clean_binary(6.0, 3.0, 12.0)
+        r["design_class"] = "rct"
+        g = grade_body(r, initial="Low", per_study_rob=["Low", "Low"])
+        assert g["total_upgrade"] == 0
+        assert g["final"] == "Low"
+
+    def test_rct_design_labels_block_upgrade_without_design_class(self):
+        # Same gate via the study design labels when design_class is absent.
+        r = self._clean_binary(6.0, 3.0, 12.0)
+        r["studies"] = [{"study_id": "a", "design": "Randomized Controlled Trial"},
+                        {"study_id": "b", "design": "Randomized Controlled Trial"}]
+        g = grade_body(r, initial="Low", per_study_rob=["Low", "Low"])
+        assert g["total_upgrade"] == 0
+
+    def test_nrs_design_class_stays_upgrade_eligible(self):
+        r = self._clean_binary(3.0, 2.0, 4.5)
+        r["design_class"] = "nrs"
+        g = grade_body(r, initial="Low", per_study_rob=["Low", "Low", "Low"])
+        assert g["total_upgrade"] == 1
+        assert g["final"] == "Moderate"
+
     def test_override_pins_a_domain(self):
         r = self._clean_binary(1.2, 1.05, 1.4)
         g = grade_body(r, initial="High", per_study_rob=["Low", "Low"],

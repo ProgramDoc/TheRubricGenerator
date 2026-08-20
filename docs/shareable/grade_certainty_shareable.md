@@ -27,7 +27,7 @@ A self-contained reference for the **GRADE agent** — the body-of-evidence engi
 - **Natural scale in, natural scale out.** The pooling engine hands over the relative effect + 95% CI already **back-transformed to the natural (display) scale** (RR/OR/HR ratios; MD/SMD/RD differences). Every GRADE decision here — imprecision CI-vs-null, imprecision CI-vs-MID, large-effect magnitude, absolute effects — reads that natural-scale CI directly. The analysis-scale (log) values live in the pooled result too (`pooled.yi`) but this agent does not need them. **The null is 1.0 for ratio measures and 0.0 for difference measures.**
 - **Deterministic trees; one optional prompt.** Every downgrade/upgrade decision is deterministic arithmetic over the pooled numbers + human judgments — no model. The agent's *only* LLM touch is the **optional indirectness auto-assessment** (§7), used when the reviewer did not supply an indirectness level and a target PICO is available. With a reviewer-supplied indirectness level, the whole agent runs with **zero model calls**.
 - **Conservative-tree note.** Where GRADE's narrative allows reviewer judgement (e.g. "consider −2 for I² > 75%"), the deterministic tree takes the **more transparent, single-level** reading and surfaces the per-domain reason so a human can override via the `overrides` mechanism (§6). The tree is stricter/plainer than the prose so the logic is inspectable and testable; it is not a claim that judgement is unnecessary.
-- **The upgrade gate is real.** GRADE rates *up* only for non-randomized evidence, and only when nothing was rated down (GRADE 9). Both conditions are enforced (§5). RCT evidence is never upgraded.
+- **The upgrade gate is real.** GRADE rates *up* only for non-randomized evidence, and only when nothing was rated down (GRADE 9). Both conditions are enforced (§5). RCT evidence is never upgraded — and "non-randomized" is checked against the body's **design** (`design_class` / the study design labels), not against the starting-certainty value, so a randomized body whose caller pinned `initial="Low"` still cannot rate up.
 
 ---
 
@@ -95,19 +95,28 @@ The GRADE agent reads a single **pooled result dict** (the pooling agent's `pool
 ```python
 GRADE_LEVELS = ["High", "Moderate", "Low", "Very low"]  # index 0..3
 
+def randomized_design(design_class, studies):
+    """Whether the body's DESIGN is randomized — from design_class when the pooler
+    supplies one, else inferred conservatively from the study design labels.
+    Deliberately independent of the starting certainty: the upgrade gate (§5.4)
+    reuses this, so a randomized body pinned to a lower starting certainty is
+    still barred from rating up."""
+    dc = (design_class or "").lower()
+    if dc == "rct":
+        return True
+    if dc == "nrs":
+        return False
+    designs = " ".join(str((s or {}).get("design") or "") for s in (studies or [])).lower()
+    non_random = "non-random" in designs or "nonrandom" in designs
+    randomized = "randomized" in designs or "randomised" in designs or "rct" in designs
+    return randomized and not non_random
+
 def initial_from_design(design_class, measure, studies):
     """RCT = High, non-randomized = Low, single-arm = Very low."""
     designs = " ".join(str((s or {}).get("design") or "") for s in (studies or [])).lower()
     if "single-arm" in designs or "single arm" in designs or "dose-escalation" in designs:
         return "Very low"
-    dc = (design_class or "").lower()
-    if dc == "rct":
-        return "High"
-    if dc == "nrs":
-        return "Low"
-    non_random = "non-random" in designs or "nonrandom" in designs
-    randomized = "randomized" in designs or "randomised" in designs or "rct" in designs
-    return "High" if (randomized and not non_random) else "Low"
+    return "High" if randomized_design(design_class, studies) else "Low"
 ```
 
 Single-arm (uncontrolled) evidence starts at **Very low**: no comparator is more severe than a confounded comparison, so it starts one level below other non-randomized designs.
@@ -262,7 +271,7 @@ def pubbias_downgrade(k, egger, trim_fill, cfg):
 
 ### 4.5 Indirectness (GRADE 8) — a supplied integer (0/1/2)
 
-Indirectness is a judgement, not a computation from the pooled numbers. The engine consumes an **integer level**; §7 describes how a hybrid path fills it in (reviewer value, else one LLM call). When omitted it defaults to 0.
+Indirectness is a judgement, not a computation from the pooled numbers. The engine consumes an **integer level**; §7 describes how a hybrid path fills it in (reviewer value, else one LLM call). When omitted it defaults to 0 — i.e. "not assessed" scores as no downgrade, and therefore **does not close the upgrade gate** (§5.4). This is deliberate: the engine cannot distinguish "assessed as direct" from "nobody looked", so the caller contract is to resolve indirectness upstream (reviewer value or the §7 auto-assessment) for any body it intends to rate up.
 
 ---
 
@@ -323,11 +332,14 @@ def opposing_confounding_upgrade(opposing_confounding):
 ### 5.4 The gate
 
 ```python
+is_randomized = randomized_design(design_class, studies)   # §3 — the DESIGN, not `initial`
 can_upgrade = (not is_randomized and initial == "Low"
                and (total_downgrade == 0 or not cfg.upgrade_requires_no_downgrade))
 ```
 
 Upgrades apply only to **non-randomized** evidence starting at Low, and (by default) only when **nothing was downgraded**. RCT evidence (starts High) is never upgraded. Single-arm evidence (starts Very low) is not eligible either — only `initial == "Low"` bodies upgrade.
+
+**`is_randomized` must come from the design, never from the starting certainty.** Deriving it as `initial == "High"` makes the two gate conditions collapse into `initial == "Low"` alone, and a randomized body whose caller pinned `initial="Low"` (an override the API allows) silently becomes upgrade-eligible — GRADE 9 restricts rating up to observational evidence *by design*, whatever the starting certainty. When `design_class` is absent, `randomized_design` falls back to the study design labels and finally to non-randomized (the conservative default matching §3's starting-certainty inference).
 
 ---
 
@@ -531,16 +543,20 @@ def _grade_index(level):
     try: return GRADE_LEVELS.index(level)
     except ValueError: return 0
 
+def _randomized_design(design_class, studies):
+    dc = (design_class or "").lower()
+    if dc == "rct": return True
+    if dc == "nrs": return False
+    designs = " ".join(str((s or {}).get("design") or "") for s in (studies or [])).lower()
+    non_random = "non-random" in designs or "nonrandom" in designs
+    randomized = "randomized" in designs or "randomised" in designs or "rct" in designs
+    return randomized and not non_random
+
 def _initial_from_design(design_class, measure, studies):
     designs = " ".join(str((s or {}).get("design") or "") for s in (studies or [])).lower()
     if "single-arm" in designs or "single arm" in designs or "dose-escalation" in designs:
         return "Very low"
-    dc = (design_class or "").lower()
-    if dc == "rct": return "High"
-    if dc == "nrs": return "Low"
-    non_random = "non-random" in designs or "nonrandom" in designs
-    randomized = "randomized" in designs or "randomised" in designs or "rct" in designs
-    return "High" if (randomized and not non_random) else "Low"
+    return "High" if _randomized_design(design_class, studies) else "Low"
 
 def _rob_across_studies(per_study_rob, weights, cfg):
     labels = list(per_study_rob)
@@ -664,7 +680,8 @@ def grade_body(pool_result, *, initial=None, per_study_rob=None, weights=None, r
         ois = total_n
     if initial is None:
         initial = _initial_from_design(pool_result.get("design_class"), measure, studies)
-    is_randomized = (initial == "High")
+    # Upgrade eligibility keys on the DESIGN, not the starting certainty (§5.4).
+    is_randomized = _randomized_design(pool_result.get("design_class"), studies)
     # RoB rides on the study records (studies[].rob), attached by the pooling
     # layer; per_study_rob is an explicit positional override.
     if per_study_rob is None:
@@ -767,6 +784,11 @@ assert g["total_upgrade"] == 0
 g = grade_body(_rr_body(6.0, 3.0, 12.0), initial="High", per_study_rob=["Low", "Low"])
 assert g["total_upgrade"] == 0 and g["final"] == "High"
 
+# ...and pinning an RCT body to initial="Low" does not open the gate — eligibility
+# keys on the design, not the starting certainty.
+g = grade_body(_rr_body(6.0, 3.0, 12.0, dc="rct"), initial="Low", per_study_rob=["Low", "Low"])
+assert g["total_upgrade"] == 0 and g["final"] == "Low"
+
 # Override pins indirectness -> High minus 2 = Low.
 g = grade_body(_rr_body(1.2, 1.05, 1.4), initial="High", per_study_rob=["Low", "Low"], overrides={"indirectness": 2})
 assert g["final"] == "Low"
@@ -785,10 +807,10 @@ assert grade_body(sa, per_study_rob=["Low"])["initial"] == "Very low"
 ## 11. Implementation notes for other platforms
 
 - **Natural-scale CI is the interface.** This engine assumes the pooling layer already back-transformed ratio measures to the natural scale. If your pooler hands over log-scale CIs, back-transform (`exp`) before calling, or the null-crossing / MID / large-effect / absolute-effect logic will be wrong. The null is **1.0 for ratios, 0.0 for differences**.
-- **RoB labels are joined by study id, not by position, upstream.** Align `per_study_rob` to the pooled `studies[]` order (which carries `weight_pct`). A missing label defaults to "Some concerns" severity — decide if that default suits your review, or pass an explicit label for every study.
+- **RoB labels are joined by study id, not by position, upstream.** Align `per_study_rob` to the pooled `studies[]` order (which carries `weight_pct`). A study with a **missing** (blank) label is **dropped from the domain and the weights renormalized** over the rest, exactly as §4.1 specifies — it is *not* defaulted to "Some concerns" (an earlier revision of this document did that; it was retired because it asserts a finding about a study nobody appraised). Only an *unrecognized non-blank* label falls back to severity 1, and a body with no labels at all is refused via `require_rob` rather than rated.
 - **Weighting matters.** Risk of bias is weighted by pooled weight, not averaged; if your pooler doesn't expose per-study weights, the engine falls back to equal weights (a coarser approximation).
 - **OIS is a rule of thumb.** 300 events / 400 participants are defaults, not a computed Optimal Information Size. If you can compute a formal OIS/RIS for your outcome, override the imprecision domain (§6) or adjust `GradeConfig`.
-- **The upgrade gate is opinionated.** By default upgrades require zero downgrades and non-randomized design starting at Low. If your methodology rates up differently, flip `upgrade_requires_no_downgrade` or adjust the `can_upgrade` condition — but note this departs from GRADE 9.
+- **The upgrade gate is opinionated.** By default upgrades require zero downgrades and non-randomized design starting at Low — with "non-randomized" checked against the **design** (`randomized_design`, §5.4), never derived from the starting-certainty value. If your methodology rates up differently, flip `upgrade_requires_no_downgrade` or adjust the `can_upgrade` condition — but note this departs from GRADE 9.
 - **Indirectness is deliberately a scalar.** The hybrid auto-assessor (§7) is optional and project-specific; the canonical GRADE input is a reviewer judgement. If you skip the LLM path entirely, always pass `indirectness_levels` explicitly.
 - **Absolute effects need a baseline.** Without `baseline_risk_per_1000` (or for continuous measures) the SoF absolute column is `None` — the relative effect carries the row instead.
 

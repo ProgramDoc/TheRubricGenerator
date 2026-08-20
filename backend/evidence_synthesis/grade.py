@@ -355,23 +355,33 @@ def absolute_effects(measure: str, estimate: Optional[float], ci_lower: Optional
 # Design -> starting certainty
 # ---------------------------------------------------------------------------
 
+def _randomized_design(design_class: Optional[str],
+                       studies: Optional[Sequence[dict]]) -> bool:
+    """Whether the body's *design* is randomized — from ``design_class`` when the
+    pooler supplies one, else inferred conservatively from the study design labels.
+
+    Deliberately independent of the starting certainty: GRADE 9 restricts rating
+    up to non-randomized evidence *by design*, so an RCT body whose caller pinned
+    ``initial="Low"`` must still be barred from the upgrade domains.
+    """
+    dc = (design_class or "").lower()
+    if dc == "rct":
+        return True
+    if dc == "nrs":
+        return False
+    designs = " ".join(str((s or {}).get("design") or "") for s in (studies or [])).lower()
+    non_random = "non-random" in designs or "nonrandom" in designs
+    randomized = ("randomized" in designs or "randomised" in designs or "rct" in designs)
+    return randomized and not non_random
+
+
 def _initial_from_design(design_class: Optional[str], measure: Optional[str],
                          studies: Optional[Sequence[dict]]) -> str:
     """Starting certainty by design (g3): RCT=High, NRS=Low, single-arm=Very low."""
     designs = " ".join(str((s or {}).get("design") or "") for s in (studies or [])).lower()
     if "single-arm" in designs or "single arm" in designs or "dose-escalation" in designs:
         return "Very low"
-    dc = (design_class or "").lower()
-    if dc == "rct":
-        return "High"
-    if dc == "nrs":
-        return "Low"
-    # Unknown design class — infer conservatively from any study design labels.
-    non_random = "non-random" in designs or "nonrandom" in designs
-    randomized = ("randomized" in designs or "randomised" in designs or "rct" in designs)
-    if randomized and not non_random:
-        return "High"
-    return "Low"
+    return "High" if _randomized_design(design_class, studies) else "Low"
 
 
 # ---------------------------------------------------------------------------
@@ -452,7 +462,10 @@ def grade_body(pool_result: dict[str, Any], *,
 
     if initial is None:
         initial = _initial_from_design(pool_result.get("design_class"), measure, studies)
-    is_randomized = (initial == "High")
+    # Upgrade eligibility keys on the DESIGN, not on the starting certainty: an RCT
+    # body whose caller pinned initial="Low" is still randomized evidence and GRADE 9
+    # never rates it up.
+    is_randomized = _randomized_design(pool_result.get("design_class"), studies)
 
     # Risk of bias arrives ON the study records, not as a parallel list: the pooler
     # drops studies without usable data, so the pooled order is not the input order and
