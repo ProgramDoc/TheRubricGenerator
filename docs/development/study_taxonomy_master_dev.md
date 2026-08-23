@@ -22,6 +22,10 @@ Internal companion to [`../shareable/study_taxonomy_master_shareable.md`](../sha
 
 Substantive changes to the shareable methodology are logged here, newest-first, so downstream implementations (e.g. forks maintained by other teams) can see what changed and why. Cosmetic / wording-only edits are not logged.
 
+### 2026-08-23 — Consolidated code appendix
+
+- Added shareable §12: every reference implementation and test sketch from the 11 companion shareable docs, transcribed verbatim (~7,800 code lines; extraction is scripted section-matching on "Reference implementation" / "test sketches" headings, plus pooling's assembly bridge and ROBINS-I V1's §19 single-arm adaptation, which are code not contained in their docs' main modules). Companions stay documents of record; the downgrades-only GRADE draft is noted as a subset rather than duplicated. One inherited repo-path reference inside `robins_i_v1_shareable.md`'s prompt placeholder was neutralized in the master's copy (the companion itself still carries it — known pre-existing convention violation).
+
 ### 2026-08-23 — Initial consolidated release
 
 - Created the master shareable doc unifying the OGAI taxonomy lineage (site v1.9, rubric v1.8, extraction v1.6, pipeline rubric v3.1) with the platform lineage (annotator taxonomy v2.1, 13-type appraisal registry).
