@@ -19,10 +19,10 @@ Explicitly **out of scope**: verbatim signaling-question and checklist-item text
 > **Deployment-status convention — read this first.**
 > This document deliberately mixes two kinds of content, and every section is tagged so a reader always knows which they are looking at:
 >
-> - **⚙ Deployed** — behavior a working implementation exhibits today. Prompts marked ⚙ are transcribed verbatim from the production agents.
-> - **📐 Reference** — methodology specified by the OGAI rubric that a *complete* implementation should exhibit, but which the current deployed agents implement only partially or not at all. 📐 material is not speculative — it is the design target — but a reader replicating "what the platform does" should implement the ⚙ parts first and treat 📐 parts as the roadmap.
+> - **Deployed** — behavior a working implementation exhibits today. Prompts tagged *deployed* are transcribed verbatim from the production agents.
+> - **Reference** — methodology specified by the OGAI rubric that a *complete* implementation should exhibit, but which the current deployed agents implement only partially or not at all. Reference material is not speculative — it is the design target — but a reader replicating "what the platform does" should implement the deployed parts first and treat reference parts as the roadmap.
 >
-> The flagship example: the deployed classification agent (§3.11, ⚙) is a single taxonomy-constrained prompt returning three keys, while the full classification rubric (§3.1–3.10, 📐) adds primacy rules, design-feature cross-validation, confusion-pair disambiguation, and mismatch documentation.
+> The flagship example: the deployed classification agent (§3.11, deployed) is a single taxonomy-constrained prompt returning three keys, while the full classification rubric (§3.1–3.10, reference) adds primacy rules, design-feature cross-validation, confusion-pair disambiguation, and mismatch documentation.
 
 ---
 
@@ -35,12 +35,13 @@ PAPER (PDF)
    │
    ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ CLASSIFICATION AGENT (§3)                                     │
-│ study type within the unified taxonomy (§2)                   │
-│ ⚙ taxonomy-constrained prompt → {major_category, subcategory, │
-│    study_type}                                                │
-│ 📐 + primacy rules, 11 design features, confusion pairs,      │
-│    author-label concordance, confidence + alternative          │
+│ CLASSIFICATION AGENT (§3)                                    │
+│ study type within the unified taxonomy (§2)                  │
+│ deployed: taxonomy-constrained prompt →                      │
+│    {major_category, subcategory, study_type}                 │
+│ reference adds: primacy rules, 11 design features,           │
+│    confusion pairs, author-label concordance,                │
+│    confidence + alternative                                  │
 └──────────┬───────────────────────────────────────────────────┘
            │
      ┌─────┴──────┐
@@ -49,62 +50,63 @@ PAPER (PDF)
            │
            ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ EXTRACTION AGENT (§4)                                         │
-│ Layer 1 universal fields (32, 8 groups)                       │
-│ Layer 2 type-specific fields (per study type, RoB-aligned)    │
-│ Layer 3 design modifiers (cross-cutting overlays)             │
-│ 📐 + classification-validation block, red-flag re-routing     │
+│ EXTRACTION AGENT (§4)                                        │
+│ Layer 1 universal fields (32, 8 groups)                      │
+│ Layer 2 type-specific fields (per study type, RoB-aligned)   │
+│ Layer 3 design modifiers (cross-cutting overlays)            │
+│ reference adds: classification-validation block,             │
+│    red-flag re-routing                                       │
 └──────────┬───────────────────────────────────────────────────┘
            │
            ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ QUALITY-APPRAISAL AGENTS — per (study × outcome) unit (§5)    │
-│ • Outcome extraction → the outcome axis (§8.4)                │
-│ • Risk-of-bias tool matched to the study type (§6)            │
-│ • Reporting-guideline adherence check (§7)                    │
-│ • GRADE indirectness + imprecision (§8.1–8.2)                 │
-│ • Per-paper GRADE combiner (§8.3)                             │
+│ QUALITY-APPRAISAL AGENTS — per (study × outcome) unit (§5)   │
+│ • Outcome extraction → the outcome axis (§8.4)               │
+│ • Risk-of-bias tool matched to the study type (§6)           │
+│ • Reporting-guideline adherence check (§7)                   │
+│ • GRADE indirectness + imprecision (§8.1–8.2)                │
+│ • Per-paper GRADE combiner (§8.3)                            │
 └──────────┬───────────────────────────────────────────────────┘
            │  many appraised studies
            ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ EVIDENCE-SYNTHESIS AGENTS — per body of evidence (§9)         │
-│ • Per-study evidence table (Table 2)                          │
-│ • Pooling / meta-analysis                                     │
-│ • Body-of-evidence GRADE agent (all 5 + 3 domains)            │
-│ • Systematic-review synthesis pipeline                        │
+│ EVIDENCE-SYNTHESIS AGENTS — per body of evidence (§9)        │
+│ • Per-study evidence table (Table 2)                         │
+│ • Pooling / meta-analysis                                    │
+│ • Body-of-evidence GRADE agent (all 5 + 3 domains)           │
+│ • Systematic-review synthesis pipeline                       │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 Two design principles run through the whole pipeline:
 
 1. **Classification exists to drive correct appraisal.** The study type is not an end in itself — it selects the extraction template, the risk-of-bias instrument, the reporting guideline, and the starting GRADE certainty. When classification is ambiguous, the tiebreaker is always: *which risk-of-bias tool must be used to properly evaluate this study?*
-2. **Misclassification is caught and corrected rather than silently propagated** (📐). Downstream stages carry validation hooks — design-feature consistency checks at classification time, red-flag blocks at extraction time, domain-applicability checks at appraisal time — that can send a study back for re-routing or human review.
+2. **Misclassification is caught and corrected rather than silently propagated** (reference). Downstream stages carry validation hooks — design-feature consistency checks at classification time, red-flag blocks at extraction time, domain-applicability checks at appraisal time — that can send a study back for re-routing or human review.
 
 ### 1.2 The agent roster
 
 | # | Agent | Unit of work | Status | Methodology of record |
 |---|-------|--------------|--------|----------------------|
-| 1 | Study classification | one paper → study type | ⚙ + 📐 rubric | **this document** §3 |
-| 2 | Field extraction (three-layer) | one paper → structured fields | ⚙ + 📐 validation | **this document** §4 |
-| 3 | Outcome extraction | one paper → appraisable outcome list | ⚙ | `outcome_extraction_shareable.md` |
-| 4 | RoB 2 (parallel-group RCT) | (study × outcome) | ⚙ | **this document** §6.1 *(standalone pending)* |
-| 5 | RoB 2 cross-over extension | (study × outcome) | ⚙ | `rob2_crossover_shareable.md` |
-| 6 | RoB 2 cluster extension (CRT) | (study × outcome) | ⚙ | `rob2_cluster_shareable.md` |
-| 7 | ROBINS-I V2 (incl. single-arm variant) | (study × outcome) | ⚙ | `robins_i_v2_shareable.md` |
-| 8 | ROBINS-I V1 (opt-in; incl. single-arm variant) | (study × outcome) | ⚙ | `robins_i_v1_shareable.md` |
-| 9 | QUADAS-2 | (study × estimate) | ⚙ | `quadas2_shareable.md` |
-| 10 | QUADAS-3 v1.2 | (study × estimate) | ⚙ | **this document** §6.6 *(standalone pending)* |
-| 11 | AMSTAR-2 | one systematic review | ⚙ | **this document** §6.8 *(standalone pending)* |
-| 12 | Reporting-guideline checkers (CONSORT 2025, CONSORT cross-over, CONSORT cluster, STROBE, STARD 2015, PRISMA 2020) | one paper | ⚙ | **this document** §7 *(standalones pending; cross-over/cluster companions exist — see §7.3)* |
-| 13 | GRADE indirectness (per-paper) | (study × outcome) | ⚙ | `quality_appraisal_grade_shareable.md` §4 |
-| 14 | GRADE imprecision (per-paper) | (study × outcome) | ⚙ | `quality_appraisal_grade_shareable.md` §5 |
-| 15 | Per-paper GRADE combiner | (study × outcome) | ⚙ | `quality_appraisal_grade_shareable.md` §§1–3, 6 |
-| 16 | Pooling / meta-analysis agent | body of evidence (outcome × comparison × design class) | ⚙ | `pooling_meta_analysis_shareable.md` |
-| 17 | Per-study evidence table (Table 2) | study × outcome × comparison × timepoint rows | ⚙ | `table2_evidence_table_shareable.md` |
-| 18 | Body-of-evidence GRADE agent | one pooled outcome | ⚙ | `grade_certainty_shareable.md` |
-| 19 | Systematic-review synthesis pipeline | one review (screen → extract → RoB → pool → GRADE) | ⚙ | `synthesis_meta_analysis_shareable.md` |
-| — | EPOC, NOS/ROBINS-E, QUIPS, PROBAST, JBI, AXIS, CASP, MMAT, CHEC, STROBE-MR, SCCS-checklist tools | (study × outcome) | 📐 routed, not built | routing rows in §2.3 |
+| 1 | Study classification | one paper → study type | deployed + reference rubric | **this document** §3 |
+| 2 | Field extraction (three-layer) | one paper → structured fields | deployed + reference validation | **this document** §4 |
+| 3 | Outcome extraction | one paper → appraisable outcome list | deployed | `outcome_extraction_shareable.md` |
+| 4 | RoB 2 (parallel-group RCT) | (study × outcome) | deployed | **this document** §6.1 *(standalone pending)* |
+| 5 | RoB 2 cross-over extension | (study × outcome) | deployed | `rob2_crossover_shareable.md` |
+| 6 | RoB 2 cluster extension (CRT) | (study × outcome) | deployed | `rob2_cluster_shareable.md` |
+| 7 | ROBINS-I V2 (incl. single-arm variant) | (study × outcome) | deployed | `robins_i_v2_shareable.md` |
+| 8 | ROBINS-I V1 (opt-in; incl. single-arm variant) | (study × outcome) | deployed | `robins_i_v1_shareable.md` |
+| 9 | QUADAS-2 | (study × estimate) | deployed | `quadas2_shareable.md` |
+| 10 | QUADAS-3 v1.2 | (study × estimate) | deployed | **this document** §6.6 *(standalone pending)* |
+| 11 | AMSTAR-2 | one systematic review | deployed | **this document** §6.8 *(standalone pending)* |
+| 12 | Reporting-guideline checkers (CONSORT 2025, CONSORT cross-over, CONSORT cluster, STROBE, STARD 2015, PRISMA 2020) | one paper | deployed | **this document** §7 *(standalones pending; cross-over/cluster companions exist — see §7.3)* |
+| 13 | GRADE indirectness (per-paper) | (study × outcome) | deployed | `quality_appraisal_grade_shareable.md` §4 |
+| 14 | GRADE imprecision (per-paper) | (study × outcome) | deployed | `quality_appraisal_grade_shareable.md` §5 |
+| 15 | Per-paper GRADE combiner | (study × outcome) | deployed | `quality_appraisal_grade_shareable.md` §§1–3, 6 |
+| 16 | Pooling / meta-analysis agent | body of evidence (outcome × comparison × design class) | deployed | `pooling_meta_analysis_shareable.md` |
+| 17 | Per-study evidence table (Table 2) | study × outcome × comparison × timepoint rows | deployed | `table2_evidence_table_shareable.md` |
+| 18 | Body-of-evidence GRADE agent | one pooled outcome | deployed | `grade_certainty_shareable.md` |
+| 19 | Systematic-review synthesis pipeline | one review (screen → extract → RoB → pool → GRADE) | deployed | `synthesis_meta_analysis_shareable.md` |
+| — | EPOC, NOS/ROBINS-E, QUIPS, PROBAST, JBI, AXIS, CASP, MMAT, CHEC, STROBE-MR, SCCS-checklist tools | (study × outcome) | reference (routed, not built) | routing rows in §2.3 |
 
 ### 1.3 Companion documents
 
@@ -123,9 +125,9 @@ Two taxonomy versions were maintained in parallel and have now converged to near
 
 This document canonicalizes the **union: 34 study types** across 5 major categories. Each type below carries its deployment status:
 
-- **A — appraisable ⚙**: classification + extraction + full quality-appraisal pipeline deployed (the 13 registry types).
-- **C — classify/extract ⚙**: the deployed classifier can assign the type and (for most) type-specific extraction fields exist, but appraisal routing is 📐 (the study is marked *skipped* by the appraisal orchestrator, with the charge refunded).
-- **T — taxonomy-only 📐**: in the unified tree, but not yet in the deployed classifier's taxonomy prompt.
+- **A — appraisable (deployed)**: classification + extraction + full quality-appraisal pipeline deployed (the 13 registry types).
+- **C — classify/extract (deployed)**: the deployed classifier can assign the type and (for most) type-specific extraction fields exist, but appraisal routing is reference-only (the study is marked *skipped* by the appraisal orchestrator, with the charge refunded).
+- **T — taxonomy-only (reference)**: in the unified tree, but not yet in the deployed classifier's taxonomy prompt.
 
 ### 2.2 The unified tree (34 types)
 
@@ -135,7 +137,7 @@ Study Designs
 │   ├── Randomized Controlled
 │   │   ├── Randomized Controlled Trial        [A]
 │   │   ├── Cluster Randomized Trial           [A]  (parallel-cluster; subtypes §2.4)
-│   │   ├── Stepped-Wedge Cluster RCT          [C]  (appraisal 📐 — see §2.4)
+│   │   ├── Stepped-Wedge Cluster RCT          [C]  (appraisal reference-only — see §2.4)
 │   │   └── Crossover Trial                    [A]
 │   ├── Non-Randomized Controlled
 │   │   └── Non-Randomized Trial               [A]
@@ -186,46 +188,46 @@ Study Designs
 
 ### 2.3 The master routing table
 
-One row per unified type: risk-of-bias tool → reporting guideline → initial GRADE certainty → status. ⚙ rows are deployed exactly as stated; 📐 rows carry the OGAI routing map's assignment for implementers who extend coverage.
+One row per unified type: risk-of-bias tool → reporting guideline → initial GRADE certainty → status. Deployed rows are exact; reference rows carry the OGAI routing map's assignment for implementers who extend coverage.
 
 | Study type | RoB tool | Reporting guideline | Initial GRADE | Status |
 |---|---|---|---|---|
-| Randomized Controlled Trial | RoB 2 (2019) | CONSORT 2025 | High | **A ⚙** |
-| Cluster Randomized Trial | RoB 2 cluster ext. (2021) | CONSORT + cluster ext. (Campbell 2012) | High | **A ⚙** |
-| Crossover Trial | RoB 2 cross-over ext. | CONSORT + cross-over ext. (Dwan 2019) | High | **A ⚙** |
-| Stepped-Wedge Cluster RCT | RoB 2 cluster + SW considerations 📐 | CONSORT stepped-wedge ext. 📐 | High | C (appraisal 📐 — §2.4) |
-| Non-Randomized Trial | ROBINS-I V2 (V1 opt-in) | STROBE | Low | **A ⚙** |
-| Single-Arm Trial | ROBINS-I V2/V1 single-arm variant | STROBE (pragmatic reuse) | Very low | **A ⚙** |
-| Dose-Escalation Study | ROBINS-I V2/V1 single-arm variant | STROBE (pragmatic reuse) | Very low | **A ⚙** |
-| Interrupted Time Series | EPOC criteria 📐 | EPOC / STROBE 📐 | Low | C |
-| Controlled Before-After | EPOC criteria 📐 | EPOC / STROBE 📐 | Low | T 📐 |
-| Uncontrolled Before-After | EPOC criteria 📐 | EPOC / STROBE 📐 | Very Low | C |
-| Difference-in-Differences | ROBINS-I 📐 | STROBE 📐 | Low | C |
-| Regression Discontinuity | ROBINS-I 📐 | STROBE 📐 | Low | C |
-| Cohort Study | ROBINS-I V2 (V1 opt-in) | STROBE | Low | **A ⚙** |
-| Case-Control | ROBINS-I V2 (V1 opt-in) | STROBE | Low | **A ⚙** |
-| Cross-Sectional (Analytical) | ROBINS-I V2 (approximation) | STROBE | Low | **A ⚙** |
-| Case-Crossover | ROBINS-I V2 (approximation) | STROBE | Low | **A ⚙** |
-| Self-Controlled Case Series | adapted ROBINS-I / SCCS checklist 📐 | SCCS guidelines 📐 | Low | C |
-| Mendelian Randomization | STROBE-MR checklist 📐 | STROBE-MR 📐 | Low | C |
-| Case Report / Series | JBI / CARE checklist 📐 | CARE / PROCESS 📐 | Very Low / N-A | C |
-| Cross-Sectional (Descriptive) | AXIS / JBI 📐 | STROBE 📐 | N/A | C |
-| Ecological Study | adapted NOS 📐 | STROBE 📐 | Very Low | C |
-| Diagnostic Accuracy | QUADAS-3 v1.2 (default) or QUADAS-2 (per-run toggle) | STARD 2015 | High (accuracy framework) | **A ⚙** |
-| Prognostic Factor Study | QUIPS 📐 | REMARK 📐 | Low (modified GRADE) | C |
-| Prediction Model Study | PROBAST 📐 | TRIPOD 📐 | separate framework | C |
-| SR with Meta-Analysis | AMSTAR-2 | PRISMA 2020 | none (confidence rating instead) | **A ⚙** |
-| SR without Meta-Analysis | AMSTAR-2 | PRISMA 2020 | none (confidence rating instead) | **A ⚙** |
-| Umbrella Review | AMSTAR-2 📐 | PRISMA 📐 | depends on included reviews | C |
-| Network Meta-Analysis | AMSTAR-2 + CINeMA 📐 | PRISMA-NMA 📐 | NMA framework | C |
-| Scoping Review | none (typically) | PRISMA-ScR 📐 | N/A | C |
+| Randomized Controlled Trial | RoB 2 (2019) | CONSORT 2025 | High | **A (deployed)** |
+| Cluster Randomized Trial | RoB 2 cluster ext. (2021) | CONSORT + cluster ext. (Campbell 2012) | High | **A (deployed)** |
+| Crossover Trial | RoB 2 cross-over ext. | CONSORT + cross-over ext. (Dwan 2019) | High | **A (deployed)** |
+| Stepped-Wedge Cluster RCT | RoB 2 cluster + SW considerations (reference) | CONSORT stepped-wedge ext. (reference) | High | C (appraisal reference-only — §2.4) |
+| Non-Randomized Trial | ROBINS-I V2 (V1 opt-in) | STROBE | Low | **A (deployed)** |
+| Single-Arm Trial | ROBINS-I V2/V1 single-arm variant | STROBE (pragmatic reuse) | Very low | **A (deployed)** |
+| Dose-Escalation Study | ROBINS-I V2/V1 single-arm variant | STROBE (pragmatic reuse) | Very low | **A (deployed)** |
+| Interrupted Time Series | EPOC criteria (reference) | EPOC / STROBE (reference) | Low | C |
+| Controlled Before-After | EPOC criteria (reference) | EPOC / STROBE (reference) | Low | T (reference) |
+| Uncontrolled Before-After | EPOC criteria (reference) | EPOC / STROBE (reference) | Very Low | C |
+| Difference-in-Differences | ROBINS-I (reference) | STROBE (reference) | Low | C |
+| Regression Discontinuity | ROBINS-I (reference) | STROBE (reference) | Low | C |
+| Cohort Study | ROBINS-I V2 (V1 opt-in) | STROBE | Low | **A (deployed)** |
+| Case-Control | ROBINS-I V2 (V1 opt-in) | STROBE | Low | **A (deployed)** |
+| Cross-Sectional (Analytical) | ROBINS-I V2 (approximation) | STROBE | Low | **A (deployed)** |
+| Case-Crossover | ROBINS-I V2 (approximation) | STROBE | Low | **A (deployed)** |
+| Self-Controlled Case Series | adapted ROBINS-I / SCCS checklist (reference) | SCCS guidelines (reference) | Low | C |
+| Mendelian Randomization | STROBE-MR checklist (reference) | STROBE-MR (reference) | Low | C |
+| Case Report / Series | JBI / CARE checklist (reference) | CARE / PROCESS (reference) | Very Low / N-A | C |
+| Cross-Sectional (Descriptive) | AXIS / JBI (reference) | STROBE (reference) | N/A | C |
+| Ecological Study | adapted NOS (reference) | STROBE (reference) | Very Low | C |
+| Diagnostic Accuracy | QUADAS-3 v1.2 (default) or QUADAS-2 (per-run toggle) | STARD 2015 | High (accuracy framework) | **A (deployed)** |
+| Prognostic Factor Study | QUIPS (reference) | REMARK (reference) | Low (modified GRADE) | C |
+| Prediction Model Study | PROBAST (reference) | TRIPOD (reference) | separate framework | C |
+| SR with Meta-Analysis | AMSTAR-2 | PRISMA 2020 | none (confidence rating instead) | **A (deployed)** |
+| SR without Meta-Analysis | AMSTAR-2 | PRISMA 2020 | none (confidence rating instead) | **A (deployed)** |
+| Umbrella Review | AMSTAR-2 (reference) | PRISMA (reference) | depends on included reviews | C |
+| Network Meta-Analysis | AMSTAR-2 + CINeMA (reference) | PRISMA-NMA (reference) | NMA framework | C |
+| Scoping Review | none (typically) | PRISMA-ScR (reference) | N/A | C |
 | Narrative Review | none | none standardized | N/A | C |
-| Guideline / Consensus | AGREE II 📐 | — | N/A | C |
-| Qualitative Research | CASP Qualitative 📐 | COREQ / SRQR 📐 | GRADE-CERQual 📐 | C |
-| Mixed Methods | MMAT 📐 | GRAMMS 📐 | per component | C |
-| Economic Evaluation | CHEC / Drummond 📐 | CHEERS 📐 | separate framework | C |
+| Guideline / Consensus | AGREE II (reference) | — | N/A | C |
+| Qualitative Research | CASP Qualitative (reference) | COREQ / SRQR (reference) | GRADE-CERQual (reference) | C |
+| Mixed Methods | MMAT (reference) | GRAMMS (reference) | per component | C |
+| Economic Evaluation | CHEC / Drummond (reference) | CHEERS (reference) | separate framework | C |
 
-Notes on the ⚙ rows:
+Notes on the deployed rows:
 
 - **Uncontrolled designs start at Very low**, one step below confounded-comparison designs: the absence of *any* comparator is a more severe limitation than a confounded comparison, and the GRADE combiner clamps further downgrades at Very low.
 - **Diagnostic Accuracy starts at High** per the GRADE handbook's treatment of cross-sectional accuracy designs; case-control accuracy designs are downgraded through the participant-selection domain of the QUADAS tools rather than through a lower starting level. PICO-style indirectness and imprecision are *skipped* for accuracy studies — those modules assume treatment trials, not PIRT (Patient / Index test / Reference standard / Target condition) questions.
@@ -236,11 +238,11 @@ Notes on the ⚙ rows:
 
 The cluster family has three subtypes; the two lineages handle them differently, and the union keeps both views coherent:
 
-- **Parallel cluster RCT** — clusters randomized once to an arm and stay there. This is the deployed **Cluster Randomized Trial** type: RoB 2 cluster extension (Domain 1a randomization + the cluster-specific Domain 1b identification/recruitment-timing) + CONSORT cluster extension. ⚙
-- **Stepped-Wedge Cluster RCT** — all clusters begin in control and cross over to intervention at *randomized* time points. Kept as its own classify-able type (the deployed classifier can assign it; extraction reuses the cluster field set), but **appraisal is deliberately not routed**: the published RoB 2 CRT cribsheet covers only parallel cluster trials, and stepped-wedge needs an additional time-trend / time-period-confounding treatment. Reference guidance (📐): assess whether crossover *timing* was truly randomized (Domain 1); recruitment practices may differ between control and intervention periods within a cluster (1b); awareness of upcoming crossover may change behavior in late control periods (Domain 2); multiple plausible correlation-structure / time-trend model specifications inflate selective-reporting risk (Domain 5); consider GRADE downgrades for time-period confounding and learning-curve indirectness.
-- **Cluster crossover RCT** — clusters receive both/all interventions in randomized sequence with washout; switching is *bidirectional* (unlike stepped-wedge). Not a separate type in either lineage's classifier; 📐 reference material for a future subtype.
+- **Parallel cluster RCT** — clusters randomized once to an arm and stay there. This is the deployed **Cluster Randomized Trial** type: RoB 2 cluster extension (Domain 1a randomization + the cluster-specific Domain 1b identification/recruitment-timing) + CONSORT cluster extension. Deployed.
+- **Stepped-Wedge Cluster RCT** — all clusters begin in control and cross over to intervention at *randomized* time points. Kept as its own classify-able type (the deployed classifier can assign it; extraction reuses the cluster field set), but **appraisal is deliberately not routed**: the published RoB 2 CRT cribsheet covers only parallel cluster trials, and stepped-wedge needs an additional time-trend / time-period-confounding treatment. Reference guidance: assess whether crossover *timing* was truly randomized (Domain 1); recruitment practices may differ between control and intervention periods within a cluster (1b); awareness of upcoming crossover may change behavior in late control periods (Domain 2); multiple plausible correlation-structure / time-trend model specifications inflate selective-reporting risk (Domain 5); consider GRADE downgrades for time-period confounding and learning-curve indirectness.
+- **Cluster crossover RCT** — clusters receive both/all interventions in randomized sequence with washout; switching is *bidirectional* (unlike stepped-wedge). Not a separate type in either lineage's classifier; reference material for a future subtype.
 
-**Subtype decision tree** (📐, for classifiers that go finer than the deployed one):
+**Subtype decision tree** (reference, for classifiers that go finer than the deployed one):
 
 ```
 Cluster-level randomization confirmed
@@ -265,7 +267,7 @@ Disambiguation signals: "all sites eventually received the intervention", "seque
 
 ## 3. The classification agent
 
-The classification agent assigns each paper one study type from the unified taxonomy. §§3.1–3.10 give the full OGAI classification rubric — the reference methodology (📐, with the elements the deployed agent already implements noted inline). §3.11 gives the deployed classification profile verbatim (⚙).
+The classification agent assigns each paper one study type from the unified taxonomy. §§3.1–3.10 give the full OGAI classification rubric — the reference methodology, with the elements the deployed agent already implements noted inline. §3.11 gives the deployed classification profile verbatim.
 
 ### 3.1 Core principle: methods over labels
 
@@ -388,7 +390,7 @@ STEP 1: Does the study synthesize existing studies?
             recommendation development → Guideline / Consensus
 ```
 
-### 3.8 The 11 design features (cross-validation) 📐
+### 3.8 The 11 design features (cross-validation) — reference
 
 Alongside the type, the classifier extracts 11 design features. They are an internal consistency check: a feature pattern that contradicts the assigned type is a warning, not a silent pass.
 
@@ -422,7 +424,7 @@ Feature-to-type consistency matrix (any mismatch → `_feature_consistency_warni
 
 *Deployment note:* the deployed platform records a compatible reduced set on each annotation for audit — `rule1_pass` … `rule3_pass`, `natural_experiment_flag`, `author_stated_design`, `author_label_discordance`, `reviewer_action` — populated by the reviewer or a downstream pipeline rather than by the classification call itself.
 
-### 3.9 Confusion pairs — disambiguation catalog 📐
+### 3.9 Confusion pairs — disambiguation catalog — reference
 
 The empirically common misclassifications, each with the single discriminating feature:
 
@@ -437,7 +439,7 @@ The empirically common misclassifications, each with the single discriminating f
 
 Plus the cluster-subtype pairs in §2.4.
 
-### 3.10 Reference output schema 📐
+### 3.10 Reference output schema
 
 The complete Stage-1 output a full implementation emits:
 
@@ -466,9 +468,9 @@ The complete Stage-1 output a full implementation emits:
 
 Low-confidence classifications with a non-null alternative trigger **dual extraction** downstream (§4.9).
 
-### 3.11 The deployed classification profile ⚙
+### 3.11 The deployed classification profile
 
-The production classifier is deliberately minimal: one LLM call, the taxonomy inline, three output keys, deterministic post-filtering. Everything in §§3.3–3.10 beyond this is 📐.
+The production classifier is deliberately minimal: one LLM call, the taxonomy inline, three output keys, deterministic post-filtering. Everything in §§3.3–3.10 beyond this is reference methodology.
 
 **Prompt (verbatim; `{TAXONOMY}` is the §2.2 tree flattened to the category → subcategory → type listing):**
 
@@ -548,7 +550,7 @@ Layer 3 — DESIGN MODIFIERS (cross-cutting overlays, 11 deployed)
 
 A key property carried over from the OGAI design: **Layer-2 fields map onto the routed RoB tool's signaling questions**, so extraction feeds appraisal instead of running parallel to it. An RCT's Layer-2 fields cover the five RoB 2 domains; a diagnostic-accuracy study's cover the QUADAS domains; a cohort's cover ROBINS-I's confounding/selection/classification concerns. The appraisal agents receive these fields as pre-extracted context alongside the PDF.
 
-### 4.2 Layer 1 — universal fields (32, in 8 groups) ⚙
+### 4.2 Layer 1 — universal fields (32, in 8 groups) — deployed
 
 | Group | Fields |
 |---|---|
@@ -563,7 +565,7 @@ A key property carried over from the OGAI design: **Layer-2 fields map onto the 
 
 Group selection is part of the request contract: a caller may extract any subset of the 8 groups; an empty/absent selection means *all* universal fields.
 
-### 4.3 Layer 2 — type-specific fields ⚙
+### 4.3 Layer 2 — type-specific fields — deployed
 
 26 of the 34 unified types carry type-specific fields; the remaining 8 (Case Report / Series, Cross-Sectional (Descriptive), Ecological Study, Self-Controlled Case Series, Mixed Methods, Scoping Review, Narrative Review, and the taxonomy-only Controlled Before-After) have none — Layer 1 suffices. The full deployed catalog:
 
@@ -596,15 +598,15 @@ Group selection is part of the request contract: a caller may extract any subset
 | Guideline / Consensus | `guideline_organization`, `panel_composition`, `evidence_base`, `grade_used`, `recommendations`, `updating_plan` |
 | Qualitative Research | `methodology`, `data_collection`, `sampling_strategy`, `data_saturation`, `reflexivity`, `themes` |
 
-### 4.4 Layer 3 — design modifiers ⚙ (+ extended catalog 📐)
+### 4.4 Layer 3 — design modifiers — deployed (+ reference extended catalog)
 
 Eleven cross-cutting modifier fields are deployed; they apply to any base type without changing classification or routing:
 
 `clinical_trial_phase` · `regulatory_context` · `registration_number` · `industry_sponsored` · `data_source_type` · `database_name` · `adaptive_design` · `pragmatic_vs_explanatory` · `trial_framework` (superiority / non-inferiority / equivalence) · `target_trial_emulation` · `pilot_or_feasibility`
 
-The OGAI extraction reference specifies a richer modifier catalog (📐) that a full implementation should adopt as structured objects rather than flat strings: adaptive-design detail (`adaptation_type`: sample-size re-estimation / arm dropping / dose finding / biomarker-adaptive / seamless phase; interim-analysis count), PRECIS-2 spectrum position for pragmatic-vs-explanatory, master-protocol type (umbrella / basket / platform), factorial-design factor matrix, Bayesian framework with prior specification, registry-based-trial flag, `natural_experiment_flag` with the exogenous-event description and the author's exogeneity argument, and data-source detail (linkage method, code-validation PPV).
+The OGAI extraction reference specifies a richer modifier catalog (reference) that a full implementation should adopt as structured objects rather than flat strings: adaptive-design detail (`adaptation_type`: sample-size re-estimation / arm dropping / dose finding / biomarker-adaptive / seamless phase; interim-analysis count), PRECIS-2 spectrum position for pragmatic-vs-explanatory, master-protocol type (umbrella / basket / platform), factorial-design factor matrix, Bayesian framework with prior specification, registry-based-trial flag, `natural_experiment_flag` with the exogenous-event description and the author's exogeneity argument, and data-source detail (linkage method, code-validation PPV).
 
-### 4.5 The deployed extraction prompt ⚙
+### 4.5 The deployed extraction prompt
 
 One LLM call, PDF attached, selective field list assembled per request. Prompt verbatim (`{study_type}` from classification; `{field_list}` is the assembled ids, one `  - field_id` per line):
 
@@ -642,11 +644,11 @@ Unknown group names and out-of-catalog field ids are silently dropped, preservin
 - **Numbers as strings.** All values are strings end-to-end; numeric coercion happens later, only in analytics (a defined subset of fields is float-coerced for min/median/max summaries, with non-numeric cells silently dropped).
 - Classification is whitelist-filtered (§3.11); extraction output is *not* whitelisted against the requested ids — a model volunteering an extra field is tolerated. A stricter port may whitelist; the reference behavior is documented here for fidelity.
 
-### 4.6 Custom-schema extraction ⚙
+### 4.6 Custom-schema extraction — deployed
 
 Besides the fixed catalog, the pipeline supports reviewer-defined schemas: a schema can be **parsed from an uploaded document** (a codebook PDF, DOCX, CSV, or pasted text — one LLM call proposes `{field_id, label, description}` entries), **refined** conversationally (one call rewrites the schema per instruction), and then **run** over a batch of papers with the same extraction prompt shape as §4.5, substituting the custom field list. Custom runs reuse the entire large-document pipeline below and the same omission/no-invention rules. Optional extended thinking can be enabled per run, in which case the model's reasoning is captured per paper alongside the extraction.
 
-### 4.7 The three-stage large-document pipeline ⚙
+### 4.7 The three-stage large-document pipeline — deployed
 
 Every extraction-family call (classify / prefill / custom / schema-parse — and every appraisal agent, which reuses this entry point) funnels through one degradation pipeline:
 
@@ -677,11 +679,11 @@ Chunked calls prepend a context note telling the model it is seeing plain text (
 
 **Vendor neutrality:** user-facing errors from this pipeline speak of "the AI model" / "the extraction service", never a vendor name. Vendor detail belongs in server logs.
 
-### 4.8 Analytics metadata ⚙
+### 4.8 Analytics metadata — deployed
 
 Two field-type sets drive downstream analytics without affecting extraction: a **numeric set** (e.g. `sample_size_total`, `attrition_rate`, `included_studies_n`, `f_statistic`, CI bounds) coerced to float for min/median/max/mean summaries, and a **categorical set** (e.g. `study_type`, `funding_source`, `clinical_trial_phase`, `trial_framework`) drawn from small discrete vocabularies for distribution charts. Ports that add fields should classify them into one of numeric / categorical / free-text — the reference heuristic for unknown fields: ≥ 80% float-parsable → numeric; ≤ 8 unique values and ≤ 60-char max → categorical; else text.
 
-### 4.9 Validation and re-routing 📐
+### 4.9 Validation and re-routing — reference
 
 The OGAI Stage-2 design adds a feedback loop the deployed extractor does not yet implement:
 
@@ -692,7 +694,7 @@ The OGAI Stage-2 design adds a feedback loop the deployed extractor does not yet
 
 ---
 
-## 5. Appraisal orchestration ⚙
+## 5. Appraisal orchestration — deployed
 
 How one paper flows through the appraisal agents. All of this is deployed behavior.
 
@@ -726,7 +728,7 @@ How one paper flows through the appraisal agents. All of this is deployed behavi
 
 Common contract (all tools): input = PDF bytes + the extracted fields (§4) + the classification + the unit's outcome/estimate; per-domain LLM calls answer signaling questions on the tool's scale; a **pure-Python decision tree** maps signal answers to the domain judgement; an aggregator derives the overall judgement; output = per-domain `{judgement, signal answers, rationale, evidence quotes}` + overall. Evidence quotes are verbatim snippets, which downstream UIs can locate in the source PDF.
 
-### 6.1 RoB 2 — parallel-group randomized trials ⚙ *(standalone document pending — this digest is the current sharable reference)*
+### 6.1 RoB 2 — parallel-group randomized trials — deployed *(standalone document pending — this digest is the current sharable reference)*
 
 - **Source:** the revised Cochrane risk-of-bias tool for randomized trials, RoB 2 (Sterne JAC et al., BMJ 2019;366:l4898), per the 22 August 2019 cribsheet for parallel-group trials. Assesses the **effect of assignment to intervention** (the ITT question).
 - **Structure:** 5 domains, 22 signaling questions (3 / 7 / 4 / 5 / 3):
@@ -742,23 +744,23 @@ Common contract (all tools): input = PDF bytes + the extracted fields (§4) + th
 - Extraction fields feeding it: the RCT Layer-2 set (§4.3) — randomization/concealment/balance for D1, blinding + analysis framework for D2, attrition for D3, measurement method for D4, protocol/registration for D5.
 - The cross-over (§6.2) and cluster (§6.3) extensions reuse these domains and trees where unchanged; their companions document only the deltas in full.
 
-### 6.2 RoB 2 cross-over extension ⚙ → `rob2_crossover_shareable.md`
+### 6.2 RoB 2 cross-over extension — deployed → `rob2_crossover_shareable.md`
 
 For individually randomized trials where each participant receives all interventions sequentially (AB/BA). **6 domains / 23 signals**: the parallel-group five plus **Domain S — bias arising from period and carryover effects** (washout adequacy, carryover assessment, period effects), and a fourth Domain-5 question (5.4) for selective first-period-only reporting on the basis of a carryover test. Domains 1–4 reuse the parallel-group signal trees. Scales and overall rule as §6.1. The companion also carries the CONSORT cross-over reporting checklist (§7.3).
 
-### 6.3 RoB 2 cluster extension (RoB 2 CRT) ⚙ → `rob2_cluster_shareable.md`
+### 6.3 RoB 2 cluster extension (RoB 2 CRT) — deployed → `rob2_cluster_shareable.md`
 
 For **parallel** cluster-randomized trials (18 March 2021 cribsheet; stepped-wedge is explicitly out of scope — §2.4). **6 domains**: 1a randomization; **1b — bias arising from the timing of identification or recruitment of participants** (the cluster-specific domain: were individuals identified/recruited after cluster allocation was known?); 2–5 as in RoB 2. **Domain 2 has two variants** selected per run: `assignment` (ITT, 8 signals) and `adhering` (per-protocol, 6 signals). Decision trees are transcribed independently from the CRT cribsheet and *diverge* from parallel RoB 2 in places (e.g. concealed-but-non-random allocation is *Some concerns* in D1a); only D5 and the overall rule are shared. Signal 3.2 has no NI option; conditional NA is derived in code. Companion carries the CONSORT cluster checklist (§7.3).
 
-### 6.4 ROBINS-I V2 ⚙ → `robins_i_v2_shareable.md`
+### 6.4 ROBINS-I V2 — deployed → `robins_i_v2_shareable.md`
 
 The default tool for every non-randomized intervention design (20 Nov 2025 cribsheet). **6 domains** (V2 retired V1's separate deviations domain): confounding; classification of interventions; selection of participants; missing data; outcome measurement; selection of the reported result. **Preflight call** answers screening questions B1/B2/B3 + C4: B2 or B3 = Y/PY short-circuits the whole assessment to **Critical**; C4 (does the analysis account for post-baseline deviations?) dispatches **Domain 1 Variant A** (ITT-like, baseline confounding) vs **Variant B** (per-protocol, adds time-varying confounding). **Single-arm variant** (project extension for Single-Arm Trial / Dose-Escalation Study): pinned by study type before preflight; replaces B1/B2 with benchmark-pre-specification questions, reframes D1 as benchmark adequacy + prognostic-mix comparability (1S.*) and D2 as intervention fidelity + intent-vs-received cohort definition; D3–D6 unchanged. Signal scale adds strength tokens (`SY/WY/WN/SN`) on designated questions; judgements are 4-level **Low / Moderate / Serious / Critical** (the V1 "No information" judgement is retired), with Domain 1's Low labelled "Low (except for concerns about uncontrolled confounding/benchmarking)" — normalized to plain Low before GRADE mapping.
 
-### 6.5 ROBINS-I V1 ⚙ (opt-in per run) → `robins_i_v1_shareable.md`
+### 6.5 ROBINS-I V1 — deployed, opt-in per run → `robins_i_v1_shareable.md`
 
 The 1 Aug 2016 original, kept co-resident for teams standardized on V1 vocabularies. **7 domains** (confounding; selection into the study; classification of interventions; **deviations from intended interventions** — aim-gated; missing data; outcome measurement; selective reporting), 5-token signal scale, 5-level judgement scale (adds "No information"). An **aim preflight** determines whether the study estimates the effect of *assignment* (ITT) or of *starting and adhering* (per-protocol), which gates Domain 4's signal path. Its own single-arm adaptation mirrors V2's (D1-SA benchmark signals 1S.1–1S.5, D2-SA signals 2S.1–2S.3, D4 = NA in code with no LLM call). The companion's migration notes map V1 ↔ V2 vocabulary conservatively.
 
-### 6.6 QUADAS-3 v1.2 — diagnostic test accuracy ⚙ *(standalone document pending — this digest is the current sharable reference)*
+### 6.6 QUADAS-3 v1.2 — diagnostic test accuracy — deployed *(standalone document pending — this digest is the current sharable reference)*
 
 - **Source:** QUADAS-3 v1.2 (the successor to QUADAS-2, restructured around the "ideal test accuracy trial" target). Assesses **risk of bias and applicability per accuracy estimate**, not per paper.
 - **Structure:** 4 domains, 20 signaling questions; domains 1–3 carry an **applicability** judgement alongside RoB, domain 4 is RoB-only:
@@ -773,26 +775,26 @@ The 1 Aug 2016 original, kept co-resident for teams standardized on V1 vocabular
 - **GRADE hand-off:** Low → 0; High → −1 (−2 if ≥ 2 High domains); Insufficient information → −1 (conservative). Indirectness/imprecision skipped (PICO modules don't fit PIRT questions); initial certainty High (§2.3).
 - Out of scope in the current version: the per-estimate domain-difference shortcut (every estimate runs all 4 domains); QUADAS-C comparative accuracy; PIRT-aware indirectness/imprecision.
 
-### 6.7 QUADAS-2 ⚙ (per-run alternative) → `quadas2_shareable.md`
+### 6.7 QUADAS-2 — deployed, per-run alternative → `quadas2_shareable.md`
 
 The classic 2011 tool most published reviews still use (Whiting et al., Ann Intern Med 2011;155:529-536). **4 domains / 11 signals** (Patient Selection 3; Index Test 2; Reference Standard 2; Flow & Timing 4), signal scale `Y / N / U`, judgements **Low / High / Unclear**, dual RoB + applicability on domains 1–3. Applicability is framed against the **review question in PIRT terms** (vs. QUADAS-3's ideal-trial framing) — same free-text context input, different meaning. Decision tree: all Y → Low; any N → High; else Unclear. Shares QUADAS-3's estimate extractor and per-estimate path. GRADE: Unclear → −1 conservative; Low/High as above.
 
-### 6.8 AMSTAR-2 — systematic reviews ⚙ *(standalone document pending — this digest is the current sharable reference)*
+### 6.8 AMSTAR-2 — systematic reviews — deployed *(standalone document pending — this digest is the current sharable reference)*
 
 - **Source:** Shea BJ et al., "AMSTAR 2: a critical appraisal tool for systematic reviews," BMJ 2017;358:j4008. Registered for SR with and without meta-analysis (items 11/12/15 carry a "No meta-analysis conducted" path).
 - **Structurally unlike the primary-study tools.** It scores **16 checklist items** (not bias domains), each rated **Yes / Partial Yes / No** (some Yes/No only), and its headline output is an **overall confidence rating** — High / Moderate / Low / Critically low — *not* a GRADE certainty. GRADE, indirectness, and imprecision are all skipped for review papers.
-- **The 16 items** (★ = critical, the published default set {2, 4, 7, 9, 11, 13, 15}): 1 PICO components in the research question · **2★** protocol established before the review · 3 explanation of study-design selection · **4★** comprehensive literature search · 5 study selection in duplicate · 6 data extraction in duplicate · **7★** list of excluded studies with justification · 8 adequate description of included studies · **9★** satisfactory risk-of-bias technique · 10 funding sources of included studies · **11★** appropriate meta-analysis methods · 12 impact of RoB on the meta-analysis · **13★** accounting for RoB when interpreting results · 14 explanation and discussion of heterogeneity · **15★** investigation of publication bias · 16 conflicts of interest of the review.
+- **The 16 items** (critical items — the published default set {2, 4, 7, 9, 11, 13, 15} — shown in bold): 1 PICO components in the research question · **2** protocol established before the review · 3 explanation of study-design selection · **4** comprehensive literature search · 5 study selection in duplicate · 6 data extraction in duplicate · **7** list of excluded studies with justification · 8 adequate description of included studies · **9** satisfactory risk-of-bias technique · 10 funding sources of included studies · **11** appropriate meta-analysis methods · 12 impact of RoB on the meta-analysis · **13** accounting for RoB when interpreting results · 14 explanation and discussion of heterogeneity · **15** investigation of publication bias · 16 conflicts of interest of the review.
 - **Per-item scoring:** the LLM answers each item's Y/N *sub-criteria* (transcribed from the checklist + guidance document); a pure decision function derives the item rating. Logic types: `all_required` (Yes iff every sub-criterion Y), `one_of`, `tiered` (Partial Yes = the partial-tier sub-criteria; Yes = those plus the yes-tier), `rob_design` (item 9 — evaluated per included design; a both-designs review takes the lower rating), `meta_design` (item 11 — design-aware Yes/No).
 - **Preflight:** one call determines `review_includes` (rct / nrsi / both — items 9 and 11 are design-aware) and `meta_analysis` (was quantitative synthesis performed). When no synthesis was performed, items 11/12/15 are set to "No meta-analysis conducted" **in code, with no LLM call** (the NA-cascade pattern, §10). Calls per paper: 1 preflight + ≤ 16 item calls.
 - **Overall confidence** (the published algorithm): a *critical flaw* = a critical item rated No; a *non-critical weakness* = a non-critical item rated No (Partial Yes and "No meta-analysis conducted" are not flaws). **High** = 0 critical flaws, ≤ 1 weakness · **Moderate** = 0 critical, > 1 weakness · **Low** = exactly 1 critical flaw · **Critically low** = ≥ 2 critical flaws.
 - **Display caution:** AMSTAR-2's labels collide with the RoB vocabulary with opposite polarity — "High" is *good* here and *bad* for RoB tools. Any UI or export must key badge/colour semantics on the tool, not the label string.
-- Out of scope in the current version: per-run custom critical-item sets; umbrella reviews / NMA (routed 📐, §2.3); reviewer override of item ratings.
+- Out of scope in the current version: per-run custom critical-item sets; umbrella reviews / NMA (routed as reference, §2.3); reviewer override of item ratings.
 
 ---
 
 ## 7. Reporting-guideline agents
 
-### 7.1 The shared contract ⚙ *(standalone documents pending — this digest is the current sharable reference)*
+### 7.1 The shared contract — deployed *(standalone documents pending — this digest is the current sharable reference)*
 
 Reporting-guideline adherence is a *reporting* signal, deliberately separate from the risk-of-bias judgement: poor adherence does not prove poor methods, and perfect adherence does not prove rigor — but unreported methods cannot be appraised, and missing items correlate empirically with methodological weakness.
 
@@ -803,7 +805,7 @@ Every guideline checker follows one contract:
 - **Score** = adhered ÷ applicable. Items judged not applicable (e.g. adverse-event items for non-invasive imaging; registration items for retrospective records reviews) are excluded from **both** numerator and denominator — an N/A never penalizes.
 - Run **once per paper** (outcome units share it), and lazily — only after at least one RoB domain call has succeeded.
 
-### 7.2 The deployed guidelines ⚙
+### 7.2 The deployed guidelines
 
 | Guideline | For | Entries | Source |
 |---|---|---|---|
@@ -820,7 +822,7 @@ The extension checkers **import the base CONSORT items** and append the extensio
 
 The cross-over and cluster extension checklists are additionally documented, item by item, as the reporting-guideline companion sections of their RoB siblings: CONSORT cross-over in `rob2_crossover_shareable.md` §10, CONSORT cluster in `rob2_cluster_shareable.md` §11.
 
-### 7.4 Critical-item tiering and RoB integration 📐
+### 7.4 Critical-item tiering and RoB integration — reference
 
 The deployed checkers score items flat; the OGAI Stage-3 reference goes further, and implementers extending the reporting layer should adopt it:
 
@@ -834,15 +836,15 @@ The deployed checkers score items flat; the OGAI Stage-3 reference goes further,
 
 These three agents produce the appraisal platform's per-(paper × outcome) certainty rating. **Do not confuse this with the body-of-evidence GRADE agent** (§9.3) — the disambiguation table in `quality_appraisal_grade_shareable.md` is the canonical statement of the difference. In one line: this path rates *one appraised study* on the three domains a single paper can support (risk of bias, indirectness, imprecision); the GRADE agent rates *one pooled outcome* on all five downgrade + three upgrade domains.
 
-### 8.1 Indirectness ⚙ → `quality_appraisal_grade_shareable.md` §4
+### 8.1 Indirectness — deployed → `quality_appraisal_grade_shareable.md` §4
 
 One LLM call judges the four PICO subdomains — population, intervention, comparator, outcome — each on a 4-level scale (`direct / probably_direct / probably_not_direct / not_direct`), plus a surrogate-outcome flag. Judged **against the reviewer's target PICO** when supplied; otherwise falls back to outcome-surrogacy assessment (the other three subdomains default toward `probably_direct` unless the as-conducted PICO is unusually narrow). The GRADE handbook's surrogate rule is baked into the prompt: surrogates rate down unless a strong, well-established correlation with patient-important outcomes exists — a criterion rarely fulfilled. A pure severity tree aggregates: none (0) / serious (−1: one `not_direct` or ≥ 2 `probably_not_direct`) / very serious (−2: two `not_direct`) / extremely serious (−3: ≥ 3 `not_direct`).
 
-### 8.2 Imprecision ⚙ → `quality_appraisal_grade_shareable.md` §5
+### 8.2 Imprecision — deployed → `quality_appraisal_grade_shareable.md` §5
 
 One LLM call judges four subdomains on the mirror-image scale (`precise / probably_precise / probably_not_precise / not_precise`): **CI width** vs. decision thresholds (the reviewer's optional MID-benefit/MID-harm pair when supplied, else line-of-no-effect + clinical importance), **sample size** adequacy, **event count** (binary outcomes only — N/A for continuous, normalized so it never contributes to severity), and **fragility** (large relative effects from few events; p just under 0.05 with small N). The same severity tree yields 0/−1/−2/−3. The call also reports the inferred outcome type and the extracted N / events / CI summary for display.
 
-### 8.3 The per-paper GRADE combiner ⚙ → `quality_appraisal_grade_shareable.md` §§1–3, 6
+### 8.3 The per-paper GRADE combiner — deployed → `quality_appraisal_grade_shareable.md` §§1–3, 6
 
 Pure arithmetic — no LLM. The ladder is `High → Moderate → Low → Very low`. Total downgrade = RoB levels + indirectness levels + imprecision levels, applied to the design's initial certainty (§2.3) and **capped at Very low**.
 
@@ -863,7 +865,7 @@ The RoB → levels mapping must handle five instruments whose overall-judgement 
 
 ROBINS-I Domain 1's "Low (except for concerns about uncontrolled confounding/benchmarking)" labels are normalized to plain "Low" by the tool's aggregator *before* this mapping — skipping that normalization silently costs a level via the fallback branch. The combiner emits a deterministic explanation string naming every contributor ("Downgraded 2 levels: 1 level for Some concerns in risk of bias + 1 level for serious indirectness — surrogate primary outcome (HbA1c)."). The companion carries the exact string grammar, the fail-open ladder caveat, and the turnkey implementation.
 
-### 8.4 Outcome extraction ⚙ → `outcome_extraction_shareable.md`
+### 8.4 Outcome extraction — deployed → `outcome_extraction_shareable.md`
 
 The agent that produces the outcome axis of §5: one call per paper returns a list of *separately appraisable* outcomes (`{name, description, measure, timing, outcome_type, is_primary}`), conservatively split — one outcome with several statistics (HR + KM curve + median survival for overall survival) is **one** outcome, because over-splitting costs a full appraisal pass per spurious entry. Advisory and fully optional: every consumer must fall back to appraising the primary outcome alone.
 
@@ -873,19 +875,19 @@ The agent that produces the outcome axis of §5: one call per paper returns a li
 
 Downstream of per-study appraisal: many appraised studies → bodies of evidence. Digests only; each companion is the document of record.
 
-### 9.1 Pooling / meta-analysis agent ⚙ → `pooling_meta_analysis_shareable.md`
+### 9.1 Pooling / meta-analysis agent — deployed → `pooling_meta_analysis_shareable.md`
 
 The model-free pooling engine plus its extraction bridge. Per-study effect sizes (OR / RR / RD from 2×2; MD / SMD from means; **IRR from events + person-time, never a count table**; HR from reported estimates; any measure from a pre-computed estimate + CI), inverse-variance fixed/random-effects pooling with DL / REML / Paule-Mandel τ², heterogeneity (Q, I², τ², prediction interval), Egger + trim-and-fill. The bridge groups many studies' extracted outcomes into bodies of evidence — **one body per outcome × comparison × timepoint × design class; randomized and non-randomized studies never pool together** — picks the measure, maps raw arm data or reported effects, and quarantines what cannot be reconciled with named warnings. Outcome-name harmonization (dictionary-first, LLM-for-the-gaps) makes differently-worded outcomes group. Hand-off to GRADE is raw numbers only — no certainty decisions.
 
-### 9.2 Per-study evidence table (Table 2) ⚙ → `table2_evidence_table_shareable.md`
+### 9.2 Per-study evidence table (Table 2) — deployed → `table2_evidence_table_shareable.md`
 
 The guideline-panel evidence table: **one row = study × outcome × comparison × timepoint**, transcribing each study's *reported* results — explicitly no pooling. Dual-mode: assemble from already-extracted tags (zero model calls) or extract in isolation. Covers study-id building, metric canonicalization, direction-of-benefit inference, statistical reconciliation, and quality-rating mapping.
 
-### 9.3 Body-of-evidence GRADE agent ⚙ → `grade_certainty_shareable.md`
+### 9.3 Body-of-evidence GRADE agent — deployed → `grade_certainty_shareable.md`
 
 The GRADE agent proper: consumes one pooled outcome and rates certainty across **all five downgrade domains** (risk of bias aggregated across studies by pooled weight; inconsistency from I²/Q; indirectness — reviewer-supplied with an optional LLM assist; imprecision from the pooled CI vs. null/MIDs + optimal information size; publication bias from Egger/trim-fill, gated at k ≥ 10) **plus the three upgrade domains** (large effect, dose-response, opposing plausible confounding — gated to non-randomized bodies with no downgrades), then anticipated absolute effects and Summary-of-Findings rows. Rate randomized and non-randomized evidence as separate bodies. A downgrades-only draft variant exists (`grade_certainty_downgrades_shareable.md`); it under-rates non-randomized bodies that qualify for rating up — share the full document unless the draft is specifically wanted.
 
-### 9.4 Systematic-review synthesis pipeline ⚙ → `synthesis_meta_analysis_shareable.md`
+### 9.4 Systematic-review synthesis pipeline — deployed → `synthesis_meta_analysis_shareable.md`
 
 The end-to-end review workflow: screening (LLM title/abstract + full-text decisions with reasons), structured effect-size extraction, per-(study × outcome) risk of bias reusing the §6 tools, pooling per outcome (the §9.1 engine, embedded), PRISMA flow accounting, and the body-of-evidence GRADE combiner. Also emits runnable R (`meta`/`metafor`) and Python code per calculation so every pooled number is independently reproducible.
 
@@ -913,7 +915,7 @@ Conventions every agent above observes, and any port should preserve:
 ## 11. Implementation notes for other platforms
 
 - **Build order.** The dependency chain is: taxonomy + classification (§2–3) → extraction (§4) → orchestration (§5) → one RoB tool end-to-end (RoB 2, §6.1, is the best first target: smallest, best documented) → reporting guideline + GRADE domains (§7–8) → the remaining tools → synthesis (§9). Every companion document's turnkey module is independently runnable once §4's extraction output shape exists.
-- **Start with the ⚙ subset.** The deployed pipeline is a complete, working system with the *simple* classifier and *flat* reporting scores. The 📐 layers (primacy rules as structured output, design-feature cross-validation, red-flag re-routing, critical-item tiering, stepped-wedge appraisal) each bolt onto a defined seam — none require re-architecting.
+- **Start with the deployed subset.** The deployed pipeline is a complete, working system with the *simple* classifier and *flat* reporting scores. The reference layers (primacy rules as structured output, design-feature cross-validation, red-flag re-routing, critical-item tiering, stepped-wedge appraisal) each bolt onto a defined seam — none require re-architecting.
 - **Guard the type strings.** The study-type string is the join key across classifier → extraction catalog → routing registry → UI. A single mismatch ("Cross-sectional (analytical)" vs. "Cross-Sectional (Analytical)") silently drops a design to *skipped*. Pin the vocabulary in one place and test membership in all three tables.
 - **Respect the mutually-exclusive unit axes.** Reject a paper carrying both outcome and estimate selections at request time — charging happens before classification, so the conflict must be caught early.
 - **Per-domain calls are parallelizable per unit;** paper-level calls are not repeated per unit. A 3-outcome cohort paper is: 1 classify + 1 extract + 1 guideline + 3 × (preflight-dependent domain calls + indirectness + imprecision) + 3 combiner runs.
