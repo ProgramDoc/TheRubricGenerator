@@ -358,3 +358,77 @@ class TestEdgeCases:
         assert ss.md(None, 2, 50, 8, 3, 50) is None
         assert ss.smd_hedges_g(10, 2, 1, 8, 2, 1) is None
         assert ss.fisher_z(0.5, 2) is None
+
+
+class TestRobCoverageGuard:
+    """A clean risk-of-bias rating computed from a sliver of assessed weight must
+    not stand in for a rating of the whole body — while a downgrade computed
+    from that sliver can only understate concerns and therefore stands."""
+
+    _HET = {"status": "ok", "I2": 10.0, "p": 0.5}
+    _POOLED = {"ci_low": 0.2, "ci_high": 0.6}
+
+    def test_low_coverage_clean_sliver_is_not_assessable(self):
+        # 1% of pooled weight assessed Low, 99% never appraised — the reproduced
+        # certainty-inflation case. Must not read as "most weight is low risk".
+        lv, reason, assessed = ss._rob_across_studies(["Low", None, None], [1, 49, 50])
+        assert assessed is False
+        assert lv == 0
+        assert "coverage" in reason
+
+    def test_low_coverage_downgrade_still_stands(self):
+        # High-risk studies carry all the assessed weight; unassessed studies
+        # could only add concerns, so the downgrade is kept.
+        lv, _, assessed = ss._rob_across_studies(["High", None, None], [10, 45, 45])
+        assert (lv, assessed) == (2, True)
+
+    def test_grade_withholds_certainty_on_severely_incomplete_coverage(self):
+        g = ss.grade_body_of_evidence(
+            initial="High", per_study_rob=["Low", None], weights=[1, 99],
+            heterogeneity=self._HET, pooled=self._POOLED,
+            measure="SMD", total_n=2000)
+        assert g["status"] == "not_rated"
+        assert g["final"] is None
+        assert any("coverage" in w for w in g["warnings"])
+
+
+class TestGradeIndirectnessInput:
+    """Indirectness is an input to the body-of-evidence calculator, not something
+    it can judge. When no assessment is supplied the domain must be flagged as
+    not assessed — never reported as 'no serious indirectness'."""
+
+    _HET = {"status": "ok", "I2": 10.0, "p": 0.5}
+    _POOLED = {"ci_low": 0.2, "ci_high": 0.6}
+
+    def _grade(self, **kw):
+        return ss.grade_body_of_evidence(
+            initial="High", per_study_rob=["Low", "Low"], weights=[1, 1],
+            heterogeneity=self._HET, pooled=self._POOLED,
+            measure="SMD", total_n=2000, **kw)
+
+    def test_unsupplied_indirectness_is_flagged_not_clean(self):
+        g = self._grade()
+        ind = next(d for d in g["domains"] if d["domain"] == "Indirectness")
+        assert ind["downgrade"] is None
+        assert ind["assessable"] is False
+        assert "not assessed" in ind["reason"]
+        assert any("Indirectness was not assessed" in w for w in g["warnings"])
+        assert "no serious indirectness" not in g["explanation"]
+        assert "not assessed" in g["explanation"]
+
+    def test_supplied_indirectness_counts_and_is_assessable(self):
+        g = self._grade(indirectness_levels=1, indirectness_reason="surrogate outcome")
+        ind = next(d for d in g["domains"] if d["domain"] == "Indirectness")
+        assert ind["downgrade"] == 1
+        assert ind["assessable"] is True
+        assert g["final"] == "Moderate"
+        assert not g["warnings"]
+
+    def test_explicit_zero_assessment_reads_clean(self):
+        g = self._grade(indirectness_levels=0,
+                        indirectness_reason="PICO matches the review question",
+                        indirectness_assessed=True)
+        ind = next(d for d in g["domains"] if d["domain"] == "Indirectness")
+        assert ind["downgrade"] == 0
+        assert ind["assessable"] is True
+        assert not g["warnings"]

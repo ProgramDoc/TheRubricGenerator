@@ -562,3 +562,43 @@ class TestOutcomeTypingScope:
         assert imprec.infer_outcome_is_binary(
             self._FIELDS, "Mean 6-minute walk distance",
             outcome_is_primary=False, outcome_type="ordinal") is False
+
+
+# ─────────────────────────────────────────────
+# run() — event-count N/A enforced in code
+# ─────────────────────────────────────────────
+class TestRunEventCountEnforcement:
+    """The prompt asks for 'n_a' on continuous outcomes, but the exclusion must
+    hold even when the LLM ignores the instruction — the UI renders the cell as
+    N/A, so counting it would silently contradict the display."""
+
+    _RAW = {
+        "ci_width": "precise", "ci_width_rationale": "narrow CI",
+        "sample_size": "precise", "sample_size_rationale": "n=1200",
+        "event_count": "not_precise", "event_count_rationale": "few events",
+        "fragility": "precise", "fragility_rationale": "robust",
+        "outcome_is_binary": False,
+        "sample_size_total": 1200, "events_total": None,
+        "ci_summary": "-0.5 to -0.2",
+    }
+
+    def test_continuous_outcome_event_count_never_downgrades(self, monkeypatch):
+        monkeypatch.setattr(imprec, "_call_with_pdf", lambda *a, **k: dict(self._RAW))
+        per_sub, severity, levels, expl = imprec.run(
+            b"%PDF", {}, {"study_type": "Randomized Controlled Trial"},
+            "mean HbA1c change", outcome_type="continuous")
+        assert severity == "none"
+        assert levels == 0
+        assert per_sub["event_count"]["judgement"] == "precise"
+        assert per_sub["event_count"].get("n_a") is True
+        assert "N/A" in per_sub["event_count"]["rationale"]
+
+    def test_binary_outcome_event_count_still_counts(self, monkeypatch):
+        raw = dict(self._RAW, outcome_is_binary=True)
+        monkeypatch.setattr(imprec, "_call_with_pdf", lambda *a, **k: raw)
+        per_sub, severity, levels, _ = imprec.run(
+            b"%PDF", {}, {"study_type": "Randomized Controlled Trial"},
+            "MACE at 24 months", outcome_type="binary")
+        assert severity == "serious"
+        assert levels == 1
+        assert per_sub["event_count"]["judgement"] == "not_precise"

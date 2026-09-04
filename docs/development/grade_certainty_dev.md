@@ -32,6 +32,17 @@ Substantive changes to the methodology, newest-first, so downstream implementati
 
 This history lives here rather than in the shareable document: the shareable document is the methodology as a reader on another stack should implement it, with no history and no repo-internal references. Everything about *this* codebase — where the code lives, what state it is in, what changed when — belongs on this side.
 
+### 2026-09-04 — RoB coverage guard (direction-aware) + honest not-assessed indirectness
+
+**What changed.** Two certainty-inflation fixes prompted by an external adversarial review, applied to `backend/evidence_synthesis/grade.py` (+ `grade_prep.py`), mirrored in `backend/synthesis_stats.py` for the Synthesis review app, and stated inline in both shareable documents (full + downgrades draft).
+
+1. **Risk-of-bias coverage guard.** Dropping unlabelled studies and renormalizing could rate a body whose labels covered a sliver of the pooled weight — the reviewer reproduced High certainty with 99% of the weight unassessed and 1% assessed Low. The guard is direction-aware: a downgrade computed from the labelled sliver stands at any coverage (unlabelled studies could only add concerns), but a **clean** (0-downgrade) result with labels on **under half the pooled weight** is refused (`grade_body` raises under `require_rob`; `grade_prep.grade_one_body` converts the refusal into a per-body "GRADE not computed" warning; `synthesis_stats._rob_across_studies` returns `assessed=False`, so the Synthesis body is `not_rated`).
+2. **Unsupplied indirectness reads "not assessed", never "no serious indirectness".** With `indirectness_levels=None` and no reason, the domain's reason previously claimed "no serious indirectness". It still contributes 0 downgrade levels (never invent a finding), but the reason string now says the domain was not assessed and that the rating does not account for it. In `synthesis_stats.grade_body_of_evidence` the domain additionally reports `downgrade: null` / `assessable: false` plus a warning (the Synthesis orchestrator supplies no indirectness input today).
+
+**Impact.** **Breaking for bodies with <50% labelled weight that previously rated clean** — those now refuse / report `not_rated`, which is the point: such ratings were unsound. Ratings for bodies with majority coverage, and all downgrades, are unchanged. Historical results rated from sliver coverage should be re-rated after appraisal completes.
+
+**Sections touched (shareable):** §4.1 (risk of bias — coverage guard prose), §4.5 (indirectness — not-assessed reason contract), §9 (reference implementation).
+
 ### 2026-08-19 — Upgrade gate keys on the design; stale "Some concerns" note removed from §11
 
 **What changed.** Two corrections prompted by an external implementer's review questions.

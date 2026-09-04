@@ -135,23 +135,31 @@ def grade_one_body(body: dict[str, Any], *,
             "labels via the pooling bridge (attach_rob) or pass require_rob=False")
         return descriptor
 
-    grade = grade_body(
-        pr,
-        initial=judgments.get("initial"),
-        per_study_rob=rob_labels,
-        require_rob=require_rob,
-        indirectness_levels=judgments.get("indirectness_levels"),
-        indirectness_reason=judgments.get("indirectness_reason", ""),
-        mid_benefit=judgments.get("mid_benefit"),
-        mid_harm=judgments.get("mid_harm"),
-        baseline_risk_per_1000=judgments.get("baseline_risk_per_1000"),
-        dose_response=judgments.get("dose_response"),
-        opposing_confounding=bool(judgments.get("opposing_confounding")),
-        subgroup=judgments.get("subgroup"),
-        metaregression=judgments.get("metaregression"),
-        overrides=judgments.get("overrides"),
-        cfg=cfg,
-    )
+    try:
+        grade = grade_body(
+            pr,
+            initial=judgments.get("initial"),
+            per_study_rob=rob_labels,
+            require_rob=require_rob,
+            indirectness_levels=judgments.get("indirectness_levels"),
+            indirectness_reason=judgments.get("indirectness_reason", ""),
+            mid_benefit=judgments.get("mid_benefit"),
+            mid_harm=judgments.get("mid_harm"),
+            baseline_risk_per_1000=judgments.get("baseline_risk_per_1000"),
+            dose_response=judgments.get("dose_response"),
+            opposing_confounding=bool(judgments.get("opposing_confounding")),
+            subgroup=judgments.get("subgroup"),
+            metaregression=judgments.get("metaregression"),
+            overrides=judgments.get("overrides"),
+            cfg=cfg,
+        )
+    except ValueError as ve:
+        # grade_body refuses bodies whose risk-of-bias coverage is severely
+        # incomplete (labels on under half the pooled weight) — same idea as the
+        # all-missing refusal above, surfaced as a per-body warning rather than
+        # aborting the whole batch.
+        descriptor["warnings"].append(f"GRADE not computed: {ve}")
+        return descriptor
     descriptor["grade"] = grade
     descriptor["sof_row"] = sof_row(pr, grade, outcome=judgments.get("outcome"))
     return descriptor

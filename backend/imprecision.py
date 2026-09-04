@@ -430,6 +430,22 @@ def run(pdf_bytes: bytes,
         outcome_is_binary = inferred_binary
     per_sub["outcome_is_binary"] = outcome_is_binary
 
+    # Enforce the event-count N/A rule in code, not just in the prompt: for a
+    # continuous outcome the event-count subdomain is not applicable and must
+    # never contribute a downgrade — even when the LLM ignored the instruction
+    # to answer "n_a" and returned a not_precise judgement anyway. (The UI
+    # renders this cell as "N/A — continuous outcome", so counting it would
+    # silently contradict the display.)
+    if outcome_is_binary is False and "event_count" in judgements:
+        if judgements["event_count"] != "precise":
+            note = ("Event count is N/A for a continuous outcome — excluded "
+                    "from severity counting in code.")
+            prior = (per_sub["event_count"].get("rationale") or "").strip()
+            per_sub["event_count"]["rationale"] = f"{prior} {note}".strip()
+        judgements["event_count"] = "precise"
+        per_sub["event_count"]["judgement"] = "precise"
+        per_sub["event_count"]["n_a"] = True
+
     def _coerce_int(v: Any) -> int | None:
         try:
             if v is None or v == "":

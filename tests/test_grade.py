@@ -355,3 +355,38 @@ class TestEdgeCases:
                              {"study_id": "b", "weight_pct": 50.0}])
         with pytest.raises(ValueError, match="match the pooled studies"):
             grade_body(r, initial="High", per_study_rob=["Low"])
+
+
+# ---------------------------------------------------------------------------
+# Risk-of-bias coverage guard
+# ---------------------------------------------------------------------------
+
+class TestRobCoverageGuard:
+    """Labels on a sliver of the pooled weight must not rate a body as clean;
+    a downgrade from that sliver still stands (it can only understate concerns)."""
+
+    def test_low_coverage_clean_labels_refused(self):
+        studies = [{"study_id": "a", "rob": "Low", "weight_pct": 1.0},
+                   {"study_id": "b", "rob": "", "weight_pct": 99.0}]
+        r = _result(measure="SMD", k=2, estimate=0.4, ci_lower=0.2, ci_upper=0.6,
+                    n_int=1000, n_ctrl=1000, studies=studies)
+        with pytest.raises(ValueError, match="coverage"):
+            grade_body(r, initial="High")
+
+    def test_low_coverage_high_risk_labels_still_rate(self):
+        studies = [{"study_id": "a", "rob": "High", "weight_pct": 10.0},
+                   {"study_id": "b", "rob": "", "weight_pct": 90.0}]
+        r = _result(measure="SMD", k=2, estimate=0.4, ci_lower=0.2, ci_upper=0.6,
+                    n_int=1000, n_ctrl=1000, studies=studies)
+        g = grade_body(r, initial="High")
+        rob = next(d for d in g["domains"] if d["domain"] == "Risk of bias")
+        assert rob["downgrade"] == 2
+
+    def test_majority_coverage_clean_labels_rate_normally(self):
+        studies = [{"study_id": "a", "rob": "Low", "weight_pct": 60.0},
+                   {"study_id": "b", "rob": "", "weight_pct": 40.0}]
+        r = _result(measure="SMD", k=2, estimate=0.4, ci_lower=0.2, ci_upper=0.6,
+                    n_int=1000, n_ctrl=1000, studies=studies)
+        g = grade_body(r, initial="High")
+        rob = next(d for d in g["domains"] if d["domain"] == "Risk of bias")
+        assert rob["downgrade"] == 0

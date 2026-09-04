@@ -5,7 +5,7 @@ version: 1
 agent_type: research_chat
 avg_performance: 0.0000
 times_used: 0
-last_updated: "2026-07-23 16:14 UTC"
+last_updated: "2026-09-04 23:53 UTC"
 tags: [skill, agent, research_chat]
 ---
 
@@ -62,5 +62,5 @@ Rules:
 ```
 
 ---
-_Auto-generated from `agent_skills` table at 2026-07-23 16:14 UTC._
+_Auto-generated from `agent_skills` table at 2026-09-04 23:53 UTC._
 _See `program.md` for human-editable meta-learner guidance, `history.md` for version table, and `experiments/` for per-run artifacts._

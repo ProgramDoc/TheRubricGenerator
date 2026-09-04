@@ -28,6 +28,15 @@ state it is in, and the revision history.
 Substantive changes to the methodology, newest-first, so downstream implementations (e.g. forks
 maintained by other teams) can see what changed and why. Cosmetic / wording-only edits are not logged.
 
+### 2026-09-04 — RoB coverage guard (direction-aware); indirectness reported as not assessed
+
+**What changed.** Two certainty-inflation fixes in `synthesis_stats` (`backend/synthesis_stats.py`), prompted by an external adversarial review; mirrored in the evidence-synthesis GRADE agent and its shareable docs.
+
+1. **`_rob_across_studies` coverage guard.** Dropping unassessed studies and renormalizing could rate a body whose labels covered a sliver of the pooled weight (reproduced: High certainty with 99% of the weight unassessed and 1% assessed Low). Direction-aware fix: a downgrade computed from the assessed sliver stands at any coverage (unassessed studies could only add concerns), but a **clean** (0-downgrade) result with under 50% assessed weight now returns `assessed=False`, so `grade_body_of_evidence` reports `status="not_rated"` — the same refusal as a body with no labels at all. The exclusion note now names the excluded weight share, and the not-rated explanation carries the specific reason.
+2. **Indirectness is an input, and an unsupplied one is flagged.** `grade_body_of_evidence` accepted `indirectness_levels` but the Synthesis orchestrator never supplies it, so every pooled body claimed "no serious indirectness". The domain now reports `downgrade: null` / `assessable: false` with a "not assessed" reason, a `warnings` entry, and an explanation caveat when no assessment (or explicit `indirectness_assessed=True`) is provided. Contribution to the total stays 0 — the fix is honesty, not an invented downgrade. Wiring a real per-body indirectness assessment (e.g. from the review PICO) remains open work.
+
+**Impact.** Breaking for bodies with <50% assessed weight that previously rated clean — those are now `not_rated`, which is the point. All downgrades and majority-coverage ratings are unchanged. The grade JSON gains `warnings` on the rated path and `assessable`/nullable `downgrade` on the Indirectness row (the Synthesis UI already renders `downgrade==null` as "n/a").
+
 ### 2026-07-31 — Risk of bias is per (study × outcome); unassessed studies no longer scored
 
 **What changed.** Three linked corrections to the GRADE risk-of-bias domain (§9).

@@ -725,7 +725,7 @@ Signaling questions:
 Return a JSON object with exactly this shape:
 {shape}
 
-Answer each question using only the response options listed for it. Answer N (or PN) when the paper gives enough information to rule out the problem, and NI only when the paper is silent. Answer every question on its own merits — do not skip a question or mark it not-applicable; the tool resolves the cribsheet's conditional structure in code. Rationales must be short (1-2 sentences) and quote the paper verbatim where possible."""
+Answer each question using only the response options listed for it, exactly as the question is worded: Y/PY when the answer to the question as written is yes/probably yes, N/PN when it is no/probably no. Some questions are phrased so that "yes" indicates a problem and others so that "yes" indicates good practice — never translate your answer into "problem present/absent". Reserve NI for when the paper provides no information to answer the question. Answer every question on its own merits — do not skip a question or mark it not-applicable; the tool resolves the cribsheet's conditional structure in code. Rationales must be short (1-2 sentences) and quote the paper verbatim where possible."""
 
 
 def _assess_domain(pdf_bytes: bytes, domain: dict[str, Any],
