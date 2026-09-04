@@ -222,8 +222,26 @@ _ESTIMATE_EXTRACTORS: dict[str, Callable] = {
 
 
 def dispatch(study_type: str) -> dict[str, str] | None:
-    """Return the appraisal config for a study type, or None if unsupported."""
-    return STUDY_TYPE_REGISTRY.get(study_type)
+    """Return the appraisal config for a study type, or None if unsupported.
+
+    Tolerant of surrounding whitespace and case drift in the classifier's
+    output — an otherwise-valid study type must never fall through to
+    "unsupported" because of formatting noise.
+    """
+    if not study_type:
+        return None
+    hit = STUDY_TYPE_REGISTRY.get(study_type)
+    if hit is not None:
+        return hit
+    normalized = str(study_type).strip()
+    hit = STUDY_TYPE_REGISTRY.get(normalized)
+    if hit is not None:
+        return hit
+    lowered = normalized.lower()
+    for key, cfg in STUDY_TYPE_REGISTRY.items():
+        if key.lower() == lowered:
+            return cfg
+    return None
 
 
 # ─────────────────────────────────────────────
@@ -458,6 +476,9 @@ def compute_grade(initial: str,
                   indirectness_explanation: str = "",
                   imprecision_levels: int = 0,
                   imprecision_explanation: str = "",
+                  indirectness_assessed: bool = True,
+                  imprecision_assessed: bool = True,
+                  unassessed_note: str = "assessment failed",
                   ) -> tuple[str, str]:
     """Compute updated GRADE + human-readable explanation.
 
@@ -479,6 +500,13 @@ def compute_grade(initial: str,
 
     Total downgrade is the sum of the three, capped at "Very low" (3 levels
     below "High").
+
+    ``indirectness_assessed`` / ``imprecision_assessed`` say whether those
+    domains were actually rated. An unassessed domain (the LLM call failed, or
+    the tool defers the domain — e.g. diagnostic accuracy) contributes 0
+    downgrade levels but the explanation carries an explicit caveat instead of
+    claiming "no serious concerns" about something nobody assessed.
+    ``unassessed_note`` names the reason in that caveat.
     """
     idx = _grade_index(initial)
     rob_levels, rob_reason = _rob_downgrade(rob_overall, rob_domain_judgements)
@@ -488,14 +516,24 @@ def compute_grade(initial: str,
     new_idx = min(idx + total, len(GRADE_LEVELS) - 1)
     new_level = GRADE_LEVELS[new_idx]
 
+    missing = ([] if indirectness_assessed else ["indirectness"]) + \
+              ([] if imprecision_assessed else ["imprecision"])
+    caveat = ""
+    if missing:
+        verb = "were" if len(missing) > 1 else "was"
+        pron = "them" if len(missing) > 1 else "it"
+        caveat = (f" Note: {' and '.join(missing)} {verb} not assessed "
+                  f"({unassessed_note}); this rating does not account for {pron} "
+                  "and may overstate certainty.")
+
     if total == 0:
         clean_parts: list[str] = []
-        if indir_levels == 0:
+        if indir_levels == 0 and indirectness_assessed:
             clean_parts.append("no serious indirectness")
-        if imprec_levels == 0:
+        if imprec_levels == 0 and imprecision_assessed:
             clean_parts.append("no serious imprecision")
         suffix = " and " + ", ".join(clean_parts) + " detected" if clean_parts else ""
-        return new_level, f"No downgrade: overall risk of bias is Low{suffix}."
+        return new_level, f"No downgrade: overall risk of bias is Low{suffix}.{caveat}"
 
     parts: list[str] = []
     if rob_levels > 0:
@@ -515,7 +553,7 @@ def compute_grade(initial: str,
         parts.append(f"{imprec_levels} {unit} for {sev_label} imprecision{suffix}")
 
     total_unit = "level" if total == 1 else "levels"
-    return new_level, f"Downgraded {total} {total_unit}: " + " + ".join(parts) + "."
+    return new_level, f"Downgraded {total} {total_unit}: " + " + ".join(parts) + f".{caveat}"
 
 
 # ─────────────────────────────────────────────
@@ -812,6 +850,11 @@ def _appraise_units(conn, run_id: int, paper_id: int, filename: str,
         indirectness_overall, indirectness_levels, indirectness_expl = "none", 0, ""
         imprecision: dict[str, Any] = {}
         imprecision_overall, imprecision_levels, imprecision_expl = "none", 0, ""
+        # A failed (or skipped) assessment must never masquerade as a clean
+        # "no serious concerns" pass: it stays at 0 downgrade levels (we never
+        # invent a finding), but the overall is labelled "not_assessed" and the
+        # GRADE explanation carries an explicit caveat instead of a reassurance.
+        indirectness_assessed = imprecision_assessed = False
         initial_grade = updated_grade = grade_expl = None
 
         if not skip_grade and not skip_extras:
@@ -821,17 +864,24 @@ def _appraise_units(conn, run_id: int, paper_id: int, filename: str,
                  indirectness_expl) = indir_mod.run(
                     pdf_bytes, fields, classification, unit.assessed_outcome,
                     target_pico=target_pico)
+                indirectness_assessed = True
             except HTTPException as he:
                 msg = f"Indirectness assessment failed: {he.detail}"
                 logger.warning("Indirectness failed (run=%s paper=%s): %s",
                                run_id, paper_id, msg)
                 notify("warn", msg)
                 indirectness = {"error": msg}
+                indirectness_overall = "not_assessed"
+                indirectness_expl = ("Indirectness assessment failed — this "
+                                     "domain was not rated.")
             except Exception:
                 logger.exception("Indirectness run failed (run=%s paper=%s)",
                                  run_id, paper_id)
                 notify("warn", "Indirectness assessment failed — see server logs.")
                 indirectness = {"error": "Indirectness assessment failed."}
+                indirectness_overall = "not_assessed"
+                indirectness_expl = ("Indirectness assessment failed — this "
+                                     "domain was not rated.")
 
             notify("info", f"Assessing GRADE imprecision ({unit.label[:50]})")
             try:
@@ -844,17 +894,24 @@ def _appraise_units(conn, run_id: int, paper_id: int, filename: str,
                     # mis-types it (see imprecision.infer_outcome_is_binary).
                     outcome_is_primary=not unit.is_override,
                     outcome_type=(unit.payload or {}).get("outcome_type", ""))
+                imprecision_assessed = True
             except HTTPException as he:
                 msg = f"Imprecision assessment failed: {he.detail}"
                 logger.warning("Imprecision failed (run=%s paper=%s): %s",
                                run_id, paper_id, msg)
                 notify("warn", msg)
                 imprecision = {"error": msg}
+                imprecision_overall = "not_assessed"
+                imprecision_expl = ("Imprecision assessment failed — this "
+                                    "domain was not rated.")
             except Exception:
                 logger.exception("Imprecision run failed (run=%s paper=%s)",
                                  run_id, paper_id)
                 notify("warn", "Imprecision assessment failed — see server logs.")
                 imprecision = {"error": "Imprecision assessment failed."}
+                imprecision_overall = "not_assessed"
+                imprecision_expl = ("Imprecision assessment failed — this "
+                                    "domain was not rated.")
 
         if not skip_grade:
             # ROBINS-I V2 stores preflight metadata under rob_domains["preflight"];
@@ -870,7 +927,13 @@ def _appraise_units(conn, run_id: int, paper_id: int, filename: str,
                 indirectness_levels=indirectness_levels,
                 indirectness_explanation=indirectness_expl,
                 imprecision_levels=imprecision_levels,
-                imprecision_explanation=imprecision_expl)
+                imprecision_explanation=imprecision_expl,
+                indirectness_assessed=indirectness_assessed,
+                imprecision_assessed=imprecision_assessed,
+                unassessed_note=(
+                    "deferred for diagnostic accuracy — the indirectness and "
+                    "imprecision modules assume a treatment-trial PICO"
+                    if skip_extras else "assessment failed"))
 
         _write_result(conn, run_id, paper_id, status="ok", filename=filename,
                        study_type=study_type,
@@ -1088,7 +1151,16 @@ def appraise_paper(conn, papers_dir: Path, user_id: int, is_admin: bool,
         _notify("error", msg)
         return {"status": "error", "error": msg}
 
-    study_type = classification.get("study_type", "")
+    # Canonicalize the classifier's study type against the registry vocabulary
+    # (strip whitespace, repair case drift) BEFORE any routing: dispatch,
+    # tool overrides, and the RoB tools' own study-type checks (e.g. the
+    # ROBINS-I single-arm variant) all compare exactly.
+    study_type = str(classification.get("study_type") or "").strip()
+    for _key in STUDY_TYPE_REGISTRY:
+        if _key.lower() == study_type.lower():
+            study_type = _key
+            break
+    classification["study_type"] = study_type
     cfg = dispatch(study_type)
     # Per-run tool override for diagnostic-accuracy papers (QUADAS-2 vs
     # QUADAS-3). Shallow-copy the cfg so we never mutate the module-level

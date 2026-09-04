@@ -74,7 +74,7 @@ Signaling questions:
 Return a JSON object with exactly this shape:
 {shape}
 
-Answer N (or PN) when the paper gives enough information to rule out the problem, and NI only when the paper is silent. Rationales must be short (1-2 sentences) and quote the paper verbatim where possible.
+Answer each signaling question exactly as worded: Y/PY when the answer to the question as written is yes/probably yes, N/PN when it is no/probably no. Some questions are phrased so that "yes" indicates a problem and others so that "yes" indicates good practice — never translate your answer into "problem present/absent". Reserve NI for when the paper provides no information to answer the question. Rationales must be short (1-2 sentences) and quote the paper verbatim where possible.
 ```
 
 `questions_block` is constructed per signaling question as:
@@ -574,7 +574,7 @@ Return a JSON object with exactly this shape:
 Notes on ROBINS-I V2:
 - The judgement scale is Low / Moderate / Serious / Critical (4 levels). Code maps your signal answers to the judgement — answer the signaling questions only.
 - Some questions allow WN / SN (weak / strong no) or WY / SY (weak / strong yes). Use the strong version only when the magnitude is clearly substantial; use the weak version when the direction is right but the magnitude is uncertain.
-- Answer N (or PN) when the paper gives enough information to rule out the problem; NI only when the paper is silent.
+- Answer each question exactly as worded: Y/PY when the answer to the question as written is yes/probably yes, N/PN when it is no/probably no. Some questions are phrased so that "yes" indicates a problem and others so that "yes" indicates good practice — never translate your answer into "problem present/absent". Reserve NI for when the paper provides no information to answer the question.
 - Rationales must be short (1-2 sentences) and quote the paper verbatim where possible.
 ```
 

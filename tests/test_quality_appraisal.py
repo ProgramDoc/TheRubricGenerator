@@ -3500,3 +3500,70 @@ class TestExportRouteResolution:
         r = client.get("/api/quality-appraisal/runs/999999",
                        headers={"Cookie": f"rubricgen_session={test_user['cookie']}"})
         assert r.status_code == 404, r.text
+
+
+# ─────────────────────────────────────────────
+# Dispatch — tolerant of classifier formatting noise
+# ─────────────────────────────────────────────
+class TestDispatchNormalization:
+    """Surrounding whitespace or case drift in an otherwise-valid study type must
+    never route a supported paper to 'unsupported' (skipped + refund)."""
+
+    def test_whitespace_wrapped_study_type_still_routes(self):
+        cfg = qa.dispatch("  Randomized Controlled Trial \n")
+        assert cfg is not None
+        assert cfg["rob_tool"] == "rob2"
+
+    def test_case_drift_still_routes(self):
+        cfg = qa.dispatch("randomized controlled trial")
+        assert cfg is not None
+        assert cfg["rob_tool"] == "rob2"
+
+    def test_genuinely_unknown_type_still_returns_none(self):
+        assert qa.dispatch("Case Report") is None
+        assert qa.dispatch("") is None
+        assert qa.dispatch(None) is None
+
+
+# ─────────────────────────────────────────────
+# compute_grade — unassessed domains carry a caveat, never a reassurance
+# ─────────────────────────────────────────────
+class TestComputeGradeUnassessedDomains:
+    def test_failed_domains_are_not_reported_as_clean(self):
+        level, expl = qa.compute_grade(
+            "High", "Low", ["Low"] * 5,
+            indirectness_assessed=False, imprecision_assessed=False)
+        assert level == "High"  # no invented downgrade
+        assert "no serious indirectness" not in expl
+        assert "no serious imprecision" not in expl
+        assert "not assessed" in expl
+        assert "may overstate certainty" in expl
+
+    def test_single_failed_domain_is_named(self):
+        level, expl = qa.compute_grade(
+            "High", "Low", ["Low"] * 5,
+            imprecision_assessed=False)
+        assert "no serious indirectness" in expl  # the assessed one stays
+        assert "imprecision was not assessed" in expl
+
+    def test_caveat_survives_a_downgrade_explanation(self):
+        level, expl = qa.compute_grade(
+            "High", "Some concerns", ["Some concerns"] * 2,
+            indirectness_assessed=False)
+        assert level == "Moderate"
+        assert "indirectness was not assessed" in expl
+
+    def test_unassessed_note_is_threaded_into_the_caveat(self):
+        _, expl = qa.compute_grade(
+            "High", "Low", ["Low"] * 4,
+            indirectness_assessed=False, imprecision_assessed=False,
+            unassessed_note="deferred for diagnostic accuracy — the indirectness and "
+                            "imprecision modules assume a treatment-trial PICO")
+        assert "deferred for diagnostic accuracy" in expl
+
+    def test_default_flags_preserve_legacy_explanations(self):
+        level, expl = qa.compute_grade("High", "Low", ["Low"] * 5)
+        assert level == "High"
+        assert "no serious indirectness" in expl
+        assert "no serious imprecision" in expl
+        assert "not assessed" not in expl

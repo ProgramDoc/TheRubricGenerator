@@ -494,6 +494,27 @@ def grade_body(pool_result: dict[str, Any], *,
         if len(weights) != len(per_study_rob):
             weights = None
 
+    # Coverage guard — the same refusal as the no-labels case above, extended to
+    # severely incomplete appraisal. Direction-aware: a downgrade computed from
+    # the labelled sliver stands whatever the coverage (unlabelled studies could
+    # only add concerns), but a *clean* result on under half the pooled weight
+    # would rate a body 99% unassessed with one small Low-risk study as though
+    # bias were clean — refuse that instead of inflating certainty.
+    if require_rob and studies and per_study_rob:
+        _lab_idx = [i for i, r in enumerate(per_study_rob) if (r or "").strip()]
+        if weights is not None and len(weights) == len(per_study_rob):
+            _total_w = sum(float(w or 0.0) for w in weights) or 1.0
+            _coverage = sum(float(weights[i] or 0.0) for i in _lab_idx) / _total_w
+        else:
+            _coverage = len(_lab_idx) / len(per_study_rob)
+        if _coverage < 0.5:
+            _lv, _ = _rob_across_studies(per_study_rob, weights, cfg)
+            if _lv == 0:
+                raise ValueError(
+                    f"risk-of-bias labels cover only {_coverage:.0%} of the pooled "
+                    "weight and show no concerns on the labelled sliver — "
+                    "insufficient coverage to rate this body of evidence")
+
     def _pin(domain_key: str, levels: int, reason: str) -> tuple[int, str]:
         if domain_key in overrides:
             return max(0, int(overrides[domain_key])), (reason + " [overridden]").strip()
@@ -506,9 +527,18 @@ def grade_body(pool_result: dict[str, Any], *,
         measure, ci_lower, ci_upper, ois_metric, _num(mid_benefit), _num(mid_harm), is_binary, cfg))
     pub_lv, pub_reason = _pin("publication_bias", *_pubbias_downgrade(k, egger, trim_fill, cfg))
     ind_input = 0 if indirectness_levels is None else max(0, int(indirectness_levels))
+    if indirectness_levels is None and not indirectness_reason:
+        # No assessment reached us at all (the orchestrator normally supplies a
+        # reviewer rating or the hybrid auto-assessment). 0 downgrade levels —
+        # we never invent a finding — but the reason must say "not assessed",
+        # never "no serious indirectness" about something nobody assessed.
+        ind_default = ("not assessed — no indirectness assessment supplied; "
+                       "the rating does not account for this domain")
+    else:
+        ind_default = ("no serious indirectness" if ind_input == 0
+                       else "indirectness concerns")
     ind_lv, ind_reason = _pin("indirectness", ind_input,
-                              indirectness_reason or ("no serious indirectness" if ind_input == 0
-                                                      else "indirectness concerns"))
+                              indirectness_reason or ind_default)
 
     domains = [
         {"domain": "Risk of bias", "kind": "downgrade", "downgrade": rob_lv, "upgrade": 0, "reason": rob_reason},

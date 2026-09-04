@@ -1058,6 +1058,16 @@ def _rob_across_studies(per_study_rob: Sequence[str],
 
     ``assessed=False`` means the domain could not be rated at all. That is distinct
     from a rating of 0: the caller must not add it into a certainty total.
+
+    Coverage guard (direction-aware): dropping unassessed studies and
+    renormalizing is only sound while the result cannot inflate certainty. A
+    downgrade computed from the assessed sliver stands whatever the coverage —
+    unassessed studies could only add concerns, never remove them. A *clean*
+    (0-downgrade) result, though, is only trustworthy when the assessed studies
+    carry at least half the pooled weight: a body 99% unassessed with one small
+    Low-risk study must not read as "most weight is in low risk-of-bias
+    studies", so below 50% assessed weight a clean result is reported as not
+    assessable instead.
     """
     labels = list(per_study_rob or [])
     w_all = (np.asarray(weights, float)
@@ -1067,11 +1077,14 @@ def _rob_across_studies(per_study_rob: Sequence[str],
     if not keep:
         return 0, "no risk-of-bias judgement is available for any pooled study", False
 
+    total_w = float(w_all.sum())
+    coverage = float(w_all[keep].sum()) / total_w if total_w > 0 else 0.0
     sev = np.array([_ROB_SEVERITY.get(labels[i].strip().lower(), 1) for i in keep], float)
     w = w_all[keep]
     w = w / w.sum()
     gap = ("" if len(keep) == len(labels) else
-           f"; {len(labels) - len(keep)} of {len(labels)} pooled studies had no assessable "
+           f"; {len(labels) - len(keep)} of {len(labels)} pooled studies "
+           f"({1 - coverage:.0%} of pooled weight) had no assessable "
            "judgement and are excluded from this domain")
     frac_serious = float(w[sev >= 2].sum())
     frac_some = float(w[sev >= 1].sum())
@@ -1079,6 +1092,10 @@ def _rob_across_studies(per_study_rob: Sequence[str],
         return 2, f"most of the weight ({frac_serious:.0%}) is in studies at high/serious risk of bias{gap}", True
     if frac_serious >= 0.25 or frac_some >= 0.5:
         return 1, f"a substantial share of weight ({frac_some:.0%}) is in studies with risk-of-bias concerns{gap}", True
+    if coverage < 0.5:
+        return 0, (f"risk of bias was assessed for only {coverage:.0%} of the pooled "
+                   f"weight ({len(keep)} of {len(labels)} studies) — insufficient "
+                   "coverage to accept a clean (no-downgrade) rating for this domain"), False
     return 0, f"most weight is in low risk-of-bias studies{gap}", True
 
 
@@ -1140,6 +1157,7 @@ def grade_body_of_evidence(*, initial: str, per_study_rob: Sequence[str],
                            trimfill: dict | None = None,
                            indirectness_levels: int = 0,
                            indirectness_reason: str = "",
+                           indirectness_assessed: bool | None = None,
                            mid_benefit: float | None = None,
                            mid_harm: float | None = None,
                            is_binary: bool = False) -> dict[str, Any]:
@@ -1149,8 +1167,17 @@ def grade_body_of_evidence(*, initial: str, per_study_rob: Sequence[str],
 
     Returns ``status="rated"`` with a ``final`` certainty, or ``status="not_rated"``
     with ``final=None`` when risk of bias — a required GRADE domain — could not be
-    assessed for any pooled study. Rating such a body would be indistinguishable, in
-    the output, from rating one that was assessed and found clean.
+    assessed for any pooled study (or only for a minority of the pooled weight).
+    Rating such a body would be indistinguishable, in the output, from rating one
+    that was assessed and found clean.
+
+    Indirectness is an *input*, not something this calculator can judge: whether
+    the included evidence matches the review question needs a PICO assessment.
+    ``indirectness_assessed`` says whether one was performed; when omitted it is
+    inferred (a supplied reason or a non-zero downgrade counts as assessed). An
+    unassessed indirectness domain contributes 0 downgrade levels but is marked
+    ``assessable=False`` with a warning, never reported as "no serious
+    indirectness".
     """
     rob_lv, rob_reason, rob_assessed = _rob_across_studies(per_study_rob, weights)
     inc_lv, inc_reason = _inconsistency_downgrade(heterogeneity, subgroup)
@@ -1158,14 +1185,23 @@ def grade_body_of_evidence(*, initial: str, per_study_rob: Sequence[str],
                                                 mid_benefit, mid_harm, is_binary)
     pub_lv, pub_reason = _pubbias_downgrade(egger, trimfill)
     ind_lv = max(0, int(indirectness_levels))
+    ind_assessed = (indirectness_assessed if indirectness_assessed is not None
+                    else bool(indirectness_reason) or ind_lv > 0)
+    if ind_assessed:
+        ind_reason = indirectness_reason or (
+            "no serious indirectness" if ind_lv == 0 else "indirectness concerns")
+    else:
+        ind_reason = ("not assessed — no indirectness assessment was supplied "
+                      "for this body of evidence")
 
     domains = [
         {"domain": "Risk of bias",
          "downgrade": rob_lv if rob_assessed else None,
          "assessable": rob_assessed, "reason": rob_reason},
         {"domain": "Inconsistency", "downgrade": inc_lv, "reason": inc_reason},
-        {"domain": "Indirectness", "downgrade": ind_lv,
-         "reason": indirectness_reason or ("no serious indirectness" if ind_lv == 0 else "indirectness concerns")},
+        {"domain": "Indirectness",
+         "downgrade": ind_lv if ind_assessed else None,
+         "assessable": ind_assessed, "reason": ind_reason},
         {"domain": "Imprecision", "downgrade": imp_lv, "reason": imp_reason},
         {"domain": "Publication bias", "downgrade": pub_lv, "reason": pub_reason},
     ]
@@ -1176,24 +1212,31 @@ def grade_body_of_evidence(*, initial: str, per_study_rob: Sequence[str],
         return {
             "initial": initial, "final": None, "status": "not_rated",
             "total_downgrade": None, "domains": domains,
-            "warnings": ["Certainty not rated: no risk-of-bias judgement is available "
-                         "for any study in this body of evidence. Risk of bias is a "
+            "warnings": [f"Certainty not rated: {rob_reason}. Risk of bias is a "
                          "required GRADE domain."],
             "explanation": (
-                "Certainty could not be rated for this outcome — risk of bias, a required "
-                "GRADE domain, was not assessed for any pooled study. The pooled estimate, "
+                f"Certainty could not be rated for this outcome — {rob_reason}. "
+                "Risk of bias is a required GRADE domain. The pooled estimate, "
                 "heterogeneity and publication-bias results are unaffected."),
         }
 
-    total = sum(d["downgrade"] for d in domains)
+    total = sum(d["downgrade"] for d in domains if d["downgrade"] is not None)
     start = _grade_index(initial)
     final_idx = min(len(GRADE_LEVELS) - 1, start + total)
     final = GRADE_LEVELS[final_idx]
+    warnings: list[str] = []
+    if not ind_assessed:
+        warnings.append(
+            "Indirectness was not assessed for this body of evidence; the "
+            "certainty rating does not account for it and may overstate certainty.")
+    caveat = (" Indirectness was not assessed; the rating may overstate certainty."
+              if not ind_assessed else "")
     fired = [f"{d['domain'].lower()} (−{d['downgrade']}: {d['reason']})"
-             for d in domains if d["downgrade"] > 0]
+             for d in domains if d["downgrade"]]
     if fired:
-        explanation = f"Initial certainty {initial}; downgraded {total} level(s) for " + "; ".join(fired) + f". Final certainty: {final}."
+        explanation = f"Initial certainty {initial}; downgraded {total} level(s) for " + "; ".join(fired) + f". Final certainty: {final}.{caveat}"
     else:
-        explanation = f"Initial certainty {initial}; no serious concerns across GRADE domains. Final certainty: {final}."
+        explanation = f"Initial certainty {initial}; no serious concerns across the assessed GRADE domains. Final certainty: {final}.{caveat}"
     return {"initial": initial, "final": final, "status": "rated",
-            "total_downgrade": total, "domains": domains, "explanation": explanation}
+            "total_downgrade": total, "domains": domains,
+            "warnings": warnings, "explanation": explanation}

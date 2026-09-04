@@ -1017,7 +1017,7 @@ Return a JSON object with exactly this shape:
 Notes on ROBINS-I V1:
 - The signal vocabulary is **Y / PY / PN / N / NI** (5 tokens). For each question, answer based on what the paper says about that specific question — **do NOT try to determine whether a question is gated out by the cribsheet's cascading structure**. Python applies the cascade rules after you answer and will set `NA` for any question that should be gated out. Just answer each question independently based on its own text.
 - The judgement scale is **Low / Moderate / Serious / Critical / No information** (5 levels). The code maps your signal answers to a judgement — answer the signaling questions only.
-- Answer N (or PN) when the paper gives enough information to rule out the problem; NI only when the paper is silent.
+- Answer each question exactly as worded: Y/PY when the answer to the question as written is yes/probably yes, N/PN when it is no/probably no. Some questions are phrased so that "yes" indicates a problem and others so that "yes" indicates good practice — never translate your answer into "problem present/absent". Reserve NI for when the paper provides no information to answer the question.
 - Rationales must be short (1-2 sentences) and quote the paper verbatim where possible."""
 
 

@@ -200,6 +200,8 @@ A study with **no** RoB entry is **dropped** from this domain and the weights re
 
 **A body with no risk-of-bias input at all is an error, not a clean body.** Scoring the domain 0 in that case reports "no serious concerns" for something nobody assessed. The engine raises; a caller that deliberately grades before appraisal has finished must opt out explicitly (`require_rob=False`) and present the domain as not assessed.
 
+**Severely incomplete coverage is refused the same way — direction-aware.** Dropping unlabelled studies and renormalizing is only sound while the result cannot inflate certainty. A downgrade computed from the labelled sliver stands at any coverage (unlabelled studies could only add concerns, never remove them). A **clean** (0-downgrade) result, though, is only trustworthy when the labelled studies carry **at least half the pooled weight**: a body 99% unassessed with one small Low-risk study must not rate as though bias were clean. Under `require_rob` the engine refuses a clean rating below 50% labelled weight, naming the coverage in the error.
+
 ### 4.2 Inconsistency (GRADE 7) — I² + Cochran-Q, subgroup-aware
 
 ```python
@@ -269,7 +271,7 @@ def pubbias_downgrade(k, egger, trim_fill, cfg):
 
 ### 4.5 Indirectness (GRADE 8) — a supplied integer (0/1/2)
 
-Indirectness is a judgement, not a computation from the pooled numbers. The engine consumes an **integer level**; §7 describes how a hybrid path fills it in (reviewer value, else one LLM call). When omitted it defaults to 0 — i.e. "not assessed" scores as no downgrade, and therefore **does not close the upgrade gate** (§5.4). This is deliberate: the engine cannot distinguish "assessed as direct" from "nobody looked", so the caller contract is to resolve indirectness upstream (reviewer value or the §7 auto-assessment) for any body it intends to rate up.
+Indirectness is a judgement, not a computation from the pooled numbers. The engine consumes an **integer level**; §7 describes how a hybrid path fills it in (reviewer value, else one LLM call). When omitted it defaults to 0 — i.e. "not assessed" scores as no downgrade, and therefore **does not close the upgrade gate** (§5.4) — **but the domain's reason string must then say "not assessed", never "no serious indirectness"**: the engine cannot distinguish "assessed as direct" from "nobody looked", and having a review PICO does not itself establish that the included evidence is direct. The caller contract is to resolve indirectness upstream (reviewer value or the §7 auto-assessment) for any body it intends to rate up, and to surface the not-assessed reason to the reader otherwise.
 
 ---
 
@@ -697,6 +699,22 @@ def grade_body(pool_result, *, initial=None, per_study_rob=None, weights=None, r
     if weights is None:
         weights = [s.get("weight_pct") for s in studies if s.get("weight_pct") is not None]
         if len(weights) != len(per_study_rob): weights = None
+    # Coverage guard (direction-aware): a downgrade computed from the labelled
+    # sliver stands at any coverage — unlabelled studies could only add concerns —
+    # but a CLEAN result on under half the pooled weight would rate a body 99%
+    # unassessed with one small Low-risk study as though bias were clean. Refuse.
+    if require_rob and per_study_rob:
+        lab_idx = [i for i, r in enumerate(per_study_rob) if (r or "").strip()]
+        if weights is not None and len(weights) == len(per_study_rob):
+            total_w = sum(float(w or 0.0) for w in weights) or 1.0
+            coverage = sum(float(weights[i] or 0.0) for i in lab_idx) / total_w
+        else:
+            coverage = len(lab_idx) / len(per_study_rob)
+        if coverage < 0.5 and _rob_across_studies(per_study_rob, weights, cfg)[0] == 0:
+            raise ValueError(
+                f"risk-of-bias labels cover only {coverage:.0%} of the pooled weight "
+                "and show no concerns on the labelled sliver — insufficient coverage "
+                "to rate this body of evidence")
 
     def pin(key, lv, reason):
         if key in overrides: return max(0, int(overrides[key])), (reason + " [overridden]").strip()
@@ -707,7 +725,13 @@ def grade_body(pool_result, *, initial=None, per_study_rob=None, weights=None, r
     imp_lv, imp_r = pin("imprecision", *_imprecision(measure, lo, hi, ois, _num(mid_benefit), _num(mid_harm), is_binary, cfg))
     pub_lv, pub_r = pin("publication_bias", *_pubbias(k, pb.get("egger"), pb.get("trim_fill"), cfg))
     ind_in = 0 if indirectness_levels is None else max(0, int(indirectness_levels))
-    ind_lv, ind_r = pin("indirectness", ind_in, indirectness_reason or ("no serious indirectness" if ind_in == 0 else "indirectness concerns"))
+    if indirectness_levels is None and not indirectness_reason:
+        # Nothing was assessed: 0 downgrade (never invent a finding), but the
+        # reason must say so — never "no serious indirectness" (§4.5).
+        ind_default = "not assessed — no indirectness assessment supplied; the rating does not account for this domain"
+    else:
+        ind_default = "no serious indirectness" if ind_in == 0 else "indirectness concerns"
+    ind_lv, ind_r = pin("indirectness", ind_in, indirectness_reason or ind_default)
 
     domains = [
         {"domain": "Risk of bias", "kind": "downgrade", "downgrade": rob_lv, "upgrade": 0, "reason": rob_r},
