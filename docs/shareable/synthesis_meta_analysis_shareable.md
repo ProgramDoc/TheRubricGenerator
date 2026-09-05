@@ -134,13 +134,14 @@ Return JSON:
 
 | Measure | `field_spec` |
 |---|---|
-| `MD`, `SMD` | `"m1": intervention-arm mean, "sd1": its SD, "n1": its sample size, "m2": comparator-arm mean, "sd2": its SD, "n2": its sample size` |
+| `MD` | `"m1": intervention-arm mean, "sd1": its SD, "n1": its sample size, "m2": comparator-arm mean, "sd2": its SD, "n2": its sample size. If a complete set of arm summaries is not reported, use "estimate": the reported mean difference (intervention minus comparator), and "se": the reported standard error of that difference. These are alternative inputs; do not invent missing arm SDs or copy an SE into an SD field. Leave estimate and se null when complete arm summaries are used. Record sample sizes only when reported` |
+| `SMD` | `"m1": intervention-arm mean, "sd1": its SD, "n1": its sample size, "m2": comparator-arm mean, "sd2": its SD, "n2": its sample size` |
 | `OR`, `RR`, `RD` | `"events1": intervention-arm event count, "total1": intervention-arm total, "events2": comparator-arm event count, "total2": comparator-arm total` |
 | `ZCOR` | `"r": Pearson correlation, "n": sample size` |
 | `PLOGIT`, `PFT` | `"events": event count (single arm), "n": group total` |
 | `IRR` | `"events": event count, "person_time": person-time at risk` |
 
-A row is flagged `needs_review` (routed to a human before pooling) when any required numeric for the measure is missing.
+A row is flagged `needs_review` when required inputs are missing. For MD, either a valid complete arm-summary set or a finite reported `estimate` with a finite positive `se` suffices. Complete arm summaries take precedence; optional sample sizes may remain unknown. Preserve the selected input form and source quote through storage and edits.
 
 ---
 
@@ -156,6 +157,8 @@ All functions return `(yi, vi)` where `yi` is on the **analysis scale** (log for
 yi = m1 - m2
 vi = sd1²/n1 + sd2²/n2
 ```
+
+If complete arm summaries are unavailable, a directly reported between-arm MD and its standard error are generic inverse-variance inputs: `yi = estimate`, `vi = se²`. Never fabricate arm SDs. A reported sample size does not replace an SE. For a body mixing arm-summary and reported-MD inputs, compute each row's effect and variance first, then pool on the same MD scale. R reproduction uses `metagen(TE, seTE, sm="MD")` for such a body. See the [Cochrane Handbook §10.3](https://www.cochrane.org/authors/handbooks-and-manuals/handbook/current/chapter-10#section-10-3).
 
 **Standardized mean difference — Hedges' g (SMD):**
 
@@ -283,6 +286,10 @@ Var(ln RR_MH) = Σ((n1ᵢ·n2ᵢ·(aᵢ+cᵢ) - aᵢ·cᵢ·Nᵢ)/Nᵢ²) / (R·
 ```
 
 **RD:** weights `wᵢ = n1ᵢ·n2ᵢ/Nᵢ`, `RD_MH = Σ wᵢ·RDᵢ / Σ wᵢ`; Greenland-Robins variance.
+
+**Contribution weights:** OR uses `bᵢcᵢ/Nᵢ`; RR uses `cᵢn1ᵢ/Nᵢ`; RD uses `n1ᵢn2ᵢ/Nᵢ`. Normalize these to sum to 100 for the fixed-effect forest plot and its weighted risk-of-bias assessment. Do not replace them with inverse-variance weights. These are the denominator weights used by [R meta's Mantel–Haenszel implementation](https://github.com/guido-s/meta/blob/master/R/metabin.R).
+
+**Storage boundary:** extracted binary rows use `events1,total1,events2,total2`. Restore `a=events1`, `c=events2`, `n1=total1`, `n2=total2` before constructing Mantel–Haenszel tables after a database reload. Preserve uncorrected counts for that calculation and recover total sample size from the two arms. MD sample size similarly comes from reported arm totals (or a reported total for generic MD); unknown sizes stay unknown.
 
 M-H tolerates single-zero cells without correction. It is the **fixed-effect headline for binary outcomes**; random effects always use the inverse-variance path with the per-study log-OR/RR variances of §3.2.
 
@@ -522,6 +529,11 @@ def md(m1, sd1, n1, m2, sd2, n2):
     vi = sd1**2 / n1 + sd2**2 / n2
     return (m1 - m2, vi) if vi > 0 else None
 
+def reported_md(estimate, se):
+    if estimate is None or se is None: return None
+    if not math.isfinite(estimate) or not math.isfinite(se) or se <= 0: return None
+    return estimate, se**2
+
 def _cc(a, b, c, d, k=0.5):
     return (a+k, b+k, c+k, d+k, True) if min(a, b, c, d) == 0 else (a, b, c, d, False)
 
@@ -635,7 +647,7 @@ def mantel_haenszel_or(tables):
     var = (P*Ri).sum()/(2*R**2) + (P*Si+Q*Ri).sum()/(2*R*S) + (Q*Si).sum()/(2*S**2)
     est = math.log(R/S); se = math.sqrt(var)
     return {"estimate": est, "se": se, "ci_low": est-Z95*se, "ci_high": est+Z95*se,
-            "p": float(2*stats.norm.sf(abs(est/se)))}
+            "p": float(2*stats.norm.sf(abs(est/se))), "weights_pct": (Si/S*100).tolist()}
 
 def pool(yi, vi, model="random", tau2_method="REML", knapp=False):
     het = heterogeneity(yi, vi)

@@ -426,6 +426,7 @@ function renderExtraction() {
   for (const oc of (r.outcomes||[])) {
     const pts = byOutcome[oc.id]||[]; const keys = measureKeys(oc.effect_measure);
     html += `<div class="card"><h3>${esc(oc.name)} <span class="chip">${oc.effect_measure}</span></h3>
+      ${oc.effect_measure==='MD'?'<p class="muted">Use arm means and SDs, or a reported mean difference and its standard error (estimate and se) when complete arm summaries are unavailable. Sample size alone does not supply precision.</p>':''}
       <table class="grid"><thead><tr><th>Study</th><th>Pool?</th>${keys.map(k=>`<th>${k}</th>`).join('')}<th>yi</th><th>vi</th><th>Subgroup</th></tr></thead><tbody>${
       pts.map(p=>`<tr class="${p.needs_review?'cell-edited':''}">
         <td><span style="cursor:pointer;color:var(--accent)" onclick="openDetail(${p.study_id})">📄 ${esc(studyName(p.study_id))}</span></td>
@@ -438,7 +439,7 @@ function renderExtraction() {
   html += `<button class="tb-btn" style="background:var(--accent);color:#fff" onclick="repool()">↻ Recompute pooling</button>`;
   document.getElementById('pane-extraction').innerHTML = html;
 }
-function measureKeys(m){ return ({MD:['m1','sd1','n1','m2','sd2','n2'],SMD:['m1','sd1','n1','m2','sd2','n2'],
+function measureKeys(m){ return ({MD:['m1','sd1','n1','m2','sd2','n2','estimate','se','n'],SMD:['m1','sd1','n1','m2','sd2','n2'],
   OR:['events1','total1','events2','total2'],RR:['events1','total1','events2','total2'],RD:['events1','total1','events2','total2'],
   HR:['hr','ci_lower','ci_upper'],
   ZCOR:['r','n'],PLOGIT:['events','n'],PFT:['events','n'],IRR:['events','person_time']})[m]||[]; }

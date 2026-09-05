@@ -32,11 +32,21 @@ def reference():
 
 def test_seed_sources_and_schema():
     data = sim.seeds()
-    assert len(data) == 3
-    assert sum(len(d["outcomes"]) for d in data.values()) == 6
+    assert len(data) == 6
+    assert sum(len(d["outcomes"]) for d in data.values()) == 9
     assert all(d["curation"] == "published_targets" for d in data.values())
     schema = json.loads((sim.ROOT / "frontend/simulator-reference-schema.json").read_text())
     assert schema == bm.Dataset.model_json_schema()
+
+
+def test_cochrane_checkpoints_preserve_unreported_grade_and_report_grain():
+    data = sim.seeds()
+    compression = data["seed:cochrane-compression-2021"]
+    assert len(compression["studies"]) == 3  # six trial units in three PDFs
+    assert compression["outcomes"][0]["target"]["k"] == 6
+    assert all(not s["outcomes"] for s in compression["studies"])
+    assert data["seed:cochrane-vitamin-c-2013"]["outcomes"][0]["target"]["grade"] is None
+    assert data["seed:cochrane-honey-2018"]["outcomes"][0]["method_verified"] is False
 
 
 def test_gold_never_passed_to_agents():

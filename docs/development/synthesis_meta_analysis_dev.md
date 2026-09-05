@@ -28,6 +28,14 @@ state it is in, and the revision history.
 Substantive changes to the methodology, newest-first, so downstream implementations (e.g. forks
 maintained by other teams) can see what changed and why. Cosmetic / wording-only edits are not logged.
 
+### 2026-09-04 — Cochrane pooling checkpoints: persisted counts, MH weights, reported MD + SE
+
+**What changed.** Restore canonical binary counts and sample size when pooling extracted rows reloaded from storage; the vitamin-C checkpoint previously raised `KeyError: a`. Mantel–Haenszel fixed-effect weights now use the measure's denominator contributions (OR `bc/N`, RR `cn1/N`, RD `n1n2/N`) in plots and weighted RoB, replacing incorrectly displayed inverse-variance weights. MD extraction, computation, editing and R export accept a reported difference plus its SE when complete arm summaries are unavailable; no missing arm SD is invented. Complete arm summaries retain precedence. The shareable extraction instructions, formulas and reference implementation are updated.
+
+**Validation.** Version-pinned published-data regressions cover CD000980.pub4 Analysis 1.1 (severe-stress subgroup) and CD007094.pub5 Analysis 1.3.1 through extraction/storage/pooling. These are statistical checks, not measured AI accuracy. Honey's rounded study data reproduce an upper CI of −0.62617 rather than the printed −0.62; the discrepancy remains explicit.
+
+**Impact.** Existing stored results are not recomputed automatically. Re-pooling restores previously lost sample sizes and can change imprecision ratings; corrected MH contributions can change weighted RoB. No prior agent-performance claim follows from passing these deterministic checks.
+
 ### 2026-09-04 — RoB coverage guard (direction-aware); indirectness reported as not assessed
 
 **What changed.** Two certainty-inflation fixes in `synthesis_stats` (`backend/synthesis_stats.py`), prompted by an external adversarial review; mirrored in the evidence-synthesis GRADE agent and its shareable docs.

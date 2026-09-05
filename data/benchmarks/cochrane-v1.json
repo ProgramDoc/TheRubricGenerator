@@ -1,0 +1,263 @@
+{
+  "cochrane-compression-2021": {
+    "title": "Cochrane checkpoint: compression stockings — oedema",
+    "version": "CD004002.pub4-2021-checkpoint-1",
+    "topic": "Travel medicine",
+    "citation": "Compression stockings for preventing deep vein thrombosis in airline passengers. Cochrane Database of Systematic Reviews. DOI: 10.1002/14651858.CD004002.pub4",
+    "source_url": "https://doi.org/10.1002/14651858.CD004002.pub4",
+    "curation": "published_targets",
+    "curator_notes": "One outcome checkpoint within a three-complete-review collection that is still in progress. Development reference, not adjudicated gold. Three reports contain six trial units; map each PDF once. Classification and screening are scored by report; trial-unit numeric extraction is not scored by the current report binding. Review-derived numerical inputs are retained separately for the deterministic replay. The review includes unpublished data. Kendall Table III resolves the abstract SD conflict, but Table IV has a conflicting 64 versus 66 denominator. GRADE Low is published; domain allocation is withheld. Keep review PDFs out of agent inputs.",
+    "split": "development",
+    "pico": {
+      "population": "Airline passengers on long flights",
+      "intervention": "Below-knee graduated compression stockings",
+      "comparator": "No stockings",
+      "inclusion_text": "Randomized long-flight trials reporting the composite oedema score. Preserve separately randomized short- and long-flight trial units within each report."
+    },
+    "outcomes": [
+      {
+        "key": "oedema",
+        "name": "Post-flight composite oedema score (lower scores better)",
+        "outcome_type": "continuous",
+        "effect_measure": "MD",
+        "model_choice": "fixed",
+        "fe_method": "IV",
+        "tau2_method": "DL",
+        "re_ci_method": "wald",
+        "method_verified": true,
+        "method_note": "Forest-plot settings transcribed and numerically replayed. Fixed inverse variance.",
+        "source_locator": "Analysis 1.3, printed page 39 (local PDF page 41); GRADE summary of findings, footnote 5.",
+        "tolerance": 0.006,
+        "target": {
+          "estimate": -4.72,
+          "ci_low": -4.91,
+          "ci_high": -4.52,
+          "grade": "Low",
+          "k": 6,
+          "i2": 92,
+          "domains": {}
+        }
+      }
+    ],
+    "studies": [
+      {
+        "key": "kendall-2003",
+        "citation": "Cesarone, MR (2003). The LONFLIT4 Concorde Deep Venous Thrombosis and Edema Study: prevention with travel stockings",
+        "expected_included": true,
+        "study_type": "Randomized Controlled Trial",
+        "outcomes": {}
+      },
+      {
+        "key": "scholl-2002",
+        "citation": "Belcaro, G (2002). Prevention of edema, flight microangiopathy and venous thrombosis in long flights with elastic stockings. A randomized trial: The LONFLIT 4 Concorde Edema-SSL Study",
+        "expected_included": true,
+        "study_type": "Randomized Controlled Trial",
+        "outcomes": {}
+      },
+      {
+        "key": "traveno-2003",
+        "citation": "Cesarone, MR (2003). The LONFLIT4 Concorde Sigvaris Traveno Stockings in Long Flights (EcoTraS) Study: a randomized trial",
+        "expected_included": true,
+        "study_type": "Randomized Controlled Trial",
+        "outcomes": {}
+      }
+    ]
+  },
+  "cochrane-honey-2018": {
+    "title": "Cochrane checkpoint: honey — cough frequency",
+    "version": "CD007094.pub5-2018-checkpoint-1",
+    "topic": "Pediatrics",
+    "citation": "Honey for acute cough in children. Cochrane Database of Systematic Reviews. DOI: 10.1002/14651858.CD007094.pub5",
+    "source_url": "https://doi.org/10.1002/14651858.CD007094.pub5",
+    "curation": "published_targets",
+    "curator_notes": "One outcome checkpoint within a three-complete-review collection that is still in progress. This is a development reference, not an adjudicated gold standard. One checkpoint; full-review collection in progress. Uses generic inverse variance with reported effect and SE; do not invent arm SDs. Review methods describe fixed effects but this forest is labelled random. Paul SE was supplied by author; Shadkam SE calculated by reviewers. GRADE Moderate is stated with footnotes mentioning both bias and imprecision; domain scores withheld pending adjudication. Both PDF renderings share pub5 and December 2018 amendment; pagination differs. Rounded trial estimates reproduce an upper CI of -0.62617 rather than the printed -0.62; retain the discrepancy.",
+    "split": "development",
+    "pico": {
+      "population": "Children with acute cough in ambulatory settings",
+      "intervention": "Honey for one night",
+      "comparator": "No treatment"
+    },
+    "outcomes": [
+      {
+        "key": "cough_frequency",
+        "name": "Reduction in cough frequency score after one night, honey versus no treatment (7-point scale)",
+        "outcome_type": "continuous",
+        "effect_measure": "MD",
+        "model_choice": "random",
+        "fe_method": "IV",
+        "tau2_method": "DL",
+        "re_ci_method": "wald",
+        "method_verified": false,
+        "method_note": "Forest-plot settings transcribed and numerically replayed. Random effects shown; tau estimator needs explicit confirmation; tau²=0 for this checkpoint.",
+        "source_locator": "Analysis 1.3.1, printed page 49 (local 80-page PDF page 52). Official 79-page rendering uses printed page 48. Summary of findings 3, footnotes 2 and 3.",
+        "tolerance": 0.006,
+        "target": {
+          "estimate": -1.05,
+          "ci_low": -1.48,
+          "ci_high": -0.62,
+          "grade": "Moderate",
+          "k": 2,
+          "i2": 0,
+          "domains": {}
+        }
+      }
+    ],
+    "studies": [
+      {
+        "key": "paul-2007",
+        "citation": "Paul 2007",
+        "expected_included": true,
+        "outcomes": {
+          "cough_frequency": {
+            "raw": {
+              "estimate": -0.97,
+              "se": 0.282,
+              "n1": 35,
+              "n2": 39
+            },
+            "source_locator": "Review Analysis 1.3.1; SE provenance differs by study"
+          }
+        }
+      },
+      {
+        "key": "shadkam-2010",
+        "citation": "Shadkam 2010",
+        "expected_included": true,
+        "outcomes": {
+          "cough_frequency": {
+            "raw": {
+              "estimate": -1.18,
+              "se": 0.345,
+              "n1": 40,
+              "n2": 40
+            },
+            "source_locator": "Review Analysis 1.3.1; SE provenance differs by study"
+          }
+        }
+      }
+    ]
+  },
+  "cochrane-vitamin-c-2013": {
+    "title": "Cochrane checkpoint: vitamin C — severe-stress cold incidence",
+    "version": "CD000980.pub4-2013-checkpoint-1",
+    "topic": "Respiratory and sports medicine",
+    "citation": "Vitamin C for preventing and treating the common cold. Cochrane Database of Systematic Reviews. DOI: 10.1002/14651858.CD000980.pub4",
+    "source_url": "https://doi.org/10.1002/14651858.CD000980.pub4",
+    "curation": "published_targets",
+    "curator_notes": "One outcome checkpoint within a three-complete-review collection that is still in progress. This is a development reference, not an adjudicated gold standard. One checkpoint; full-review collection in progress. No published GRADE label verified in this 2013 version. The author-hosted 2016 draft was rejected/unpublished and is excluded. Use the forest interval ending 0.64, not a rounded alternate abstract endpoint. Moolla is an unpublished thesis accepted in 1997; identity crosswalk retained. Inputs here are review-derived pending independent original-paper verification.",
+    "split": "development",
+    "pico": {
+      "population": "People under short-term severe physical stress and/or cold exposure",
+      "intervention": "Regular vitamin C supplementation",
+      "comparator": "Placebo",
+      "inclusion_text": "Use the active severe-stress subgroup only; exclude sedentary control cohorts and combined-antioxidant arms."
+    },
+    "outcomes": [
+      {
+        "key": "cold_incidence_stress",
+        "name": "At least one cold during short-term severe physical stress and/or cold",
+        "outcome_type": "binary",
+        "effect_measure": "RR",
+        "model_choice": "fixed",
+        "fe_method": "MH",
+        "tau2_method": "DL",
+        "re_ci_method": "wald",
+        "method_verified": true,
+        "method_note": "Forest-plot settings transcribed and numerically replayed. Fixed Mantel–Haenszel.",
+        "source_locator": "Analysis 1.1 subgroup 2; printed page 83 (PDF page 85).",
+        "tolerance": 0.015,
+        "target": {
+          "estimate": 0.48,
+          "ci_low": 0.35,
+          "ci_high": 0.64,
+          "grade": null,
+          "k": 5,
+          "i2": 0,
+          "domains": {}
+        }
+      }
+    ],
+    "studies": [
+      {
+        "key": "peters-1996a",
+        "citation": "Peters 1996a",
+        "expected_included": true,
+        "outcomes": {
+          "cold_incidence_stress": {
+            "raw": {
+              "events1": 7,
+              "total1": 44,
+              "events2": 19,
+              "total2": 47
+            },
+            "source_locator": "Review Analysis 1.1.2; primary table verification pending"
+          }
+        }
+      },
+      {
+        "key": "sabiston-1974",
+        "citation": "Sabiston 1974",
+        "expected_included": true,
+        "outcomes": {
+          "cold_incidence_stress": {
+            "raw": {
+              "events1": 6,
+              "total1": 56,
+              "events2": 14,
+              "total2": 56
+            },
+            "source_locator": "Review Analysis 1.1.2; primary table verification pending"
+          }
+        }
+      },
+      {
+        "key": "moolla-1996a",
+        "citation": "Moolla 1996a",
+        "expected_included": true,
+        "outcomes": {
+          "cold_incidence_stress": {
+            "raw": {
+              "events1": 4,
+              "total1": 13,
+              "events2": 13,
+              "total2": 19
+            },
+            "source_locator": "Review Analysis 1.1.2; primary table verification pending"
+          }
+        }
+      },
+      {
+        "key": "peters-1993a",
+        "citation": "Peters 1993a",
+        "expected_included": true,
+        "outcomes": {
+          "cold_incidence_stress": {
+            "raw": {
+              "events1": 14,
+              "total1": 43,
+              "events2": 28,
+              "total2": 41
+            },
+            "source_locator": "Review Analysis 1.1.2; primary table verification pending"
+          }
+        }
+      },
+      {
+        "key": "ritzel-1961",
+        "citation": "Ritzel 1961",
+        "expected_included": true,
+        "outcomes": {
+          "cold_incidence_stress": {
+            "raw": {
+              "events1": 17,
+              "total1": 139,
+              "events2": 31,
+              "total2": 140
+            },
+            "source_locator": "Review Analysis 1.1.2; primary table verification pending"
+          }
+        }
+      }
+    ]
+  }
+}

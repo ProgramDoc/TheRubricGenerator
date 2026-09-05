@@ -70,6 +70,7 @@ def _user(cookie, key, *, write=False):
 
 def seeds():
     data = json.loads((ROOT / "data/benchmarks/published-v1.json").read_text())
+    data.update(json.loads((ROOT / "data/benchmarks/cochrane-v1.json").read_text()))
     return {f"seed:{key}": bm.Dataset.model_validate(value).model_dump() for key, value in data.items()}
 
 
