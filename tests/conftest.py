@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 # Set env vars BEFORE importing main (prevents real API calls / daily scheduler)
 os.environ["ADMIN_SECRET"] = "test_admin_secret"
 os.environ["DAILY_ENABLED"] = "false"
+os.environ["SIMULATOR_WORKER_ENABLED"] = "0"
 os.environ["ANTHROPIC_API_KEY"] = ""
 os.environ["OPENAI_API_KEY"] = ""
 os.environ["GEMINI_API_KEY"] = ""

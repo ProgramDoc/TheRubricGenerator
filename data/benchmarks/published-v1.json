@@ -1,0 +1,180 @@
+{
+  "flight-stockings-2021": {
+    "title": "Compression stockings during air travel",
+    "topic": "Vascular prevention",
+    "citation": "Clarke MJ et al. Cochrane Database Syst Rev. 2021;CD004002. doi:10.1002/14651858.CD004002.pub4",
+    "source_url": "https://www.cochrane.org/evidence/CD004002_compression-stockings-preventing-deep-vein-thrombosis-dvt-airline-passengers",
+    "version": "2026-09-04.1",
+    "curation": "published_targets",
+    "curator_notes": "Published outcome targets transcribed from the cited source on 2026-09-04. Not independently adjudicated. Upload the corresponding primary reports; verify the study manifest, outcome definitions, and pooling settings before interpreting agreement. No source PDFs are redistributed.",
+    "split": "development",
+    "pico": {
+      "population": "Airline passengers on flights lasting at least four hours",
+      "intervention": "Graduated compression stockings worn on both legs during flight",
+      "comparator": "No compression stockings",
+      "inclusion_text": "Randomized controlled trials; reproduce the both-legs comparison in the review searched through 1 April 2020"
+    },
+    "outcomes": [
+      {
+        "key": "asymptomatic-dvt",
+        "name": "Symptomless deep vein thrombosis detected after flight",
+        "outcome_type": "binary",
+        "effect_measure": "OR",
+        "model_choice": "random",
+        "tau2_method": "REML",
+        "fe_method": "IV",
+        "re_ci_method": "wald",
+        "method_verified": false,
+        "source_locator": "2021 review abstract, Main results: symptomless DVT; 2637 participants",
+        "target": {
+          "estimate": 0.1,
+          "ci_low": 0.04,
+          "ci_high": 0.25,
+          "grade": "High",
+          "k": 9
+        },
+        "tolerance": 0.05
+      },
+      {
+        "key": "superficial-thrombosis",
+        "name": "Superficial vein thrombosis after flight",
+        "outcome_type": "binary",
+        "effect_measure": "OR",
+        "model_choice": "random",
+        "tau2_method": "REML",
+        "fe_method": "IV",
+        "re_ci_method": "wald",
+        "method_verified": false,
+        "source_locator": "2021 review abstract, Main results: superficial vein thrombosis; 1804 participants",
+        "target": {
+          "estimate": 0.45,
+          "ci_low": 0.18,
+          "ci_high": 1.13,
+          "grade": "Moderate",
+          "k": null
+        },
+        "tolerance": 0.05
+      },
+      {
+        "key": "oedema",
+        "name": "Leg oedema score after flight",
+        "outcome_type": "continuous",
+        "effect_measure": "MD",
+        "model_choice": "random",
+        "tau2_method": "REML",
+        "fe_method": "IV",
+        "re_ci_method": "wald",
+        "method_verified": false,
+        "source_locator": "2021 review abstract, Main results: oedema pooled from six trials",
+        "target": {
+          "estimate": -4.72,
+          "ci_low": -4.91,
+          "ci_high": -4.52,
+          "grade": "Low",
+          "k": 6
+        },
+        "tolerance": 0.05
+      }
+    ],
+    "studies": []
+  },
+  "probiotics-aad-2021": {
+    "title": "Probiotics to prevent antibiotic-associated diarrhoea",
+    "topic": "Gastroenterology",
+    "citation": "Goodman C et al. BMJ Open. 2021;11:e043054. doi:10.1136/bmjopen-2020-043054",
+    "source_url": "https://bmjopen.bmj.com/content/11/8/e043054",
+    "version": "2026-09-04.1",
+    "curation": "published_targets",
+    "curator_notes": "Published outcome targets transcribed from the cited source on 2026-09-04. Not independently adjudicated. Upload the corresponding primary reports; verify the study manifest, outcome definitions, and pooling settings before interpreting agreement. No source PDFs are redistributed.",
+    "split": "development",
+    "pico": {
+      "population": "Adults receiving antibiotics",
+      "intervention": "Probiotics co-administered with antibiotics",
+      "comparator": "Any eligible control in the review",
+      "inclusion_text": "Randomized controlled trials from the 2021 review; reproduce the complete-case primary comparison"
+    },
+    "outcomes": [
+      {
+        "key": "aad",
+        "name": "Incidence of antibiotic-associated diarrhoea, complete-case analysis",
+        "outcome_type": "binary",
+        "effect_measure": "RR",
+        "model_choice": "random",
+        "tau2_method": "REML",
+        "fe_method": "IV",
+        "re_ci_method": "wald",
+        "method_verified": false,
+        "source_locator": "Abstract Results and primary forest plot, comparison 1.1; GRADE statement in Discussion",
+        "target": {
+          "estimate": 0.63,
+          "ci_low": 0.54,
+          "ci_high": 0.73,
+          "grade": "Moderate",
+          "k": null
+        },
+        "tolerance": 0.05
+      }
+    ],
+    "studies": []
+  },
+  "sepsis-corticosteroids-2018": {
+    "title": "Corticosteroids in sepsis: review and clinical guideline",
+    "topic": "Critical care",
+    "citation": "Rochwerg B et al. Corticosteroids in Sepsis: An Updated Systematic Review and Meta-Analysis. Crit Care Med. 2018;46:1411\u20131420. PMID:29979221. Linked guideline: BMJ 2018;362:k3284.",
+    "source_url": "https://pubmed.ncbi.nlm.nih.gov/29979221/",
+    "version": "2026-09-04.1",
+    "curation": "published_targets",
+    "curator_notes": "Published outcome targets transcribed from the cited source on 2026-09-04. Not independently adjudicated. Upload the corresponding primary reports; verify the study manifest, outcome definitions, and pooling settings before interpreting agreement. No source PDFs are redistributed.",
+    "split": "development",
+    "pico": {
+      "population": "Patients with sepsis or septic shock",
+      "intervention": "Systemic corticosteroids",
+      "comparator": "Placebo or no corticosteroids",
+      "inclusion_text": "Randomized controlled trials included in the 2018 systematic review; preserve each reported mortality follow-up window"
+    },
+    "outcomes": [
+      {
+        "key": "short-term-mortality",
+        "name": "Short-term mortality at 28\u201331 days",
+        "outcome_type": "binary",
+        "effect_measure": "RR",
+        "model_choice": "random",
+        "tau2_method": "REML",
+        "fe_method": "IV",
+        "re_ci_method": "wald",
+        "method_verified": false,
+        "source_locator": "Abstract: short-term mortality, 28\u201331 days",
+        "target": {
+          "estimate": 0.93,
+          "ci_low": 0.84,
+          "ci_high": 1.03,
+          "grade": "Low",
+          "k": null
+        },
+        "tolerance": 0.05
+      },
+      {
+        "key": "long-term-mortality",
+        "name": "Long-term mortality at 60 days to one year",
+        "outcome_type": "binary",
+        "effect_measure": "RR",
+        "model_choice": "random",
+        "tau2_method": "REML",
+        "fe_method": "IV",
+        "re_ci_method": "wald",
+        "method_verified": false,
+        "source_locator": "Abstract: long-term mortality, 60 days to one year",
+        "target": {
+          "estimate": 0.94,
+          "ci_low": 0.89,
+          "ci_high": 1.0,
+          "grade": "Moderate",
+          "k": null
+        },
+        "tolerance": 0.05
+      }
+    ],
+    "studies": [],
+    "guideline_url": "https://www.bmj.com/content/362/bmj.k3284"
+  }
+}
