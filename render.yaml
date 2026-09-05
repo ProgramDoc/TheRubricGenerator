@@ -23,6 +23,8 @@ services:
           property: connectionString
       - key: RENDER_DATA_DIR
         value: /var/data
+      - key: LOCAL_UPLOAD_DIR
+        value: /var/data/uploads
       - key: OBSIDIAN_VAULT_DIR
         value: /var/data/obsidian_vault
       - key: ADMIN_EMAIL

@@ -636,3 +636,10 @@ pytest tests/ -v    # Requires Python 3.12+
 ```
 
 Tests use SQLite fallback (no DATABASE_URL) — no external API calls, no production DB access.
+
+
+### Benchmark paper persistence (2026-09-05)
+
+The first live Cochrane checkpoint exposed PDFs stored under ephemeral `uploads/` despite an attached Render disk. `backend/storage.py` now honors `LOCAL_UPLOAD_DIR`, falling back to `RENDER_DATA_DIR/uploads` or local `uploads/` for development. Both ordinary local writes and the S3 failure fallback use that directory. Production sets `LOCAL_UPLOAD_DIR=/var/data/uploads` on the existing mounted disk. Cloud write failures still log warnings; this change does not repair cloud IAM configuration.
+
+Re-uploading identical content verifies the existing file and restores missing or corrupted bytes under the original paper ID, without adding a library record or consuming another storage slot. The simulator verifies actual source-file hashes before review creation or any model call. Missing PDFs are infrastructure failures, and historical runs remain unchanged. Regression tests are in `tests/test_persistent_papers.py`.

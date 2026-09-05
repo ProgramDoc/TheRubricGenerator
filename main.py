@@ -3829,6 +3829,35 @@ async def upload_paper(
     # already authorized the upload and org credits are the new resource gate.
     conn = get_db()
     try:
+        sha256 = hashlib.sha256(content).hexdigest()
+        existing = conn.execute(
+            "SELECT id, filename, disk_filename, storage_path FROM papers WHERE sha256=? AND user_id=?",
+            (sha256, user["id"]),
+        ).fetchone()
+        if existing:
+            try:
+                existing_content = paper_files_mod.read_paper_bytes(existing, PAPERS_DIR)
+                needs_restore = hashlib.sha256(existing_content).hexdigest() != sha256
+            except HTTPException as exc:
+                if exc.status_code != 404:
+                    raise
+                needs_restore = True
+            if needs_restore:
+                # The record can outlive an ephemeral file. Restore its bytes
+                # under the same id so memberships and benchmark bindings survive.
+                try:
+                    restored_path = paper_files_mod.write_paper_file(content, file.filename)
+                except Exception:
+                    logger.exception("Paper restore failed for paper %s", existing["id"])
+                    raise HTTPException(502, "Could not restore the PDF to storage. Please try again.")
+                conn.execute("UPDATE papers SET storage_path=? WHERE id=? AND user_id=?",
+                             (restored_path, existing["id"], user["id"]))
+                conn.commit()
+                return {"id": existing["id"], "duplicate": True, "restored": True,
+                        "storage": "s3" if restored_path.startswith("s3://") else "local"}
+            return {"id": existing["id"], "duplicate": True}
+
+        # Restoring an existing paper must remain possible at the upload limit.
         if not enterprise_mod.ENTERPRISE_MODE:
             pdf_status = member_mod.check_pdf_limit(conn, user["id"])
             if not pdf_status["allowed"]:
@@ -3836,13 +3865,6 @@ async def upload_paper(
                     "detail": f"PDF upload limit reached ({pdf_status['used']}/{pdf_status['limit']}). Upgrade your membership to upload more.",
                     "pdf_status": pdf_status,
                 })
-
-        sha256 = hashlib.sha256(content).hexdigest()
-        existing = conn.execute(
-            "SELECT id FROM papers WHERE sha256=? AND user_id=?", (sha256, user["id"])
-        ).fetchone()
-        if existing:
-            return {"id": existing["id"], "duplicate": True}
         # Persist via storage.py (S3 when configured, local uploads/ otherwise).
         # write_paper_file handles S3 failures internally by falling back to local,
         # so by the time we get here we have *some* path on disk or in S3.

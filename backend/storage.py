@@ -22,8 +22,9 @@ S3_PREFIX = os.environ.get("AWS_S3_PREFIX", "lab-documents/")
 _USE_S3 = bool(S3_BUCKET)
 _s3_client = None
 
-LOCAL_UPLOAD_DIR = Path("uploads")
-LOCAL_UPLOAD_DIR.mkdir(exist_ok=True)
+LOCAL_UPLOAD_DIR = Path(os.environ.get("LOCAL_UPLOAD_DIR") or
+                        (Path(os.environ.get("RENDER_DATA_DIR", ".")) / "uploads"))
+LOCAL_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _get_s3():

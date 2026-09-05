@@ -100,7 +100,8 @@ def fingerprint():
     from backend.helpers import ANTHROPIC_MODEL
     paths = [ROOT / "backend/annotator.py", ROOT / "backend/helpers.py", ROOT / "backend/synthesis.py",
              ROOT / "backend/synthesis_stats.py", ROOT / "backend/quality_appraisal.py", ROOT / "backend/benchmark.py",
-             ROOT / "backend/simulator.py", ROOT / "backend/simulator_grade.py", ROOT / "backend/indirectness.py"]
+             ROOT / "backend/simulator.py", ROOT / "backend/simulator_grade.py", ROOT / "backend/indirectness.py",
+             ROOT / "backend/storage.py", ROOT / "backend/paper_files.py"]
     paths += sorted((ROOT / "backend/rob_tools").glob("*.py"))
     paths += sorted((ROOT / "backend/evidence_synthesis").glob("*.py"))
     hashes = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
@@ -426,10 +427,19 @@ def process_job(get_db, papers_dir, job):
         current = fingerprint()
         if current["implementation_hash"] != cfg["implementation_hash"] or current["model"] != cfg["model"]:
             raise ValueError("Code changed while queued. Start a new run to record the new implementation.")
+        from backend.paper_files import read_paper_bytes
         for p in inputs["papers"]:
-            row = conn.execute("SELECT sha256 FROM papers WHERE id=? AND user_id=?", (p["id"], job["user_id"])).fetchone()
+            row = conn.execute("SELECT sha256,filename,disk_filename,storage_path FROM papers WHERE id=? AND user_id=?",
+                               (p["id"], job["user_id"])).fetchone()
             if not row or row["sha256"] != p["sha256"]:
                 raise ValueError("An input paper changed after launch")
+            try:
+                content = read_paper_bytes(row, papers_dir)
+            except HTTPException:
+                raise ValueError(f"Source PDF unavailable: {p['filename']}. Re-upload it before starting another run.") from None
+            if hashlib.sha256(content).hexdigest() != p["sha256"]:
+                raise ValueError("Source PDF contents changed after launch; re-upload and start a new run")
+        # File validation precedes all model calls and review creation.
         rid = _create_review(conn, job, dataset, inputs)
     finally:
         conn.close()

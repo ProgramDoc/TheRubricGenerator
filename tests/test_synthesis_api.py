@@ -8,19 +8,22 @@ without any network calls.
 from __future__ import annotations
 
 import json
+import hashlib
 
 import pytest
 
 
 def _mk_papers(n: int, owner_id: int) -> list[int]:
-    from main import get_db
+    from main import get_db, PAPERS_DIR
     conn = get_db()
     ids = []
     try:
         for i in range(n):
+            content = f"%PDF-1.4 synthetic study {i}".encode()
+            (PAPERS_DIR / f"study{i}.pdf").write_bytes(content)
             conn.execute(
                 "INSERT INTO papers (filename, disk_filename, sha256, user_id) VALUES (?,?,?,?)",
-                (f"study{i}.pdf", f"study{i}.pdf", f"hash{i}", owner_id))
+                (f"study{i}.pdf", f"study{i}.pdf", hashlib.sha256(content).hexdigest(), owner_id))
             ids.append(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
         conn.commit()
     finally:

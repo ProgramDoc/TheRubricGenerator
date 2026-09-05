@@ -2,8 +2,8 @@
 
 Papers used to live on local disk at ``PAPERS_DIR / disk_filename``. That
 is ephemeral on Render, so new uploads route through
-:mod:`backend.storage` (S3 when ``AWS_S3_BUCKET`` is set, local ``uploads/``
-otherwise). The ``papers.storage_path`` column records the resulting URI
+:mod:`backend.storage` (S3 when ``AWS_S3_BUCKET`` is set, the configured local
+upload directory otherwise). The ``papers.storage_path`` column records the URI
 or path.
 
 Legacy rows (uploaded before the S3 migration) keep working: when
@@ -24,8 +24,8 @@ from .storage import delete_file, download_file, is_cloud_storage, upload_file
 logger = logging.getLogger("rubricgen")
 
 # When S3 is configured but a write fails, the local-disk fallback is on
-# Render's ephemeral filesystem — every deploy/restart wipes it, orphaning
-# the DB row. Set STRICT_STORAGE=1 to re-raise instead of falling back, so
+# the configured local upload directory. It must be on a persistent disk
+# in production. Set STRICT_STORAGE=1 to re-raise instead of falling back, so
 # the upload fails loudly rather than silently losing data.
 _STRICT_STORAGE = os.environ.get("STRICT_STORAGE", "").strip() in {"1", "true", "yes"}
 
@@ -50,10 +50,9 @@ def write_paper_file(content: bytes, filename: str) -> str:
 
     - ``STRICT_STORAGE=1`` (recommended for production) — re-raise so the
       upload fails loudly. The user retries, ops fixes IAM, no orphaned rows.
-    - default — log a WARNING with explicit ephemerality wording and write
-      to local ``uploads/`` so the user isn't blocked. On Render this disk is
-      wiped on the next deploy/restart, so this path is a stop-gap that masks
-      data loss; the WARNING is your signal to fix the underlying S3 issue.
+    - default — log a warning and use storage.LOCAL_UPLOAD_DIR. Configure
+      this on an attached persistent disk in production. A directory inside
+      the release checkout will be lost on deploy.
     """
     s3_configured = is_cloud_storage()
     try:
@@ -72,22 +71,20 @@ def write_paper_file(content: bytes, filename: str) -> str:
         # Import lazily so a truly busted storage module can't stop fallback.
         from pathlib import Path
         import uuid
-        local_dir = Path("uploads")
-        local_dir.mkdir(exist_ok=True)
+        from .storage import LOCAL_UPLOAD_DIR
+        local_dir = LOCAL_UPLOAD_DIR
+        local_dir.mkdir(parents=True, exist_ok=True)
         ext = Path(filename).suffix.lower() or ".pdf"
         local_path = local_dir / f"{uuid.uuid4().hex}{ext}"
         local_path.write_bytes(content)
 
         if s3_configured:
-            # S3 was configured but failed — the local write is on an
-            # ephemeral disk in production. Make this loud so it isn't
-            # missed in the log noise.
+            # Keep the cloud failure visible even with a persistent fallback.
             logger.warning(
-                "S3 write failed for %s — falling back to local uploads/ at %s. "
-                "WARNING: on Render the local disk is EPHEMERAL — this file "
-                "WILL BE LOST on the next deploy/restart, orphaning its DB row. "
-                "Fix the S3 IAM / network issue (or set STRICT_STORAGE=1 to "
-                "fail uploads instead). Underlying error: %s",
+                "S3 write failed for %s — falling back to local storage at %s. "
+                "On Render, LOCAL_UPLOAD_DIR must be on the attached persistent disk "
+                "to survive deploys. Fix S3 or set STRICT_STORAGE=1 to fail uploads "
+                "instead. Underlying error: %s",
                 filename,
                 local_path,
                 e,
