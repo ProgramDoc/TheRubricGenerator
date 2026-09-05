@@ -410,6 +410,15 @@ def screen_paper(pdf_bytes: bytes, criteria: dict, classification: dict, pico: d
 # LLM step 3 — extract effect-size data for one outcome
 # ─────────────────────────────────────────────
 def _extract_field_spec(measure: str) -> str:
+    if measure == "MD":
+        return ('"m1": intervention-arm mean, "sd1": its SD, "n1": its sample size,\n'
+                '   "m2": comparator-arm mean, "sd2": its SD, "n2": its sample size. '
+                'If a complete set of arm summaries is not reported, use "estimate": '
+                'the reported mean difference (intervention minus comparator), and '
+                '"se": the reported standard error of that difference. These are '
+                'alternative inputs; do not invent missing arm SDs or copy an SE '
+                'into an SD field. Leave estimate and se null when complete arm '
+                'summaries are used. Record sample sizes only when reported')
     if measure in ("MD", "SMD"):
         return ('"m1": intervention-arm mean, "sd1": its SD, "n1": its sample size,\n'
                 '   "m2": comparator-arm mean, "sd2": its SD, "n2": its sample size')
@@ -478,11 +487,15 @@ def extract_outcome_data(pdf_bytes: bytes, outcome_name: str, measure: str, pico
         rows = []
     out = []
     keys = _REQUIRED_KEYS.get(measure, [])
+    if measure == "MD":
+        keys = keys + ["estimate", "se", "n"]
     for i, r in enumerate(rows):
         if not isinstance(r, dict):
             continue
         numeric = {k: _coerce_num(r.get(k)) for k in keys}
         needs_review = any(numeric.get(k) is None for k in keys)
+        if measure == "MD":
+            needs_review = stats.effect_size(measure, numeric) is None
         out.append({
             "context_label": str(r.get("context_label") or f"Context {i + 1}"),
             "timepoint": str(r.get("timepoint") or ""),
@@ -593,8 +606,15 @@ def pool_outcome(conn, review_id: int, outcome: dict, points: list[dict],
     for p in usable:
         st = studies_by_id.get(p["study_id"], {})
         raw = json.loads(p.get("raw_json") or "{}") if isinstance(p.get("raw_json"), str) else (p.get("raw") or {})
+        # Extraction persists events1/total1/etc.; the binary engine uses
+        # a/c/n1/n2. Restore that metadata without replacing edited yi/vi.
+        computed = stats.effect_size(measure, raw)
+        n = computed.n if computed is not None else raw.get("n")
+        if computed is not None:
+            raw = {**raw, **computed.raw}
         effects.append(stats.EffectSize(yi=float(p["yi"]), vi=float(p["vi"]),
-                                        measure=measure, n=raw.get("n"), raw=raw))
+                                        measure=measure, n=n, raw=raw,
+                                        corrected=bool(p.get("continuity_applied"))))
         labels.append(st.get("filename") or st.get("label") or p.get("context_label") or "Study")
         subgroups.append(p.get("subgroup_value"))
         rob_label, rob_src = _resolve_study_rob(

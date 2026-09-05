@@ -87,7 +87,12 @@ def _r_dataframe(measure: str, studies: list[dict]) -> str:
     labels = [s.get("label", f"Study {i+1}") for i, s in enumerate(studies)]
     raw = [s.get("raw", {}) for s in studies]
     cols = [f"  study = {_rstrvec(labels)}"]
-    if measure in ("MD", "SMD"):
+    if _generic_md(measure, studies):
+        cols += [
+            f"  TE = {_rvec([s.get('yi') for s in studies])}",
+            f"  seTE = {_rvec([_se(s.get('vi')) for s in studies])}",
+        ]
+    elif measure in ("MD", "SMD"):
         cols += [
             f"  n.e = {_rvec([r.get('n1') for r in raw])}",
             f"  mean.e = {_rvec([r.get('m1') for r in raw])}",
@@ -133,8 +138,18 @@ def _r_dataframe(measure: str, studies: list[dict]) -> str:
     return "dat <- data.frame(\n" + ",\n".join(cols) + "\n)"
 
 
-def _r_meta_call(measure: str, model: str, tau2_method: str, fe_method: str) -> str:
+def _generic_md(measure: str, studies: list[dict]) -> bool:
+    """Use metagen for the whole body if any MD lacks complete arm summaries."""
+    return measure == "MD" and any(
+        any(s.get("raw", {}).get(k) is None for k in ("m1", "sd1", "n1", "m2", "sd2", "n2"))
+        for s in studies)
+
+
+def _r_meta_call(measure: str, model: str, tau2_method: str, fe_method: str,
+                 generic_md: bool = False) -> str:
     fn, sm = _META_FN[measure]
+    if generic_md:
+        fn = "metagen"
     common = "TRUE" if model in ("fixed", "both") else "FALSE"
     random = "TRUE" if model in ("random", "both") else "FALSE"
     args = []
@@ -212,7 +227,8 @@ def code_blocks(outcome: dict, studies: list[dict]) -> list[dict[str, str]]:
 
     blocks.append({
         "key": "model", "title": "2. Effect sizes + pooled model",
-        "r_code": _r_meta_call(measure, model, tau2_method, fe_method),
+        "r_code": _r_meta_call(measure, model, tau2_method, fe_method,
+                               generic_md=_generic_md(measure, studies)),
         "py_code": (_PY_HELPERS + "\n\n"
                     f"tau2 = tau2_reml(yi, vi)   # method = {tau2_method}\n"
                     "fe = pool(yi, vi, 0.0)\n"

@@ -118,6 +118,7 @@ backend/
   ├── outcomes.py       — Per-outcome candidate list (one LLM call; feeds assessed_outcome for RoB + indirectness + imprecision)
   ├── synthesis.py      — Synthesis: systematic review + meta-analysis orchestrator (screen → extract → RoB → pool → body-of-evidence GRADE; 6 synthesis_* tables, events polling, credit model)
   ├── synthesis_stats.py — pure numpy/scipy meta-analysis engine (effect sizes, FE/RE pooling, heterogeneity, publication bias, subgroup/meta-regression, sensitivity, GRADE combiner)
+  │                       MD also accepts reported estimate + SE; MH uses measure-specific contribution weights. Saved binary rows recover canonical counts and arm totals before pooling. Cochrane numerical regressions: tests/test_cochrane_pooling.py.
   ├── synthesis_codegen.py — emits runnable R (meta/metafor) + Python per meta-analysis calculation for the Analysis tab
   ├── indirectness.py   — GRADE indirectness — single-trial PICO assessment (4 subdomains, severity decision tree)
   ├── imprecision.py    — GRADE imprecision — single-trial CI / N / events / fragility (4 subdomains, severity decision tree)

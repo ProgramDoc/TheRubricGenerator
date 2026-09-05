@@ -304,6 +304,18 @@ def effect_size(measure: str, row: dict[str, Any], correction: float = 0.5) -> E
     """
     g = row.get
     if measure == "MD":
+        # Reported between-arm MD + its SE is a generic inverse-variance
+        # input. Never treat the SE of the difference as an arm-level SD.
+        arm_keys = ("m1", "sd1", "n1", "m2", "sd2", "n2")
+        if not all(g(k) is not None for k in arm_keys):
+            estimate, se = g("estimate"), g("se")
+            if not _finite(estimate, se) or se <= 0:
+                return None
+            n = g("n") if _finite(g("n")) and g("n") > 0 else None
+            if _finite(g("n1"), g("n2")) and g("n1") > 0 and g("n2") > 0:
+                n = g("n1") + g("n2")
+            return EffectSize(float(estimate), float(se) ** 2, "MD", n=n,
+                              raw=dict(row))
         return md(g("m1"), g("sd1"), g("n1"), g("m2"), g("sd2"), g("n2"))
     if measure == "SMD":
         return smd_hedges_g(g("m1"), g("sd1"), g("n1"), g("m2"), g("sd2"), g("n2"))
@@ -417,6 +429,7 @@ def mantel_haenszel(tables: Sequence[dict], measure: str, alpha: float = 0.05) -
         Q = (B + C) / N
         Ri = A * D / N
         Si = B * C / N
+        w = Si
         var = ((P * Ri).sum() / (2 * R ** 2)
                + (P * Si + Q * Ri).sum() / (2 * R * S)
                + (Q * Si).sum() / (2 * S ** 2))
@@ -425,6 +438,7 @@ def mantel_haenszel(tables: Sequence[dict], measure: str, alpha: float = 0.05) -
         n2 = C + D
         R = (A * n2 / N).sum()
         S = (C * n1 / N).sum()
+        w = C * n1 / N
         if R <= 0 or S <= 0:
             return {"status": "degenerate", "k": k}
         log_est = math.log(R / S)
@@ -443,14 +457,16 @@ def mantel_haenszel(tables: Sequence[dict], measure: str, alpha: float = 0.05) -
         zval = est / se if se > 0 else float("nan")
         return {"status": "ok", "k": k, "estimate": est, "se": se,
                 "ci_low": est - crit * se, "ci_high": est + crit * se,
-                "z": zval, "p": float(2 * stats.norm.sf(abs(zval))), "method": "MH"}
+                "z": zval, "p": float(2 * stats.norm.sf(abs(zval))), "method": "MH",
+                "weights": w.tolist(), "weights_pct": (w / w.sum() * 100).tolist()}
     else:
         raise ValueError(f"Mantel-Haenszel undefined for measure {measure!r}")
     se = math.sqrt(max(var, 1e-18))
     zval = log_est / se if se > 0 else float("nan")
     return {"status": "ok", "k": k, "estimate": log_est, "se": se,
             "ci_low": log_est - crit * se, "ci_high": log_est + crit * se,
-            "z": zval, "p": float(2 * stats.norm.sf(abs(zval))), "method": "MH"}
+            "z": zval, "p": float(2 * stats.norm.sf(abs(zval))), "method": "MH",
+            "weights": w.tolist(), "weights_pct": (w / w.sum() * 100).tolist()}
 
 
 # ---------------------------------------------------------------------------
@@ -621,7 +637,6 @@ def pool(effects: Sequence[EffectSize], measure: str, *,
         tables = [{"a": e.raw["a"], "b": e.raw["n1"] - e.raw["a"],
                    "c": e.raw["c"], "d": e.raw["n2"] - e.raw["c"]} for e in effects]
         fixed = mantel_haenszel(tables, measure, alpha)
-        fixed["weights_pct"] = _iv_weight_pct(vi, 0.0)
     else:
         fixed = inverse_variance_pool(yi, vi, 0.0, alpha, "wald")
     out["fixed"] = fixed
