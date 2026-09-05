@@ -65,6 +65,7 @@ from backend.quality_appraisal import QUALITY_APPRAISAL_TABLES_SQL
 from backend import quality_appraisal as qa_mod
 from backend.synthesis import SYNTHESIS_TABLES_SQL
 from backend import synthesis as synthesis_mod
+from backend import simulator as simulator_mod
 from backend.evidence_synthesis.grade_agent import GRADE_TABLES_SQL
 from backend.evidence_synthesis import grade_agent as grade_mod
 from backend.evidence_synthesis import grade_assess as grade_assess_mod
@@ -415,6 +416,7 @@ def init_db() -> None:
         # Synthesis: systematic review + meta-analysis (mirrors QA's run/results/events)
         conn.executescript(SYNTHESIS_TABLES_SQL)
         synthesis_mod.migrate_synthesis_columns(conn)
+        conn.executescript(simulator_mod.SIMULATOR_TABLES_SQL)
         # GRADE agent: body-of-evidence certainty runs (consumes the pooling agent)
         conn.executescript(GRADE_TABLES_SQL)
         # 3-judge adjudication: human-review queue for grade disagreements
@@ -833,6 +835,7 @@ from backend import scheduler as sched
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    simulator_stop = simulator_mod.start_worker(get_db, PAPERS_DIR)
     # Startup: spawn the daily scheduler background task
     task = None
     try:
@@ -844,6 +847,7 @@ async def _lifespan(app: FastAPI):
     except Exception as e:
         logger.error("Failed to start daily scheduler: %s", e)
     yield
+    simulator_stop.set()
     # Shutdown: cancel the scheduler task
     if task is not None:
         task.cancel()
@@ -854,6 +858,7 @@ async def _lifespan(app: FastAPI):
 
 
 app = FastAPI(title="The AI Researcher", lifespan=_lifespan)
+app.include_router(simulator_mod.router)
 
 
 # ─────────────────────────────────────────────

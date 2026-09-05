@@ -1,0 +1,426 @@
+{
+  "$defs": {
+    "Outcome": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "maxLength": 80,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "title": "Key",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "outcome_type": {
+          "default": "binary",
+          "enum": [
+            "binary",
+            "continuous",
+            "time_to_event"
+          ],
+          "title": "Outcome Type",
+          "type": "string"
+        },
+        "effect_measure": {
+          "enum": [
+            "RR",
+            "OR",
+            "RD",
+            "MD",
+            "SMD",
+            "HR"
+          ],
+          "title": "Effect Measure",
+          "type": "string"
+        },
+        "model_choice": {
+          "default": "random",
+          "enum": [
+            "fixed",
+            "random"
+          ],
+          "title": "Model Choice",
+          "type": "string"
+        },
+        "tau2_method": {
+          "default": "REML",
+          "enum": [
+            "REML",
+            "DL",
+            "PM"
+          ],
+          "title": "Tau2 Method",
+          "type": "string"
+        },
+        "fe_method": {
+          "default": "IV",
+          "enum": [
+            "IV",
+            "MH"
+          ],
+          "title": "Fe Method",
+          "type": "string"
+        },
+        "re_ci_method": {
+          "default": "wald",
+          "enum": [
+            "wald",
+            "knapp_hartung"
+          ],
+          "title": "Re Ci Method",
+          "type": "string"
+        },
+        "continuity_correction": {
+          "default": 0.5,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Continuity Correction",
+          "type": "number"
+        },
+        "mid_benefit": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mid Benefit"
+        },
+        "mid_harm": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mid Harm"
+        },
+        "baseline_risk_per_1000": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Baseline Risk Per 1000"
+        },
+        "method_verified": {
+          "default": false,
+          "title": "Method Verified",
+          "type": "boolean"
+        },
+        "method_note": {
+          "default": "Pooling settings need verification against the publication",
+          "maxLength": 1500,
+          "title": "Method Note",
+          "type": "string"
+        },
+        "source_locator": {
+          "maxLength": 1500,
+          "minLength": 1,
+          "title": "Source Locator",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/Target"
+        },
+        "tolerance": {
+          "default": 0.05,
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "title": "Tolerance",
+          "type": "number"
+        }
+      },
+      "required": [
+        "key",
+        "name",
+        "effect_measure",
+        "source_locator",
+        "target"
+      ],
+      "title": "Outcome",
+      "type": "object"
+    },
+    "Study": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Key",
+          "type": "string"
+        },
+        "citation": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Citation",
+          "type": "string"
+        },
+        "expected_included": {
+          "title": "Expected Included",
+          "type": "boolean"
+        },
+        "study_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Study Type"
+        },
+        "outcomes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/StudyOutcome"
+          },
+          "title": "Outcomes",
+          "type": "object"
+        }
+      },
+      "required": [
+        "key",
+        "citation",
+        "expected_included"
+      ],
+      "title": "Study",
+      "type": "object"
+    },
+    "StudyOutcome": {
+      "additionalProperties": false,
+      "properties": {
+        "raw": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Raw",
+          "type": "object"
+        },
+        "rob": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rob"
+        },
+        "source_locator": {
+          "default": "",
+          "title": "Source Locator",
+          "type": "string"
+        }
+      },
+      "title": "StudyOutcome",
+      "type": "object"
+    },
+    "Target": {
+      "additionalProperties": false,
+      "properties": {
+        "estimate": {
+          "title": "Estimate",
+          "type": "number"
+        },
+        "ci_low": {
+          "title": "Ci Low",
+          "type": "number"
+        },
+        "ci_high": {
+          "title": "Ci High",
+          "type": "number"
+        },
+        "grade": {
+          "anyOf": [
+            {
+              "enum": [
+                "High",
+                "Moderate",
+                "Low",
+                "Very low"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Grade"
+        },
+        "k": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "K"
+        },
+        "i2": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "I2"
+        },
+        "domains": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Domains",
+          "type": "object"
+        }
+      },
+      "required": [
+        "estimate",
+        "ci_low",
+        "ci_high"
+      ],
+      "title": "Target",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "maxLength": 300,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    },
+    "version": {
+      "maxLength": 60,
+      "minLength": 1,
+      "title": "Version",
+      "type": "string"
+    },
+    "topic": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Topic",
+      "type": "string"
+    },
+    "citation": {
+      "maxLength": 1500,
+      "minLength": 1,
+      "title": "Citation",
+      "type": "string"
+    },
+    "source_url": {
+      "title": "Source Url",
+      "type": "string"
+    },
+    "guideline_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Guideline Url"
+    },
+    "curation": {
+      "default": "published_targets",
+      "enum": [
+        "published_targets",
+        "adjudicated"
+      ],
+      "title": "Curation",
+      "type": "string"
+    },
+    "curator_notes": {
+      "default": "",
+      "maxLength": 4000,
+      "title": "Curator Notes",
+      "type": "string"
+    },
+    "adjudicators": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10,
+      "title": "Adjudicators",
+      "type": "array"
+    },
+    "split": {
+      "default": "development",
+      "enum": [
+        "development",
+        "holdout"
+      ],
+      "title": "Split",
+      "type": "string"
+    },
+    "pico": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Pico",
+      "type": "object"
+    },
+    "outcomes": {
+      "items": {
+        "$ref": "#/$defs/Outcome"
+      },
+      "maxItems": 10,
+      "minItems": 1,
+      "title": "Outcomes",
+      "type": "array"
+    },
+    "studies": {
+      "items": {
+        "$ref": "#/$defs/Study"
+      },
+      "maxItems": 100,
+      "title": "Studies",
+      "type": "array"
+    }
+  },
+  "required": [
+    "title",
+    "version",
+    "topic",
+    "citation",
+    "source_url",
+    "pico",
+    "outcomes"
+  ],
+  "title": "Dataset",
+  "type": "object"
+}

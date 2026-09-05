@@ -735,7 +735,7 @@ def _row_dict(row) -> dict:
 # Full pipeline
 # ─────────────────────────────────────────────
 def run_synthesis(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
-                  review_id: int) -> None:
+                  review_id: int, *, on_study_fields=None) -> None:
     """Screen -> extract -> RoB -> pool -> GRADE. Safe to run on a daemon thread."""
     total_refunded = 0
     conn = get_db_fn()
@@ -856,6 +856,8 @@ def run_synthesis(get_db_fn, papers_dir: Path, user_id: int, is_admin: bool,
                 try:
                     # Once per paper — prefill is outcome-independent.
                     fields = annotator_mod.prefill_fields(pdf_bytes, study_type)
+                    if on_study_fields is not None:
+                        on_study_fields(sid, fields)
                 except Exception:
                     logger.exception("RoB prefill failed (review=%s paper=%s)", review_id, pid)
                     log_event(c, review_id, "warn",
